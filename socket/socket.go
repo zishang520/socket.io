@@ -1,0 +1,674 @@
+package socket
+
+import (
+	"errors"
+	"fmt"
+	"github.com/zishang520/engine.io/engine"
+	"github.com/zishang520/engine.io/events"
+	"github.com/zishang520/engine.io/types"
+	"github.com/zishang520/engine.io/utils"
+	"github.com/zishang520/socket.io/parser"
+	"net/http"
+	"reflect"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+var SOCKET_RESERVED_EVENTS = types.NewSet("connect", "connect_error", "disconnect", "disconnecting", "newListener", "removeListener")
+
+type Handshake struct {
+	// The headers sent as part of the handshake
+	Headers *http.Header
+	// The date of creation (as string)
+	Time string
+	// The ip of the client
+	Address string
+	// Whether the connection is cross-domain
+	Xdomain bool
+	// Whether the connection is secure
+	Secure bool
+	// The date of creation (as unix timestamp)
+	Issued int64
+	// The request URL string
+	Url string
+	// The query object
+	Query *utils.ParameterBag
+	// The auth object
+	Auth interface{}
+}
+
+type Socket struct {
+	*StrictEventEmitter
+
+	nsp       *Namespace
+	client    *Client
+	id        SocketId
+	handshake *Handshake
+
+	// Additional information that can be attached to the Socket instance and which will be used in the fetchSockets method
+	data      interface{}
+	connected bool
+
+	server                *Server
+	adapter               Adapter
+	acks                  *sync.Map
+	fns                   []func([]interface{}, func(error))
+	flags                 *BroadcastFlags
+	_anyListeners         []events.Listener
+	_anyOutgoingListeners []events.Listener
+
+	fns_mu                   sync.RWMutex
+	_anyListeners_mu         sync.RWMutex
+	_anyOutgoingListeners_mu sync.RWMutex
+}
+
+func (s *Socket) Nsp() *Namespace {
+	return s.nsp
+}
+
+func (s *Socket) Id() SocketId {
+	return s.id
+}
+
+func (s *Socket) Client() *Client {
+	return s.client
+}
+
+func (s *Socket) Acks() *sync.Map {
+	return s.acks
+}
+
+func (s *Socket) Handshake() *Handshake {
+	return s.handshake
+}
+
+func (s *Socket) Connected() bool {
+	return s.connected
+}
+
+func (s *Socket) Data() interface{} {
+	return s.data
+}
+
+func (s *Socket) SetData(data interface{}) {
+	s.data = data
+}
+
+func NewSocket(nsp *Namespace, client *Client, auth interface{}) *Socket {
+	s := &Socket{}
+	s.StrictEventEmitter = NewStrictEventEmitter()
+	s.nsp = nsp
+	s.client = client
+	// Additional information that can be attached to the Socket instance and which will be used in the fetchSockets method
+	s.data = nil
+	s.connected = false
+	s.acks = &sync.Map{}
+	s.fns = []func([]interface{}, func(error)){}
+	s.flags = &BroadcastFlags{}
+	s.server = nsp.Server()
+	s.adapter = s.nsp.Adapter()
+	if client.conn.Protocol() == 3 {
+		if name := nsp.Name(); name != "/" {
+			s.id = SocketId(name + "#" + client.id)
+		} else {
+			s.id = SocketId(client.id)
+		}
+	} else {
+		id, _ := utils.Base64Id().GenerateId()
+		s.id = SocketId(id) // don't reuse the Engine.IO id because it's sensitive information
+	}
+	s.handshake = s.buildHandshake(auth)
+	return s
+}
+
+// Builds the `handshake` BC object
+func (s *Socket) buildHandshake(auth interface{}) *Handshake {
+	return &Handshake{
+		Headers: s.Request().Headers(),
+		Time:    time.Now().Format("2006-01-02 15:04:05"),
+		Address: s.Conn().RemoteAddress(),
+		Xdomain: s.Request().Headers().Get("Origin") != "",
+		Secure:  s.Request().Secure(),
+		Issued:  time.Now().UnixMilli(),
+		Url:     s.Request().Request().RequestURI,
+		Query:   s.Request().Query(),
+		Auth:    auth,
+	}
+}
+
+// Emits to this client.
+func (s *Socket) Emit(ev string, args ...interface{}) error {
+	if SOCKET_RESERVED_EVENTS.Has(ev) {
+		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
+	}
+	data := append([]interface{}{ev}, args...)
+	data_len := len(data)
+	packet := &parser.Packet{
+		Type: parser.EVENT,
+		Data: data,
+	}
+	// access last argument to see if it's an ACK callback
+	if fn, ok := data[data_len-1].(func(error, ...interface{})); ok {
+		id := s.nsp.Ids()
+		utils.Log().Debug("emitting packet with ack id %d", id)
+		packet.Data = data[:data_len-1]
+		s.registerAckCallback(id, fn)
+		packet.Id = id
+	}
+	flags := *s.flags
+	s.flags = &BroadcastFlags{}
+	s.notifyOutgoingListeners(packet)
+	s.packet(packet, &flags)
+	return nil
+}
+
+func (s *Socket) registerAckCallback(id uint64, ack func(error, ...interface{})) {
+	timeout := s.flags.Timeout
+	if timeout == nil {
+		s.acks.Store(id, ack)
+		return
+	}
+	timer := utils.SetTimeOut(func() {
+		utils.Log().Debug("event with ack id %d has timed out after %d ms", id, *timeout/time.Millisecond)
+		s.acks.Delete(id)
+		ack(errors.New("operation has timed out"))
+	}, *timeout)
+	s.acks.Store(id, func(args ...interface{}) {
+		utils.ClearTimeout(timer)
+		ack(nil, args...)
+	})
+}
+
+// Targets a room when broadcasting.
+func (s *Socket) To(room ...Room) *BroadcastOperator {
+	return s.newBroadcastOperator().To(room...)
+}
+
+// Targets a room when broadcasting.
+func (s *Socket) In(room ...Room) *BroadcastOperator {
+	return s.newBroadcastOperator().In(room...)
+}
+
+// Excludes a room when broadcasting.
+func (s *Socket) Except(room ...Room) *BroadcastOperator {
+	return s.newBroadcastOperator().Except(room...)
+}
+
+// Sends a `message` event.
+func (s *Socket) Send(args ...interface{}) *Socket {
+	s.Emit("message", args...)
+	return s
+}
+
+// Sends a `message` event.
+func (s *Socket) Write(args ...interface{}) *Socket {
+	s.Emit("message", args...)
+	return s
+}
+
+// Writes a packet.
+func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
+	packet.Nsp = s.nsp.Name()
+	if opts == nil {
+		opts = &BroadcastFlags{}
+	}
+	opts.Compress = false != opts.Compress
+	s.client._packet(packet, &opts.WriteOptions)
+}
+
+// Joins a room.
+func (s *Socket) Join(rooms ...Room) {
+	utils.Log().Debug("join room %s", rooms)
+	s.adapter.AddAll(s.id, types.NewSet(rooms...))
+}
+
+// Leaves a room.
+func (s *Socket) Leave(room Room) {
+	utils.Log().Debug("leave room %s", room)
+	s.adapter.Del(s.id, room)
+}
+
+// Leave all rooms.
+func (s *Socket) leaveAll() {
+	s.adapter.DelAll(s.id)
+}
+
+// Called by `Namespace` upon successful
+// middleware execution (ie authorization).
+// Socket is added to namespace array before
+// call to join, so adapters can access it.
+func (s *Socket) _onconnect() {
+	utils.Log().Debug("socket connected - writing packet")
+	s.connected = true
+	s.Join(Room(s.id))
+	if s.Conn().Protocol() == 3 {
+		s.packet(&parser.Packet{
+			Type: parser.CONNECT,
+		}, nil)
+	} else {
+		s.packet(&parser.Packet{
+			Type: parser.CONNECT,
+			Data: map[string]interface{}{
+				"sid": s.id,
+			},
+		}, nil)
+	}
+}
+
+// Called with each packet. Called by `Client`.
+func (s *Socket) _onpacket(packet *parser.Packet) {
+	utils.Log().Debug("got packet %v", packet)
+	switch packet.Type {
+	case parser.EVENT:
+		s.onevent(packet)
+		break
+	case parser.BINARY_EVENT:
+		s.onevent(packet)
+		break
+	case parser.ACK:
+		s.onack(packet)
+		break
+	case parser.BINARY_ACK:
+		s.onack(packet)
+		break
+	case parser.DISCONNECT:
+		s.ondisconnect()
+		break
+	}
+}
+
+// Called upon event packet.
+func (s *Socket) onevent(packet *parser.Packet) {
+	args := packet.Data
+	utils.Log().Debug("emitting event %v", args)
+	if 0 != packet.Id {
+		utils.Log().Debug("attaching ack callback to event")
+		args = append(args.([]interface{}), s.ack(packet.Id))
+	}
+	s._anyListeners_mu.RLock()
+	if s._anyListeners != nil && len(s._anyListeners) > 0 {
+		listeners := append([]events.Listener{}, s._anyListeners[:]...)
+		s._anyListeners_mu.RUnlock()
+		for _, listener := range listeners {
+			listener(args.([]interface{})...)
+		}
+	} else {
+		s._anyListeners_mu.RUnlock()
+	}
+	s.dispatch(args.([]interface{}))
+}
+
+// Produces an ack callback to emit with an event.
+func (s *Socket) ack(id uint64) events.Listener {
+	sent := int32(0)
+	return func(args ...interface{}) {
+		// prevent double callbacks
+		if atomic.CompareAndSwapInt32(&sent, 0, 1) {
+			utils.Log().Debug("sending ack %v", args)
+			s.packet(&parser.Packet{
+				Id:   id,
+				Type: parser.ACK,
+				Data: args,
+			}, nil)
+		}
+	}
+}
+
+// Called upon ack packet.
+func (s *Socket) onack(packet *parser.Packet) {
+	if ack, ok := s.acks.Load(packet.Id); ok {
+		utils.Log().Debug("calling ack %s with %v", packet.Id, packet.Data)
+		(ack.(func(...interface{})))(packet.Data)
+		s.acks.Delete(packet.Id)
+	} else {
+		utils.Log().Debug("bad ack %s", packet.Id)
+	}
+}
+
+// Called upon client disconnect packet.
+func (s *Socket) ondisconnect() {
+	utils.Log().Debug("got disconnect packet")
+	s._onclose("client namespace disconnect")
+}
+
+// Handles a client error.
+func (s *Socket) _onerror(err interface{}) {
+	if s.ListenerCount("error") > 0 {
+		s.EmitReserved("error", err)
+	} else {
+		utils.Log().Error("Missing error handler on `socket`.")
+		utils.Log().Error("%v", err)
+	}
+}
+
+// Called upon closing. Called by `Client`.
+func (s *Socket) _onclose(reason interface{}) *Socket {
+	if !s.connected {
+		return s
+	}
+	utils.Log().Debug("closing socket - reason %v", reason)
+	s.EmitReserved("disconnecting", reason)
+	s.leaveAll()
+	s.nsp._remove(s)
+	s.client._remove(s)
+	s.connected = false
+	s.EmitReserved("disconnect", reason)
+	return nil
+}
+
+// Produces an `error` packet.
+func (s *Socket) _error(err interface{}) {
+	s.packet(&parser.Packet{
+		Type: parser.CONNECT_ERROR,
+		Data: err,
+	}, nil)
+}
+
+// Disconnects this client.
+func (s *Socket) Disconnect(status bool) *Socket {
+	if !s.connected {
+		return s
+	}
+	if status {
+		s.client._disconnect()
+	} else {
+		s.packet(&parser.Packet{
+			Type: parser.DISCONNECT,
+		}, nil)
+		s._onclose("server namespace disconnect")
+	}
+	return s
+}
+
+// Sets the compress flag.
+func (s *Socket) Compress(compress bool) *Socket {
+	s.flags.Compress = compress
+	return s
+}
+
+// Sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to
+// receive messages (because of network slowness or other issues, or because they’re connected through long polling
+// and is in the middle of a request-response cycle).
+func (s *Socket) Volatile() *Socket {
+	s.flags.Volatile = true
+	return s
+}
+
+// Sets a modifier for a subsequent event emission that the event data will only be broadcast to every sockets but the
+// sender.
+func (s *Socket) Broadcast() *BroadcastOperator {
+	return s.newBroadcastOperator()
+
+}
+
+// Sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
+func (s *Socket) Local() *BroadcastOperator {
+	return s.newBroadcastOperator().Local()
+}
+
+// Sets a modifier for a subsequent event emission that the callback will be called with an error when the
+// given number of milliseconds have elapsed without an acknowledgement from the client:
+//
+// ```
+// socket.Timeout(5000 * time.Millisecond).Emit("my-event", func(args ...interface{}) {
+//   if args[0] != nil {
+//     // the client did not acknowledge the event in the given delay
+//   }
+// })
+// ```
+func (s *Socket) Timeout(timeout time.Duration) *Socket {
+	s.flags.Timeout = &timeout
+	return s
+}
+
+// Dispatch incoming event to socket listeners.
+func (s *Socket) dispatch(event []interface{}) {
+	utils.Log().Debug("dispatching an event %v", event)
+	s.run(event, func(err error) {
+		defer func() {
+			if err != nil {
+				s._onerror(err)
+				return
+			}
+			if s.connected {
+				s.EmitUntyped(event[0].(string), event[1:]...)
+			} else {
+				utils.Log().Debug("ignore packet received after disconnection")
+			}
+		}()
+	})
+}
+
+// Sets up socket middleware.
+func (s *Socket) Use(fn func([]interface{}, func(error))) *Socket {
+	s.fns_mu.Lock()
+	defer s.fns_mu.Unlock()
+
+	s.fns = append(s.fns, fn)
+	return s
+}
+
+// Executes the middleware for an incoming event.
+func (s *Socket) run(event []interface{}, fn func(err error)) {
+	s.fns_mu.RLock()
+	fns := append([]func([]interface{}, func(error)){}, s.fns...)
+	s.fns_mu.RUnlock()
+	if length := len(fns); length > 0 {
+		var run func(i int)
+		run = func(i int) {
+			fns[i](event, func(err error) {
+				// upon error, short-circuit
+				if err != nil {
+					fn(err)
+					return
+				}
+				// if no middleware left, summon callback
+				if i >= length {
+					fn(nil)
+					return
+				}
+				// go on to next
+				run(i + 1)
+			})
+		}
+		run(0)
+	} else {
+		fn(nil)
+	}
+}
+
+// Whether the socket is currently disconnected
+
+func (s *Socket) Disconnected() bool {
+	return !s.connected
+}
+
+// A reference to the request that originated the underlying Engine.IO Socket.
+func (s *Socket) Request() *types.HttpContext {
+	return s.client.Request()
+}
+
+// A reference to the underlying Client transport connection (Engine.IO Socket object).
+func (s *Socket) Conn() engine.Socket {
+	return s.client.conn
+}
+
+func (s *Socket) Rooms() *types.Set[Room] {
+	if rooms := s.adapter.SocketRooms(s.id); rooms != nil {
+		return rooms
+	}
+	return types.NewSet[Room]()
+}
+
+// Adds a listener that will be fired when any event is received. The event name is passed as the first argument to
+// the callback.
+func (s *Socket) OnAny(listener events.Listener) *Socket {
+	s._anyListeners_mu.Lock()
+	defer s._anyListeners_mu.Unlock()
+
+	if s._anyListeners == nil {
+		s._anyListeners = []events.Listener{}
+	}
+	s._anyListeners = append(s._anyListeners, listener)
+	return s
+}
+
+// Adds a listener that will be fired when any event is received. The event name is passed as the first argument to
+// the callback. The listener is added to the beginning of the listeners array.
+func (s *Socket) PrependAny(listener events.Listener) *Socket {
+	s._anyListeners_mu.Lock()
+	defer s._anyListeners_mu.Unlock()
+
+	if s._anyListeners == nil {
+		s._anyListeners = []events.Listener{}
+	}
+	s._anyListeners = append([]events.Listener{listener}, s._anyListeners...)
+	return s
+}
+
+// Removes the listener that will be fired when any event is received.
+func (s *Socket) OffAny(listener events.Listener) *Socket {
+	s._anyListeners_mu.Lock()
+	defer s._anyListeners_mu.Unlock()
+
+	if len(s._anyListeners) == 0 {
+		return s
+	}
+	if listener != nil {
+		listenerPointer := reflect.ValueOf(listener).Pointer()
+		for i, _listener := range s._anyListeners {
+			if listenerPointer == reflect.ValueOf(_listener).Pointer() {
+				s._anyListeners = append(s._anyListeners[:i], s._anyListeners[i+1:]...)
+				return s
+			}
+		}
+	} else {
+		s._anyListeners = []events.Listener{}
+	}
+	return s
+}
+
+// Returns an array of listeners that are listening for any event that is specified. This array can be manipulated,
+// e.g. to remove listeners.
+func (s *Socket) ListenersAny() []events.Listener {
+	s._anyListeners_mu.Lock()
+	defer s._anyListeners_mu.Unlock()
+
+	if s._anyListeners == nil {
+		s._anyListeners = []events.Listener{}
+	}
+	return s._anyListeners
+}
+
+// Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
+// callback.
+//
+// <pre><code>
+//
+// socket.OnAnyOutgoing(events.Listener {
+//   fmt.Println(args)
+// })
+//
+// </pre></code>
+func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
+	s._anyOutgoingListeners_mu.Lock()
+	defer s._anyOutgoingListeners_mu.Unlock()
+
+	if s._anyOutgoingListeners == nil {
+		s._anyOutgoingListeners = []events.Listener{}
+	}
+	s._anyOutgoingListeners = append(s._anyOutgoingListeners, listener)
+	return s
+}
+
+// Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
+// callback. The listener is added to the beginning of the listeners array.
+//
+// <pre><code>
+//
+// socket.PrependAnyOutgoing(events.Listener {
+//   fmt.Println(args)
+// })
+//
+// </pre></code>
+func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
+	s._anyOutgoingListeners_mu.Lock()
+	defer s._anyOutgoingListeners_mu.Unlock()
+
+	if s._anyOutgoingListeners == nil {
+		s._anyOutgoingListeners = []events.Listener{}
+	}
+	s._anyOutgoingListeners = append([]events.Listener{listener}, s._anyOutgoingListeners...)
+	return s
+}
+
+// Removes the listener that will be fired when any event is emitted.
+//
+// <pre><code>
+//
+// handler := func(args ...interface{}) {
+//   fmt.Println(args)
+// }
+//
+// socket.OnAnyOutgoing(handler)
+//
+// then later
+// socket.OffAnyOutgoing(handler)
+//
+// </pre></code>
+func (s *Socket) OffAnyOutgoing(listener events.Listener) *Socket {
+	s._anyOutgoingListeners_mu.Lock()
+	defer s._anyOutgoingListeners_mu.Unlock()
+
+	if s._anyOutgoingListeners == nil {
+		return s
+	}
+	if listener != nil {
+		listenerPointer := reflect.ValueOf(listener).Pointer()
+		for i, _listener := range s._anyOutgoingListeners {
+			if listenerPointer == reflect.ValueOf(_listener).Pointer() {
+				s._anyOutgoingListeners = append(s._anyOutgoingListeners[:i], s._anyOutgoingListeners[i+1:]...)
+				return s
+			}
+		}
+	} else {
+		s._anyOutgoingListeners = []events.Listener{}
+	}
+	return s
+}
+
+// Returns an array of listeners that are listening for any event that is specified. This array can be manipulated,
+// e.g. to remove listeners.
+func (s *Socket) ListenersAnyOutgoing() []events.Listener {
+	s._anyOutgoingListeners_mu.Lock()
+	defer s._anyOutgoingListeners_mu.Unlock()
+
+	if s._anyOutgoingListeners == nil {
+		s._anyOutgoingListeners = []events.Listener{}
+	}
+	return s._anyOutgoingListeners
+}
+
+// Notify the listeners for each packet sent (emit or broadcast)
+func (s *Socket) notifyOutgoingListeners(packet *parser.Packet) {
+	s._anyOutgoingListeners_mu.RLock()
+	if s._anyOutgoingListeners != nil && len(s._anyOutgoingListeners) > 0 {
+		listeners := append([]events.Listener{}, s._anyOutgoingListeners[:]...)
+		s._anyOutgoingListeners_mu.RUnlock()
+		for _, listener := range listeners {
+			listener(packet.Data)
+		}
+	} else {
+		s._anyOutgoingListeners_mu.RUnlock()
+	}
+}
+func (s *Socket) NotifyOutgoingListeners() func(*parser.Packet) {
+	return s.notifyOutgoingListeners
+}
+
+func (s *Socket) newBroadcastOperator() *BroadcastOperator {
+	flags := *s.flags
+	s.flags = &BroadcastFlags{}
+	return NewBroadcastOperator(s.adapter, types.NewSet[Room](), types.NewSet[Room](Room(s.id)), &flags)
+}
