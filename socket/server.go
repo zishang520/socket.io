@@ -52,6 +52,10 @@ type Server struct {
 	httpServer      *types.HttpServer
 }
 
+func (s *Server) Engine() engine.Server {
+	return s.engine
+}
+
 func (s *Server) Encoder() parser.Encoder {
 	return s.encoder
 }

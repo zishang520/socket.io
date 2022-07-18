@@ -20,6 +20,10 @@ type Client struct {
 	connectTimeout *utils.Timer
 }
 
+func (c *Client) Conn() engine.Socket {
+	return c.conn
+}
+
 // Client constructor.
 func NewClient(server *Server, conn engine.Socket) *Client {
 	c := &Client{}
