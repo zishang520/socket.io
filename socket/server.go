@@ -52,6 +52,10 @@ type Server struct {
 	httpServer      *types.HttpServer
 }
 
+func (s *Server) Sockets() NamespaceInterface {
+	return s.sockets
+}
+
 func (s *Server) Engine() engine.Server {
 	return s.engine
 }
