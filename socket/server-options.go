@@ -32,22 +32,20 @@ type ServerOptions struct {
 	config.AttachOptions
 
 	// whether to serve the client files
-	serveClient *bool `json:"serveClient,omitempty"`
+	serveClient *bool
+
 	// the adapter to use
-	adapter Adapter `json:"adapter,omitempty"`
+	adapter Adapter
+
 	// the parser to use
-	parser parser.Parser `json:"parser,omitempty"`
+	parser parser.Parser
+
 	// how many ms before a client without namespace is closed
-	connectTimeout *time.Duration `json:"connectTimeout,omitempty"`
+	connectTimeout *time.Duration
 }
 
 func DefaultServerOptions() *ServerOptions {
 	a := &ServerOptions{}
-	// a.SetPath("/socket.io")
-	// a.SetServeClient(true)
-	// a.SetAdapter(&adapter{})
-	// a.SetParser(parser.NewParser())
-	// a.SetConnectTimeout(time.Duration(45000 * time.Millisecond))
 	return a
 }
 
