@@ -400,11 +400,10 @@ func (s *Server) Close(fn func()) {
 		return true
 	})
 
-	s.engine.Close()
-
 	if s.httpServer != nil {
 		s.httpServer.Close(fn)
 	} else {
+		s.engine.Close()
 		if fn != nil {
 			fn()
 		}
