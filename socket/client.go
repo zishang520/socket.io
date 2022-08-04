@@ -2,12 +2,15 @@ package socket
 
 import (
 	"github.com/zishang520/engine.io/engine"
+	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
 	"github.com/zishang520/engine.io/utils"
 	"github.com/zishang520/socket.io/parser"
 	"net/url"
 	"sync"
 )
+
+var client_log = log.NewLog("socket.io:client")
 
 type Client struct {
 	conn           engine.Socket
@@ -56,10 +59,10 @@ func (c *Client) setup() {
 			return false
 		})
 		if empty {
-			utils.Log().Debug("no namespace joined yet, close the client")
+			client_log.Debug("no namespace joined yet, close the client")
 			c.close()
 		} else {
-			utils.Log().Debug("the client has already joined a namespace, nothing to do")
+			client_log.Debug("the client has already joined a namespace, nothing to do")
 		}
 	}, c.server._connectTimeout)
 }
@@ -67,7 +70,7 @@ func (c *Client) setup() {
 // Connects a client to a namespace.
 func (c *Client) connect(name string, auth interface{}) {
 	if _, ok := c.server._nsps.Load(name); ok {
-		utils.Log().Debug("connecting to namespace %s", name)
+		client_log.Debug("connecting to namespace %s", name)
 		c.doConnect(name, auth)
 		return
 	}
@@ -75,7 +78,7 @@ func (c *Client) connect(name string, auth interface{}) {
 		if dynamicNspName != nil {
 			c.doConnect(name, auth)
 		} else {
-			utils.Log().Debug("creation of namespace %s was denied", name)
+			client_log.Debug("creation of namespace %s was denied", name)
 			c._packet(&parser.Packet{
 				Type: parser.CONNECT_ERROR,
 				Nsp:  name,
@@ -115,14 +118,14 @@ func (c *Client) _remove(socket *Socket) {
 		c.sockets.Delete(socket.Id())
 		c.nsps.Delete(nsp.(*Socket).Nsp().Name())
 	} else {
-		utils.Log().Debug("ignoring remove for %s", socket.Id())
+		client_log.Debug("ignoring remove for %s", socket.Id())
 	}
 }
 
 // Closes the underlying connection.
 func (c *Client) close() {
 	if "open" == c.conn.ReadyState() {
-		utils.Log().Debug("forcing transport close")
+		client_log.Debug("forcing transport close")
 		c.conn.Close(false)
 		c.onclose("forced server close")
 	}
@@ -131,7 +134,7 @@ func (c *Client) close() {
 // Writes a packet to the transport.
 func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 	if c.conn.ReadyState() != "open" {
-		utils.Log().Debug("ignoring packet write %v", packet)
+		client_log.Debug("ignoring packet write %v", packet)
 		return
 	}
 
@@ -146,7 +149,7 @@ func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 
 func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *WriteOptions) {
 	if opts.Volatile && !c.conn.Transport().Writable() {
-		utils.Log().Debug("volatile packet is discarded since the transport is not currently writable")
+		client_log.Debug("volatile packet is discarded since the transport is not currently writable")
 		return
 	}
 
@@ -159,7 +162,7 @@ func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *Wri
 func (c *Client) ondata(args ...interface{}) {
 	// error is needed for protocol violations (GH-1880)
 	if err := c.decoder.Add(args[0]); err != nil {
-		utils.Log().Debug("invalid packet format")
+		client_log.Debug("invalid packet format")
 		c.onerror(err)
 	}
 }
@@ -184,7 +187,7 @@ func (c *Client) ondecoded(args ...interface{}) {
 	} else if ok && packet.Type != parser.CONNECT && packet.Type != parser.CONNECT_ERROR {
 		defer socket.(*Socket)._onpacket(packet)
 	} else {
-		utils.Log().Debug("invalid state (packet type: %s)", packet.Type)
+		client_log.Debug("invalid state (packet type: %s)", packet.Type)
 		c.close()
 	}
 }
@@ -200,7 +203,7 @@ func (c *Client) onerror(args ...interface{}) {
 
 //  Called upon transport close.
 func (c *Client) onclose(args ...interface{}) {
-	utils.Log().Debug("client close with reason %v", args[0])
+	client_log.Debug("client close with reason %v", args[0])
 	// ignore a potential subsequent `close` event
 	c.destroy()
 	// `nsps` and `sockets` are cleaned up seamlessly

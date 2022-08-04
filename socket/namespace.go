@@ -3,12 +3,14 @@ package socket
 import (
 	"errors"
 	"fmt"
+	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/engine.io/utils"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+var namespace_log = log.NewLog("socket.io:namespace")
 
 type ExtendedError struct {
 	message string
@@ -146,7 +148,7 @@ func (n *Namespace) Except(room ...Room) *BroadcastOperator {
 
 // Adds a new client.
 func (n *Namespace) Add(client *Client, query interface{}, fn func(*Socket)) *Socket {
-	utils.Log().Debug("adding socket to nsp %s", n.name)
+	namespace_log.Debug("adding socket to nsp %s", n.name)
 	socket := NewSocket(n, client, query)
 	n.run(socket, func(err *ExtendedError) {
 		defer func() {
@@ -181,7 +183,7 @@ func (n *Namespace) Add(client *Client, query interface{}, fn func(*Socket)) *So
 				n.EmitReserved("connect", socket)
 				n.EmitReserved("connection", socket)
 			} else {
-				utils.Log().Debug("next called after client was closed - ignoring socket")
+				namespace_log.Debug("next called after client was closed - ignoring socket")
 			}
 		}()
 	})
@@ -191,7 +193,7 @@ func (n *Namespace) Add(client *Client, query interface{}, fn func(*Socket)) *So
 // Removes a client. Called by each `Socket`.
 func (n *Namespace) _remove(socket *Socket) {
 	if _, ok := n.sockets.LoadAndDelete(socket.Id()); !ok {
-		utils.Log().Debug("ignoring remove for %s", socket.Id())
+		namespace_log.Debug("ignoring remove for %s", socket.Id())
 	}
 }
 

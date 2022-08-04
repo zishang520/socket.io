@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/andybalholm/brotli"
 	"github.com/zishang520/engine.io/engine"
+	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
 	"github.com/zishang520/engine.io/utils"
 	"github.com/zishang520/socket.io/parser"
@@ -25,6 +26,7 @@ const clientVersion = "4.5.1"
 
 var (
 	dotMapRegex = regexp.MustCompile(`\.map`)
+	server_log  = log.NewLog("socket.io:server")
 )
 
 type ParentNspNameMatchFn *func(string, interface{}, func(error, bool))
@@ -119,12 +121,12 @@ func (s *Server) _checkNamespace(name string, auth interface{}, fn func(nsp *Nam
 			}
 			if nsp, ok := s._nsps.Load(name); ok {
 				// the namespace was created in the meantime
-				utils.Log().Debug("dynamic namespace %s already exists", name)
+				server_log.Debug("dynamic namespace %s already exists", name)
 				fn(nsp.(*Namespace))
 				return
 			}
 			namespace := pnsp.(*ParentNamespace).CreateChild(name)
-			utils.Log().Debug("dynamic namespace %s was created", name)
+			server_log.Debug("dynamic namespace %s was created", name)
 			s.sockets.EmitReserved("new_namespace", namespace)
 			fn(namespace)
 		})
@@ -176,7 +178,7 @@ func (s *Server) Attach(srv interface{}, opts *ServerOptions) *Server {
 	switch address := srv.(type) {
 	case string:
 		// handle a port as a string
-		utils.Log().Debug("creating http server and binding to %s", address)
+		server_log.Debug("creating http server and binding to %s", address)
 		server = types.CreateServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "404 page not found", http.StatusNotFound)
 		}))
@@ -204,7 +206,7 @@ func (s *Server) Attach(srv interface{}, opts *ServerOptions) *Server {
 // Initialize engine
 func (s *Server) initEngine(srv *types.HttpServer, opts interface{}) {
 	// initialize engine
-	utils.Log().Debug("creating engine.io instance with opts %v", opts)
+	server_log.Debug("creating engine.io instance with opts %v", opts)
 	s.eio = engine.Attach(srv, opts)
 
 	// attach static file serving
@@ -221,7 +223,7 @@ func (s *Server) initEngine(srv *types.HttpServer, opts interface{}) {
 
 // Attaches the static file serving.
 func (s *Server) attachServe(srv *types.HttpServer) {
-	utils.Log().Debug("attaching client serving req handler")
+	server_log.Debug("attaching client serving req handler")
 	srv.HandleFunc(s._path+"/", func(w http.ResponseWriter, r *http.Request) {
 		if s.clientPathRegex.MatchString(r.URL.Path) {
 			s.serve(w, r)
@@ -250,14 +252,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 	if etag := r.Header.Get("If-None-Match"); etag != "" {
 		if expectedEtag == etag || weakEtag == etag {
-			utils.Log().Debug("serve client %s 304", _type)
+			server_log.Debug("serve client %s 304", _type)
 			w.WriteHeader(http.StatusNotModified)
 			w.Write(nil)
 			return
 		}
 	}
 
-	utils.Log().Debug("serve client %s", _type)
+	server_log.Debug("serve client %s", _type)
 	w.Header().Set("Cache-Control", "public, max-age=0")
 	if isMap {
 		w.Header().Set("Content-Type", "application/json")
@@ -271,14 +273,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) {
 	_file, err := os.Executable()
 	if err != nil {
-		utils.Log().Debug("Failed to get run path: %v", err)
+		server_log.Debug("Failed to get run path: %v", err)
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 
 	file, err := os.Open(path.Join(filepath.Dir(_file), "../client-dist/", filename))
 	if err != nil {
-		utils.Log().Debug("File read failed: %v", err)
+		server_log.Debug("File read failed: %v", err)
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
@@ -294,7 +296,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	case "gzip":
 		gz, err := gzip.NewWriterLevel(w, 1)
 		if err != nil {
-			utils.Log().Debug("Failed to compress data: %v", err)
+			server_log.Debug("Failed to compress data: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -305,7 +307,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	case "deflate":
 		fl, err := flate.NewWriter(w, 1)
 		if err != nil {
-			utils.Log().Debug("Failed to compress data: %v", err)
+			server_log.Debug("Failed to compress data: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -329,7 +331,7 @@ func (s *Server) Bind(egs engine.Server) *Server {
 // Called with each incoming transport connection.
 func (s *Server) onconnection(conns ...interface{}) {
 	conn := conns[0].(engine.Socket)
-	utils.Log().Debug("incoming connection with id %s", conn.Id())
+	server_log.Debug("incoming connection with id %s", conn.Id())
 	client := NewClient(s, conn)
 	if conn.Protocol() == 3 {
 		client.connect("/", nil)
@@ -341,7 +343,7 @@ func (s *Server) Of(name interface{}, fn func(...interface{})) NamespaceInterfac
 	switch n := name.(type) {
 	case ParentNspNameMatchFn:
 		parentNsp := NewParentNamespace(s)
-		utils.Log().Debug("initializing parent namespace %s", parentNsp.Name())
+		server_log.Debug("initializing parent namespace %s", parentNsp.Name())
 		s.parentNsps.Store(n, parentNsp)
 		if fn != nil {
 			parentNsp.On("connect", fn)
@@ -349,7 +351,7 @@ func (s *Server) Of(name interface{}, fn func(...interface{})) NamespaceInterfac
 		return parentNsp
 	case *regexp.Regexp:
 		parentNsp := NewParentNamespace(s)
-		utils.Log().Debug("initializing parent namespace %s", parentNsp.Name())
+		server_log.Debug("initializing parent namespace %s", parentNsp.Name())
 		nfn := func(nsp string, _ interface{}, next func(error, bool)) {
 			next(nil, n.MatchString(nsp))
 		}
@@ -377,7 +379,7 @@ func (s *Server) Of(name interface{}, fn func(...interface{})) NamespaceInterfac
 	if nsp, ok := s._nsps.Load(n); ok {
 		namespace = nsp.(*Namespace)
 	} else {
-		utils.Log().Debug("initializing namespace %s", n)
+		server_log.Debug("initializing namespace %s", n)
 		namespace = NewNamespace(s, n)
 		s._nsps.Store(n, namespace)
 		if n != "/" {

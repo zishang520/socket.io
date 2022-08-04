@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/zishang520/engine.io/events"
+	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/engine.io/utils"
 	"io"
 	"strconv"
 	"strings"
 )
+
+var parser_log = log.NewLog("socket.io:parser")
 
 // A socket.io Decoder instance
 type decoder struct {
@@ -92,7 +94,7 @@ func (d *decoder) Add(data interface{}) error {
 func (d *decoder) decodeAsString(str types.BufferInterface) error {
 	packet, err := d.decodeString(str)
 	if err != nil {
-		utils.Log().Debug("decode err %v", err)
+		parser_log.Debug("decode err %v", err)
 		return err
 	}
 	if packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK {
@@ -111,14 +113,12 @@ func (d *decoder) decodeAsString(str types.BufferInterface) error {
 
 // Decode a packet String (JSON data)
 func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err error) {
-	// DEBUG
-	if utils.Log().DEBUG {
-		defer func(str string) {
-			if err == nil {
-				utils.Log().Debug("decoded %s as %v", str, packet)
-			}
-		}(str.String())
-	}
+	defer func(str string) {
+		if err == nil {
+			parser_log.Debug("decoded %s as %v", str, packet)
+		}
+	}(str.String())
+
 	// look up type
 	packet = &Packet{}
 	msgType, err := str.ReadByte()

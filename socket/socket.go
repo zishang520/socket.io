@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/zishang520/engine.io/engine"
 	"github.com/zishang520/engine.io/events"
+	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
 	"github.com/zishang520/engine.io/utils"
 	"github.com/zishang520/socket.io/parser"
@@ -15,7 +16,10 @@ import (
 	"time"
 )
 
-var SOCKET_RESERVED_EVENTS = types.NewSet("connect", "connect_error", "disconnect", "disconnecting", "newListener", "removeListener")
+var (
+	SOCKET_RESERVED_EVENTS = types.NewSet("connect", "connect_error", "disconnect", "disconnecting", "newListener", "removeListener")
+	socket_log             = log.NewLog("socket.io:socket")
+)
 
 type Handshake struct {
 	// The headers sent as part of the handshake
@@ -151,7 +155,7 @@ func (s *Socket) Emit(ev string, args ...interface{}) error {
 	// access last argument to see if it's an ACK callback
 	if fn, ok := data[data_len-1].(func(error, ...interface{})); ok {
 		id := s.nsp.Ids()
-		utils.Log().Debug("emitting packet with ack id %d", id)
+		socket_log.Debug("emitting packet with ack id %d", id)
 		packet.Data = data[:data_len-1]
 		s.registerAckCallback(id, fn)
 		packet.Id = id
@@ -170,7 +174,7 @@ func (s *Socket) registerAckCallback(id uint64, ack func(error, ...interface{}))
 		return
 	}
 	timer := utils.SetTimeOut(func() {
-		utils.Log().Debug("event with ack id %d has timed out after %d ms", id, *timeout/time.Millisecond)
+		socket_log.Debug("event with ack id %d has timed out after %d ms", id, *timeout/time.Millisecond)
 		s.acks.Delete(id)
 		ack(errors.New("operation has timed out"))
 	}, *timeout)
@@ -219,13 +223,13 @@ func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
 
 // Joins a room.
 func (s *Socket) Join(rooms ...Room) {
-	utils.Log().Debug("join room %s", rooms)
+	socket_log.Debug("join room %s", rooms)
 	s.adapter.AddAll(s.id, types.NewSet(rooms...))
 }
 
 // Leaves a room.
 func (s *Socket) Leave(room Room) {
-	utils.Log().Debug("leave room %s", room)
+	socket_log.Debug("leave room %s", room)
 	s.adapter.Del(s.id, room)
 }
 
@@ -239,7 +243,7 @@ func (s *Socket) leaveAll() {
 // Socket is added to namespace array before
 // call to join, so adapters can access it.
 func (s *Socket) _onconnect() {
-	utils.Log().Debug("socket connected - writing packet")
+	socket_log.Debug("socket connected - writing packet")
 	s.connected = true
 	s.Join(Room(s.id))
 	if s.Conn().Protocol() == 3 {
@@ -258,7 +262,7 @@ func (s *Socket) _onconnect() {
 
 // Called with each packet. Called by `Client`.
 func (s *Socket) _onpacket(packet *parser.Packet) {
-	utils.Log().Debug("got packet %v", packet)
+	socket_log.Debug("got packet %v", packet)
 	switch packet.Type {
 	case parser.EVENT:
 		s.onevent(packet)
@@ -281,9 +285,9 @@ func (s *Socket) _onpacket(packet *parser.Packet) {
 // Called upon event packet.
 func (s *Socket) onevent(packet *parser.Packet) {
 	args := packet.Data
-	utils.Log().Debug("emitting event %v", args)
+	socket_log.Debug("emitting event %v", args)
 	if 0 != packet.Id {
-		utils.Log().Debug("attaching ack callback to event")
+		socket_log.Debug("attaching ack callback to event")
 		args = append(args.([]interface{}), s.ack(packet.Id))
 	}
 	s._anyListeners_mu.RLock()
@@ -305,7 +309,7 @@ func (s *Socket) ack(id uint64) events.Listener {
 	return func(args ...interface{}) {
 		// prevent double callbacks
 		if atomic.CompareAndSwapInt32(&sent, 0, 1) {
-			utils.Log().Debug("sending ack %v", args)
+			socket_log.Debug("sending ack %v", args)
 			s.packet(&parser.Packet{
 				Id:   id,
 				Type: parser.ACK,
@@ -318,17 +322,17 @@ func (s *Socket) ack(id uint64) events.Listener {
 // Called upon ack packet.
 func (s *Socket) onack(packet *parser.Packet) {
 	if ack, ok := s.acks.Load(packet.Id); ok {
-		utils.Log().Debug("calling ack %s with %v", packet.Id, packet.Data)
+		socket_log.Debug("calling ack %s with %v", packet.Id, packet.Data)
 		(ack.(func(...interface{})))(packet.Data)
 		s.acks.Delete(packet.Id)
 	} else {
-		utils.Log().Debug("bad ack %s", packet.Id)
+		socket_log.Debug("bad ack %s", packet.Id)
 	}
 }
 
 // Called upon client disconnect packet.
 func (s *Socket) ondisconnect() {
-	utils.Log().Debug("got disconnect packet")
+	socket_log.Debug("got disconnect packet")
 	s._onclose("client namespace disconnect")
 }
 
@@ -347,7 +351,7 @@ func (s *Socket) _onclose(reason interface{}) *Socket {
 	if !s.connected {
 		return s
 	}
-	utils.Log().Debug("closing socket - reason %v", reason)
+	socket_log.Debug("closing socket - reason %v", reason)
 	s.EmitReserved("disconnecting", reason)
 	s.leaveAll()
 	s.nsp._remove(s)
@@ -424,7 +428,7 @@ func (s *Socket) Timeout(timeout time.Duration) *Socket {
 
 // Dispatch incoming event to socket listeners.
 func (s *Socket) dispatch(event []interface{}) {
-	utils.Log().Debug("dispatching an event %v", event)
+	socket_log.Debug("dispatching an event %v", event)
 	s.run(event, func(err error) {
 		defer func() {
 			if err != nil {
@@ -434,7 +438,7 @@ func (s *Socket) dispatch(event []interface{}) {
 			if s.connected {
 				s.EmitUntyped(event[0].(string), event[1:]...)
 			} else {
-				utils.Log().Debug("ignore packet received after disconnection")
+				socket_log.Debug("ignore packet received after disconnection")
 			}
 		}()
 	})

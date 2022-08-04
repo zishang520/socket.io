@@ -3,7 +3,6 @@ package parser
 import (
 	"encoding/json"
 	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/engine.io/utils"
 	"strconv"
 	"strings"
 )
@@ -19,7 +18,7 @@ func NewEncoder() Encoder {
 // Encode a packet as a single string if non-binary, or as a
 // buffer sequence, depending on packet type.
 func (e *encoder) Encode(packet *Packet) []types.BufferInterface {
-	utils.Log().Debug("encoding packet %v", packet)
+	parser_log.Debug("encoding packet %v", packet)
 	if packet.Type == EVENT || packet.Type == ACK {
 		if HasBinary(packet.Data) {
 			if packet.Type == EVENT {
@@ -87,7 +86,7 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 			str.Write(b)
 		}
 	}
-	utils.Log().Debug("encoded %v as %v", packet, str)
+	parser_log.Debug("encoded %v as %v", packet, str)
 	return str
 }
 
