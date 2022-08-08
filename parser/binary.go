@@ -2,13 +2,15 @@ package parser
 
 import (
 	"errors"
+	"fmt"
+	"github.com/mitchellh/mapstructure"
 	"github.com/zishang520/engine.io/types"
 	"io"
 )
 
 type Placeholder struct {
-	Placeholder bool `json:"_placeholder"`
-	Num         int  `json:"num"`
+	Placeholder bool `json:"_placeholder" mapstructure:"_placeholder"`
+	Num         int  `json:"num" mapstructure:"num"`
 }
 
 // Replaces every Buffer | ArrayBuffer | Blob | File in packet with a numbered placeholder.
@@ -80,12 +82,11 @@ func _reconstructPacket(data interface{}, buffers *[]types.BufferInterface) (int
 		}
 		return newData, nil
 	case map[string]interface{}:
-		if _placeholder, _placeholder_ok := d["_placeholder"]; _placeholder_ok {
-			if placeholder, placeholder_ok := _placeholder.(bool); placeholder_ok && placeholder {
-				if _num, _num_ok := d["num"]; _num_ok {
-					if num, num_ok := _num.(float64); num_ok && num >= 0 && int(num) < len(*buffers) {
-						return (*buffers)[int(num)], nil // appropriate buffer (should be natural order anyway)
-					}
+		var _placeholder *Placeholder
+		if mapstructure.Decode(d, &_placeholder) == nil {
+			if _placeholder.Placeholder {
+				if _placeholder.Num >= 0 && _placeholder.Num < len(*buffers) {
+					return (*buffers)[_placeholder.Num], nil // appropriate buffer (should be natural order anyway)
 				}
 				return nil, errors.New("illegal attachments")
 			}
