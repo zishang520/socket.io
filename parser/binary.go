@@ -2,7 +2,6 @@ package parser
 
 import (
 	"errors"
-	"fmt"
 	"github.com/mitchellh/mapstructure"
 	"github.com/zishang520/engine.io/types"
 	"io"
