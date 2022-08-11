@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/zishang520/engine.io/events"
-	"github.com/zishang520/engine.io/log"
-	"github.com/zishang520/engine.io/types"
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/zishang520/engine.io/events"
+	"github.com/zishang520/engine.io/log"
+	"github.com/zishang520/engine.io/types"
 )
 
 var parser_log = log.NewLog("socket.io:parser")
@@ -172,6 +173,8 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 	} else {
 		if err != io.EOF {
 			return nil, errors.New("Illegal namespace")
+		} else {
+			packet.Nsp = "/"
 		}
 	}
 
