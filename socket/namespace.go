@@ -14,10 +14,10 @@ var namespace_log = log.NewLog("socket.io:namespace")
 
 type ExtendedError struct {
 	message string
-	data    interface{}
+	data    any
 }
 
-func NewExtendedError(message string, data interface{}) *ExtendedError {
+func NewExtendedError(message string, data any) *ExtendedError {
 	return &ExtendedError{message: message, data: data}
 }
 
@@ -25,7 +25,7 @@ func (e *ExtendedError) Err() error {
 	return e
 }
 
-func (e *ExtendedError) Data() interface{} {
+func (e *ExtendedError) Data() any {
 	return e.data
 }
 
@@ -147,7 +147,7 @@ func (n *Namespace) Except(room ...Room) *BroadcastOperator {
 }
 
 // Adds a new client.
-func (n *Namespace) Add(client *Client, query interface{}, fn func(*Socket)) *Socket {
+func (n *Namespace) Add(client *Client, query any, fn func(*Socket)) *Socket {
 	namespace_log.Debug("adding socket to nsp %s", n.name)
 	socket := NewSocket(n, client, query)
 	n.run(socket, func(err *ExtendedError) {
@@ -162,7 +162,7 @@ func (n *Namespace) Add(client *Client, query interface{}, fn func(*Socket)) *So
 						socket._error(err.Error())
 						return
 					} else {
-						socket._error(map[string]interface{}{
+						socket._error(map[string]any{
 							"message": err.Error(),
 							"data":    err.Data(),
 						})
@@ -198,24 +198,24 @@ func (n *Namespace) _remove(socket *Socket) {
 }
 
 // Emits to all clients.
-func (n *Namespace) Emit(ev string, args ...interface{}) error {
+func (n *Namespace) Emit(ev string, args ...any) error {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Emit(ev, args...)
 }
 
 // Sends a `message` event to all clients.
-func (n *Namespace) Send(args ...interface{}) NamespaceInterface {
+func (n *Namespace) Send(args ...any) NamespaceInterface {
 	n.Emit("message", args...)
 	return n
 }
 
 // Sends a `message` event to all clients.
-func (n *Namespace) Write(args ...interface{}) NamespaceInterface {
+func (n *Namespace) Write(args ...any) NamespaceInterface {
 	n.Emit("message", args...)
 	return n
 }
 
 // Emit a packet to other Socket.IO servers
-func (n *Namespace) ServerSideEmit(ev string, args ...interface{}) error {
+func (n *Namespace) ServerSideEmit(ev string, args ...any) error {
 	if NAMESPACE_RESERVED_EVENTS.Has(ev) {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
 	}
@@ -226,7 +226,7 @@ func (n *Namespace) ServerSideEmit(ev string, args ...interface{}) error {
 }
 
 // Called when a packet is received from another Socket.IO server
-func (n *Namespace) _onServerSideEmit(ev string, args ...interface{}) {
+func (n *Namespace) _onServerSideEmit(ev string, args ...any) {
 	n.EmitUntyped(ev, args...)
 }
 
@@ -256,7 +256,7 @@ func (n *Namespace) Local() *BroadcastOperator {
 //
 // <pre><code>
 //
-// io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...interface{}) {
+// io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
 //   // ...
 // });
 //

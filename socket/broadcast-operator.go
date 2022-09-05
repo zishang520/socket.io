@@ -86,7 +86,7 @@ func (b *BroadcastOperator) Local() *BroadcastOperator {
 //
 // <pre><code>
 //
-// io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...interface{}) {
+// io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
 //   // ...
 // });
 //
@@ -98,12 +98,12 @@ func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
 }
 
 // Emits to all clients.
-func (b *BroadcastOperator) Emit(ev string, args ...interface{}) error {
+func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	if SOCKET_RESERVED_EVENTS.Has(ev) {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
 	}
 	// set up packet object
-	data := append([]interface{}{ev}, args...)
+	data := append([]any{ev}, args...)
 	data_len := len(data)
 
 	packet := &parser.Packet{
@@ -111,7 +111,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...interface{}) error {
 		Data: data,
 	}
 
-	ack, withAck := data[data_len-1].(func(error, []interface{}))
+	ack, withAck := data[data_len-1].(func(error, []any))
 
 	if !withAck {
 		b.adapter.Broadcast(packet, &BroadcastOptions{
@@ -126,7 +126,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...interface{}) error {
 	packet.Data = data[:data_len-1]
 
 	timedOut := false
-	responses := []interface{}{}
+	responses := []any{}
 	var responsesMu sync.RWMutex
 	var timeout time.Duration
 
@@ -162,7 +162,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...interface{}) error {
 		atomic.AddUint64(&expectedClientCount, clientCount)
 		atomic.AddInt64(&actualServerCount, 1)
 		checkCompleteness()
-	}, func(clientResponse ...interface{}) {
+	}, func(clientResponse ...any) {
 		// each client sends an acknowledgement
 		responsesMu.Lock()
 		responses = append(responses, clientResponse...)
@@ -229,7 +229,7 @@ type RemoteSocket struct {
 	id        SocketId
 	handshake *Handshake
 	rooms     *types.Set[Room]
-	data      interface{}
+	data      any
 
 	operator *BroadcastOperator
 }
@@ -246,7 +246,7 @@ func (r *RemoteSocket) Rooms() *types.Set[Room] {
 	return r.rooms
 }
 
-func (r *RemoteSocket) Data() interface{} {
+func (r *RemoteSocket) Data() any {
 	return r.data
 }
 
@@ -262,7 +262,7 @@ func NewRemoteSocket(adapter Adapter, details SocketDetails) *RemoteSocket {
 	return r
 }
 
-func (r *RemoteSocket) Emit(ev string, args ...interface{}) error {
+func (r *RemoteSocket) Emit(ev string, args ...any) error {
 	return r.operator.Emit(ev, args...)
 }
 

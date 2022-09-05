@@ -7,7 +7,7 @@ import (
 )
 
 // Returns true if obj is a Buffer or a File.
-func IsBinary(data interface{}) bool {
+func IsBinary(data any) bool {
 	switch data.(type) {
 	case *types.StringBuffer: // false
 	case *strings.Reader: // false
@@ -19,17 +19,17 @@ func IsBinary(data interface{}) bool {
 	return false
 }
 
-func HasBinary(data interface{}) bool {
+func HasBinary(data any) bool {
 	switch o := data.(type) {
 	case nil:
 		return false
-	case []interface{}:
+	case []any:
 		for _, v := range o {
 			if HasBinary(v) {
 				return true
 			}
 		}
-	case map[string]interface{}:
+	case map[string]any:
 		for _, v := range o {
 			if HasBinary(v) {
 				return true

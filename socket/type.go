@@ -76,7 +76,7 @@ type Adapter interface {
 	//  - `Flags` {*BroadcastFlags} flags for this packet
 	//  - `Except` {*types.Set[Room]} sids that should be excluded
 	//  - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
-	BroadcastWithAck(*parser.Packet, *BroadcastOptions, func(uint64), func(...interface{}))
+	BroadcastWithAck(*parser.Packet, *BroadcastOptions, func(uint64), func(...any))
 
 	// Gets a list of sockets by sid.
 	Sockets(*types.Set[Room]) *types.Set[SocketId]
@@ -85,7 +85,7 @@ type Adapter interface {
 	SocketRooms(SocketId) *types.Set[Room]
 
 	// Returns the matching socket instances
-	FetchSockets(*BroadcastOptions) []interface{}
+	FetchSockets(*BroadcastOptions) []any
 
 	// Makes the matching socket instances join the specified rooms
 	AddSockets(*BroadcastOptions, []Room)
@@ -97,14 +97,14 @@ type Adapter interface {
 	DisconnectSockets(*BroadcastOptions, bool)
 
 	// Send a packet to the other Socket.IO servers in the cluster
-	ServerSideEmit(string, ...interface{}) error
+	ServerSideEmit(string, ...any) error
 }
 
 type SocketDetails interface {
 	Id() SocketId
 	Handshake() *Handshake
 	Rooms() *types.Set[Room]
-	Data() interface{}
+	Data() any
 }
 
 type NamespaceInterface interface {
@@ -112,8 +112,8 @@ type NamespaceInterface interface {
 
 	On(string, ...events.Listener) error
 	Once(string, ...events.Listener) error
-	EmitReserved(string, ...interface{})
-	EmitUntyped(string, ...interface{})
+	EmitReserved(string, ...any)
+	EmitUntyped(string, ...any)
 	Listeners(string) []events.Listener
 
 	Sockets() *sync.Map
@@ -125,11 +125,11 @@ type NamespaceInterface interface {
 	To(...Room) *BroadcastOperator
 	In(...Room) *BroadcastOperator
 	Except(...Room) *BroadcastOperator
-	Add(*Client, interface{}, func(*Socket)) *Socket
-	Emit(string, ...interface{}) error
-	Send(...interface{}) NamespaceInterface
-	Write(...interface{}) NamespaceInterface
-	ServerSideEmit(string, ...interface{}) error
+	Add(*Client, any, func(*Socket)) *Socket
+	Emit(string, ...any) error
+	Send(...any) NamespaceInterface
+	Write(...any) NamespaceInterface
+	ServerSideEmit(string, ...any) error
 	AllSockets() (*types.Set[SocketId], error)
 	Compress(bool) *BroadcastOperator
 	Volatile() *BroadcastOperator

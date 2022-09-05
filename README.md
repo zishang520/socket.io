@@ -53,11 +53,11 @@ Sample code:
 import (
     "github.com/zishang520/socket.io/socket"
 )
-io.On("connection", func(clients ...interface{}) {
+io.On("connection", func(clients ...any) {
     client := clients[0].(*socket.Socket)
     client.Emit("request" /* … */)                       // emit an event to the socket
     io.Emit("broadcast" /* … */)                         // emit an event to all connected sockets
-    client.On("reply", func(...interface{}) { /* … */ }) // listen to the event
+    client.On("reply", func(...any) { /* … */ }) // listen to the event
 })
 ```
 
@@ -94,11 +94,11 @@ func main() {
     utils.Log().DEBUG = true
     httpServer := types.CreateServer(nil)
     io := socket.NewServer(httpServer, nil)
-    io.On("connection", func(clients ...interface{}) {
+    io.On("connection", func(clients ...any) {
         client := clients[0].(*socket.Socket)
-        client.On("event", func(datas ...interface{}) {
+        client.On("event", func(datas ...any) {
         })
-        client.On("disconnect", func(...interface{}) {
+        client.On("disconnect", func(...any) {
         })
     })
     httpServer.Listen("127.0.0.1:3000", nil)

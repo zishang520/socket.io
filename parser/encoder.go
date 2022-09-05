@@ -32,7 +32,7 @@ func (e *encoder) Encode(packet *Packet) []types.BufferInterface {
 	return []types.BufferInterface{e.encodeAsString(packet)}
 }
 
-func _encodeData(data interface{}) interface{} {
+func _encodeData(data any) any {
 	if data == nil {
 		return nil
 	}
@@ -44,14 +44,14 @@ func _encodeData(data interface{}) interface{} {
 	}
 
 	switch tdata := data.(type) {
-	case []interface{}:
-		newData := make([]interface{}, 0, len(tdata))
+	case []any:
+		newData := make([]any, 0, len(tdata))
 		for _, v := range tdata {
 			newData = append(newData, _encodeData(v))
 		}
 		return newData
-	case map[string]interface{}:
-		newData := map[string]interface{}{}
+	case map[string]any:
+		newData := map[string]any{}
 		for k, v := range tdata {
 			newData[k] = _encodeData(v)
 		}

@@ -27,7 +27,7 @@ func (s *StrictEventEmitter) Once(ev string, listeners ...events.Listener) error
 }
 
 // Emits an event.
-func (s *StrictEventEmitter) Emit(ev string, args ...interface{}) {
+func (s *StrictEventEmitter) Emit(ev string, args ...any) {
 	s.EventEmitter.Emit(events.EventName(ev), args...)
 }
 
@@ -35,7 +35,7 @@ func (s *StrictEventEmitter) Emit(ev string, args ...interface{}) {
 //
 // This method is `protected`, so that only a class extending
 // `StrictEventEmitter` can emit its own reserved events.
-func (s *StrictEventEmitter) EmitReserved(ev string, args ...interface{}) {
+func (s *StrictEventEmitter) EmitReserved(ev string, args ...any) {
 	s.EventEmitter.Emit(events.EventName(ev), args...)
 }
 
@@ -44,7 +44,7 @@ func (s *StrictEventEmitter) EmitReserved(ev string, args ...interface{}) {
 // This method is `protected`, so that only a class extending
 // `StrictEventEmitter` can get around the strict typing. This is useful for
 // calling `emit.apply`, which can be called as `emitUntyped.apply`.
-func (s *StrictEventEmitter) EmitUntyped(ev string, args ...interface{}) {
+func (s *StrictEventEmitter) EmitUntyped(ev string, args ...any) {
 	s.EventEmitter.Emit(events.EventName(ev), args...)
 }
 

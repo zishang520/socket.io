@@ -39,7 +39,7 @@ type Handshake struct {
 	// The query object
 	Query *utils.ParameterBag
 	// The auth object
-	Auth interface{}
+	Auth any
 }
 
 type Socket struct {
@@ -51,13 +51,13 @@ type Socket struct {
 	handshake *Handshake
 
 	// Additional information that can be attached to the Socket instance and which will be used in the fetchSockets method
-	data      interface{}
+	data      any
 	connected bool
 
 	server                *Server
 	adapter               Adapter
 	acks                  *sync.Map
-	fns                   []func([]interface{}, func(error))
+	fns                   []func([]any, func(error))
 	flags                 *BroadcastFlags
 	_anyListeners         []events.Listener
 	_anyOutgoingListeners []events.Listener
@@ -91,15 +91,15 @@ func (s *Socket) Connected() bool {
 	return s.connected
 }
 
-func (s *Socket) Data() interface{} {
+func (s *Socket) Data() any {
 	return s.data
 }
 
-func (s *Socket) SetData(data interface{}) {
+func (s *Socket) SetData(data any) {
 	s.data = data
 }
 
-func NewSocket(nsp *Namespace, client *Client, auth interface{}) *Socket {
+func NewSocket(nsp *Namespace, client *Client, auth any) *Socket {
 	s := &Socket{}
 	s.StrictEventEmitter = NewStrictEventEmitter()
 	s.nsp = nsp
@@ -108,7 +108,7 @@ func NewSocket(nsp *Namespace, client *Client, auth interface{}) *Socket {
 	s.data = nil
 	s.connected = false
 	s.acks = &sync.Map{}
-	s.fns = []func([]interface{}, func(error)){}
+	s.fns = []func([]any, func(error)){}
 	s.flags = &BroadcastFlags{}
 	s.server = nsp.Server()
 	s.adapter = s.nsp.Adapter()
@@ -127,7 +127,7 @@ func NewSocket(nsp *Namespace, client *Client, auth interface{}) *Socket {
 }
 
 // Builds the `handshake` BC object
-func (s *Socket) buildHandshake(auth interface{}) *Handshake {
+func (s *Socket) buildHandshake(auth any) *Handshake {
 	return &Handshake{
 		Headers: s.Request().Headers(),
 		Time:    time.Now().Format("2006-01-02 15:04:05"),
@@ -142,18 +142,18 @@ func (s *Socket) buildHandshake(auth interface{}) *Handshake {
 }
 
 // Emits to this client.
-func (s *Socket) Emit(ev string, args ...interface{}) error {
+func (s *Socket) Emit(ev string, args ...any) error {
 	if SOCKET_RESERVED_EVENTS.Has(ev) {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
 	}
-	data := append([]interface{}{ev}, args...)
+	data := append([]any{ev}, args...)
 	data_len := len(data)
 	packet := &parser.Packet{
 		Type: parser.EVENT,
 		Data: data,
 	}
 	// access last argument to see if it's an ACK callback
-	if fn, ok := data[data_len-1].(func(error, ...interface{})); ok {
+	if fn, ok := data[data_len-1].(func(error, ...any)); ok {
 		id := s.nsp.Ids()
 		socket_log.Debug("emitting packet with ack id %d", id)
 		packet.Data = data[:data_len-1]
@@ -167,7 +167,7 @@ func (s *Socket) Emit(ev string, args ...interface{}) error {
 	return nil
 }
 
-func (s *Socket) registerAckCallback(id uint64, ack func(error, ...interface{})) {
+func (s *Socket) registerAckCallback(id uint64, ack func(error, ...any)) {
 	timeout := s.flags.Timeout
 	if timeout == nil {
 		s.acks.Store(id, ack)
@@ -178,7 +178,7 @@ func (s *Socket) registerAckCallback(id uint64, ack func(error, ...interface{}))
 		s.acks.Delete(id)
 		ack(errors.New("operation has timed out"))
 	}, *timeout)
-	s.acks.Store(id, func(args ...interface{}) {
+	s.acks.Store(id, func(args ...any) {
 		utils.ClearTimeout(timer)
 		ack(nil, args...)
 	})
@@ -200,13 +200,13 @@ func (s *Socket) Except(room ...Room) *BroadcastOperator {
 }
 
 // Sends a `message` event.
-func (s *Socket) Send(args ...interface{}) *Socket {
+func (s *Socket) Send(args ...any) *Socket {
 	s.Emit("message", args...)
 	return s
 }
 
 // Sends a `message` event.
-func (s *Socket) Write(args ...interface{}) *Socket {
+func (s *Socket) Write(args ...any) *Socket {
 	s.Emit("message", args...)
 	return s
 }
@@ -253,7 +253,7 @@ func (s *Socket) _onconnect() {
 	} else {
 		s.packet(&parser.Packet{
 			Type: parser.CONNECT,
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"sid": s.id,
 			},
 		}, nil)
@@ -288,25 +288,25 @@ func (s *Socket) onevent(packet *parser.Packet) {
 	socket_log.Debug("emitting event %v", args)
 	if 0 != packet.Id {
 		socket_log.Debug("attaching ack callback to event")
-		args = append(args.([]interface{}), s.ack(packet.Id))
+		args = append(args.([]any), s.ack(packet.Id))
 	}
 	s._anyListeners_mu.RLock()
 	if s._anyListeners != nil && len(s._anyListeners) > 0 {
 		listeners := append([]events.Listener{}, s._anyListeners[:]...)
 		s._anyListeners_mu.RUnlock()
 		for _, listener := range listeners {
-			listener(args.([]interface{})...)
+			listener(args.([]any)...)
 		}
 	} else {
 		s._anyListeners_mu.RUnlock()
 	}
-	s.dispatch(args.([]interface{}))
+	s.dispatch(args.([]any))
 }
 
 // Produces an ack callback to emit with an event.
 func (s *Socket) ack(id uint64) events.Listener {
 	sent := int32(0)
-	return func(args ...interface{}) {
+	return func(args ...any) {
 		// prevent double callbacks
 		if atomic.CompareAndSwapInt32(&sent, 0, 1) {
 			socket_log.Debug("sending ack %v", args)
@@ -322,11 +322,11 @@ func (s *Socket) ack(id uint64) events.Listener {
 // Called upon ack packet.
 func (s *Socket) onack(packet *parser.Packet) {
 	if ack, ok := s.acks.Load(packet.Id); ok {
-		socket_log.Debug("calling ack %s with %v", packet.Id, packet.Data)
-		(ack.(func(...interface{})))(packet.Data)
+		socket_log.Debug("calling ack %d with %v", packet.Id, packet.Data)
+		(ack.(func(...any)))(packet.Data)
 		s.acks.Delete(packet.Id)
 	} else {
-		socket_log.Debug("bad ack %s", packet.Id)
+		socket_log.Debug("bad ack %d", packet.Id)
 	}
 }
 
@@ -337,7 +337,7 @@ func (s *Socket) ondisconnect() {
 }
 
 // Handles a client error.
-func (s *Socket) _onerror(err interface{}) {
+func (s *Socket) _onerror(err any) {
 	if s.ListenerCount("error") > 0 {
 		s.EmitReserved("error", err)
 	} else {
@@ -347,7 +347,7 @@ func (s *Socket) _onerror(err interface{}) {
 }
 
 // Called upon closing. Called by `Client`.
-func (s *Socket) _onclose(reason interface{}) *Socket {
+func (s *Socket) _onclose(reason any) *Socket {
 	if !s.connected {
 		return s
 	}
@@ -362,7 +362,7 @@ func (s *Socket) _onclose(reason interface{}) *Socket {
 }
 
 // Produces an `error` packet.
-func (s *Socket) _error(err interface{}) {
+func (s *Socket) _error(err any) {
 	s.packet(&parser.Packet{
 		Type: parser.CONNECT_ERROR,
 		Data: err,
@@ -415,7 +415,7 @@ func (s *Socket) Local() *BroadcastOperator {
 // given number of milliseconds have elapsed without an acknowledgement from the client:
 //
 // ```
-// socket.Timeout(5000 * time.Millisecond).Emit("my-event", func(args ...interface{}) {
+// socket.Timeout(5000 * time.Millisecond).Emit("my-event", func(args ...any) {
 //   if args[0] != nil {
 //     // the client did not acknowledge the event in the given delay
 //   }
@@ -427,7 +427,7 @@ func (s *Socket) Timeout(timeout time.Duration) *Socket {
 }
 
 // Dispatch incoming event to socket listeners.
-func (s *Socket) dispatch(event []interface{}) {
+func (s *Socket) dispatch(event []any) {
 	socket_log.Debug("dispatching an event %v", event)
 	s.run(event, func(err error) {
 		defer func() {
@@ -445,7 +445,7 @@ func (s *Socket) dispatch(event []interface{}) {
 }
 
 // Sets up socket middleware.
-func (s *Socket) Use(fn func([]interface{}, func(error))) *Socket {
+func (s *Socket) Use(fn func([]any, func(error))) *Socket {
 	s.fns_mu.Lock()
 	defer s.fns_mu.Unlock()
 
@@ -454,9 +454,9 @@ func (s *Socket) Use(fn func([]interface{}, func(error))) *Socket {
 }
 
 // Executes the middleware for an incoming event.
-func (s *Socket) run(event []interface{}, fn func(err error)) {
+func (s *Socket) run(event []any, fn func(err error)) {
 	s.fns_mu.RLock()
-	fns := append([]func([]interface{}, func(error)){}, s.fns...)
+	fns := append([]func([]any, func(error)){}, s.fns...)
 	s.fns_mu.RUnlock()
 	if length := len(fns); length > 0 {
 		var run func(i int)
@@ -611,7 +611,7 @@ func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
 //
 // <pre><code>
 //
-// handler := func(args ...interface{}) {
+// handler := func(args ...any) {
 //   fmt.Println(args)
 // }
 //

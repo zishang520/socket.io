@@ -20,7 +20,7 @@ func DeconstructPacket(packet *Packet) (pack *Packet, buffers []types.BufferInte
 	return pack, buffers
 }
 
-func _deconstructPacket(data interface{}, buffers *[]types.BufferInterface) interface{} {
+func _deconstructPacket(data any, buffers *[]types.BufferInterface) any {
 	if data == nil {
 		return nil
 	}
@@ -41,14 +41,14 @@ func _deconstructPacket(data interface{}, buffers *[]types.BufferInterface) inte
 		return _placeholder
 	} else {
 		switch tdata := data.(type) {
-		case []interface{}:
-			newData := make([]interface{}, 0, len(tdata))
+		case []any:
+			newData := make([]any, 0, len(tdata))
 			for _, v := range tdata {
 				newData = append(newData, _deconstructPacket(v, buffers))
 			}
 			return newData
-		case map[string]interface{}:
-			newData := map[string]interface{}{}
+		case map[string]any:
+			newData := map[string]any{}
 			for k, v := range tdata {
 				newData[k] = _deconstructPacket(v, buffers)
 			}
@@ -65,13 +65,13 @@ func ReconstructPacket(data *Packet, buffers []types.BufferInterface) (_ *Packet
 	return data, nil
 }
 
-func _reconstructPacket(data interface{}, buffers *[]types.BufferInterface) (interface{}, error) {
+func _reconstructPacket(data any, buffers *[]types.BufferInterface) (any, error) {
 	if data == nil {
 		return nil, nil
 	}
 	switch d := data.(type) {
-	case []interface{}:
-		newData := make([]interface{}, 0, len(d))
+	case []any:
+		newData := make([]any, 0, len(d))
 		for _, v := range d {
 			_data, err := _reconstructPacket(v, buffers)
 			if err != nil {
@@ -80,7 +80,7 @@ func _reconstructPacket(data interface{}, buffers *[]types.BufferInterface) (int
 			newData = append(newData, _data)
 		}
 		return newData, nil
-	case map[string]interface{}:
+	case map[string]any:
 		var _placeholder *Placeholder
 		if mapstructure.Decode(d, &_placeholder) == nil {
 			if _placeholder.Placeholder {
@@ -90,7 +90,7 @@ func _reconstructPacket(data interface{}, buffers *[]types.BufferInterface) (int
 				return nil, errors.New("illegal attachments")
 			}
 		}
-		newData := map[string]interface{}{}
+		newData := map[string]any{}
 		for k, v := range d {
 			_data, err := _reconstructPacket(v, buffers)
 			if err != nil {

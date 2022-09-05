@@ -54,7 +54,7 @@ func (c *Client) setup() {
 	c.conn.On("close", c.onclose)
 	c.connectTimeout = utils.SetTimeOut(func() {
 		empty := true
-		c.nsps.Range(func(interface{}, interface{}) bool {
+		c.nsps.Range(func(any, any) bool {
 			empty = false
 			return false
 		})
@@ -68,7 +68,7 @@ func (c *Client) setup() {
 }
 
 // Connects a client to a namespace.
-func (c *Client) connect(name string, auth interface{}) {
+func (c *Client) connect(name string, auth any) {
 	if _, ok := c.server._nsps.Load(name); ok {
 		client_log.Debug("connecting to namespace %s", name)
 		c.doConnect(name, auth)
@@ -91,7 +91,7 @@ func (c *Client) connect(name string, auth interface{}) {
 }
 
 // Connects a client to a namespace.
-func (c *Client) doConnect(name string, auth interface{}) {
+func (c *Client) doConnect(name string, auth any) {
 	nsp := c.server.Of(name, nil)
 	nsp.Add(c, auth, func(socket *Socket) {
 		c.sockets.Store(socket.Id(), socket)
@@ -104,7 +104,7 @@ func (c *Client) doConnect(name string, auth interface{}) {
 }
 
 func (c *Client) _disconnect() {
-	c.sockets.Range(func(id, socket interface{}) bool {
+	c.sockets.Range(func(id, socket any) bool {
 		socket.(*Socket).Disconnect(false)
 		c.sockets.Delete(id)
 		return true
@@ -159,7 +159,7 @@ func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *Wri
 }
 
 //  Called with incoming transport data.
-func (c *Client) ondata(args ...interface{}) {
+func (c *Client) ondata(args ...any) {
 	// error is needed for protocol violations (GH-1880)
 	if err := c.decoder.Add(args[0]); err != nil {
 		client_log.Debug("invalid packet format")
@@ -168,10 +168,10 @@ func (c *Client) ondata(args ...interface{}) {
 }
 
 //  Called when parser fully decodes a packet.
-func (c *Client) ondecoded(args ...interface{}) {
+func (c *Client) ondecoded(args ...any) {
 	packet, _ := args[0].(*parser.Packet)
 	var namespace string
-	var authPayload interface{}
+	var authPayload any
 	if c.conn.Protocol() == 3 {
 		if parsed, err := url.Parse(packet.Nsp); err == nil {
 			namespace = parsed.Path
@@ -187,14 +187,14 @@ func (c *Client) ondecoded(args ...interface{}) {
 	} else if ok && packet.Type != parser.CONNECT && packet.Type != parser.CONNECT_ERROR {
 		defer socket.(*Socket)._onpacket(packet)
 	} else {
-		client_log.Debug("invalid state (packet type: %s)", packet.Type)
+		client_log.Debug("invalid state (packet type: %s)", packet.Type.String())
 		c.close()
 	}
 }
 
 //  Handles an error.
-func (c *Client) onerror(args ...interface{}) {
-	c.sockets.Range(func(_, socket interface{}) bool {
+func (c *Client) onerror(args ...any) {
+	c.sockets.Range(func(_, socket any) bool {
 		socket.(*Socket)._onerror(args[0])
 		return true
 	})
@@ -202,12 +202,12 @@ func (c *Client) onerror(args ...interface{}) {
 }
 
 //  Called upon transport close.
-func (c *Client) onclose(args ...interface{}) {
+func (c *Client) onclose(args ...any) {
 	client_log.Debug("client close with reason %v", args[0])
 	// ignore a potential subsequent `close` event
 	c.destroy()
 	// `nsps` and `sockets` are cleaned up seamlessly
-	c.sockets.Range(func(id, socket interface{}) bool {
+	c.sockets.Range(func(id, socket any) bool {
 		socket.(*Socket)._onclose(args[0])
 		c.sockets.Delete(id)
 		return true

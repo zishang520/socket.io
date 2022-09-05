@@ -155,7 +155,7 @@ func (a *adapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 //  - `Flags` {*BroadcastFlags} flags for this packet
 //  - `Except` {*types.Set[Room]} sids that should be excluded
 //  - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
-func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions, clientCountCallback func(uint64), ack func(...interface{})) {
+func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions, clientCountCallback func(uint64), ack func(...any)) {
 	flags := &BroadcastFlags{}
 	if opts != nil && opts.Flags != nil {
 		flags = opts.Flags
@@ -202,7 +202,7 @@ func (a *adapter) SocketRooms(id SocketId) *types.Set[Room] {
 }
 
 // Returns the matching socket instances
-func (a *adapter) FetchSockets(opts *BroadcastOptions) (sockets []interface{}) {
+func (a *adapter) FetchSockets(opts *BroadcastOptions) (sockets []any) {
 	a.apply(opts, func(socket *Socket) {
 		sockets = append(sockets, socket)
 	})
@@ -251,7 +251,7 @@ func (a *adapter) apply(opts *BroadcastOptions, callback func(*Socket)) {
 			}
 		}
 	} else {
-		a.sids.Range(func(id interface{}, _ interface{}) bool {
+		a.sids.Range(func(id any, _ any) bool {
 			if except.Has(id.(SocketId)) {
 				return true
 			}
@@ -276,7 +276,7 @@ func (a *adapter) computeExceptSids(exceptRooms *types.Set[Room]) *types.Set[Soc
 }
 
 // Send a packet to the other Socket.IO servers in the cluster
-func (a *adapter) ServerSideEmit(ev string, args ...interface{}) error {
+func (a *adapter) ServerSideEmit(ev string, args ...any) error {
 	utils.Log().Warning(`this adapter does not support the ServerSideEmit() functionality`)
 	return nil
 }

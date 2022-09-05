@@ -27,7 +27,7 @@ func NewDecoder() Decoder {
 }
 
 // Decodes an encoded packet string into packet JSON.
-func (d *decoder) Add(data interface{}) error {
+func (d *decoder) Add(data any) error {
 	switch tdata := data.(type) {
 	case string:
 		if d.reconstructor != nil {
@@ -213,7 +213,7 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 
 	// look up json data
 	if str.Len() > 0 {
-		var payload interface{}
+		var payload any
 		if json.NewDecoder(str).Decode(&payload) != nil {
 			return nil, errors.New("invalid payload")
 		}
@@ -227,24 +227,24 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 	return packet, nil
 }
 
-func isPayloadValid(t PacketType, payload interface{}) bool {
+func isPayloadValid(t PacketType, payload any) bool {
 	switch t {
 	case CONNECT:
-		_, ok := payload.(map[string]interface{})
+		_, ok := payload.(map[string]any)
 		return ok
 	case DISCONNECT:
 		return payload == nil
 	case CONNECT_ERROR:
-		_, ok := payload.(map[string]interface{})
+		_, ok := payload.(map[string]any)
 		if !ok {
 			_, ok = payload.(string)
 		}
 		return ok
 	case EVENT, BINARY_EVENT:
-		data, ok := payload.([]interface{})
+		data, ok := payload.([]any)
 		return ok && len(data) > 0
 	case ACK, BINARY_ACK:
-		_, ok := payload.([]interface{})
+		_, ok := payload.([]any)
 		return ok
 	}
 	return false
