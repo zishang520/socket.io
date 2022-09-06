@@ -153,10 +153,10 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 		if '/' == nsp {
 			_nsp, err := str.ReadString(',')
 			if err != nil {
-				if err == io.EOF {
-					packet.Nsp = "/" + _nsp
+				if err != io.EOF {
+					return nil, errors.New("Illegal namespace")
 				}
-				return nil, errors.New("Illegal namespace")
+				packet.Nsp = "/" + _nsp
 			} else {
 				_l := len(_nsp)
 				if _l < 1 {
@@ -165,17 +165,16 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 				packet.Nsp = "/" + _nsp[:_l-1]
 			}
 		} else {
-			packet.Nsp = "/"
 			if err := str.UnreadByte(); err != nil {
 				return nil, errors.New("Illegal namespace")
 			}
+			packet.Nsp = "/"
 		}
 	} else {
 		if err != io.EOF {
 			return nil, errors.New("Illegal namespace")
-		} else {
-			packet.Nsp = "/"
 		}
+		packet.Nsp = "/"
 	}
 
 	if str.Len() > 0 {
