@@ -92,7 +92,6 @@ import (
 )
 
 func main() {
-    utils.Log().DEBUG = true
     httpServer := types.CreateServer(nil)
     io := socket.NewServer(httpServer, nil)
     io.On("connection", func(clients ...any) {
@@ -107,11 +106,11 @@ func main() {
     exit := make(chan struct{})
     SignalC := make(chan os.Signal)
 
-    signal.Notify(SignalC, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+    signal.Notify(SignalC, os.Interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
     go func() {
         for s := range SignalC {
             switch s {
-            case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
+            case os.Interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
                 close(exit)
                 return
             }
@@ -126,15 +125,24 @@ func main() {
 
 ## Documentation
 
-Not available yet
+Please see the documentation [here](https://pkg.go.dev/github.com/zishang520/socket.io).
 
 ## Debug / logging
 
-Not available yet
+In order to see all the debug output, run your app with the environment variable
+`DEBUG` including the desired scope.
+
+To see the output from all of Socket.IO's debugging scopes you can use:
+
+```
+DEBUG=socket.io*
+```
 
 ## Testing
 
-Not available yet
+```
+make test
+```
 
 
 
