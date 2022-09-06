@@ -415,11 +415,13 @@ func (s *Socket) Local() *BroadcastOperator {
 // given number of milliseconds have elapsed without an acknowledgement from the client:
 //
 // ```
-// socket.Timeout(5000 * time.Millisecond).Emit("my-event", func(args ...any) {
-//   if args[0] != nil {
-//     // the client did not acknowledge the event in the given delay
-//   }
-// })
+//
+//	socket.Timeout(5000 * time.Millisecond).Emit("my-event", func(args ...any) {
+//	  if args[0] != nil {
+//	    // the client did not acknowledge the event in the given delay
+//	  }
+//	})
+//
 // ```
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
 	s.flags.Timeout = &timeout
@@ -570,9 +572,9 @@ func (s *Socket) ListenersAny() []events.Listener {
 //
 // <pre><code>
 //
-// socket.OnAnyOutgoing(events.Listener {
-//   fmt.Println(args)
-// })
+//	socket.OnAnyOutgoing(events.Listener {
+//	  fmt.Println(args)
+//	})
 //
 // </pre></code>
 func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
@@ -591,9 +593,9 @@ func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
 //
 // <pre><code>
 //
-// socket.PrependAnyOutgoing(events.Listener {
-//   fmt.Println(args)
-// })
+//	socket.PrependAnyOutgoing(events.Listener {
+//	  fmt.Println(args)
+//	})
 //
 // </pre></code>
 func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
@@ -611,9 +613,9 @@ func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
 //
 // <pre><code>
 //
-// handler := func(args ...any) {
-//   fmt.Println(args)
-// }
+//	handler := func(args ...any) {
+//	  fmt.Println(args)
+//	}
 //
 // socket.OnAnyOutgoing(handler)
 //

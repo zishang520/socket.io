@@ -115,9 +115,9 @@ func (a *adapter) SetBroadcast(broadcast func(*parser.Packet, *BroadcastOptions)
 // Broadcasts a packet.
 //
 // Options:
-//  - `Flags` {*BroadcastFlags} flags for this packet
-//  - `Except` {*types.Set[Room]} sids that should be excluded
-//  - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
+//   - `Flags` {*BroadcastFlags} flags for this packet
+//   - `Except` {*types.Set[Room]} sids that should be excluded
+//   - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
 func (a *adapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 	a._broadcast(packet, opts)
 }
@@ -125,9 +125,9 @@ func (a *adapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 // Broadcasts a packet.
 //
 // Options:
-//  - `Flags` {*BroadcastFlags} flags for this packet
-//  - `Except` {*types.Set[Room]} sids that should be excluded
-//  - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
+//   - `Flags` {*BroadcastFlags} flags for this packet
+//   - `Except` {*types.Set[Room]} sids that should be excluded
+//   - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
 func (a *adapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 	flags := &BroadcastFlags{}
 	if opts != nil && opts.Flags != nil {
@@ -152,9 +152,9 @@ func (a *adapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 // Broadcasts a packet and expects multiple acknowledgements.
 //
 // Options:
-//  - `Flags` {*BroadcastFlags} flags for this packet
-//  - `Except` {*types.Set[Room]} sids that should be excluded
-//  - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
+//   - `Flags` {*BroadcastFlags} flags for this packet
+//   - `Except` {*types.Set[Room]} sids that should be excluded
+//   - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
 func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions, clientCountCallback func(uint64), ack func(...any)) {
 	flags := &BroadcastFlags{}
 	if opts != nil && opts.Flags != nil {

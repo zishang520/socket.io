@@ -86,9 +86,9 @@ func (b *BroadcastOperator) Local() *BroadcastOperator {
 //
 // <pre><code>
 //
-// io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//   // ...
-// });
+//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
+//	  // ...
+//	});
 //
 // </pre></code>
 func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {

@@ -158,7 +158,7 @@ func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *Wri
 	}
 }
 
-//  Called with incoming transport data.
+// Called with incoming transport data.
 func (c *Client) ondata(args ...any) {
 	// error is needed for protocol violations (GH-1880)
 	if err := c.decoder.Add(args[0]); err != nil {
@@ -167,7 +167,7 @@ func (c *Client) ondata(args ...any) {
 	}
 }
 
-//  Called when parser fully decodes a packet.
+// Called when parser fully decodes a packet.
 func (c *Client) ondecoded(args ...any) {
 	packet, _ := args[0].(*parser.Packet)
 	var namespace string
@@ -192,7 +192,7 @@ func (c *Client) ondecoded(args ...any) {
 	}
 }
 
-//  Handles an error.
+// Handles an error.
 func (c *Client) onerror(args ...any) {
 	c.sockets.Range(func(_, socket any) bool {
 		socket.(*Socket)._onerror(args[0])
@@ -201,7 +201,7 @@ func (c *Client) onerror(args ...any) {
 	c.conn.Close(false)
 }
 
-//  Called upon transport close.
+// Called upon transport close.
 func (c *Client) onclose(args ...any) {
 	client_log.Debug("client close with reason %v", args[0])
 	// ignore a potential subsequent `close` event
@@ -215,7 +215,7 @@ func (c *Client) onclose(args ...any) {
 	c.decoder.Destroy() // clean up decoder
 }
 
-//  Cleans up event listeners.
+// Cleans up event listeners.
 func (c *Client) destroy() {
 	c.conn.RemoveListener("data", c.ondata)
 	c.conn.RemoveListener("error", c.onerror)

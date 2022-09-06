@@ -239,7 +239,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	filename := strings.Replace(r.URL.Path, s._path, "", 1)
+	filename := filepath.Base(r.URL.Path)
 	isMap := dotMapRegex.MatchString(filename)
 	_type := "source"
 	if isMap {
@@ -278,7 +278,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	file, err := os.Open(path.Join(filepath.Dir(_file), "../client-dist/", filename))
+	file, err := os.Open(filepath.Clean(path.Join(filepath.Dir(filepath.Dir(_file)), "client-dist", filename)))
 	if err != nil {
 		server_log.Debug("File read failed: %v", err)
 		http.Error(w, "file not found", http.StatusNotFound)
@@ -474,9 +474,9 @@ func (s *Server) Local() *BroadcastOperator {
 //
 // <pre><code>
 //
-// io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//   // ...
-// });
+//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
+//	  // ...
+//	});
 //
 // </pre></code>
 func (s *Server) Timeout(timeout time.Duration) *BroadcastOperator {
