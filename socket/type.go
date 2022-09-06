@@ -121,22 +121,68 @@ type NamespaceInterface interface {
 	Adapter() Adapter
 	Name() string
 	Ids() uint64
+
+	// Sets up namespace middleware.
 	Use(func(*Socket, func(*ExtendedError))) NamespaceInterface
+
+	// Targets a room when emitting.
 	To(...Room) *BroadcastOperator
+
+	// Targets a room when emitting.
 	In(...Room) *BroadcastOperator
+
+	// Excludes a room when emitting.
 	Except(...Room) *BroadcastOperator
+
+	// Adds a new client.
 	Add(*Client, any, func(*Socket)) *Socket
+
+	// Emits to all clients.
 	Emit(string, ...any) error
+
+	// Sends a `message` event to all clients.
 	Send(...any) NamespaceInterface
+
+	// Sends a `message` event to all clients.
 	Write(...any) NamespaceInterface
+
+	// Emit a packet to other Socket.IO servers
 	ServerSideEmit(string, ...any) error
+
+	// Gets a list of clients.
 	AllSockets() (*types.Set[SocketId], error)
+
+	// Sets the compress flag.
 	Compress(bool) *BroadcastOperator
+
+	// Sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to
+	// receive messages (because of network slowness or other issues, or because they’re connected through long polling
+	// and is in the middle of a request-response cycle).
 	Volatile() *BroadcastOperator
+
+	// Sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
 	Local() *BroadcastOperator
+
+	// Adds a timeout in milliseconds for the next operation
+	//
+	// <pre><code>
+	//
+	// io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
+	//   // ...
+	// });
+	//
+	// </pre></code>
 	Timeout(time.Duration) *BroadcastOperator
+
+	// Returns the matching socket instances
 	FetchSockets() ([]*RemoteSocket, error)
+
+	// Makes the matching socket instances join the specified rooms
 	SocketsJoin(...Room)
+
+	// Makes the matching socket instances leave the specified rooms
 	SocketsLeave(...Room)
+
+	// Makes the matching socket instances disconnect
 	DisconnectSockets(bool)
 }
