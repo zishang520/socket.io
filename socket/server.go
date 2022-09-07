@@ -167,6 +167,29 @@ func (s *Server) Adapter() Adapter {
 	return s._adapter
 }
 
+func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
+	if opts == nil {
+		opts = DefaultServerOptions()
+	}
+
+	// merge the options passed to the Socket.IO server
+	opts.Assign(s.opts)
+	// set engine.io path to `/socket.io`
+	if opts.GetRawPath() == nil {
+		opts.SetPath(s._path)
+	}
+
+	// initialize engine
+	server_log.Debug("creating engine.io instance with opts %v", opts)
+	s.eio = engine.NewServer(opts)
+	// bind to engine events
+	s.Bind(s.eio)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.eio.ServeHTTP(w, r)
+	})
+}
+
 // Attaches socket.io to a server or port.
 func (s *Server) Listen(srv any, opts *ServerOptions) *Server {
 	return s.Attach(srv, opts)
