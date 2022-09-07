@@ -278,7 +278,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	file, err := os.Open(filepath.Clean(path.Join(filepath.Dir(filepath.Dir(_file)), "client-dist", filename)))
+	file, err := os.Open(filepath.FromSlash(path.Join(filepath.Dir(filepath.Dir(_file)), "client-dist", path.Clean("/"+filename))))
 	if err != nil {
 		server_log.Debug("File read failed: %v", err)
 		http.Error(w, "file not found", http.StatusNotFound)
