@@ -112,6 +112,7 @@ func (s *Server) ServeClient() bool {
 
 // Executes the middleware for an incoming namespace not already created on the server.
 func (s *Server) _checkNamespace(name string, auth any, fn func(nsp *Namespace)) {
+	end := true
 	s.parentNsps.Range(func(nextFn any, pnsp any) bool {
 		status := false
 		(*(nextFn.(ParentNspNameMatchFn)))(name, auth, func(err error, allow bool) {
@@ -123,16 +124,20 @@ func (s *Server) _checkNamespace(name string, auth any, fn func(nsp *Namespace))
 				// the namespace was created in the meantime
 				server_log.Debug("dynamic namespace %s already exists", name)
 				fn(nsp.(*Namespace))
+				end = false
 				return
 			}
 			namespace := pnsp.(*ParentNamespace).CreateChild(name)
 			server_log.Debug("dynamic namespace %s was created", name)
 			s.sockets.EmitReserved("new_namespace", namespace)
 			fn(namespace)
+			end = false
 		})
 		return status // whether to continue traversing.
 	})
-	fn(nil)
+	if end {
+		fn(nil)
+	}
 }
 
 // Sets the client serving path.
