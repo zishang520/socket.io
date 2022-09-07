@@ -122,6 +122,53 @@ func main() {
     os.Exit(0)
 }
 ```
+other: Use http.Handler interface
+```golang
+package main
+
+import (
+    "github.com/zishang520/engine.io/types"
+    "github.com/zishang520/engine.io/utils"
+    "github.com/zishang520/socket.io/socket"
+    "os"
+    "os/signal"
+    "syscall"
+)
+
+func main() {
+    httpServer := types.CreateServer(nil)
+    io := socket.NewServer(nil, nil)
+    httpServer.Handle("/socket.io", io.ServeHandler(nil))
+
+    io.On("connection", func(clients ...any) {
+        client := clients[0].(*socket.Socket)
+        client.On("event", func(datas ...any) {
+        })
+        client.On("disconnect", func(...any) {
+        })
+    })
+    httpServer.Listen("127.0.0.1:3000", nil)
+
+    exit := make(chan struct{})
+    SignalC := make(chan os.Signal)
+
+    signal.Notify(SignalC, os.Interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+    go func() {
+        for s := range SignalC {
+            switch s {
+            case os.Interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
+                close(exit)
+                return
+            }
+        }
+    }()
+
+    <-exit
+    io.Close(nil)
+    httpServer.Close(nil)
+    os.Exit(0)
+}
+```
 
 ## Documentation
 
