@@ -51,8 +51,9 @@ type Socket struct {
 	handshake *Handshake
 
 	// Additional information that can be attached to the Socket instance and which will be used in the fetchSockets method
-	data      any
-	connected bool
+	data         any
+	connected    bool
+	connected_mu sync.RWMutex
 
 	server                *Server
 	adapter               Adapter
@@ -88,6 +89,9 @@ func (s *Socket) Handshake() *Handshake {
 }
 
 func (s *Socket) Connected() bool {
+	s.connected_mu.RLock()
+	defer s.connected_mu.RUnlock()
+
 	return s.connected
 }
 
@@ -244,7 +248,11 @@ func (s *Socket) leaveAll() {
 // call to join, so adapters can access it.
 func (s *Socket) _onconnect() {
 	socket_log.Debug("socket connected - writing packet")
+
+	s.connected_mu.Lock()
 	s.connected = true
+	s.connected_mu.Unlock()
+
 	s.Join(Room(s.id))
 	if s.Conn().Protocol() == 3 {
 		s.packet(&parser.Packet{
@@ -348,15 +356,18 @@ func (s *Socket) _onerror(err any) {
 
 // Called upon closing. Called by `Client`.
 func (s *Socket) _onclose(reason any) *Socket {
-	if !s.connected {
+	if !s.Connected() {
 		return s
 	}
+
 	socket_log.Debug("closing socket - reason %v", reason)
 	s.EmitReserved("disconnecting", reason)
 	s.leaveAll()
 	s.nsp._remove(s)
 	s.client._remove(s)
+	s.connected_mu.Lock()
 	s.connected = false
+	s.connected_mu.Unlock()
 	s.EmitReserved("disconnect", reason)
 	return nil
 }
@@ -371,7 +382,7 @@ func (s *Socket) _error(err any) {
 
 // Disconnects this client.
 func (s *Socket) Disconnect(status bool) *Socket {
-	if !s.connected {
+	if !s.Connected() {
 		return s
 	}
 	if status {
@@ -437,7 +448,7 @@ func (s *Socket) dispatch(event []any) {
 				s._onerror(err)
 				return
 			}
-			if s.connected {
+			if s.Connected() {
 				s.EmitUntyped(event[0].(string), event[1:]...)
 			} else {
 				socket_log.Debug("ignore packet received after disconnection")
@@ -485,9 +496,8 @@ func (s *Socket) run(event []any, fn func(err error)) {
 }
 
 // Whether the socket is currently disconnected
-
 func (s *Socket) Disconnected() bool {
-	return !s.connected
+	return !s.Connected()
 }
 
 // A reference to the request that originated the underlying Engine.IO Socket.
