@@ -1,9 +1,10 @@
 package socket
 
 import (
+	"time"
+
 	"github.com/zishang520/engine.io/config"
 	"github.com/zishang520/socket.io/parser"
-	"time"
 )
 
 type ServerOptionsInterface interface {

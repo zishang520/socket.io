@@ -1,8 +1,9 @@
 package parser
 
 import (
-	"github.com/zishang520/engine.io/types"
 	"sync"
+
+	"github.com/zishang520/engine.io/types"
 )
 
 // Protocol version.

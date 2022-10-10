@@ -3,17 +3,17 @@ package socket
 import (
 	"errors"
 	"fmt"
+	"reflect"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/zishang520/engine.io/engine"
 	"github.com/zishang520/engine.io/events"
 	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
 	"github.com/zishang520/engine.io/utils"
 	"github.com/zishang520/socket.io/parser"
-	"net/http"
-	"reflect"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 var (
@@ -23,7 +23,7 @@ var (
 
 type Handshake struct {
 	// The headers sent as part of the handshake
-	Headers *http.Header
+	Headers *utils.ParameterBag
 	// The date of creation (as string)
 	Time string
 	// The ip of the client
@@ -132,7 +132,7 @@ func (s *Socket) buildHandshake(auth any) *Handshake {
 		Headers: s.Request().Headers(),
 		Time:    time.Now().Format("2006-01-02 15:04:05"),
 		Address: s.Conn().RemoteAddress(),
-		Xdomain: s.Request().Headers().Get("Origin") != "",
+		Xdomain: s.Request().Headers().Peek("Origin") != "",
 		Secure:  s.Request().Secure(),
 		Issued:  time.Now().UnixMilli(),
 		Url:     s.Request().Request().RequestURI,

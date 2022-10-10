@@ -1,11 +1,12 @@
 package socket
 
 import (
+	"strconv"
+	"sync/atomic"
+
 	"github.com/zishang520/engine.io/errors"
 	"github.com/zishang520/engine.io/types"
 	"github.com/zishang520/socket.io/parser"
-	"strconv"
-	"sync/atomic"
 )
 
 var count uint64 = 0

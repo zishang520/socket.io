@@ -2,9 +2,10 @@ package parser
 
 import (
 	"errors"
+	"io"
+
 	"github.com/mitchellh/mapstructure"
 	"github.com/zishang520/engine.io/types"
-	"io"
 )
 
 type Placeholder struct {

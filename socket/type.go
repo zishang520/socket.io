@@ -1,12 +1,13 @@
 package socket
 
 import (
+	"sync"
+	"time"
+
 	"github.com/zishang520/engine.io/events"
 	"github.com/zishang520/engine.io/packet"
 	"github.com/zishang520/engine.io/types"
 	"github.com/zishang520/socket.io/parser"
-	"sync"
-	"time"
 )
 
 type SocketId string

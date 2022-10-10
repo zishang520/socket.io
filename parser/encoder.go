@@ -2,9 +2,10 @@ package parser
 
 import (
 	"encoding/json"
-	"github.com/zishang520/engine.io/types"
 	"strconv"
 	"strings"
+
+	"github.com/zishang520/engine.io/types"
 )
 
 // A socket.io Encoder instance

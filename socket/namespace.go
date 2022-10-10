@@ -3,11 +3,12 @@ package socket
 import (
 	"errors"
 	"fmt"
-	"github.com/zishang520/engine.io/log"
-	"github.com/zishang520/engine.io/types"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/zishang520/engine.io/log"
+	"github.com/zishang520/engine.io/types"
 )
 
 var namespace_log = log.NewLog("socket.io:namespace")
