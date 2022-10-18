@@ -7,6 +7,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/zishang520/engine.io/events"
 	"github.com/zishang520/engine.io/log"
@@ -20,6 +21,7 @@ type decoder struct {
 	events.EventEmitter
 
 	reconstructor *binaryreconstructor
+	mu            sync.RWMutex
 }
 
 func NewDecoder() Decoder {
@@ -30,16 +32,22 @@ func NewDecoder() Decoder {
 func (d *decoder) Add(data any) error {
 	switch tdata := data.(type) {
 	case string:
+		d.mu.RLock()
 		if d.reconstructor != nil {
+			defer d.mu.RUnlock()
 			return errors.New("got plaintext data when reconstructing a packet")
 		}
+		d.mu.RUnlock()
 		if err := d.decodeAsString(types.NewStringBufferString(tdata)); err != nil {
 			return err
 		}
 	case *strings.Reader:
+		d.mu.RLock()
 		if d.reconstructor != nil {
+			defer d.mu.RUnlock()
 			return errors.New("got plaintext data when reconstructing a packet")
 		}
+		d.mu.RUnlock()
 		rdata, err := types.NewStringBufferReader(tdata)
 		if err != nil {
 			return err
@@ -48,18 +56,24 @@ func (d *decoder) Add(data any) error {
 			return err
 		}
 	case *types.StringBuffer:
+		d.mu.RLock()
 		if d.reconstructor != nil {
+			defer d.mu.RUnlock()
 			return errors.New("got plaintext data when reconstructing a packet")
 		}
+		d.mu.RUnlock()
 		if err := d.decodeAsString(tdata); err != nil {
 			return err
 		}
 	default:
 		if IsBinary(data) {
 			// raw binary data
+			d.mu.RLock()
 			if d.reconstructor == nil {
+				defer d.mu.RUnlock()
 				return errors.New("got binary data when not reconstructing a packet")
 			}
+			d.mu.RUnlock()
 
 			rdata := types.NewBytesBuffer(nil)
 			switch tdata := data.(type) {
@@ -75,13 +89,17 @@ func (d *decoder) Add(data any) error {
 					return err
 				}
 			}
+			d.mu.RLock()
 			packet, err := d.reconstructor.takeBinaryData(rdata)
+			d.mu.RUnlock()
 			if err != nil {
 				return errors.New(fmt.Sprintf("Decode error: %v", err.Error()))
 			}
 			if packet != nil {
 				// received final buffer
+				d.mu.Lock()
 				d.reconstructor = nil
+				d.mu.Unlock()
 				d.Emit("decoded", packet)
 			}
 		} else {
@@ -100,7 +118,9 @@ func (d *decoder) decodeAsString(str types.BufferInterface) error {
 	}
 	if packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK {
 		// binary packet's json
+		d.mu.Lock()
 		d.reconstructor = NewBinaryReconstructor(packet)
+		d.mu.Unlock()
 		// no attachments, labeled binary but no binary data to follow
 		if packet.Attachments == 0 {
 			d.Emit("decoded", packet)
@@ -251,6 +271,9 @@ func isPayloadValid(t PacketType, payload any) bool {
 
 // Deallocates a parser's resources
 func (d *decoder) Destroy() {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
 	if d.reconstructor != nil {
 		d.reconstructor.finishedReconstruction()
 	}

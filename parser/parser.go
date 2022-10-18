@@ -5,14 +5,6 @@ import (
 	"github.com/zishang520/engine.io/types"
 )
 
-type Parser interface {
-	// A socket.io Encoder instance
-	Encoder() Encoder
-
-	// A socket.io Decoder instance
-	Decoder() Decoder
-}
-
 // A socket.io Encoder instance
 type Encoder interface {
 	Encode(*Packet) []types.BufferInterface
@@ -26,22 +18,25 @@ type Decoder interface {
 	Destroy()
 }
 
+type Parser interface {
+	// A socket.io Encoder instance
+	Encoder() Encoder
+
+	// A socket.io Decoder instance
+	Decoder() Decoder
+}
+
 type parser struct {
-	encoder Encoder
-	decoder Decoder
 }
 
 func (p *parser) Encoder() Encoder {
-	return p.encoder
+	return NewEncoder()
 }
 
 func (p *parser) Decoder() Decoder {
-	return p.decoder
+	return NewDecoder()
 }
 
 func NewParser() Parser {
-	return &parser{
-		encoder: NewEncoder(),
-		decoder: NewDecoder(),
-	}
+	return &parser{}
 }

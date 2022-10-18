@@ -114,12 +114,12 @@ func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 			fns[i](socket, func(err *ExtendedError) {
 				// upon error, short-circuit
 				if err != nil {
-					fn(err)
+					go fn(err)
 					return
 				}
 				// if no middleware left, summon callback
 				if i >= length {
-					fn(nil)
+					go fn(nil)
 					return
 				}
 				// go on to next
@@ -128,7 +128,7 @@ func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 		}
 		run(0)
 	} else {
-		fn(nil)
+		go fn(nil)
 	}
 }
 
@@ -152,41 +152,42 @@ func (n *Namespace) Add(client *Client, query any, fn func(*Socket)) *Socket {
 	namespace_log.Debug("adding socket to nsp %s", n.name)
 	socket := NewSocket(n, client, query)
 	n.run(socket, func(err *ExtendedError) {
-		defer func() {
-			if "open" == client.conn.ReadyState() {
-				if err != nil {
-					if client.conn.Protocol() == 3 {
-						if e := err.Data(); e != nil {
-							socket._error(e)
-							return
-						}
-						socket._error(err.Error())
-						return
-					} else {
-						socket._error(map[string]any{
-							"message": err.Error(),
-							"data":    err.Data(),
-						})
-						return
-					}
+		if "open" != client.conn.ReadyState() {
+			namespace_log.Debug("next called after client was closed - ignoring socket")
+			socket._cleanup()
+			return
+		}
+		if err != nil {
+			namespace_log.Debug("middleware error, sending CONNECT_ERROR packet to the client")
+			socket._cleanup()
+			if client.conn.Protocol() == 3 {
+				if e := err.Data(); e != nil {
+					socket._error(e)
+					return
 				}
-				// track socket
-				n.sockets.Store(socket.Id(), socket)
-				// it's paramount that the internal `onconnect` logic
-				// fires before user-set events to prevent state order
-				// violations (such as a disconnection before the connection
-				// logic is complete)
-				socket._onconnect()
-				if fn != nil {
-					fn(socket)
-				}
-				// fire user-set events
-				n.EmitReserved("connect", socket)
-				n.EmitReserved("connection", socket)
+				socket._error(err.Error())
+				return
 			} else {
-				namespace_log.Debug("next called after client was closed - ignoring socket")
+				socket._error(map[string]any{
+					"message": err.Error(),
+					"data":    err.Data(),
+				})
+				return
 			}
-		}()
+		}
+		// track socket
+		n.sockets.Store(socket.Id(), socket)
+		// it's paramount that the internal `onconnect` logic
+		// fires before user-set events to prevent state order
+		// violations (such as a disconnection before the connection
+		// logic is complete)
+		socket._onconnect()
+		if fn != nil {
+			fn(socket)
+		}
+		// fire user-set events
+		n.EmitReserved("connect", socket)
+		n.EmitReserved("connection", socket)
 	})
 	return socket
 }

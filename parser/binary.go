@@ -13,7 +13,7 @@ type Placeholder struct {
 	Num         int  `json:"num" mapstructure:"num"`
 }
 
-// Replaces every Buffer | ArrayBuffer | Blob | File in packet with a numbered placeholder.
+// Replaces every io.Reader | []byte in packet with a numbered placeholder.
 func DeconstructPacket(packet *Packet) (pack *Packet, buffers []types.BufferInterface) {
 	pack = packet
 	pack.Data = _deconstructPacket(packet.Data, &buffers)

@@ -96,7 +96,5 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 // a list of buffers.
 func (e *encoder) encodeAsBinary(obj *Packet) []types.BufferInterface {
 	packet, buffers := DeconstructPacket(obj)
-	pack := e.encodeAsString(packet)
-	buffers = append([]types.BufferInterface{pack}, buffers...) // add packet info to beginning of data list
-	return buffers                                              // write all the buffers
+	return append([]types.BufferInterface{e.encodeAsString(packet)}, buffers...) // write all the buffers
 }

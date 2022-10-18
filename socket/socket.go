@@ -54,6 +54,8 @@ type Socket struct {
 	data         any
 	connected    bool
 	connected_mu sync.RWMutex
+	canJoin      bool
+	canJoin_mu   sync.RWMutex
 
 	server                *Server
 	adapter               Adapter
@@ -63,6 +65,7 @@ type Socket struct {
 	_anyListeners         []events.Listener
 	_anyOutgoingListeners []events.Listener
 
+	flags_mu                 sync.RWMutex
 	fns_mu                   sync.RWMutex
 	_anyListeners_mu         sync.RWMutex
 	_anyOutgoingListeners_mu sync.RWMutex
@@ -111,6 +114,7 @@ func NewSocket(nsp *Namespace, client *Client, auth any) *Socket {
 	// Additional information that can be attached to the Socket instance and which will be used in the fetchSockets method
 	s.data = nil
 	s.connected = false
+	s.canJoin = true
 	s.acks = &sync.Map{}
 	s.fns = []func([]any, func(error)){}
 	s.flags = &BroadcastFlags{}
@@ -164,15 +168,19 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		s.registerAckCallback(id, fn)
 		packet.Id = id
 	}
+	s.flags_mu.Lock()
 	flags := *s.flags
 	s.flags = &BroadcastFlags{}
+	s.flags_mu.Unlock()
 	s.notifyOutgoingListeners(packet)
 	s.packet(packet, &flags)
 	return nil
 }
 
 func (s *Socket) registerAckCallback(id uint64, ack func(error, ...any)) {
+	s.flags_mu.RLock()
 	timeout := s.flags.Timeout
+	s.flags_mu.RUnlock()
 	if timeout == nil {
 		s.acks.Store(id, ack)
 		return
@@ -227,6 +235,13 @@ func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
 
 // Joins a room.
 func (s *Socket) Join(rooms ...Room) {
+	s.canJoin_mu.Lock()
+	if !s.canJoin {
+		defer s.canJoin_mu.Unlock()
+		return
+	}
+	s.canJoin_mu.Unlock()
+
 	socket_log.Debug("join room %s", rooms)
 	s.adapter.AddAll(s.id, types.NewSet(rooms...))
 }
@@ -362,7 +377,7 @@ func (s *Socket) _onclose(reason any) *Socket {
 
 	socket_log.Debug("closing socket - reason %v", reason)
 	s.EmitReserved("disconnecting", reason)
-	s.leaveAll()
+	s._cleanup()
 	s.nsp._remove(s)
 	s.client._remove(s)
 	s.connected_mu.Lock()
@@ -370,6 +385,15 @@ func (s *Socket) _onclose(reason any) *Socket {
 	s.connected_mu.Unlock()
 	s.EmitReserved("disconnect", reason)
 	return nil
+}
+
+// Makes the socket leave all the rooms it was part of and prevents it from joining any other room
+func (s *Socket) _cleanup() {
+	s.leaveAll()
+	s.canJoin_mu.Lock()
+	s.canJoin = false
+	s.canJoin_mu.Unlock()
+
 }
 
 // Produces an `error` packet.
@@ -398,7 +422,9 @@ func (s *Socket) Disconnect(status bool) *Socket {
 
 // Sets the compress flag.
 func (s *Socket) Compress(compress bool) *Socket {
+	s.flags_mu.Lock()
 	s.flags.Compress = compress
+	s.flags_mu.Unlock()
 	return s
 }
 
@@ -406,7 +432,9 @@ func (s *Socket) Compress(compress bool) *Socket {
 // receive messages (because of network slowness or other issues, or because they’re connected through long polling
 // and is in the middle of a request-response cycle).
 func (s *Socket) Volatile() *Socket {
+	s.flags_mu.Lock()
 	s.flags.Volatile = true
+	s.flags_mu.Unlock()
 	return s
 }
 
@@ -435,7 +463,9 @@ func (s *Socket) Local() *BroadcastOperator {
 //
 // ```
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
+	s.flags_mu.Lock()
 	s.flags.Timeout = &timeout
+	s.flags_mu.Unlock()
 	return s
 }
 
@@ -443,17 +473,15 @@ func (s *Socket) Timeout(timeout time.Duration) *Socket {
 func (s *Socket) dispatch(event []any) {
 	socket_log.Debug("dispatching an event %v", event)
 	s.run(event, func(err error) {
-		defer func() {
-			if err != nil {
-				s._onerror(err)
-				return
-			}
-			if s.Connected() {
-				s.EmitUntyped(event[0].(string), event[1:]...)
-			} else {
-				socket_log.Debug("ignore packet received after disconnection")
-			}
-		}()
+		if err != nil {
+			s._onerror(err)
+			return
+		}
+		if s.Connected() {
+			s.EmitUntyped(event[0].(string), event[1:]...)
+		} else {
+			socket_log.Debug("ignore packet received after disconnection")
+		}
 	})
 }
 
@@ -477,12 +505,12 @@ func (s *Socket) run(event []any, fn func(err error)) {
 			fns[i](event, func(err error) {
 				// upon error, short-circuit
 				if err != nil {
-					fn(err)
+					go fn(err)
 					return
 				}
 				// if no middleware left, summon callback
 				if i >= length {
-					fn(nil)
+					go fn(nil)
 					return
 				}
 				// go on to next
@@ -491,7 +519,7 @@ func (s *Socket) run(event []any, fn func(err error)) {
 		}
 		run(0)
 	} else {
-		fn(nil)
+		go fn(nil)
 	}
 }
 
@@ -684,7 +712,9 @@ func (s *Socket) NotifyOutgoingListeners() func(*parser.Packet) {
 }
 
 func (s *Socket) newBroadcastOperator() *BroadcastOperator {
+	s.flags_mu.Lock()
 	flags := *s.flags
 	s.flags = &BroadcastFlags{}
+	s.flags_mu.Unlock()
 	return NewBroadcastOperator(s.adapter, types.NewSet[Room](), types.NewSet[Room](Room(s.id)), &flags)
 }

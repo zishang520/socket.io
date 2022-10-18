@@ -14,14 +14,15 @@ import (
 var client_log = log.NewLog("socket.io:client")
 
 type Client struct {
-	conn           engine.Socket
-	id             string
-	server         *Server
-	encoder        parser.Encoder
-	decoder        parser.Decoder
-	sockets        *sync.Map
-	nsps           *sync.Map
-	connectTimeout *utils.Timer
+	conn              engine.Socket
+	id                string
+	server            *Server
+	encoder           parser.Encoder
+	decoder           parser.Decoder
+	sockets           *sync.Map
+	nsps              *sync.Map
+	connectTimeout    *utils.Timer
+	mu_connectTimeout sync.Mutex
 }
 
 func (c *Client) Conn() engine.Socket {
@@ -53,6 +54,10 @@ func (c *Client) setup() {
 	c.conn.On("data", c.ondata)
 	c.conn.On("error", c.onerror)
 	c.conn.On("close", c.onclose)
+
+	c.mu_connectTimeout.Lock()
+	defer c.mu_connectTimeout.Unlock()
+
 	c.connectTimeout = utils.SetTimeOut(func() {
 		empty := true
 		c.nsps.Range(func(any, any) bool {
@@ -97,6 +102,8 @@ func (c *Client) doConnect(name string, auth any) {
 	nsp.Add(c, auth, func(socket *Socket) {
 		c.sockets.Store(socket.Id(), socket)
 		c.nsps.Store(nsp.Name(), socket)
+		c.mu_connectTimeout.Lock()
+		defer c.mu_connectTimeout.Unlock()
 		if c.connectTimeout != nil {
 			utils.ClearTimeout(c.connectTimeout)
 			c.connectTimeout = nil
@@ -155,7 +162,12 @@ func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *Wri
 	}
 
 	for _, encodedPacket := range encodedPackets {
-		c.conn.Write(encodedPacket, &opts.Options, nil)
+		switch data := encodedPacket.(type) {
+		case *types.StringBuffer:
+			c.conn.Write(types.NewStringBuffer(data.Bytes()), &opts.Options, nil)
+		case *types.BytesBuffer:
+			c.conn.Write(types.NewBytesBuffer(data.Bytes()), &opts.Options, nil)
+		}
 	}
 }
 
@@ -186,7 +198,7 @@ func (c *Client) ondecoded(args ...any) {
 	if !ok && packet.Type == parser.CONNECT {
 		c.connect(namespace, authPayload)
 	} else if ok && packet.Type != parser.CONNECT && packet.Type != parser.CONNECT_ERROR {
-		defer socket.(*Socket)._onpacket(packet)
+		go socket.(*Socket)._onpacket(packet)
 	} else {
 		client_log.Debug("invalid state (packet type: %s)", packet.Type.String())
 		c.close()
@@ -222,6 +234,8 @@ func (c *Client) destroy() {
 	c.conn.RemoveListener("error", c.onerror)
 	c.conn.RemoveListener("close", c.onclose)
 	c.decoder.RemoveListener("decoded", c.ondecoded)
+	c.mu_connectTimeout.Lock()
+	defer c.mu_connectTimeout.Unlock()
 	if c.connectTimeout != nil {
 		utils.ClearTimeout(c.connectTimeout)
 		c.connectTimeout = nil

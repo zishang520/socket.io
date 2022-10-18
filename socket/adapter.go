@@ -21,13 +21,8 @@ type adapter struct {
 	_broadcast func(*parser.Packet, *BroadcastOptions)
 }
 
-// In-memory adapter NewAdapter.
-func NewAdapter(nsp NamespaceInterface) Adapter {
+func (*adapter) New(nsp NamespaceInterface) Adapter {
 	a := &adapter{}
-	return a.New(nsp)
-}
-
-func (a *adapter) New(nsp NamespaceInterface) Adapter {
 	a.EventEmitter = events.New()
 	a.nsp = nsp
 	a.rooms = &sync.Map{}

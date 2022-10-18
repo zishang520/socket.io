@@ -38,11 +38,11 @@ type BroadcastOptions struct {
 }
 
 type Adapter interface {
+	New(NamespaceInterface) Adapter
+
 	Rooms() *sync.Map
 	Sids() *sync.Map
 	Nsp() NamespaceInterface
-
-	New(NamespaceInterface) Adapter
 
 	// To be overridden
 	Init()
