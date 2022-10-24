@@ -32,6 +32,10 @@ func (b *binaryreconstructor) takeBinaryData(binData types.BufferInterface) (*Pa
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.reconPack == nil {
+		return nil, nil
+	}
+
 	b.buffers = append(b.buffers, binData)
 
 	if uint64(len(b.buffers)) == b.reconPack.Attachments {
@@ -41,7 +45,7 @@ func (b *binaryreconstructor) takeBinaryData(binData types.BufferInterface) (*Pa
 			return nil, err
 		}
 		b.reconPack = nil
-		b.buffers = []types.BufferInterface{}
+		b.buffers = nil
 
 		return packet, nil
 	}
@@ -54,5 +58,5 @@ func (b *binaryreconstructor) finishedReconstruction() {
 	defer b.mu.Unlock()
 
 	b.reconPack = nil
-	b.buffers = []types.BufferInterface{}
+	b.buffers = nil
 }
