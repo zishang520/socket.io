@@ -137,6 +137,9 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 	timer := utils.SetTimeOut(func() {
 		timedOut = true
+		responsesMu.RLock()
+		defer responsesMu.RUnlock()
+
 		ack(errors.New("operation has timed out"), responses)
 	}, timeout)
 
