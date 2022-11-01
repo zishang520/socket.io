@@ -51,7 +51,9 @@ type Socket struct {
 	handshake *Handshake
 
 	// Additional information that can be attached to the Socket instance and which will be used in the fetchSockets method
-	data         any
+	data    any
+	data_mu sync.RWMutex
+
 	connected    bool
 	connected_mu sync.RWMutex
 	canJoin      bool
@@ -99,10 +101,16 @@ func (s *Socket) Connected() bool {
 }
 
 func (s *Socket) Data() any {
+	s.data_mu.RLock()
+	defer s.data_mu.RUnlock()
+
 	return s.data
 }
 
 func (s *Socket) SetData(data any) {
+	s.data_mu.Lock()
+	defer s.data_mu.Unlock()
+
 	s.data = data
 }
 
