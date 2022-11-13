@@ -1,5 +1,5 @@
 /*!
- * Socket.IO v4.5.1
+ * Socket.IO v4.5.3
  * (c) 2014-2022 Guillermo Rauch
  * Released under the MIT License.
  */
@@ -12,17 +12,11 @@
   function _typeof(obj) {
     "@babel/helpers - typeof";
 
-    if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") {
-      _typeof = function (obj) {
-        return typeof obj;
-      };
-    } else {
-      _typeof = function (obj) {
-        return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
-      };
-    }
-
-    return _typeof(obj);
+    return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (obj) {
+      return typeof obj;
+    } : function (obj) {
+      return obj && "function" == typeof Symbol && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
+    }, _typeof(obj);
   }
 
   function _classCallCheck(instance, Constructor) {
@@ -44,11 +38,14 @@
   function _createClass(Constructor, protoProps, staticProps) {
     if (protoProps) _defineProperties(Constructor.prototype, protoProps);
     if (staticProps) _defineProperties(Constructor, staticProps);
+    Object.defineProperty(Constructor, "prototype", {
+      writable: false
+    });
     return Constructor;
   }
 
   function _extends() {
-    _extends = Object.assign || function (target) {
+    _extends = Object.assign ? Object.assign.bind() : function (target) {
       for (var i = 1; i < arguments.length; i++) {
         var source = arguments[i];
 
@@ -61,7 +58,6 @@
 
       return target;
     };
-
     return _extends.apply(this, arguments);
   }
 
@@ -77,22 +73,24 @@
         configurable: true
       }
     });
+    Object.defineProperty(subClass, "prototype", {
+      writable: false
+    });
     if (superClass) _setPrototypeOf(subClass, superClass);
   }
 
   function _getPrototypeOf(o) {
-    _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) {
+    _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf.bind() : function _getPrototypeOf(o) {
       return o.__proto__ || Object.getPrototypeOf(o);
     };
     return _getPrototypeOf(o);
   }
 
   function _setPrototypeOf(o, p) {
-    _setPrototypeOf = Object.setPrototypeOf || function _setPrototypeOf(o, p) {
+    _setPrototypeOf = Object.setPrototypeOf ? Object.setPrototypeOf.bind() : function _setPrototypeOf(o, p) {
       o.__proto__ = p;
       return o;
     };
-
     return _setPrototypeOf(o, p);
   }
 
@@ -111,7 +109,7 @@
 
   function _construct(Parent, args, Class) {
     if (_isNativeReflectConstruct()) {
-      _construct = Reflect.construct;
+      _construct = Reflect.construct.bind();
     } else {
       _construct = function _construct(Parent, args, Class) {
         var a = [null];
@@ -210,9 +208,9 @@
     return object;
   }
 
-  function _get(target, property, receiver) {
+  function _get() {
     if (typeof Reflect !== "undefined" && Reflect.get) {
-      _get = Reflect.get;
+      _get = Reflect.get.bind();
     } else {
       _get = function _get(target, property, receiver) {
         var base = _superPropBase(target, property);
@@ -221,14 +219,14 @@
         var desc = Object.getOwnPropertyDescriptor(base, property);
 
         if (desc.get) {
-          return desc.get.call(receiver);
+          return desc.get.call(arguments.length < 3 ? target : receiver);
         }
 
         return desc.value;
       };
     }
 
-    return _get(target, property, receiver || target);
+    return _get.apply(this, arguments);
   }
 
   function _unsupportedIterableToArray(o, minLen) {
@@ -363,11 +361,6 @@
     return fileReader.readAsDataURL(data);
   };
 
-  /*
-   * base64-arraybuffer 1.0.1 <https://github.com/niklasvh/base64-arraybuffer>
-   * Copyright (c) 2022 Niklas von Hertzen <https://hertzen.com>
-   * Released under MIT License
-   */
   var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; // Use a lookup table to find the index.
 
   var lookup$1 = typeof Uint8Array === 'undefined' ? [] : new Uint8Array(256);
@@ -375,7 +368,6 @@
   for (var i$1 = 0; i$1 < chars.length; i$1++) {
     lookup$1[chars.charCodeAt(i$1)] = i$1;
   }
-
   var decode$1 = function decode(base64) {
     var bufferLength = base64.length * 0.75,
         len = base64.length,
@@ -667,7 +659,7 @@
     return !!this.listeners(event).length;
   };
 
-  var globalThis = (function () {
+  var globalThisShim = function () {
     if (typeof self !== "undefined") {
       return self;
     } else if (typeof window !== "undefined") {
@@ -675,7 +667,7 @@
     } else {
       return Function("return this")();
     }
-  })();
+  }();
 
   function pick(obj) {
     for (var _len = arguments.length, attr = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
@@ -695,11 +687,11 @@
   var NATIVE_CLEAR_TIMEOUT = clearTimeout;
   function installTimerFunctions(obj, opts) {
     if (opts.useNativeTimers) {
-      obj.setTimeoutFn = NATIVE_SET_TIMEOUT.bind(globalThis);
-      obj.clearTimeoutFn = NATIVE_CLEAR_TIMEOUT.bind(globalThis);
+      obj.setTimeoutFn = NATIVE_SET_TIMEOUT.bind(globalThisShim);
+      obj.clearTimeoutFn = NATIVE_CLEAR_TIMEOUT.bind(globalThisShim);
     } else {
-      obj.setTimeoutFn = setTimeout.bind(globalThis);
-      obj.clearTimeoutFn = clearTimeout.bind(globalThis);
+      obj.setTimeoutFn = setTimeout.bind(globalThisShim);
+      obj.clearTimeoutFn = clearTimeout.bind(globalThisShim);
     }
   } // base64 encoded buffers are about 33% bigger (https://en.wikipedia.org/wiki/Base64)
 
@@ -753,7 +745,7 @@
       return _this;
     }
 
-    return TransportError;
+    return _createClass(TransportError);
   }( /*#__PURE__*/_wrapNativeSuper(Error));
 
   var Transport = /*#__PURE__*/function (_Emitter) {
@@ -998,7 +990,7 @@
   var hasCORS = value;
 
   // browser shim for xmlhttprequest module
-  function XMLHttpRequest$1 (opts) {
+  function XHR(opts) {
     var xdomain = opts.xdomain; // XMLHttpRequest can be disabled on IE
 
     try {
@@ -1009,7 +1001,7 @@
 
     if (!xdomain) {
       try {
-        return new globalThis[["Active"].concat("Object").join("X")]("Microsoft.XMLHTTP");
+        return new globalThisShim[["Active"].concat("Object").join("X")]("Microsoft.XMLHTTP");
       } catch (e) {}
     }
   }
@@ -1017,7 +1009,7 @@
   function empty() {}
 
   var hasXHR2 = function () {
-    var xhr = new XMLHttpRequest$1({
+    var xhr = new XHR({
       xdomain: false
     });
     return null != xhr.responseType;
@@ -1362,7 +1354,7 @@
         var opts = pick(this.opts, "agent", "pfx", "key", "passphrase", "cert", "ca", "ciphers", "rejectUnauthorized", "autoUnref");
         opts.xdomain = !!this.opts.xd;
         opts.xscheme = !!this.opts.xs;
-        var xhr = this.xhr = new XMLHttpRequest$1(opts);
+        var xhr = this.xhr = new XHR(opts);
 
         try {
           xhr.open(this.method, this.uri, this.async);
@@ -1513,7 +1505,7 @@
       // @ts-ignore
       attachEvent("onunload", unloadHandler);
     } else if (typeof addEventListener === "function") {
-      var terminationEvent = "onpagehide" in globalThis ? "pagehide" : "unload";
+      var terminationEvent = "onpagehide" in globalThisShim ? "pagehide" : "unload";
       addEventListener(terminationEvent, unloadHandler, false);
     }
   }
@@ -1539,7 +1531,7 @@
       };
     }
   }();
-  var WebSocket = globalThis.WebSocket || globalThis.MozWebSocket;
+  var WebSocket = globalThisShim.WebSocket || globalThisShim.MozWebSocket;
   var usingBrowserWebSocket = true;
   var defaultBinaryType = "arraybuffer";
 
@@ -1745,7 +1737,7 @@
     }, {
       key: "check",
       value: function check() {
-        return !!WebSocket && !("__initialize" in WebSocket && this.name === WS.prototype.name);
+        return !!WebSocket;
       }
     }]);
 
@@ -1800,11 +1792,11 @@
     var regx = /\/{2,9}/g,
         names = path.replace(regx, "/").split("/");
 
-    if (path.substr(0, 1) == '/' || path.length === 0) {
+    if (path.slice(0, 1) == '/' || path.length === 0) {
       names.splice(0, 1);
     }
 
-    if (path.substr(path.length - 1, 1) == '/') {
+    if (path.slice(-1) == '/') {
       names.splice(names.length - 1, 1);
     }
 
@@ -1904,14 +1896,16 @@
           // Firefox closes the connection when the "beforeunload" event is emitted but not Chrome. This event listener
           // ensures every browser behaves the same (no "disconnect" event at the Socket.IO level when the page is
           // closed/reloaded)
-          addEventListener("beforeunload", function () {
+          _this.beforeunloadEventListener = function () {
             if (_this.transport) {
               // silently close the transport
               _this.transport.removeAllListeners();
 
               _this.transport.close();
             }
-          }, false);
+          };
+
+          addEventListener("beforeunload", _this.beforeunloadEventListener, false);
         }
 
         if (_this.hostname !== "localhost") {
@@ -2459,6 +2453,7 @@
           this.transport.removeAllListeners();
 
           if (typeof removeEventListener === "function") {
+            removeEventListener("beforeunload", this.beforeunloadEventListener, false);
             removeEventListener("offline", this.offlineEventListener, false);
           } // set ready state
 
@@ -2500,6 +2495,8 @@
     return Socket;
   }(Emitter);
   Socket$1.protocol = protocol$1;
+
+  Socket$1.protocol;
 
   /**
    * URL parser.
@@ -3088,6 +3085,31 @@
     newListener: 1,
     removeListener: 1
   });
+  /**
+   * A Socket is the fundamental class for interacting with the server.
+   *
+   * A Socket belongs to a certain Namespace (by default /) and uses an underlying {@link Manager} to communicate.
+   *
+   * @example
+   * const socket = io();
+   *
+   * socket.on("connect", () => {
+   *   console.log("connected");
+   * });
+   *
+   * // send an event to the server
+   * socket.emit("foo", "bar");
+   *
+   * socket.on("foobar", () => {
+   *   // an event was received from the server
+   * });
+   *
+   * // upon disconnection
+   * socket.on("disconnect", (reason) => {
+   *   console.log(`disconnected due to ${reason}`);
+   * });
+   */
+
   var Socket = /*#__PURE__*/function (_Emitter) {
     _inherits(Socket, _Emitter);
 
@@ -3095,8 +3117,6 @@
 
     /**
      * `Socket` constructor.
-     *
-     * @public
      */
     function Socket(io, nsp, opts) {
       var _this;
@@ -3104,8 +3124,31 @@
       _classCallCheck(this, Socket);
 
       _this = _super.call(this);
+      /**
+       * Whether the socket is currently connected to the server.
+       *
+       * @example
+       * const socket = io();
+       *
+       * socket.on("connect", () => {
+       *   console.log(socket.connected); // true
+       * });
+       *
+       * socket.on("disconnect", () => {
+       *   console.log(socket.connected); // false
+       * });
+       */
+
       _this.connected = false;
+      /**
+       * Buffer for packets received before the CONNECT packet
+       */
+
       _this.receiveBuffer = [];
+      /**
+       * Buffer for packets that will be sent once the socket is connected
+       */
+
       _this.sendBuffer = [];
       _this.ids = 0;
       _this.acks = {};
@@ -3122,6 +3165,17 @@
     }
     /**
      * Whether the socket is currently disconnected
+     *
+     * @example
+     * const socket = io();
+     *
+     * socket.on("connect", () => {
+     *   console.log(socket.disconnected); // false
+     * });
+     *
+     * socket.on("disconnect", () => {
+     *   console.log(socket.disconnected); // true
+     * });
      */
 
 
@@ -3144,7 +3198,21 @@
         this.subs = [on(io, "open", this.onopen.bind(this)), on(io, "packet", this.onpacket.bind(this)), on(io, "error", this.onerror.bind(this)), on(io, "close", this.onclose.bind(this))];
       }
       /**
-       * Whether the Socket will try to reconnect when its Manager connects or reconnects
+       * Whether the Socket will try to reconnect when its Manager connects or reconnects.
+       *
+       * @example
+       * const socket = io();
+       *
+       * console.log(socket.active); // true
+       *
+       * socket.on("disconnect", (reason) => {
+       *   if (reason === "io server disconnect") {
+       *     // the disconnection was initiated by the server, you need to manually reconnect
+       *     console.log(socket.active); // false
+       *   }
+       *   // else the socket will automatically try to reconnect
+       *   console.log(socket.active); // true
+       * });
        */
 
     }, {
@@ -3155,7 +3223,12 @@
       /**
        * "Opens" the socket.
        *
-       * @public
+       * @example
+       * const socket = io({
+       *   autoConnect: false
+       * });
+       *
+       * socket.connect();
        */
 
     }, {
@@ -3169,7 +3242,7 @@
         return this;
       }
       /**
-       * Alias for connect()
+       * Alias for {@link connect()}.
        */
 
     }, {
@@ -3180,8 +3253,17 @@
       /**
        * Sends a `message` event.
        *
+       * This method mimics the WebSocket.send() method.
+       *
+       * @see https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/send
+       *
+       * @example
+       * socket.send("hello");
+       *
+       * // this is equivalent to
+       * socket.emit("message", "hello");
+       *
        * @return self
-       * @public
        */
 
     }, {
@@ -3199,15 +3281,25 @@
        * Override `emit`.
        * If the event is in `events`, it's emitted normally.
        *
+       * @example
+       * socket.emit("hello", "world");
+       *
+       * // all serializable datastructures are supported (no need to call JSON.stringify)
+       * socket.emit("hello", 1, "2", { 3: ["4"], 5: Uint8Array.from([6]) });
+       *
+       * // with an acknowledgement from the server
+       * socket.emit("hello", "world", (val) => {
+       *   // ...
+       * });
+       *
        * @return self
-       * @public
        */
 
     }, {
       key: "emit",
       value: function emit(ev) {
         if (RESERVED_EVENTS.hasOwnProperty(ev)) {
-          throw new Error('"' + ev + '" is a reserved event name');
+          throw new Error('"' + ev.toString() + '" is a reserved event name');
         }
 
         for (var _len2 = arguments.length, args = new Array(_len2 > 1 ? _len2 - 1 : 0), _key2 = 1; _key2 < _len2; _key2++) {
@@ -3558,10 +3650,20 @@
         this.io["_destroy"](this);
       }
       /**
-       * Disconnects the socket manually.
+       * Disconnects the socket manually. In that case, the socket will not try to reconnect.
+       *
+       * If this is the last active Socket instance of the {@link Manager}, the low-level connection will be closed.
+       *
+       * @example
+       * const socket = io();
+       *
+       * socket.on("disconnect", (reason) => {
+       *   // console.log(reason); prints "io client disconnect"
+       * });
+       *
+       * socket.disconnect();
        *
        * @return self
-       * @public
        */
 
     }, {
@@ -3584,10 +3686,9 @@
         return this;
       }
       /**
-       * Alias for disconnect()
+       * Alias for {@link disconnect()}.
        *
        * @return self
-       * @public
        */
 
     }, {
@@ -3598,9 +3699,11 @@
       /**
        * Sets the compress flag.
        *
+       * @example
+       * socket.compress(false).emit("hello");
+       *
        * @param compress - if `true`, compresses the sending data
        * @return self
-       * @public
        */
 
     }, {
@@ -3613,8 +3716,10 @@
        * Sets a modifier for a subsequent event emission that the event message will be dropped when this socket is not
        * ready to send messages.
        *
+       * @example
+       * socket.volatile.emit("hello"); // the server may or may not receive it
+       *
        * @returns self
-       * @public
        */
 
     }, {
@@ -3627,16 +3732,14 @@
        * Sets a modifier for a subsequent event emission that the callback will be called with an error when the
        * given number of milliseconds have elapsed without an acknowledgement from the server:
        *
-       * ```
+       * @example
        * socket.timeout(5000).emit("my-event", (err) => {
        *   if (err) {
        *     // the server did not acknowledge the event in the given delay
        *   }
        * });
-       * ```
        *
        * @returns self
-       * @public
        */
 
     }, {
@@ -3649,8 +3752,12 @@
        * Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
        * callback.
        *
+       * @example
+       * socket.onAny((event, ...args) => {
+       *   console.log(`got ${event}`);
+       * });
+       *
        * @param listener
-       * @public
        */
 
     }, {
@@ -3666,8 +3773,12 @@
        * Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
        * callback. The listener is added to the beginning of the listeners array.
        *
+       * @example
+       * socket.prependAny((event, ...args) => {
+       *   console.log(`got event ${event}`);
+       * });
+       *
        * @param listener
-       * @public
        */
 
     }, {
@@ -3682,8 +3793,20 @@
       /**
        * Removes the listener that will be fired when any event is emitted.
        *
+       * @example
+       * const catchAllListener = (event, ...args) => {
+       *   console.log(`got event ${event}`);
+       * }
+       *
+       * socket.onAny(catchAllListener);
+       *
+       * // remove a specific listener
+       * socket.offAny(catchAllListener);
+       *
+       * // or remove all listeners
+       * socket.offAny();
+       *
        * @param listener
-       * @public
        */
 
     }, {
@@ -3711,8 +3834,6 @@
       /**
        * Returns an array of listeners that are listening for any event that is specified. This array can be manipulated,
        * e.g. to remove listeners.
-       *
-       * @public
        */
 
     }, {
@@ -3724,17 +3845,14 @@
        * Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
        * callback.
        *
-       * @param listener
+       * Note: acknowledgements sent to the server are not included.
        *
-       * <pre><code>
-       *
+       * @example
        * socket.onAnyOutgoing((event, ...args) => {
-       *   console.log(event);
+       *   console.log(`sent event ${event}`);
        * });
        *
-       * </pre></code>
-       *
-       * @public
+       * @param listener
        */
 
     }, {
@@ -3750,17 +3868,14 @@
        * Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
        * callback. The listener is added to the beginning of the listeners array.
        *
-       * @param listener
+       * Note: acknowledgements sent to the server are not included.
        *
-       * <pre><code>
-       *
+       * @example
        * socket.prependAnyOutgoing((event, ...args) => {
-       *   console.log(event);
+       *   console.log(`sent event ${event}`);
        * });
        *
-       * </pre></code>
-       *
-       * @public
+       * @param listener
        */
 
     }, {
@@ -3775,22 +3890,20 @@
       /**
        * Removes the listener that will be fired when any event is emitted.
        *
-       * @param listener
-       *
-       * <pre><code>
-       *
-       * const handler = (event, ...args) => {
-       *   console.log(event);
+       * @example
+       * const catchAllListener = (event, ...args) => {
+       *   console.log(`sent event ${event}`);
        * }
        *
-       * socket.onAnyOutgoing(handler);
+       * socket.onAnyOutgoing(catchAllListener);
        *
-       * // then later
-       * socket.offAnyOutgoing(handler);
+       * // remove a specific listener
+       * socket.offAnyOutgoing(catchAllListener);
        *
-       * </pre></code>
+       * // or remove all listeners
+       * socket.offAnyOutgoing();
        *
-       * @public
+       * @param [listener] - the catch-all listener (optional)
        */
 
     }, {
@@ -3818,8 +3931,6 @@
       /**
        * Returns an array of listeners that are listening for any event that is specified. This array can be manipulated,
        * e.g. to remove listeners.
-       *
-       * @public
        */
 
     }, {
@@ -4179,7 +4290,11 @@
     }, {
       key: "ondata",
       value: function ondata(data) {
-        this.decoder.add(data);
+        try {
+          this.decoder.add(data);
+        } catch (e) {
+          this.onclose("parse error", e);
+        }
       }
       /**
        * Called when parser fully decodes a packet.
@@ -4190,7 +4305,12 @@
     }, {
       key: "ondecoded",
       value: function ondecoded(packet) {
-        this.emitReserved("packet", packet);
+        var _this3 = this;
+
+        // the nextTick call prevents an exception in a user-provided event listener from triggering a disconnection due to a "parse error"
+        nextTick(function () {
+          _this3.emitReserved("packet", packet);
+        }, this.setTimeoutFn);
       }
       /**
        * Called upon socket error.
@@ -4328,7 +4448,7 @@
     }, {
       key: "reconnect",
       value: function reconnect() {
-        var _this3 = this;
+        var _this4 = this;
 
         if (this._reconnecting || this.skipReconnect) return this;
         var self = this;
@@ -4343,7 +4463,7 @@
           var timer = this.setTimeoutFn(function () {
             if (self.skipReconnect) return;
 
-            _this3.emitReserved("reconnect_attempt", self.backoff.attempts); // check again for the case socket closed in above events
+            _this4.emitReserved("reconnect_attempt", self.backoff.attempts); // check again for the case socket closed in above events
 
 
             if (self.skipReconnect) return;
@@ -4352,7 +4472,7 @@
                 self._reconnecting = false;
                 self.reconnect();
 
-                _this3.emitReserved("reconnect_error", err);
+                _this4.emitReserved("reconnect_error", err);
               } else {
                 self.onreconnect();
               }

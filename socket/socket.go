@@ -169,7 +169,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		Data: data,
 	}
 	// access last argument to see if it's an ACK callback
-	if fn, ok := data[data_len-1].(func(error, ...any)); ok {
+	if fn, ok := data[data_len-1].(func(...any)); ok {
 		id := s.nsp.Ids()
 		socket_log.Debug("emitting packet with ack id %d", id)
 		packet.Data = data[:data_len-1]
@@ -185,7 +185,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	return nil
 }
 
-func (s *Socket) registerAckCallback(id uint64, ack func(error, ...any)) {
+func (s *Socket) registerAckCallback(id uint64, ack func(...any)) {
 	s.flags_mu.RLock()
 	timeout := s.flags.Timeout
 	s.flags_mu.RUnlock()
@@ -200,7 +200,7 @@ func (s *Socket) registerAckCallback(id uint64, ack func(error, ...any)) {
 	}, *timeout)
 	s.acks.Store(id, func(args ...any) {
 		utils.ClearTimeout(timer)
-		ack(nil, args...)
+		ack(append([]any{nil}, args...)...)
 	})
 }
 
@@ -315,27 +315,27 @@ func (s *Socket) _onpacket(packet *parser.Packet) {
 
 // Called upon event packet.
 func (s *Socket) onevent(packet *parser.Packet) {
-	args := packet.Data
+	args := packet.Data.([]any)
 	socket_log.Debug("emitting event %v", args)
 	if 0 != packet.Id {
 		socket_log.Debug("attaching ack callback to event")
-		args = append(args.([]any), s.ack(packet.Id))
+		args = append(args, s.ack(packet.Id))
 	}
 	s._anyListeners_mu.RLock()
 	if s._anyListeners != nil && len(s._anyListeners) > 0 {
 		listeners := append([]events.Listener{}, s._anyListeners[:]...)
 		s._anyListeners_mu.RUnlock()
 		for _, listener := range listeners {
-			listener(args.([]any)...)
+			listener(args...)
 		}
 	} else {
 		s._anyListeners_mu.RUnlock()
 	}
-	s.dispatch(args.([]any))
+	s.dispatch(args)
 }
 
 // Produces an ack callback to emit with an event.
-func (s *Socket) ack(id uint64) events.Listener {
+func (s *Socket) ack(id uint64) func(...any) {
 	sent := int32(0)
 	return func(args ...any) {
 		// prevent double callbacks
@@ -354,7 +354,7 @@ func (s *Socket) ack(id uint64) events.Listener {
 func (s *Socket) onack(packet *parser.Packet) {
 	if ack, ok := s.acks.Load(packet.Id); ok {
 		socket_log.Debug("calling ack %d with %v", packet.Id, packet.Data)
-		(ack.(func(...any)))(packet.Data)
+		(ack.(func(...any)))(packet.Data.([]any)...)
 		s.acks.Delete(packet.Id)
 	} else {
 		socket_log.Debug("bad ack %d", packet.Id)
@@ -709,7 +709,11 @@ func (s *Socket) notifyOutgoingListeners(packet *parser.Packet) {
 		listeners := append([]events.Listener{}, s._anyOutgoingListeners[:]...)
 		s._anyOutgoingListeners_mu.RUnlock()
 		for _, listener := range listeners {
-			listener(packet.Data)
+			if args, ok := packet.Data.([]any); ok {
+				listener(args...)
+			} else {
+				listener(packet.Data)
+			}
 		}
 	} else {
 		s._anyOutgoingListeners_mu.RUnlock()
