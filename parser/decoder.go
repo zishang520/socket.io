@@ -122,7 +122,7 @@ func (d *decoder) decodeAsString(str types.BufferInterface) error {
 		d.reconstructor = NewBinaryReconstructor(packet)
 		d.mu.Unlock()
 		// no attachments, labeled binary but no binary data to follow
-		if packet.Attachments == 0 {
+		if attachments := packet.Attachments; attachments != nil && *attachments == 0 {
 			d.Emit("decoded", packet)
 		}
 	} else {
@@ -165,7 +165,7 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 		if err != nil {
 			return nil, errors.New("Illegal attachments")
 		}
-		packet.Attachments = attachments
+		packet.Attachments = &attachments
 	}
 
 	// look up namespace (if any)
@@ -226,7 +226,7 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 			if err != nil {
 				return nil, err
 			}
-			packet.Id = id
+			packet.Id = &id
 		}
 	}
 

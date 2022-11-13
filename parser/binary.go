@@ -17,7 +17,8 @@ type Placeholder struct {
 func DeconstructPacket(packet *Packet) (pack *Packet, buffers []types.BufferInterface) {
 	pack = packet
 	pack.Data = _deconstructPacket(packet.Data, &buffers)
-	pack.Attachments = uint64(len(buffers)) // number of binary 'attachments'
+	attachments := uint64(len(buffers))
+	pack.Attachments = &attachments // number of binary 'attachments'
 	return pack, buffers
 }
 
@@ -62,7 +63,7 @@ func _deconstructPacket(data any, buffers *[]types.BufferInterface) any {
 // Reconstructs a binary packet from its placeholder packet and buffers
 func ReconstructPacket(data *Packet, buffers []types.BufferInterface) (_ *Packet, err error) {
 	data.Data, err = _reconstructPacket(data.Data, &buffers)
-	data.Attachments = 0 // no longer useful
+	data.Attachments = nil // no longer useful
 	return data, nil
 }
 

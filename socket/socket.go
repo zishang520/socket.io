@@ -174,7 +174,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		socket_log.Debug("emitting packet with ack id %d", id)
 		packet.Data = data[:data_len-1]
 		s.registerAckCallback(id, fn)
-		packet.Id = id
+		packet.Id = &id
 	}
 	s.flags_mu.Lock()
 	flags := *s.flags
@@ -317,9 +317,9 @@ func (s *Socket) _onpacket(packet *parser.Packet) {
 func (s *Socket) onevent(packet *parser.Packet) {
 	args := packet.Data.([]any)
 	socket_log.Debug("emitting event %v", args)
-	if 0 != packet.Id {
+	if nil != packet.Id {
 		socket_log.Debug("attaching ack callback to event")
-		args = append(args, s.ack(packet.Id))
+		args = append(args, s.ack(*packet.Id))
 	}
 	s._anyListeners_mu.RLock()
 	if s._anyListeners != nil && len(s._anyListeners) > 0 {
@@ -342,7 +342,7 @@ func (s *Socket) ack(id uint64) func(...any) {
 		if atomic.CompareAndSwapInt32(&sent, 0, 1) {
 			socket_log.Debug("sending ack %v", args)
 			s.packet(&parser.Packet{
-				Id:   id,
+				Id:   &id,
 				Type: parser.ACK,
 				Data: args,
 			}, nil)
@@ -352,12 +352,16 @@ func (s *Socket) ack(id uint64) func(...any) {
 
 // Called upon ack packet.
 func (s *Socket) onack(packet *parser.Packet) {
-	if ack, ok := s.acks.Load(packet.Id); ok {
-		socket_log.Debug("calling ack %d with %v", packet.Id, packet.Data)
-		(ack.(func(...any)))(packet.Data.([]any)...)
-		s.acks.Delete(packet.Id)
+	if packet.Id != nil {
+		if ack, ok := s.acks.Load(*packet.Id); ok {
+			socket_log.Debug("calling ack %d with %v", *packet.Id, packet.Data)
+			(ack.(func(...any)))(packet.Data.([]any)...)
+			s.acks.Delete(*packet.Id)
+		} else {
+			socket_log.Debug("bad ack %d", *packet.Id)
+		}
 	} else {
-		socket_log.Debug("bad ack %d", packet.Id)
+		socket_log.Debug("bad ack nil")
 	}
 }
 

@@ -38,7 +38,7 @@ func (b *binaryreconstructor) takeBinaryData(binData types.BufferInterface) (*Pa
 
 	b.buffers = append(b.buffers, binData)
 
-	if uint64(len(b.buffers)) == b.reconPack.Attachments {
+	if attachments := b.reconPack.Attachments; attachments != nil && uint64(len(b.buffers)) == *attachments {
 		// done with buffer list
 		packet, err := ReconstructPacket(b.reconPack, b.buffers)
 		if err != nil {

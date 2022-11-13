@@ -164,14 +164,15 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 
 	packet.Nsp = a.nsp.Name()
 	// we can use the same id for each packet, since the _ids counter is common (no duplicate)
-	packet.Id = a.nsp.Ids()
+	id := a.nsp.Ids()
+	packet.Id = &id
 	encodedPackets := a.encoder.Encode(packet)
 	clientCount := uint64(0)
 	a.apply(opts, func(socket *Socket) {
 		// track the total number of acknowledgements that are expected
 		atomic.AddUint64(&clientCount, 1)
 		// call the ack callback for each client response
-		socket.Acks().Store(packet.Id, ack)
+		socket.Acks().Store(*packet.Id, ack)
 		if notifyOutgoingListeners := socket.NotifyOutgoingListeners(); notifyOutgoingListeners != nil {
 			notifyOutgoingListeners(packet)
 		}

@@ -67,8 +67,8 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 	// first is type
 	str := types.NewStringBuffer([]byte{byte(packet.Type)})
 	// attachments if we have them
-	if packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK {
-		str.WriteString(strconv.FormatUint(packet.Attachments, 10))
+	if (packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK) && packet.Attachments != nil {
+		str.WriteString(strconv.FormatUint(*packet.Attachments, 10))
 		str.WriteByte('-')
 	}
 	// if we have a namespace other than `/`
@@ -78,8 +78,8 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 		str.WriteByte(',')
 	}
 	// immediately followed by the id
-	if 0 < packet.Id {
-		str.WriteString(strconv.FormatUint(packet.Id, 10))
+	if nil != packet.Id {
+		str.WriteString(strconv.FormatUint(*packet.Id, 10))
 	}
 	// json data
 	if nil != packet.Data {

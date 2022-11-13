@@ -6,8 +6,8 @@ type Packet struct {
 	Type        PacketType
 	Nsp         string
 	Data        any
-	Id          uint64
-	Attachments uint64
+	Id          *uint64
+	Attachments *uint64
 }
 
 const (
