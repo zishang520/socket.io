@@ -15,8 +15,8 @@ github.com/stretchr/testify v1.7.0 h1:nwc3DEeHmmLAfoZucVR881uASk0Mfjw8xYJ99tb5Cc
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 h1:QldyIu/L63oPpyvQmHgvgickp1Yw510KJOqX7H24mg8=
 github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778/go.mod h1:2MuV+tbUrU1zIOPMxZ5EncGwgmMJsa+9ucAQZXxsObs=
-github.com/zishang520/engine.io v1.2.0 h1:kE3cWyiVUAh98Z6qWqcDOiDB7N8YyJ0FoSAKV4EHGLk=
-github.com/zishang520/engine.io v1.2.0/go.mod h1:2GFZaH7ssIBz4qveJ4pbc0BhaDSnTzzMy1B1dWsRLnU=
+github.com/zishang520/engine.io v1.2.1 h1:1lt/fwogRTsYHdP2GF60U6jja+X4u9LLKvrzzW69JFY=
+github.com/zishang520/engine.io v1.2.1/go.mod h1:2GFZaH7ssIBz4qveJ4pbc0BhaDSnTzzMy1B1dWsRLnU=
 golang.org/x/sys v0.0.0-20210330210617-4fbd30eecc44 h1:Bli41pIlzTzf3KEY06n+xnzK/BESIg2ze4Pgfh/aI8c=
 golang.org/x/sys v0.0.0-20210330210617-4fbd30eecc44/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
