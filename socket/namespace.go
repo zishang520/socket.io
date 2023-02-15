@@ -37,6 +37,10 @@ func (e *ExtendedError) Error() string {
 var NAMESPACE_RESERVED_EVENTS = types.NewSet("connect", "connection", "new_namespace")
 
 type Namespace struct {
+	// _ids has to be first in the struct to guarantee alignment for atomic
+	// operations. http://golang.org/pkg/sync/atomic/#pkg-note-BUG
+	_ids uint64
+
 	*StrictEventEmitter
 
 	name    string
@@ -44,7 +48,6 @@ type Namespace struct {
 	adapter Adapter
 	server  *Server
 	_fns    []func(*Socket, func(*ExtendedError))
-	_ids    uint64
 
 	_fns_mu sync.RWMutex
 }
