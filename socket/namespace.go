@@ -121,7 +121,7 @@ func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 					return
 				}
 				// if no middleware left, summon callback
-				if i >= length {
+				if i >= length-1 {
 					go fn(nil)
 					return
 				}

@@ -521,7 +521,7 @@ func (s *Socket) run(event []any, fn func(err error)) {
 					return
 				}
 				// if no middleware left, summon callback
-				if i >= length {
+				if i >= length-1 {
 					go fn(nil)
 					return
 				}
