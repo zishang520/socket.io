@@ -191,9 +191,7 @@ func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
 	// bind to engine events
 	s.Bind(s.eio)
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.eio.ServeHTTP(w, r)
-	})
+	return http.HandlerFunc(s.eio.ServeHTTP)
 }
 
 // Attaches socket.io to a server or port.
@@ -240,7 +238,7 @@ func (s *Server) initEngine(srv *types.HttpServer, opts any) {
 
 	// attach static file serving
 	if s._serveClient {
-		s.attachServe(srv)
+		s.attachServe(srv, s.eio)
 	}
 
 	// Export http server
@@ -251,13 +249,14 @@ func (s *Server) initEngine(srv *types.HttpServer, opts any) {
 }
 
 // Attaches the static file serving.
-func (s *Server) attachServe(srv *types.HttpServer) {
+func (s *Server) attachServe(srv *types.HttpServer, egs engine.Server) {
 	server_log.Debug("attaching client serving req handler")
 	srv.HandleFunc(s._path+"/", func(w http.ResponseWriter, r *http.Request) {
 		if s.clientPathRegex.MatchString(r.URL.Path) {
 			s.serve(w, r)
 		} else {
-			srv.DefaultHandler.ServeHTTP(w, r)
+			// srv.DefaultHandler.ServeHTTP(w, r)
+			egs.ServeHTTP(w, r)
 		}
 	})
 }
