@@ -107,6 +107,10 @@ func (s *ServerOptions) Assign(data ServerOptionsInterface) (ServerOptionsInterf
 		s.SetDestroyUpgrade(data.DestroyUpgrade())
 	}
 
+	if s.GetRawAddTrailingSlash() == nil {
+		s.SetAddTrailingSlash(data.AddTrailingSlash())
+	}
+
 	if s.GetRawServeClient() == nil {
 		s.SetServeClient(data.ServeClient())
 	}

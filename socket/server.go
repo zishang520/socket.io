@@ -231,14 +231,14 @@ func (s *Server) Attach(srv any, opts *ServerOptions) *Server {
 }
 
 // Initialize engine
-func (s *Server) initEngine(srv *types.HttpServer, opts any) {
+func (s *Server) initEngine(srv *types.HttpServer, opts *ServerOptions) {
 	// initialize engine
 	server_log.Debug("creating engine.io instance with opts %v", opts)
-	s.eio = engine.Attach(srv, opts)
+	s.eio = engine.Attach(srv, any(opts))
 
 	// attach static file serving
 	if s._serveClient {
-		s.attachServe(srv, s.eio)
+		s.attachServe(srv, s.eio, opts)
 	}
 
 	// Export http server
@@ -249,14 +249,17 @@ func (s *Server) initEngine(srv *types.HttpServer, opts any) {
 }
 
 // Attaches the static file serving.
-func (s *Server) attachServe(srv *types.HttpServer, egs engine.Server) {
+func (s *Server) attachServe(srv *types.HttpServer, egs engine.Server, opts *ServerOptions) {
 	server_log.Debug("attaching client serving req handler")
 	srv.HandleFunc(s._path+"/", func(w http.ResponseWriter, r *http.Request) {
 		if s.clientPathRegex.MatchString(r.URL.Path) {
 			s.serve(w, r)
 		} else {
-			// srv.DefaultHandler.ServeHTTP(w, r)
-			egs.ServeHTTP(w, r)
+			if opts.AddTrailingSlash() {
+				egs.ServeHTTP(w, r)
+			} else {
+				srv.DefaultHandler.ServeHTTP(w, r)
+			}
 		}
 	})
 }
