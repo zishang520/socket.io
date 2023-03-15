@@ -165,14 +165,6 @@ type NamespaceInterface interface {
 	Local() *BroadcastOperator
 
 	// Adds a timeout in milliseconds for the next operation
-	//
-	// <pre><code>
-	//
-	// io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-	//   // ...
-	// });
-	//
-	// </pre></code>
 	Timeout(time.Duration) *BroadcastOperator
 
 	// Returns the matching socket instances

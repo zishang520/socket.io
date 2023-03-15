@@ -620,13 +620,9 @@ func (s *Socket) ListenersAny() []events.Listener {
 // Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
 // callback.
 //
-// <pre><code>
-//
 //	socket.OnAnyOutgoing(events.Listener {
 //	  fmt.Println(args)
 //	})
-//
-// </pre></code>
 func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
 	s._anyOutgoingListeners_mu.Lock()
 	defer s._anyOutgoingListeners_mu.Unlock()
@@ -641,13 +637,9 @@ func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
 // Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
 // callback. The listener is added to the beginning of the listeners array.
 //
-// <pre><code>
-//
 //	socket.PrependAnyOutgoing(events.Listener {
 //	  fmt.Println(args)
 //	})
-//
-// </pre></code>
 func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
 	s._anyOutgoingListeners_mu.Lock()
 	defer s._anyOutgoingListeners_mu.Unlock()
@@ -661,8 +653,6 @@ func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
 
 // Removes the listener that will be fired when any event is emitted.
 //
-// <pre><code>
-//
 //	handler := func(args ...any) {
 //	  fmt.Println(args)
 //	}
@@ -671,8 +661,6 @@ func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
 //
 // then later
 // socket.OffAnyOutgoing(handler)
-//
-// </pre></code>
 func (s *Socket) OffAnyOutgoing(listener events.Listener) *Socket {
 	s._anyOutgoingListeners_mu.Lock()
 	defer s._anyOutgoingListeners_mu.Unlock()

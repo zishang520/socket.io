@@ -259,13 +259,9 @@ func (n *Namespace) Local() *BroadcastOperator {
 
 // Adds a timeout in milliseconds for the next operation
 //
-// <pre><code>
-//
 //	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
 //	  // ...
-//	});
-//
-// </pre></code>
+//	})
 func (n *Namespace) Timeout(timeout time.Duration) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Timeout(timeout)
 }
