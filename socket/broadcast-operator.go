@@ -56,8 +56,8 @@ func NewBroadcastOperator(adapter Adapter, rooms *types.Set[Room], exceptRooms *
 //
 //	io.To("room-101").To("room-102").Emit("foo", "bar")
 //
-// param room - a `Room`, or a `Room` slice to expand
-// return a new `*BroadcastOperator` instance for chaining
+// Param: room - a `Room`, or a `Room` slice to expand
+// Return: a new `*BroadcastOperator` instance for chaining
 func (b *BroadcastOperator) To(room ...Room) *BroadcastOperator {
 	rooms := types.NewSet(b.rooms.Keys()...)
 	rooms.Add(room...)
@@ -70,8 +70,8 @@ func (b *BroadcastOperator) To(room ...Room) *BroadcastOperator {
 //
 //	io.In("room-101").DisconnectSockets()
 //
-// param room - a `Room`, or a `Room` slice to expand
-// return a new `*BroadcastOperator` instance for chaining
+// Param: room - a `Room`, or a `Room` slice to expand
+// Return: a new `*BroadcastOperator` instance for chaining
 func (b *BroadcastOperator) In(room ...Room) *BroadcastOperator {
 	return b.To(room...)
 }
@@ -91,8 +91,8 @@ func (b *BroadcastOperator) In(room ...Room) *BroadcastOperator {
 //
 //	io.Except("room-101").Except("room-102").Emit("foo", "bar")
 //
-// param room - a `Room`, or a `Room` slice to expand
-// return a new `*BroadcastOperator` instance for chaining
+// Param: room - a `Room`, or a `Room` slice to expand
+// Return: a new `*BroadcastOperator` instance for chaining
 func (b *BroadcastOperator) Except(room ...Room) *BroadcastOperator {
 	exceptRooms := types.NewSet(b.exceptRooms.Keys()...)
 	exceptRooms.Add(room...)
@@ -125,7 +125,7 @@ func (b *BroadcastOperator) Volatile() *BroadcastOperator {
 //
 //	io.Local().Emit("foo", "bar")
 //
-// return a new `*BroadcastOperator` instance for chaining
+// Return: a new `*BroadcastOperator` instance for chaining
 func (b *BroadcastOperator) Local() *BroadcastOperator {
 	flags := *b.flags
 	flags.Local = true
@@ -305,7 +305,7 @@ func (b *BroadcastOperator) FetchSockets() (remoteSockets []*RemoteSocket) {
 //
 //	io.In("room1").SocketsJoin([]Room{"room2", "room3"}...)
 //
-// param room - a `Room`, or a `Room` slice to expand
+// Param: room - a `Room`, or a `Room` slice to expand
 func (b *BroadcastOperator) SocketsJoin(room ...Room) {
 	b.adapter.AddSockets(&BroadcastOptions{
 		Rooms:  b.rooms,
@@ -324,9 +324,9 @@ func (b *BroadcastOperator) SocketsJoin(room ...Room) {
 //
 // make all socket instances in the "room1" room leave the "room2" and "room3" rooms
 //
-//	io.in("room1").SocketsLeave([]Room{"room2", "room3"}...)
+//	io.In("room1").SocketsLeave([]Room{"room2", "room3"}...)
 //
-// param room - a `Room`, or a `Room` slice to expand
+// Param: room - a `Room`, or a `Room` slice to expand
 func (b *BroadcastOperator) SocketsLeave(room ...Room) {
 	b.adapter.DelSockets(&BroadcastOptions{
 		Rooms:  b.rooms,
@@ -345,7 +345,7 @@ func (b *BroadcastOperator) SocketsLeave(room ...Room) {
 //
 // make all socket instances in the "room1" room disconnect and close the underlying connections
 //
-//	io.in("room1").DisconnectSockets(true)
+//	io.In("room1").DisconnectSockets(true)
 func (b *BroadcastOperator) DisconnectSockets(status bool) {
 	b.adapter.DisconnectSockets(&BroadcastOptions{
 		Rooms:  b.rooms,
