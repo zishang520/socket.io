@@ -76,7 +76,55 @@ func (n *Namespace) EventEmitter() *StrictEventEmitter {
 	return n.StrictEventEmitter
 }
 
-// Namespace constructor.
+// A Namespace is a communication channel that allows you to split the logic of your application over a single shared
+// connection.
+//
+// Each namespace has its own:
+//
+// - event handlers
+//
+//	io.Of("/orders").On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//		socket.On("order:list", func(...any){})
+//		socket.On("order:create", func(...any){})
+//	})
+//
+//	io.Of("/users").On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//		socket.On("user:list", func(...any){})
+//	})
+//
+// - rooms
+//
+// orderNamespace := io.Of("/orders")
+//
+//	orderNamespace.On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//		socket.Join("room1")
+//		orderNamespace.To("room1").Emit("hello")
+//	})
+//
+// userNamespace := io.Of("/users")
+//
+//	userNamespace.On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//		socket.Join("room1") // distinct from the room in the "orders" namespace
+//		userNamespace.To("room1").Emit("holà")
+//	})
+//
+// - middlewares
+//
+// orderNamespace := io.Of("/orders")
+//
+//	orderNamespace.Use(func(socket *socket.Socket, next func(*socket.ExtendedError)) {
+//		// ensure the socket has access to the "orders" namespace
+//	})
+//
+// userNamespace := io.Of("/users")
+//
+//	userNamespace.Use(func(socket *socket.Socket, next func(*socket.ExtendedError)) {
+//		// ensure the socket has access to the "users" namespace
+//	})
 func NewNamespace(server *Server, name string) *Namespace {
 	n := &Namespace{}
 	n.StrictEventEmitter = NewStrictEventEmitter()
@@ -97,7 +145,16 @@ func (n *Namespace) _initAdapter() {
 	n.adapter = n.server.Adapter().New(n)
 }
 
-// Sets up namespace middleware.
+// Registers a middleware, which is a function that gets executed for every incoming {@link Socket}.
+//
+// myNamespace := io.Of("/my-namespace");
+//
+//	myNamespace.Use(func(socket *socket.Socket, next func(*socket.ExtendedError)) {
+//		// ...
+//		next(nil)
+//	})
+//
+// Param: fn - the middleware function
 func (n *Namespace) Use(fn func(*Socket, func(*ExtendedError))) NamespaceInterface {
 	n._fns_mu.Lock()
 	defer n._fns_mu.Unlock()
@@ -136,16 +193,55 @@ func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 }
 
 // Targets a room when emitting.
+//
+// the “foo” event will be broadcast to all connected clients in the “room-101” room
+//
+//	io.To("room-101").Emit("foo", "bar")
+//
+// with an array of rooms (a client will be notified at most once)
+//
+//	io.To("room-101", "room-102").Emit("foo", "bar")
+//	io.To([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
+//
+// with multiple chained calls
+//
+//	io.To("room-101").To("room-102").Emit("foo", "bar")
+//
+// Param: room - a `Room`, or a `Room` slice to expand
+// Return: a new `*BroadcastOperator` instance for chaining
 func (n *Namespace) To(room ...Room) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).To(room...)
 }
 
 // Targets a room when emitting.
+//
+// disconnect all clients in the "room-101" room
+//
+//	io.In("room-101").DisconnectSockets()
+//
+// Param: room - a `Room`, or a `Room` slice to expand
+// Return: a new `*BroadcastOperator` instance for chaining
 func (n *Namespace) In(room ...Room) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).In(room...)
 }
 
 // Excludes a room when emitting.
+//
+// the "foo" event will be broadcast to all connected clients, except the ones that are in the "room-101" room
+//
+//	io.Except("room-101").Emit("foo", "bar")
+//
+// with an array of rooms
+//
+//	io.Except(["room-101", "room-102"]).Emit("foo", "bar")
+//	io.Except([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
+//
+// with multiple chained calls
+//
+//	io.Except("room-101").Except("room-102").Emit("foo", "bar")
+//
+// Param: room - a `Room`, or a `Room` slice to expand
+// Return: a new `*BroadcastOperator` instance for chaining
 func (n *Namespace) Except(room ...Room) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Except(room...)
 }
@@ -203,23 +299,70 @@ func (n *Namespace) _remove(socket *Socket) {
 }
 
 // Emits to all clients.
+//
+// the “foo” event will be broadcast to all connected clients
+//
+//	io.Emit("foo", "bar");
+//
+// the “foo” event will be broadcast to all connected clients in the “room-101” room
+//
+//	io.To("room-101").Emit("foo", "bar");
+//
+// with an acknowledgement expected from all connected clients
+//
+//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
+//		if (args[0] != nil) {
+//			// some clients did not acknowledge the event in the given delay
+//		} else {
+//			fmt.Println(args[1]); // one response per client
+//		}
+//	})
 func (n *Namespace) Emit(ev string, args ...any) error {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Emit(ev, args...)
 }
 
 // Sends a `message` event to all clients.
+//
+// This method mimics the WebSocket.send() method.
+//
+// See: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/send
+//
+// io.Send("hello")
+//
+// this is equivalent to
+// io.Emit("message", "hello")
 func (n *Namespace) Send(args ...any) NamespaceInterface {
 	n.Emit("message", args...)
 	return n
 }
 
-// Sends a `message` event to all clients.
+// Sends a `message` event to all clients. Alias of Send.
 func (n *Namespace) Write(args ...any) NamespaceInterface {
 	n.Emit("message", args...)
 	return n
 }
 
 // Emit a packet to other Socket.IO servers
+//
+//	io.ServerSideEmit("hello", "world")
+//
+//	io.On("hello", func(args any...) {
+//		fmt.Println(args) // prints "world"
+//	});
+//
+// acknowledgements (without binary content) are supported too:
+//
+//	io.ServerSideEmit("ping", func(args ...any) {
+//		if args[0] != nil {
+//			// some clients did not acknowledge the event in the given delay
+//		} else {
+//			fmt.Println(args[1]) // one response per client
+//		}
+//	});
+//
+//	io.On("ping", func(args ...any) {
+//		args[0]("pong")
+//	})
 func (n *Namespace) ServerSideEmit(ev string, args ...any) error {
 	if NAMESPACE_RESERVED_EVENTS.Has(ev) {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
@@ -235,12 +378,19 @@ func (n *Namespace) _onServerSideEmit(ev string, args ...any) {
 	n.EmitUntyped(ev, args...)
 }
 
-// Gets a list of clients.
+// Gets a list of socket ids.
+//
+// Deprecated: this method will be removed in the next major release, please use *Server.ServerSideEmit or *BroadcastOperator.FetchSockets instead.
 func (n *Namespace) AllSockets() (*types.Set[SocketId], error) {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).AllSockets()
 }
 
 // Sets the compress flag.
+//
+//	io.compress(false).emit("hello");
+//
+// Param: compress - if `true`, compresses the sending data
+// Return: a new *BroadcastOperator instance for chaining
 func (n *Namespace) Compress(compress bool) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Compress(compress)
 }
@@ -248,11 +398,19 @@ func (n *Namespace) Compress(compress bool) *BroadcastOperator {
 // Sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to
 // receive messages (because of network slowness or other issues, or because they’re connected through long polling
 // and is in the middle of a request-response cycle).
+//
+//	io.Volatile().Emit("hello") // the clients may or may not receive it
 func (n *Namespace) Volatile() *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Volatile()
 }
 
 // Sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
+//
+// the “foo” event will be broadcast to all connected clients on this node
+//
+//	io.Local().Emit("foo", "bar")
+//
+// Return: a new `*BroadcastOperator` instance for chaining
 func (n *Namespace) Local() *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Local()
 }
@@ -260,28 +418,88 @@ func (n *Namespace) Local() *BroadcastOperator {
 // Adds a timeout in milliseconds for the next operation
 //
 //	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//	  // ...
+//		if (args[0] != nil) {
+//			// some clients did not acknowledge the event in the given delay
+//		} else {
+//			fmt.Println(args[1]); // one response per client
+//		}
 //	})
 func (n *Namespace) Timeout(timeout time.Duration) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Timeout(timeout)
 }
 
 // Returns the matching socket instances
+//
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+//
+// return all Socket instances
+//
+//	sockets := io.FetchSockets()
+//
+// return all Socket instances in the "room1" room
+//
+//	sockets := io.In("room1").FetchSockets()
+//
+//	for _, socket := range sockets {
+//		fmt.Println(socket.Id())
+//		fmt.Println(socket.Handshake())
+//		fmt.Println(socket.Rooms())
+//		fmt.Println(socket.Data())
+//
+//		socket.Emit("hello")
+//		socket.Join("room1")
+//		socket.Leave("room2")
+//		socket.Disconnect()
+//	}
 func (n *Namespace) FetchSockets() ([]*RemoteSocket, error) {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).FetchSockets(), nil
 }
 
 // Makes the matching socket instances join the specified rooms
+//
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+//
+// make all socket instances join the "room1" room
+//
+//	io.SocketsJoin("room1")
+//
+// make all socket instances in the "room1" room join the "room2" and "room3" rooms
+//
+//	io.In("room1").SocketsJoin([]Room{"room2", "room3"}...)
+//
+// Param: room - a `Room`, or a `Room` slice to expand
 func (n *Namespace) SocketsJoin(room ...Room) {
 	NewBroadcastOperator(n.adapter, nil, nil, nil).SocketsJoin(room...)
 }
 
 // Makes the matching socket instances leave the specified rooms
+//
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+//
+// make all socket instances leave the "room1" room
+//
+//	io.SocketsLeave("room1")
+//
+// make all socket instances in the "room1" room leave the "room2" and "room3" rooms
+//
+//	io.In("room1").SocketsLeave([]Room{"room2", "room3"}...)
+//
+// Param: room - a `Room`, or a `Room` slice to expand
 func (n *Namespace) SocketsLeave(room ...Room) {
 	NewBroadcastOperator(n.adapter, nil, nil, nil).SocketsLeave(room...)
 }
 
 // Makes the matching socket instances disconnect
+//
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+//
+// make all socket instances disconnect (the connections might be kept alive for other namespaces)
+//
+//	io.DisconnectSockets(false)
+//
+// make all socket instances in the "room1" room disconnect and close the underlying connections
+//
+//	io.In("room1").DisconnectSockets(true)
 func (n *Namespace) DisconnectSockets(status bool) {
 	NewBroadcastOperator(n.adapter, nil, nil, nil).DisconnectSockets(status)
 }
