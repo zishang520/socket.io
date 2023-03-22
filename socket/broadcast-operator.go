@@ -43,17 +43,14 @@ func NewBroadcastOperator(adapter Adapter, rooms *types.Set[Room], exceptRooms *
 
 // Targets a room when emitting.
 //
-// the “foo” event will be broadcast to all connected clients in the “room-101” room
-//
+//	// the “foo” event will be broadcast to all connected clients in the “room-101” room
 //	io.To("room-101").Emit("foo", "bar")
 //
-// with an array of rooms (a client will be notified at most once)
-//
+//	// with an array of rooms (a client will be notified at most once)
 //	io.To("room-101", "room-102").Emit("foo", "bar")
 //	io.To([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
 //
-// with multiple chained calls
-//
+//	// with multiple chained calls
 //	io.To("room-101").To("room-102").Emit("foo", "bar")
 //
 // Param: room - a `Room`, or a `Room` slice to expand
@@ -66,8 +63,7 @@ func (b *BroadcastOperator) To(room ...Room) *BroadcastOperator {
 
 // Targets a room when emitting. Similar to `to()`, but might feel clearer in some cases:
 //
-// disconnect all clients in the "room-101" room
-//
+//	// disconnect all clients in the "room-101" room
 //	io.In("room-101").DisconnectSockets()
 //
 // Param: room - a `Room`, or a `Room` slice to expand
@@ -78,17 +74,14 @@ func (b *BroadcastOperator) In(room ...Room) *BroadcastOperator {
 
 // Excludes a room when emitting.
 //
-// the "foo" event will be broadcast to all connected clients, except the ones that are in the "room-101" room
-//
+//	// the "foo" event will be broadcast to all connected clients, except the ones that are in the "room-101" room
 //	io.Except("room-101").Emit("foo", "bar")
 //
-// with an array of rooms
-//
+//	// with an array of rooms
 //	io.Except(["room-101", "room-102"]).Emit("foo", "bar")
 //	io.Except([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
 //
-// with multiple chained calls
-//
+//	// with multiple chained calls
 //	io.Except("room-101").Except("room-102").Emit("foo", "bar")
 //
 // Param: room - a `Room`, or a `Room` slice to expand
@@ -121,8 +114,7 @@ func (b *BroadcastOperator) Volatile() *BroadcastOperator {
 
 // Sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
 //
-// the “foo” event will be broadcast to all connected clients on this node
-//
+//	// the “foo” event will be broadcast to all connected clients on this node
 //	io.Local().Emit("foo", "bar")
 //
 // Return: a new `*BroadcastOperator` instance for chaining
@@ -138,7 +130,7 @@ func (b *BroadcastOperator) Local() *BroadcastOperator {
 //		if (args[0] != nil) {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]); // one response per client
+//			fmt.Println(args[1]) // one response per client
 //		}
 //	})
 func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
@@ -149,21 +141,18 @@ func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
 
 // Emits to all clients.
 //
-// the “foo” event will be broadcast to all connected clients
+//	// the “foo” event will be broadcast to all connected clients
+//	io.Emit("foo", "bar")
 //
-//	io.Emit("foo", "bar");
+//	// the “foo” event will be broadcast to all connected clients in the “room-101” room
+//	io.To("room-101").Emit("foo", "bar")
 //
-// the “foo” event will be broadcast to all connected clients in the “room-101” room
-//
-//	io.To("room-101").Emit("foo", "bar");
-//
-// with an acknowledgement expected from all connected clients
-//
+//	// with an acknowledgement expected from all connected clients
 //	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
 //		if (args[0] != nil) {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]); // one response per client
+//			fmt.Println(args[1]) // one response per client
 //		}
 //	})
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
@@ -259,12 +248,10 @@ func (b *BroadcastOperator) AllSockets() (*types.Set[SocketId], error) {
 //
 // Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
 //
-// return all Socket instances
-//
+//	// return all Socket instances
 //	sockets := io.FetchSockets()
 //
-// return all Socket instances in the "room1" room
-//
+//	// return all Socket instances in the "room1" room
 //	sockets := io.In("room1").FetchSockets()
 //
 //	for _, socket := range sockets {
@@ -297,12 +284,10 @@ func (b *BroadcastOperator) FetchSockets() (remoteSockets []*RemoteSocket) {
 //
 // Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
 //
-// make all socket instances join the "room1" room
-//
+//	// make all socket instances join the "room1" room
 //	io.SocketsJoin("room1")
 //
-// make all socket instances in the "room1" room join the "room2" and "room3" rooms
-//
+//	// make all socket instances in the "room1" room join the "room2" and "room3" rooms
 //	io.In("room1").SocketsJoin([]Room{"room2", "room3"}...)
 //
 // Param: room - a `Room`, or a `Room` slice to expand
@@ -318,12 +303,10 @@ func (b *BroadcastOperator) SocketsJoin(room ...Room) {
 //
 // Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
 //
-// make all socket instances leave the "room1" room
-//
+//	// make all socket instances leave the "room1" room
 //	io.SocketsLeave("room1")
 //
-// make all socket instances in the "room1" room leave the "room2" and "room3" rooms
-//
+//	// make all socket instances in the "room1" room leave the "room2" and "room3" rooms
 //	io.In("room1").SocketsLeave([]Room{"room2", "room3"}...)
 //
 // Param: room - a `Room`, or a `Room` slice to expand
@@ -339,12 +322,10 @@ func (b *BroadcastOperator) SocketsLeave(room ...Room) {
 //
 // Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
 //
-// make all socket instances disconnect (the connections might be kept alive for other namespaces)
-//
+//	// make all socket instances disconnect (the connections might be kept alive for other namespaces)
 //	io.DisconnectSockets(false)
 //
-// make all socket instances in the "room1" room disconnect and close the underlying connections
-//
+//	// make all socket instances in the "room1" room disconnect and close the underlying connections
 //	io.In("room1").DisconnectSockets(true)
 func (b *BroadcastOperator) DisconnectSockets(status bool) {
 	b.adapter.DisconnectSockets(&BroadcastOptions{
