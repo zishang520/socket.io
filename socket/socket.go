@@ -45,15 +45,29 @@ type Handshake struct {
 type Socket struct {
 	*StrictEventEmitter
 
-	nsp       *Namespace
-	client    *Client
-	id        SocketId
+	nsp    *Namespace
+	client *Client
+
+	// An unique identifier for the session.
+	id SocketId
+	// The handshake details.
 	handshake *Handshake
 
-	// Additional information that can be attached to the Socket instance and which will be used in the fetchSockets method
+	// Additional information that can be attached to the Socket instance and which will be used in the (*socket.Server).fetchSockets() method.
 	data    any
 	data_mu sync.RWMutex
 
+	// Whether the socket is currently connected or not.
+	//
+	//	io.Use(func(socket *socket.Socket, next func(*ExtendedError)) {
+	//		fmt.Println(socket.Connected()) // false
+	//		next(nil)
+	//	})
+	//
+	//	io.On("connection", func(args ...any) {
+	//		socket := args[0].(*socket.Socket)
+	//		fmt.Println(socket.Connected()) // true
+	//	})
 	connected    bool
 	connected_mu sync.RWMutex
 	canJoin      bool
@@ -114,6 +128,36 @@ func (s *Socket) SetData(data any) {
 	s.data = data
 }
 
+// This is the main object for interacting with a client.
+//
+// A Socket belongs to a given *socket.Namespace and uses an underlying *socket.Client to communicate.
+//
+// Within each *socket.Namespace, you can also define arbitrary channels (called "rooms") that the *socket.Socket can
+// join and leave. That provides a convenient way to broadcast to a group of socket instances.
+//
+//	io.On("connection", On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//
+//		utils.Log().Info(`socket %s connected`, socket.Id())
+//
+//		// send an event to the client
+//		socket.Emit("foo", "bar")
+//
+//		socket.On("foobar", func(...any) {
+//			// an event was received from the client
+//		})
+//
+//		// join the room named "room1"
+//		socket.Join("room1")
+//
+//		// broadcast to everyone in the room named "room1"
+//		io.to("room1").Emit("hello")
+//
+//		// upon disconnection
+//		socket.On("disconnect", func(reason ...any) {
+//			utils.Log().Info(`socket %s disconnected due to %s`, socket.Id(), reason[0])
+//		})
+//	})
 func NewSocket(nsp *Namespace, client *Client, auth any) *Socket {
 	s := &Socket{}
 	s.StrictEventEmitter = NewStrictEventEmitter()
@@ -158,6 +202,19 @@ func (s *Socket) buildHandshake(auth any) *Handshake {
 }
 
 // Emits to this client.
+//
+//	io.On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//		socket.Emit("hello", "world")
+//
+//		// all serializable datastructures are supported (no need to call json.Marshal, But the map can only be of `map[string]any` type, currently does not support other types of maps)
+//		socket.Emit("hello", 1, "2", map[string]any{"3": []string{"4"}, "5": types.NewBytesBuffer([]byte{6})})
+//
+//		// with an acknowledgement from the client
+//		socket.Emit("hello", "world", func(args ...any) {
+//			// ...
+//		})
+//	})
 func (s *Socket) Emit(ev string, args ...any) error {
 	if SOCKET_RESERVED_EVENTS.Has(ev) {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
@@ -205,27 +262,82 @@ func (s *Socket) registerAckCallback(id uint64, ack func(...any)) {
 }
 
 // Targets a room when broadcasting.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		// the “foo” event will be broadcast to all connected clients in the “room-101” room, except this socket
+//		socket.To("room-101").Emit("foo", "bar")
+//
+//		// the code above is equivalent to:
+//		io.To("room-101").Except(Room(socket.Id())).Emit("foo", "bar")
+//
+//		// with an array of rooms (a client will be notified at most once)
+//		socket.To([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
+//
+//		// with multiple chained calls
+//		socket.To("room-101").To("room-102").Emit("foo", "bar")
+//	})
+//
+// Param: Room - a `Room`, or a `Room` slice to expand
+// Return: a new `*BroadcastOperator` instance for chaining
 func (s *Socket) To(room ...Room) *BroadcastOperator {
 	return s.newBroadcastOperator().To(room...)
 }
 
-// Targets a room when broadcasting.
+// Targets a room when broadcasting. Similar to `to()`, but might feel clearer in some cases:
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		// disconnect all clients in the "room-101" room, except this socket
+//		socket.In("room-101").DisconnectSockets(false)
+//	});
+//
+// Param: Room - a `Room`, or a `Room` slice to expand
+// Return: a new `*BroadcastOperator` instance for chaining
 func (s *Socket) In(room ...Room) *BroadcastOperator {
 	return s.newBroadcastOperator().In(room...)
 }
 
 // Excludes a room when broadcasting.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		// the "foo" event will be broadcast to all connected clients, except the ones that are in the "room-101" room
+//		// and this socket
+//		socket.Except("room-101").Emit("foo", "bar")
+//
+//		// with an array of rooms
+//		socket.Except([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
+//
+//		// with multiple chained calls
+//		socket.Except("room-101").Except("room-102").Emit("foo", "bar")
+//	})
+//
+// Param: Room - a `Room`, or a `Room` slice to expand
+// Return: a new `*BroadcastOperator` instance for chaining
 func (s *Socket) Except(room ...Room) *BroadcastOperator {
 	return s.newBroadcastOperator().Except(room...)
 }
 
 // Sends a `message` event.
+//
+// This method mimics the WebSocket.send() method.
+//
+// See: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/send
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		socket.Send("hello");
+//
+//		// this is equivalent to
+//		socket.Emit("message", "hello");
+//	});
 func (s *Socket) Send(args ...any) *Socket {
 	s.Emit("message", args...)
 	return s
 }
 
-// Sends a `message` event.
+// Sends a `message` event. Alias of Send.
 func (s *Socket) Write(args ...any) *Socket {
 	s.Emit("message", args...)
 	return s
@@ -242,6 +354,17 @@ func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
 }
 
 // Joins a room.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		// join a single room
+//		socket.Join("room1")
+//
+//		// join multiple rooms
+//		socket.Join([]Room{"room-101", "room-102"}...)
+//	})
+//
+// Param: Room - a `Room`, or a `Room` slice to expand
 func (s *Socket) Join(rooms ...Room) {
 	s.canJoin_mu.Lock()
 	if !s.canJoin {
@@ -255,6 +378,18 @@ func (s *Socket) Join(rooms ...Room) {
 }
 
 // Leaves a room.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		// leave a single room
+//		socket.Leave("room1")
+//
+//		// leave multiple rooms
+//		socket.Leave("room-101")
+//		socket.Leave("room-102")
+//	})
+//
+// Param: Room - a `Room`, or a `Room` slice to expand
 func (s *Socket) Leave(room Room) {
 	socket_log.Debug("leave room %s", room)
 	s.adapter.Del(s.id, room)
@@ -417,6 +552,18 @@ func (s *Socket) _error(err any) {
 }
 
 // Disconnects this client.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		// disconnect this socket (the connection might be kept alive for other namespaces)
+//		socket.Disconnect(false)
+//
+//		// disconnect this socket and close the underlying connection
+//		socket.Disconnect(true)
+//	})
+//
+//	Param: bool - if `true`, closes the underlying connection
+//	Return: *Socket
 func (s *Socket) Disconnect(status bool) *Socket {
 	if !s.Connected() {
 		return s
@@ -433,6 +580,11 @@ func (s *Socket) Disconnect(status bool) *Socket {
 }
 
 // Sets the compress flag.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		socket.Compress(false).Emit("hello")
+//	})
 func (s *Socket) Compress(compress bool) *Socket {
 	s.flags_mu.Lock()
 	s.flags.Compress = compress
@@ -443,6 +595,11 @@ func (s *Socket) Compress(compress bool) *Socket {
 // Sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to
 // receive messages (because of network slowness or other issues, or because they’re connected through long polling
 // and is in the middle of a request-response cycle).
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		socket.Volatile().Emit("hello") // the client may or may not receive it
+//	})
 func (s *Socket) Volatile() *Socket {
 	s.flags_mu.Lock()
 	s.flags.Volatile = true
@@ -452,12 +609,28 @@ func (s *Socket) Volatile() *Socket {
 
 // Sets a modifier for a subsequent event emission that the event data will only be broadcast to every sockets but the
 // sender.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		// the “foo” event will be broadcast to all connected clients, except this socket
+//		socket.Broadcast().Emit("foo", "bar")
+//	})
+//
+//	Return: a new *BroadcastOperator instance for chaining
 func (s *Socket) Broadcast() *BroadcastOperator {
 	return s.newBroadcastOperator()
 
 }
 
 // Sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		// the “foo” event will be broadcast to all connected clients on this node, except this socket
+//		socket.Local().Emit("foo", "bar")
+//	})
+//
+//	Return: a new *BroadcastOperator instance for chaining
 func (s *Socket) Local() *BroadcastOperator {
 	return s.newBroadcastOperator().Local()
 }
@@ -465,15 +638,14 @@ func (s *Socket) Local() *BroadcastOperator {
 // Sets a modifier for a subsequent event emission that the callback will be called with an error when the
 // given number of milliseconds have elapsed without an acknowledgement from the client:
 //
-// ```
-//
-//	socket.Timeout(5000 * time.Millisecond).Emit("my-event", func(args ...any) {
-//	  if args[0] != nil {
-//	    // the client did not acknowledge the event in the given delay
-//	  }
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		socket.Timeout(1000 * time.Millisecond).Emit("my-event", func(args ...any) {
+//			if args[0] != nil {
+//				// the client did not acknowledge the event in the given delay
+//			}
+//		})
 //	})
-//
-// ```
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
 	s.flags_mu.Lock()
 	s.flags.Timeout = &timeout
@@ -498,6 +670,24 @@ func (s *Socket) dispatch(event []any) {
 }
 
 // Sets up socket middleware.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		socket.Use(func(append(events []any, next func(error)) {
+//			if isUnauthorized(events[0]) {
+//				next(error.New("unauthorized event"))
+//				return
+//			}
+//			// do not forget to call next
+//			next(nil)
+//		})
+//
+//		socket.On("error", func(errs ...any) {
+//			if err, ok := errs[0].(error); ok && err.Error() == "unauthorized event" {
+//				socket.Disconnect(false)
+//			}
+//		});
+//	});
 func (s *Socket) Use(fn func([]any, func(error))) *Socket {
 	s.fns_mu.Lock()
 	defer s.fns_mu.Unlock()
@@ -546,10 +736,29 @@ func (s *Socket) Request() *types.HttpContext {
 }
 
 // A reference to the underlying Client transport connection (Engine.IO Socket object).
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		fmt.Println(socket.Conn().Transport().Name()) // prints "polling" or "websocket"
+//
+//		socket.Conn().Once("upgrade", func(...any) {
+//			fmt.Println(socket.Conn().Transport().Name()) // prints "websocket"
+//		})
+//	})
 func (s *Socket) Conn() engine.Socket {
 	return s.client.conn
 }
 
+// Returns the rooms the socket is currently in.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		fmt.Println(socket.Rooms()) // *types.Set { <socket.id> }
+//
+//		socket.Join("room1")
+//
+//		fmt.Println(socket.Rooms()) // *types.Set { <socket.id>, "room1" }
+//	})
 func (s *Socket) Rooms() *types.Set[Room] {
 	if rooms := s.adapter.SocketRooms(s.id); rooms != nil {
 		return rooms
@@ -559,6 +768,13 @@ func (s *Socket) Rooms() *types.Set[Room] {
 
 // Adds a listener that will be fired when any event is received. The event name is passed as the first argument to
 // the callback.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		socket.OnAny(func(events ...any) {
+//			fmt.Println(`got event `, events)
+//		})
+//	})
 func (s *Socket) OnAny(listener events.Listener) *Socket {
 	s._anyListeners_mu.Lock()
 	defer s._anyListeners_mu.Unlock()
@@ -584,6 +800,21 @@ func (s *Socket) PrependAny(listener events.Listener) *Socket {
 }
 
 // Removes the listener that will be fired when any event is received.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		catchAllListener := func(events ...any) {
+//			fmt.Println(`got event `, events)
+//		}
+//
+//		socket.OnAny(catchAllListener)
+//
+//		// remove a specific listener
+//		socket.OffAny(catchAllListener)
+//
+//		// or remove all listeners
+//		socket.OffAny(nil)
+//	})
 func (s *Socket) OffAny(listener events.Listener) *Socket {
 	s._anyListeners_mu.Lock()
 	defer s._anyListeners_mu.Unlock()
@@ -617,12 +848,19 @@ func (s *Socket) ListenersAny() []events.Listener {
 	return s._anyListeners
 }
 
-// Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
-// callback.
+// Adds a listener that will be fired when any event is sent. The event name is passed as the first argument to
+// the callback.
 //
-//	socket.OnAnyOutgoing(events.Listener {
-//	  fmt.Println(args)
+// Note: acknowledgements sent to the client are not included.
+//
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		socket.onAnyOutgoing(func(events ...any) {
+//			fmt.Println(`got event `, events)
+//		})
 //	})
+//
+//	Param: events.Listener
 func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
 	s._anyOutgoingListeners_mu.Lock()
 	defer s._anyOutgoingListeners_mu.Unlock()
@@ -637,8 +875,11 @@ func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
 // Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
 // callback. The listener is added to the beginning of the listeners array.
 //
-//	socket.PrependAnyOutgoing(events.Listener {
-//	  fmt.Println(args)
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		socket.PrependAnyOutgoing(func(events ...any) {
+//			fmt.Println(`sent event `, events)
+//		})
 //	})
 func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
 	s._anyOutgoingListeners_mu.Lock()
@@ -651,16 +892,24 @@ func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
 	return s
 }
 
-// Removes the listener that will be fired when any event is emitted.
+// Removes the listener that will be fired when any event is sent.
 //
-//	handler := func(args ...any) {
-//	  fmt.Println(args)
-//	}
+//	io.On("connection", func(clients ...any) {
+//		socket := clients[0].(*socket.Socket)
+//		catchAllListener := func(events ...any) {
+//			fmt.Println(`sent event `, events)
+//		}
 //
-// socket.OnAnyOutgoing(handler)
+//		socket.OnAnyOutgoing(catchAllListener)
 //
-// then later
-// socket.OffAnyOutgoing(handler)
+//		// remove a specific listener
+//		socket.OffAnyOutgoing(catchAllListener)
+//
+//		// or remove all listeners
+//		socket.OffAnyOutgoing(nil)
+//	})
+//
+//	Param: events.Listener - the catch-all listener
 func (s *Socket) OffAnyOutgoing(listener events.Listener) *Socket {
 	s._anyOutgoingListeners_mu.Lock()
 	defer s._anyOutgoingListeners_mu.Unlock()

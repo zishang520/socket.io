@@ -53,7 +53,7 @@ func NewBroadcastOperator(adapter Adapter, rooms *types.Set[Room], exceptRooms *
 //	// with multiple chained calls
 //	io.To("room-101").To("room-102").Emit("foo", "bar")
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 // Return: a new `*BroadcastOperator` instance for chaining
 func (b *BroadcastOperator) To(room ...Room) *BroadcastOperator {
 	rooms := types.NewSet(b.rooms.Keys()...)
@@ -64,9 +64,9 @@ func (b *BroadcastOperator) To(room ...Room) *BroadcastOperator {
 // Targets a room when emitting. Similar to `to()`, but might feel clearer in some cases:
 //
 //	// disconnect all clients in the "room-101" room
-//	io.In("room-101").DisconnectSockets()
+//	io.In("room-101").DisconnectSockets(false)
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 // Return: a new `*BroadcastOperator` instance for chaining
 func (b *BroadcastOperator) In(room ...Room) *BroadcastOperator {
 	return b.To(room...)
@@ -84,7 +84,7 @@ func (b *BroadcastOperator) In(room ...Room) *BroadcastOperator {
 //	// with multiple chained calls
 //	io.Except("room-101").Except("room-102").Emit("foo", "bar")
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 // Return: a new `*BroadcastOperator` instance for chaining
 func (b *BroadcastOperator) Except(room ...Room) *BroadcastOperator {
 	exceptRooms := types.NewSet(b.exceptRooms.Keys()...)
@@ -127,7 +127,7 @@ func (b *BroadcastOperator) Local() *BroadcastOperator {
 // Adds a timeout in milliseconds for the next operation
 //
 //	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if (args[0] != nil) {
+//		if args[0] != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
 //			fmt.Println(args[1]) // one response per client
@@ -149,7 +149,7 @@ func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
 //
 //	// with an acknowledgement expected from all connected clients
 //	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if (args[0] != nil) {
+//		if args[0] != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
 //			fmt.Println(args[1]) // one response per client
@@ -290,7 +290,7 @@ func (b *BroadcastOperator) FetchSockets() (remoteSockets []*RemoteSocket) {
 //	// make all socket instances in the "room1" room join the "room2" and "room3" rooms
 //	io.In("room1").SocketsJoin([]Room{"room2", "room3"}...)
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 func (b *BroadcastOperator) SocketsJoin(room ...Room) {
 	b.adapter.AddSockets(&BroadcastOptions{
 		Rooms:  b.rooms,
@@ -309,7 +309,7 @@ func (b *BroadcastOperator) SocketsJoin(room ...Room) {
 //	// make all socket instances in the "room1" room leave the "room2" and "room3" rooms
 //	io.In("room1").SocketsLeave([]Room{"room2", "room3"}...)
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 func (b *BroadcastOperator) SocketsLeave(room ...Room) {
 	b.adapter.DelSockets(&BroadcastOptions{
 		Rooms:  b.rooms,

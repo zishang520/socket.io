@@ -154,7 +154,7 @@ func (n *Namespace) _initAdapter() {
 //		next(nil)
 //	})
 //
-// Param: fn - the middleware function
+// Param: func(*ExtendedError) - the middleware function
 func (n *Namespace) Use(fn func(*Socket, func(*ExtendedError))) NamespaceInterface {
 	n._fns_mu.Lock()
 	defer n._fns_mu.Unlock()
@@ -206,7 +206,7 @@ func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 //	// with multiple chained calls
 //	myNamespace.To("room-101").To("room-102").Emit("foo", "bar")
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 // Return: a new `*BroadcastOperator` instance for chaining
 func (n *Namespace) To(room ...Room) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).To(room...)
@@ -217,9 +217,9 @@ func (n *Namespace) To(room ...Room) *BroadcastOperator {
 //	myNamespace := io.Of("/my-namespace")
 //
 //	// disconnect all clients in the "room-101" room
-//	myNamespace.In("room-101").DisconnectSockets()
+//	myNamespace.In("room-101").DisconnectSockets(false)
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 // Return: a new `*BroadcastOperator` instance for chaining
 func (n *Namespace) In(room ...Room) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).In(room...)
@@ -239,7 +239,7 @@ func (n *Namespace) In(room ...Room) *BroadcastOperator {
 //	// with multiple chained calls
 //	myNamespace.Except("room-101").Except("room-102").Emit("foo", "bar")
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 // Return: a new `*BroadcastOperator` instance for chaining
 func (n *Namespace) Except(room ...Room) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Except(room...)
@@ -309,7 +309,7 @@ func (n *Namespace) _remove(socket *Socket) {
 //
 //	// with an acknowledgement expected from all connected clients
 //	myNamespace.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if (args[0] != nil) {
+//		if args[0] != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
 //			fmt.Println(args[1]) // one response per client
@@ -348,7 +348,7 @@ func (n *Namespace) Write(args ...any) NamespaceInterface {
 //
 //	myNamespace.ServerSideEmit("hello", "world")
 //
-//	myNamespace.On("hello", func(args any...) {
+//	myNamespace.On("hello", func(args ...any) {
 //		fmt.Println(args) // prints "world"
 //	})
 //
@@ -390,7 +390,7 @@ func (n *Namespace) AllSockets() (*types.Set[SocketId], error) {
 //
 //	io.compress(false).emit("hello")
 //
-// Param: compress - if `true`, compresses the sending data
+// Param: bool - if `true`, compresses the sending data
 // Return: a new *BroadcastOperator instance for chaining
 func (n *Namespace) Compress(compress bool) *BroadcastOperator {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Compress(compress)
@@ -418,7 +418,7 @@ func (n *Namespace) Local() *BroadcastOperator {
 // Adds a timeout in milliseconds for the next operation
 //
 //	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if (args[0] != nil) {
+//		if args[0] != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
 //			fmt.Println(args[1]) // one response per client
@@ -463,7 +463,7 @@ func (n *Namespace) FetchSockets() ([]*RemoteSocket, error) {
 //	// make all socket instances in the "room1" room join the "room2" and "room3" rooms
 //	io.In("room1").SocketsJoin([]Room{"room2", "room3"}...)
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 func (n *Namespace) SocketsJoin(room ...Room) {
 	NewBroadcastOperator(n.adapter, nil, nil, nil).SocketsJoin(room...)
 }
@@ -478,7 +478,7 @@ func (n *Namespace) SocketsJoin(room ...Room) {
 //	// make all socket instances in the "room1" room leave the "room2" and "room3" rooms
 //	io.In("room1").SocketsLeave([]Room{"room2", "room3"}...)
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 func (n *Namespace) SocketsLeave(room ...Room) {
 	NewBroadcastOperator(n.adapter, nil, nil, nil).SocketsLeave(room...)
 }

@@ -417,8 +417,8 @@ func (s *Server) onconnection(conns ...any) {
 //		namespace.Emit("hello")
 //	})
 //
-// Param: name - nsp name
-// Param: fn optional, nsp `connection` ev handler
+// Param: any - nsp name
+// Param: func(...any) - nsp `connection` ev handler
 func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 	switch n := name.(type) {
 	case ParentNspNameMatchFn:
@@ -497,7 +497,7 @@ func (s *Server) Close(fn func()) {
 //		next(nil)
 //	})
 //
-// Param: fn - the middleware function
+// Param: func(*ExtendedError) - the middleware function
 func (s *Server) Use(fn func(*Socket, func(*ExtendedError))) *Server {
 	s.sockets.Use(fn)
 	return s
@@ -515,7 +515,7 @@ func (s *Server) Use(fn func(*Socket, func(*ExtendedError))) *Server {
 //	// with multiple chained calls
 //	io.To("room-101").To("room-102").Emit("foo", "bar")
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 // Return: a new `*BroadcastOperator` instance for chaining
 func (s *Server) To(room ...Room) *BroadcastOperator {
 	return s.sockets.To(room...)
@@ -524,9 +524,9 @@ func (s *Server) To(room ...Room) *BroadcastOperator {
 // Targets a room when emitting.
 //
 //	// disconnect all clients in the "room-101" room
-//	io.In("room-101").DisconnectSockets()
+//	io.In("room-101").DisconnectSockets(false)
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 // Return: a new `*BroadcastOperator` instance for chaining
 func (s *Server) In(room ...Room) *BroadcastOperator {
 	return s.sockets.In(room...)
@@ -544,7 +544,7 @@ func (s *Server) In(room ...Room) *BroadcastOperator {
 //	// with multiple chained calls
 //	io.Except("room-101").Except("room-102").Emit("foo", "bar")
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 // Return: a new `*BroadcastOperator` instance for chaining
 func (s *Server) Except(room ...Room) *BroadcastOperator {
 	return s.sockets.Except(room...)
@@ -575,7 +575,7 @@ func (s *Server) Write(args ...any) *Server {
 //
 //	io.ServerSideEmit("hello", "world")
 //
-//	io.On("hello", func(args any...) {
+//	io.On("hello", func(args ...any) {
 //		fmt.Println(args) // prints "world"
 //	})
 //
@@ -606,7 +606,7 @@ func (s *Server) AllSockets() (*types.Set[SocketId], error) {
 //
 //	io.compress(false).emit("hello")
 //
-// Param: compress - if `true`, compresses the sending data
+// Param: bool - if `true`, compresses the sending data
 // Return: a new *BroadcastOperator instance for chaining
 func (s *Server) Compress(compress bool) *BroadcastOperator {
 	return s.sockets.Compress(compress)
@@ -634,7 +634,7 @@ func (s *Server) Local() *BroadcastOperator {
 // Adds a timeout in milliseconds for the next operation
 //
 //	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if (args[0] != nil) {
+//		if args[0] != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
 //			fmt.Println(args[1]) // one response per client
@@ -679,7 +679,7 @@ func (s *Server) FetchSockets() ([]*RemoteSocket, error) {
 //	// make all socket instances in the "room1" room join the "room2" and "room3" rooms
 //	io.In("room1").SocketsJoin([]Room{"room2", "room3"}...)
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 func (s *Server) SocketsJoin(room ...Room) {
 	s.sockets.SocketsJoin(room...)
 }
@@ -694,7 +694,7 @@ func (s *Server) SocketsJoin(room ...Room) {
 //	// make all socket instances in the "room1" room leave the "room2" and "room3" rooms
 //	io.In("room1").SocketsLeave([]Room{"room2", "room3"}...)
 //
-// Param: room - a `Room`, or a `Room` slice to expand
+// Param: Room - a `Room`, or a `Room` slice to expand
 func (s *Server) SocketsLeave(room ...Room) {
 	s.sockets.SocketsLeave(room...)
 }
