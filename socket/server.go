@@ -604,7 +604,7 @@ func (s *Server) AllSockets() (*types.Set[SocketId], error) {
 
 // Sets the compress flag.
 //
-//	io.compress(false).emit("hello")
+//	io.Compress(false).Emit("hello")
 //
 // Param: bool - if `true`, compresses the sending data
 // Return: a new *BroadcastOperator instance for chaining
