@@ -1,6 +1,6 @@
 module github.com/zishang520/socket.io
 
-go 1.18
+go 1.19
 
 retract v1.0.8
 
