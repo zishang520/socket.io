@@ -253,7 +253,7 @@ func (s *Socket) registerAckCallback(id uint64, ack func(...any)) {
 	timer := utils.SetTimeOut(func() {
 		socket_log.Debug("event with ack id %d has timed out after %d ms", id, *timeout/time.Millisecond)
 		s.acks.Delete(id)
-		ack(errors.New("operation has timed out"))
+		ack(errors.New("operation has timed out"), nil)
 	}, *timeout)
 	s.acks.Store(id, func(args ...any) {
 		utils.ClearTimeout(timer)
