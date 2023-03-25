@@ -182,7 +182,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 	packet.Data = data[:data_len-1]
 
-	timedOut := false
+	var timedOut atomic.Bool
 	responses := []any{}
 	var responsesMu sync.RWMutex
 	var timeout time.Duration
@@ -192,7 +192,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	}
 
 	timer := utils.SetTimeOut(func() {
-		timedOut = true
+		timedOut.Store(true)
 		if b.flags.ExpectSingleResponse {
 			ack(errors.New("operation has timed out"), nil)
 		} else {
@@ -211,7 +211,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		responsesMu.RLock()
 		defer responsesMu.RUnlock()
 
-		if !timedOut && expectedServerCount == atomic.LoadInt64(&actualServerCount) && uint64(len(responses)) == atomic.LoadUint64(&expectedClientCount) {
+		if !timedOut.Load() && expectedServerCount == atomic.LoadInt64(&actualServerCount) && uint64(len(responses)) == atomic.LoadUint64(&expectedClientCount) {
 			utils.ClearTimeout(timer)
 			if b.flags.ExpectSingleResponse {
 				ack(nil, nil)
