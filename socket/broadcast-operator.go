@@ -244,8 +244,8 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 // Emits an event and waits for an acknowledgement from all clients.
 //
-//	io.Timeout(1000).EmitWithAck("some-event")(func(err error, responses []any){
-//		if err == nil {
+//	io.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args ...any) {
+//		if args[0] == nil {
 //			fmt.Println(args[1]) // one response per client
 //		} else {
 //			// some clients did not acknowledge the event in the given delay
