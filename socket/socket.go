@@ -517,20 +517,20 @@ func (s *Socket) _onerror(err any) {
 }
 
 // Called upon closing. Called by `Client`.
-func (s *Socket) _onclose(reason any) *Socket {
+func (s *Socket) _onclose(args ...any) *Socket {
 	if !s.Connected() {
 		return s
 	}
 
-	socket_log.Debug("closing socket - reason %v", reason)
-	s.EmitReserved("disconnecting", reason)
+	socket_log.Debug("closing socket - reason %v", args[0])
+	s.EmitReserved("disconnecting", args...)
 	s._cleanup()
 	s.nsp._remove(s)
 	s.client._remove(s)
 	s.connected_mu.Lock()
 	s.connected = false
 	s.connected_mu.Unlock()
-	s.EmitReserved("disconnect", reason)
+	s.EmitReserved("disconnect", args...)
 	return nil
 }
 

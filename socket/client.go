@@ -221,7 +221,7 @@ func (c *Client) onclose(args ...any) {
 	c.destroy()
 	// `nsps` and `sockets` are cleaned up seamlessly
 	c.sockets.Range(func(id, socket any) bool {
-		socket.(*Socket)._onclose(args[0])
+		socket.(*Socket)._onclose(args...)
 		c.sockets.Delete(id)
 		return true
 	})
