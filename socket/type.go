@@ -29,6 +29,8 @@ type BroadcastFlags struct {
 	Broadcast bool
 	Binary    bool
 	Timeout   *time.Duration
+
+	ExpectSingleResponse bool
 }
 
 type BroadcastOptions struct {

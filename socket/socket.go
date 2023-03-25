@@ -53,7 +53,7 @@ type Socket struct {
 	// The handshake details.
 	handshake *Handshake
 
-	// Additional information that can be attached to the Socket instance and which will be used in the (*socket.Server).fetchSockets() method.
+	// Additional information that can be attached to the Socket instance and which will be used in the (*socket.Server).FetchSockets() method.
 	data    any
 	data_mu sync.RWMutex
 
@@ -163,7 +163,7 @@ func NewSocket(nsp *Namespace, client *Client, auth any) *Socket {
 	s.StrictEventEmitter = NewStrictEventEmitter()
 	s.nsp = nsp
 	s.client = client
-	// Additional information that can be attached to the Socket instance and which will be used in the fetchSockets method
+	// Additional information that can be attached to the Socket instance and which will be used in the FetchSockets method
 	s.data = nil
 	s.connected = false
 	s.canJoin = true

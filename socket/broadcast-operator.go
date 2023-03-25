@@ -168,7 +168,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Data: data,
 	}
 
-	ack, withAck := data[data_len-1].(func(error, []any))
+	ack, withAck := data[data_len-1].(func(...any))
 
 	if !withAck {
 		b.adapter.Broadcast(packet, &BroadcastOptions{
@@ -193,10 +193,14 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 	timer := utils.SetTimeOut(func() {
 		timedOut = true
-		responsesMu.RLock()
-		defer responsesMu.RUnlock()
+		if b.flags.ExpectSingleResponse {
+			ack(errors.New("operation has timed out"), nil)
+		} else {
+			responsesMu.RLock()
+			defer responsesMu.RUnlock()
 
-		ack(errors.New("operation has timed out"), responses)
+			ack(errors.New("operation has timed out"), responses)
+		}
 	}, timeout)
 
 	expectedServerCount := int64(-1)
@@ -209,7 +213,11 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 		if !timedOut && expectedServerCount == atomic.LoadInt64(&actualServerCount) && uint64(len(responses)) == atomic.LoadUint64(&expectedClientCount) {
 			utils.ClearTimeout(timer)
-			ack(nil, responses)
+			if b.flags.ExpectSingleResponse {
+				ack(nil, nil)
+			} else {
+				ack(nil, responses)
+			}
 		}
 	}
 
@@ -232,6 +240,24 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	expectedServerCount = b.adapter.ServerCount()
 	checkCompleteness()
 	return nil
+}
+
+// Emits an event and waits for an acknowledgement from all clients.
+//
+//	io.Timeout(1000).EmitWithAck("some-event")(func(err error, responses []any){
+//		if err == nil {
+//			fmt.Println(args[1]) // one response per client
+//		} else {
+//			// some clients did not acknowledge the event in the given delay
+//		}
+//	})
+//
+// Return:  a `func(func(...any))` that will be fulfilled when all clients have acknowledged the event
+func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(func(...any)) {
+	return func(ack func(...any)) {
+		args = append(args, ack)
+		b.Emit(ev, args...)
+	}
 }
 
 // Gets a list of clients.
@@ -367,9 +393,36 @@ func NewRemoteSocket(adapter Adapter, details SocketDetails) *RemoteSocket {
 	r.handshake = details.Handshake()
 	r.rooms = types.NewSet(details.Rooms().Keys()...)
 	r.data = details.Data()
-	r.operator = NewBroadcastOperator(adapter, types.NewSet[Room](Room(r.id)), nil, nil)
+	r.operator = NewBroadcastOperator(adapter, types.NewSet[Room](Room(r.id)), types.NewSet[Room](), &BroadcastFlags{
+		ExpectSingleResponse: true,
+	})
 
 	return r
+}
+
+// Adds a timeout in milliseconds for the next operation.
+//
+//	sockets :=  io.FetchSockets()
+//
+//	for _, socket := range sockets {
+//		if (someCondition) {
+//			socket.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
+//				if args[0] != nil {
+//					// the client did not acknowledge the event in the given delay
+//				}
+//			})
+//		}
+//	}
+//
+//	// Note: if possible, using a room instead of looping over all sockets is preferable
+//
+//	io.Timeout(1000 * time.Millisecond).To(someConditionRoom).Emit("some-event", func(error, args []any) {
+//		// ...
+//	})
+//
+// Param: time.Duration - timeout
+func (r *RemoteSocket) Timeout(timeout time.Duration) *BroadcastOperator {
+	return r.operator.Timeout(timeout)
 }
 
 func (r *RemoteSocket) Emit(ev string, args ...any) error {

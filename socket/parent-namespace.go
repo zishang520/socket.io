@@ -57,7 +57,7 @@ func (p *ParentNamespace) CreateChild(name string) *Namespace {
 }
 
 func (p *ParentNamespace) FetchSockets() ([]*RemoteSocket, error) {
-	// note: we could make the fetchSockets() method work for dynamic namespaces created with a regex (by sending the
+	// note: we could make the FetchSockets() method work for dynamic namespaces created with a regex (by sending the
 	// regex to the other Socket.IO servers, and returning the sockets of each matching namespace for example), but
 	// the behavior for namespaces created with a function is less clear
 	// note²: we cannot loop over each children namespace, because with multiple Socket.IO servers, a given namespace
