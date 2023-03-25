@@ -458,7 +458,8 @@ func (s *Socket) onevent(packet *parser.Packet) {
 	}
 	s._anyListeners_mu.RLock()
 	if s._anyListeners != nil && len(s._anyListeners) > 0 {
-		listeners := append([]events.Listener{}, s._anyListeners[:]...)
+		listeners := make([]events.Listener, len(s._anyListeners))
+		copy(listeners, s._anyListeners)
 		s._anyListeners_mu.RUnlock()
 		for _, listener := range listeners {
 			listener(args...)
@@ -826,7 +827,8 @@ func (s *Socket) OffAny(listener events.Listener) *Socket {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
 		for i, _listener := range s._anyListeners {
 			if listenerPointer == reflect.ValueOf(_listener).Pointer() {
-				s._anyListeners = append(s._anyListeners[:i], s._anyListeners[i+1:]...)
+				copy(s._anyListeners[i:], s._anyListeners[i+1:])
+				s._anyListeners = s._anyListeners[:len(s._anyListeners)-1]
 				return s
 			}
 		}
@@ -921,7 +923,8 @@ func (s *Socket) OffAnyOutgoing(listener events.Listener) *Socket {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
 		for i, _listener := range s._anyOutgoingListeners {
 			if listenerPointer == reflect.ValueOf(_listener).Pointer() {
-				s._anyOutgoingListeners = append(s._anyOutgoingListeners[:i], s._anyOutgoingListeners[i+1:]...)
+				copy(s._anyOutgoingListeners[i:], s._anyOutgoingListeners[i+1:])
+				s._anyOutgoingListeners = s._anyOutgoingListeners[:len(s._anyOutgoingListeners)-1]
 				return s
 			}
 		}
@@ -947,7 +950,8 @@ func (s *Socket) ListenersAnyOutgoing() []events.Listener {
 func (s *Socket) notifyOutgoingListeners(packet *parser.Packet) {
 	s._anyOutgoingListeners_mu.RLock()
 	if s._anyOutgoingListeners != nil && len(s._anyOutgoingListeners) > 0 {
-		listeners := append([]events.Listener{}, s._anyOutgoingListeners[:]...)
+		listeners := make([]events.Listener, len(s._anyOutgoingListeners))
+		copy(listeners, s._anyOutgoingListeners)
 		s._anyOutgoingListeners_mu.RUnlock()
 		for _, listener := range listeners {
 			if args, ok := packet.Data.([]any); ok {

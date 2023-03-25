@@ -81,6 +81,7 @@ func (a *adapter) Del(id SocketId, room Room) {
 	}
 	a._del(room, id)
 }
+
 func (a *adapter) _del(room Room, id SocketId) {
 	if ids, ok := a.rooms.Load(room); ok {
 		if ids.(*types.Set[SocketId]).Delete(id) {
@@ -276,4 +277,12 @@ func (a *adapter) computeExceptSids(exceptRooms *types.Set[Room]) *types.Set[Soc
 func (a *adapter) ServerSideEmit(ev string, args ...any) error {
 	utils.Log().Warning(`this adapter does not support the ServerSideEmit() functionality`)
 	return nil
+}
+
+// Save the client session in order to restore it upon reconnection.
+func (a *adapter) PersistSession(session *SessionToPersist) {}
+
+// Restore the session and find the packets that were missed by the client.
+func (a *adapter) RestoreSession(pid PrivateSessionId, offset string) {
+	// return nil
 }

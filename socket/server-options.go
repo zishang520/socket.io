@@ -11,21 +11,65 @@ type ServerOptionsInterface interface {
 	config.ServerOptionsInterface
 	config.AttachOptionsInterface
 
-	SetServeClient(serveClient bool)
+	SetServeClient(bool)
 	GetRawServeClient() *bool
 	ServeClient() bool
 
-	SetAdapter(adapter Adapter)
+	SetAdapter(Adapter)
 	GetRawAdapter() Adapter
 	Adapter() Adapter
 
-	SetParser(parser parser.Parser)
+	SetParser(parser.Parser)
 	GetRawParser() parser.Parser
 	Parser() parser.Parser
 
-	SetConnectTimeout(connectTimeout time.Duration)
+	SetConnectTimeout(time.Duration)
 	GetRawConnectTimeout() *time.Duration
 	ConnectTimeout() time.Duration
+
+	SetConnectionStateRecovery(*ConnectionStateRecovery)
+	GetRawConnectionStateRecovery() *ConnectionStateRecovery
+	ConnectionStateRecovery() *ConnectionStateRecovery
+
+	SetCleanupEmptyChildNamespaces(bool)
+	GetRawCleanupEmptyChildNamespaces() *bool
+	CleanupEmptyChildNamespaces() bool
+}
+
+type ConnectionStateRecovery struct {
+	// The backup duration of the sessions and the packets.
+	maxDisconnectionDuration *int64
+
+	// Whether to skip middlewares upon successful connection state recovery.
+	skipMiddlewares *bool
+}
+
+func (c *ConnectionStateRecovery) SetMaxDisconnectionDuration(maxDisconnectionDuration int64) {
+	c.maxDisconnectionDuration = &maxDisconnectionDuration
+}
+func (c *ConnectionStateRecovery) GetRawMaxDisconnectionDuration() *int64 {
+	return c.maxDisconnectionDuration
+}
+func (c *ConnectionStateRecovery) MaxDisconnectionDuration() int64 {
+	if c.maxDisconnectionDuration == nil {
+		return 120000
+	}
+
+	return *c.maxDisconnectionDuration
+}
+
+func (c *ConnectionStateRecovery) SetSkipMiddlewares(skipMiddlewares bool) {
+	c.skipMiddlewares = &skipMiddlewares
+}
+func (c *ConnectionStateRecovery) GetRawSkipMiddlewares() *bool {
+	return c.skipMiddlewares
+}
+func (c *ConnectionStateRecovery) SkipMiddlewares() bool {
+	if c.skipMiddlewares == nil {
+		return true
+	}
+
+	return *c.skipMiddlewares
 }
 
 type ServerOptions struct {
@@ -43,6 +87,14 @@ type ServerOptions struct {
 
 	// how many ms before a client without namespace is closed
 	connectTimeout *time.Duration
+
+	// Whether to enable the recovery of connection state when a client temporarily disconnects.
+	//
+	// The connection state includes the missed packets, the rooms the socket was in and the `data` attribute.
+	connectionStateRecovery *ConnectionStateRecovery
+
+	// Whether to remove child namespaces that have no sockets connected to them
+	cleanupEmptyChildNamespaces *bool
 }
 
 func DefaultServerOptions() *ServerOptions {
@@ -190,4 +242,32 @@ func (s *ServerOptions) ConnectTimeout() time.Duration {
 	}
 
 	return *s.connectTimeout
+}
+
+func (s *ServerOptions) SetConnectionStateRecovery(connectionStateRecovery *ConnectionStateRecovery) {
+	s.connectionStateRecovery = connectionStateRecovery
+}
+func (s *ServerOptions) GetRawConnectionStateRecovery() *ConnectionStateRecovery {
+	return s.connectionStateRecovery
+}
+func (s *ServerOptions) ConnectionStateRecovery() *ConnectionStateRecovery {
+	if s.connectionStateRecovery == nil {
+		return &ConnectionStateRecovery{}
+	}
+
+	return s.connectionStateRecovery
+}
+
+func (s *ServerOptions) SetCleanupEmptyChildNamespaces(cleanupEmptyChildNamespaces bool) {
+	s.cleanupEmptyChildNamespaces = &cleanupEmptyChildNamespaces
+}
+func (s *ServerOptions) GetRawCleanupEmptyChildNamespaces() *bool {
+	return s.cleanupEmptyChildNamespaces
+}
+func (s *ServerOptions) CleanupEmptyChildNamespaces() bool {
+	if s.cleanupEmptyChildNamespaces == nil {
+		return false
+	}
+
+	return *s.cleanupEmptyChildNamespaces
 }
