@@ -52,13 +52,13 @@ type SessionToPersist struct {
 type Session struct {
 	SessionToPersist
 
-	MissedPackets [][]any
+	MissedPackets []any
 }
 
 type PersistedPacket struct {
 	Id        string
 	EmittedAt int64
-	Data      []any
+	Data      any
 	Opts      *BroadcastOptions
 }
 

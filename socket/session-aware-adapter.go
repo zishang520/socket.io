@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/zishang520/engine.io/utils"
+	"github.com/zishang520/socket.io/parser"
 )
 
 type SessionAwareAdapter struct {
@@ -20,6 +21,7 @@ func (*SessionAwareAdapter) New(nsp NamespaceInterface) Adapter {
 	s := &SessionAwareAdapter{}
 	s.adapter = &adapter{}
 	s.adapter.New(nsp)
+	s._broadcast = s.broadcast
 
 	s.maxDisconnectionDuration =
 		nsp.Server().opts.ConnectionStateRecovery().MaxDisconnectionDuration()
@@ -95,4 +97,26 @@ func (s *SessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 		SessionToPersist: session.SessionToPersist,
 		MissedPackets:    missedPackets,
 	}
+}
+
+func (s *SessionAwareAdapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
+	isEventPacket := packet.Type == parser.EVENT
+	// packets with acknowledgement are not stored because the acknowledgement function cannot be serialized and
+	// restored on another server upon reconnection
+	withoutAcknowledgement := packet.Id == nil
+	notVolatile := opts.Flags != nil && opts.Flags.Volatile == false
+
+	if isEventPacket && withoutAcknowledgement && notVolatile {
+		id := utils.YeastDate()
+		// the offset is stored at the end of the data array, so the client knows the ID of the last packet it has
+		// processed (and the format is backward-compatible)
+		packet.Data = any(append(packet.Data.([]any), any(id)))
+		s.packets = append(s.packets, &PersistedPacket{
+			Id:        id,
+			EmittedAt: time.Now().UnixMilli(),
+			Data:      packet.Data,
+			Opts:      opts,
+		})
+	}
+	s.adapter.broadcast(packet, opts)
 }
