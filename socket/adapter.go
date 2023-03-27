@@ -283,6 +283,6 @@ func (a *adapter) ServerSideEmit(ev string, args ...any) error {
 func (a *adapter) PersistSession(session *SessionToPersist) {}
 
 // Restore the session and find the packets that were missed by the client.
-func (a *adapter) RestoreSession(pid PrivateSessionId, offset string) {
-	// return nil
+func (a *adapter) RestoreSession(pid PrivateSessionId, offset string) *Session {
+	return nil
 }
