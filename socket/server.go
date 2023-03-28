@@ -70,6 +70,10 @@ func (s *Server) Encoder() parser.Encoder {
 	return s.encoder
 }
 
+func (s *Server) Opts() *ServerOptions {
+	return s.opts
+}
+
 // Represents a Socket.IO server.
 //
 //	import (
@@ -335,9 +339,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	server_log.Debug("serve client %s", _type)
 	w.Header().Set("Cache-Control", "public, max-age=0")
 	if isMap {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	} else {
-		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	}
 	w.Header().Set("ETag", expectedEtag)
 	s.sendFile(filename, w, r)
@@ -558,6 +562,21 @@ func (s *Server) Except(room ...Room) *BroadcastOperator {
 	return s.sockets.Except(room...)
 }
 
+// Emits an event and waits for an acknowledgement from all clients.
+//
+//	io.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args ...any) {
+//		if args[0] == nil {
+//			fmt.Println(args[1]) // one response per client
+//		} else {
+//			// some servers did not acknowledge the event in the given delay
+//		}
+//	})
+//
+// Return: a `func(func(...any))` that will be fulfilled when all servers have acknowledged the event
+func (s *Server) EmitWithAck(ev string, args ...any) func(func(...any)) {
+	return s.sockets.EmitWithAck(ev, args...)
+}
+
 // Sends a `message` event to all clients.
 //
 // This method mimics the WebSocket.send() method.
@@ -590,9 +609,9 @@ func (s *Server) Write(args ...any) *Server {
 //	// acknowledgements (without binary content) are supported too:
 //	io.ServerSideEmit("ping", func(args ...any) {
 //		if args[0] != nil {
-//			// some clients did not acknowledge the event in the given delay
+//			// some servers did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]) // one response per client
+//			fmt.Println(args[1]) // one response per server (except the current one)
 //		}
 //	})
 //
@@ -601,6 +620,21 @@ func (s *Server) Write(args ...any) *Server {
 //	})
 func (s *Server) ServerSideEmit(ev string, args ...any) error {
 	return s.sockets.ServerSideEmit(ev, args...)
+}
+
+// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
+//
+//	io.Timeout(1000 * time.Millisecond).ServerSideEmitWithAck("some-event")(func(args ...any) {
+//		if args[0] == nil {
+//			fmt.Println(args[1]) // one response per client
+//		} else {
+//			// some servers did not acknowledge the event in the given delay
+//		}
+//	})
+//
+// Return: a `func(func(...any))` that will be fulfilled when all servers have acknowledged the event
+func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(func(...any)) {
+	return s.sockets.ServerSideEmitWithAck(ev, args...)
 }
 
 // Gets a list of socket ids.

@@ -24,7 +24,7 @@ func (*SessionAwareAdapter) New(nsp NamespaceInterface) AdapterInterface {
 	s := &SessionAwareAdapter{}
 	s.Adapter = &Adapter{}
 	s.Adapter.New(nsp)
-	s._broadcast = s.broadcast
+	s.SetBroadcast(s.broadcast)
 
 	s.maxDisconnectionDuration =
 		nsp.Server().opts.ConnectionStateRecovery().MaxDisconnectionDuration()
