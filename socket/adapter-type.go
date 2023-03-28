@@ -3,6 +3,7 @@ package socket
 import (
 	"time"
 
+	"github.com/zishang520/engine.io/packet"
 	"github.com/zishang520/engine.io/types"
 )
 
@@ -50,7 +51,7 @@ type SessionToPersist struct {
 }
 
 type Session struct {
-	SessionToPersist
+	*SessionToPersist
 
 	MissedPackets []any
 }
@@ -63,7 +64,7 @@ type PersistedPacket struct {
 }
 
 type SessionWithTimestamp struct {
-	SessionToPersist
+	*SessionToPersist
 
 	DisconnectedAt int64
 }
