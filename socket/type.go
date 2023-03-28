@@ -9,8 +9,8 @@ import (
 	"github.com/zishang520/socket.io/parser"
 )
 
-type Adapter interface {
-	New(NamespaceInterface) Adapter
+type AdapterInterface interface {
+	New(NamespaceInterface) AdapterInterface
 
 	Rooms() *sync.Map
 	Sids() *sync.Map
@@ -97,7 +97,7 @@ type NamespaceInterface interface {
 
 	Sockets() *sync.Map
 	Server() *Server
-	Adapter() Adapter
+	Adapter() AdapterInterface
 	Name() string
 	Ids() uint64
 

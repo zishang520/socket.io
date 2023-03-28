@@ -15,9 +15,9 @@ type ServerOptionsInterface interface {
 	GetRawServeClient() *bool
 	ServeClient() bool
 
-	SetAdapter(Adapter)
-	GetRawAdapter() Adapter
-	Adapter() Adapter
+	SetAdapter(AdapterInterface)
+	GetRawAdapter() AdapterInterface
+	Adapter() AdapterInterface
 
 	SetParser(parser.Parser)
 	GetRawParser() parser.Parser
@@ -80,7 +80,7 @@ type ServerOptions struct {
 	serveClient *bool
 
 	// the adapter to use
-	adapter Adapter
+	adapter AdapterInterface
 
 	// the parser to use
 	parser parser.Parser
@@ -204,15 +204,15 @@ func (s *ServerOptions) ServeClient() bool {
 	return *s.serveClient
 }
 
-func (s *ServerOptions) SetAdapter(adapter Adapter) {
+func (s *ServerOptions) SetAdapter(adapter AdapterInterface) {
 	s.adapter = adapter
 }
-func (s *ServerOptions) GetRawAdapter() Adapter {
+func (s *ServerOptions) GetRawAdapter() AdapterInterface {
 	return s.adapter
 }
-func (s *ServerOptions) Adapter() Adapter {
+func (s *ServerOptions) Adapter() AdapterInterface {
 	if s.adapter == nil {
-		return &adapter{}
+		return &Adapter{}
 	}
 	return s.adapter
 }

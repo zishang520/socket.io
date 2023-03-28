@@ -36,7 +36,10 @@ type Server struct {
 	*StrictEventEmitter
 
 	sockets NamespaceInterface
-	engine  engine.Server
+	// A reference to the underlying Engine.IO server.
+	//
+	//	clientsCount := io.Engine().ClientsCount()
+	engine engine.Server
 
 	_parser parser.Parser
 	encoder parser.Encoder
@@ -44,7 +47,7 @@ type Server struct {
 	_nsps *sync.Map
 
 	parentNsps      *sync.Map
-	_adapter        Adapter
+	_adapter        AdapterInterface
 	_serveClient    bool
 	opts            *ServerOptions
 	eio             engine.Server
@@ -115,9 +118,14 @@ func NewServer(srv any, opts *ServerOptions) *Server {
 	if _adapter := opts.Adapter(); _adapter != nil {
 		s.SetAdapter(_adapter)
 	} else {
-		s.SetAdapter(&adapter{})
+		if opts.GetRawConnectionStateRecovery() != nil {
+			s.SetAdapter(&SessionAwareAdapter{})
+		} else {
+			s.SetAdapter(&Adapter{})
+		}
 	}
 	s.sockets = s.Of("/", nil)
+
 	s.StrictEventEmitter = s.sockets.EventEmitter()
 
 	s.opts = opts
@@ -187,7 +195,7 @@ func (s *Server) ConnectTimeout() time.Duration {
 }
 
 // Sets the adapter for rooms.
-func (s *Server) SetAdapter(v Adapter) *Server {
+func (s *Server) SetAdapter(v AdapterInterface) *Server {
 	s._adapter = v
 	s._nsps.Range(func(_, nsp any) bool {
 		nsp.(*Namespace)._initAdapter()
@@ -195,7 +203,7 @@ func (s *Server) SetAdapter(v Adapter) *Server {
 	})
 	return s
 }
-func (s *Server) Adapter() Adapter {
+func (s *Server) Adapter() AdapterInterface {
 	return s._adapter
 }
 

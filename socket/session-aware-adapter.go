@@ -11,7 +11,7 @@ import (
 )
 
 type SessionAwareAdapter struct {
-	*adapter
+	*Adapter
 
 	maxDisconnectionDuration int64
 
@@ -20,10 +20,10 @@ type SessionAwareAdapter struct {
 	mu_packets sync.RWMutex
 }
 
-func (*SessionAwareAdapter) New(nsp NamespaceInterface) Adapter {
+func (*SessionAwareAdapter) New(nsp NamespaceInterface) AdapterInterface {
 	s := &SessionAwareAdapter{}
-	s.adapter = &adapter{}
-	s.adapter.New(nsp)
+	s.Adapter = &Adapter{}
+	s.Adapter.New(nsp)
 	s._broadcast = s.broadcast
 
 	s.maxDisconnectionDuration =
@@ -132,7 +132,7 @@ func (s *SessionAwareAdapter) broadcast(packet *parser.Packet, opts *BroadcastOp
 			Opts:      opts,
 		})
 	}
-	s.adapter.broadcast(packet, opts)
+	s.Adapter.broadcast(packet, opts)
 }
 
 func shouldIncludePacket(sessionRooms *types.Set[Room], opts *BroadcastOptions) bool {

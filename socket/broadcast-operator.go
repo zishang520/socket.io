@@ -13,13 +13,13 @@ import (
 )
 
 type BroadcastOperator struct {
-	adapter     Adapter
+	adapter     AdapterInterface
 	rooms       *types.Set[Room]
 	exceptRooms *types.Set[Room]
 	flags       *BroadcastFlags
 }
 
-func NewBroadcastOperator(adapter Adapter, rooms *types.Set[Room], exceptRooms *types.Set[Room], flags *BroadcastFlags) *BroadcastOperator {
+func NewBroadcastOperator(adapter AdapterInterface, rooms *types.Set[Room], exceptRooms *types.Set[Room], flags *BroadcastFlags) *BroadcastOperator {
 	b := &BroadcastOperator{}
 	b.adapter = adapter
 	if rooms == nil {
@@ -386,7 +386,7 @@ func (r *RemoteSocket) Data() any {
 	return r.data
 }
 
-func NewRemoteSocket(adapter Adapter, details SocketDetails) *RemoteSocket {
+func NewRemoteSocket(adapter AdapterInterface, details SocketDetails) *RemoteSocket {
 	r := &RemoteSocket{}
 
 	r.id = details.Id()

@@ -74,7 +74,7 @@ type Socket struct {
 	canJoin_mu   sync.RWMutex
 
 	server                *Server
-	adapter               Adapter
+	adapter               AdapterInterface
 	acks                  *sync.Map
 	fns                   []func([]any, func(error))
 	flags                 *BroadcastFlags

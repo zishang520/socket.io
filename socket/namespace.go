@@ -45,7 +45,7 @@ type Namespace struct {
 
 	name    string
 	sockets *sync.Map
-	adapter Adapter
+	adapter AdapterInterface
 	server  *Server
 	_fns    []func(*Socket, func(*ExtendedError))
 
@@ -60,7 +60,7 @@ func (n *Namespace) Server() *Server {
 	return n.server
 }
 
-func (n *Namespace) Adapter() Adapter {
+func (n *Namespace) Adapter() AdapterInterface {
 	return n.adapter
 }
 
@@ -139,7 +139,7 @@ func NewNamespace(server *Server, name string) *Namespace {
 }
 
 // Initializes the `Adapter` for n nsp.
-// Run upon changing adapter by `Server#adapter`
+// Run upon changing adapter by `Server.Adapter`
 // in addition to the constructor.
 func (n *Namespace) _initAdapter() {
 	n.adapter = n.server.Adapter().New(n)
