@@ -674,7 +674,7 @@ func (s *Socket) dispatch(event []any) {
 //
 //	io.On("connection", func(clients ...any) {
 //		socket := clients[0].(*socket.Socket)
-//		socket.Use(func(append(events []any, next func(error)) {
+//		socket.Use(func(events []any, next func(error)) {
 //			if isUnauthorized(events[0]) {
 //				next(error.New("unauthorized event"))
 //				return
@@ -700,7 +700,8 @@ func (s *Socket) Use(fn func([]any, func(error))) *Socket {
 // Executes the middleware for an incoming event.
 func (s *Socket) run(event []any, fn func(err error)) {
 	s.fns_mu.RLock()
-	fns := append([]func([]any, func(error)){}, s.fns...)
+	fns := make([]func([]any, func(error)), len(s.fns))
+	copy(fns, s.fns)
 	s.fns_mu.RUnlock()
 	if length := len(fns); length > 0 {
 		var run func(i int)

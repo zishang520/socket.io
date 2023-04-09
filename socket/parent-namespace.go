@@ -46,7 +46,8 @@ func (p *ParentNamespace) CreateChild(name string) *Namespace {
 	namespace := NewNamespace(p.server, name)
 
 	namespace._fns_mu.RLock()
-	namespace._fns = append([]func(*Socket, func(*ExtendedError)){}, p._fns...)
+	namespace._fns = make([]func(*Socket, func(*ExtendedError)), len(p._fns))
+	copy(namespace._fns, p._fns)
 	namespace._fns_mu.RUnlock()
 
 	namespace.AddListener("connect", p.Listeners("connect")...)

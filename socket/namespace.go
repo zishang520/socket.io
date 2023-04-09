@@ -166,7 +166,8 @@ func (n *Namespace) Use(fn func(*Socket, func(*ExtendedError))) NamespaceInterfa
 // Executes the middleware for an incoming client.
 func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 	n._fns_mu.RLock()
-	fns := append([]func(*Socket, func(*ExtendedError)){}, n._fns...)
+	fns := make([]func(*Socket, func(*ExtendedError)), len(n._fns))
+	copy(fns, n._fns)
 	n._fns_mu.RUnlock()
 	if length := len(fns); length > 0 {
 		var run func(i int)
