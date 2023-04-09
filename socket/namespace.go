@@ -7,32 +7,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
 )
 
 var namespace_log = log.NewLog("socket.io:namespace")
-
-type ExtendedError struct {
-	message string
-	data    any
-}
-
-func NewExtendedError(message string, data any) *ExtendedError {
-	return &ExtendedError{message: message, data: data}
-}
-
-func (e *ExtendedError) Err() error {
-	return e
-}
-
-func (e *ExtendedError) Data() any {
-	return e.data
-}
-
-func (e *ExtendedError) Error() string {
-	return e.message
-}
 
 var NAMESPACE_RESERVED_EVENTS = types.NewSet("connect", "connection", "new_namespace")
 
@@ -247,9 +227,14 @@ func (n *Namespace) Except(room ...Room) *BroadcastOperator {
 }
 
 // Adds a new client.
-func (n *Namespace) Add(client *Client, query any, fn func(*Socket)) *Socket {
+func (n *Namespace) Add(client *Client, auth any, fn func(*Socket)) {
 	namespace_log.Debug("adding socket to nsp %s", n.name)
-	socket := NewSocket(n, client, query)
+	socket := n._createSocket(client, auth)
+	if n.server.Opts().ConnectionStateRecovery().SkipMiddlewares() && socket.Recovered() && client.Conn().ReadyState() == "open" {
+		n._doConnect(socket, fn)
+		return
+	}
+	// socket := NewSocket(n, client, query)
 	n.run(socket, func(err *ExtendedError) {
 		if "open" != client.conn.ReadyState() {
 			namespace_log.Debug("next called after client was closed - ignoring socket")
@@ -274,21 +259,44 @@ func (n *Namespace) Add(client *Client, query any, fn func(*Socket)) *Socket {
 				return
 			}
 		}
-		// track socket
-		n.sockets.Store(socket.Id(), socket)
-		// it's paramount that the internal `onconnect` logic
-		// fires before user-set events to prevent state order
-		// violations (such as a disconnection before the connection
-		// logic is complete)
-		socket._onconnect()
-		if fn != nil {
-			fn(socket)
-		}
-		// fire user-set events
-		n.EmitReserved("connect", socket)
-		n.EmitReserved("connection", socket)
+
+		n._doConnect(socket, fn)
 	})
-	return socket
+}
+
+func (n *Namespace) _createSocket(client *Client, auth any) *Socket {
+	var _auth *SeesionData
+	if mapstructure.Decode(auth, &_auth) == nil {
+		sessionId, has_sessionId := _auth.GetPid()
+		offset, has_offset := _auth.GetOffset()
+		if has_sessionId && has_offset && n.server.Opts().GetRawConnectionStateRecovery() != nil {
+			session := n.adapter.RestoreSession(PrivateSessionId(sessionId), offset)
+			if session != nil {
+				namespace_log.Debug("connection state recovered for sid %s", session.Sid)
+				return NewSocket(n, client, auth, session)
+			} else {
+				namespace_log.Debug("unable to restore session state")
+			}
+		}
+	}
+	return NewSocket(n, client, auth)
+}
+
+func (n *Namespace) _doConnect(socket *Socket, fn func(*Socket)) {
+	// track socket
+	n.sockets.Store(socket.Id(), socket)
+	// it's paramount that the internal `onconnect` logic
+	// fires before user-set events to prevent state order
+	// violations (such as a disconnection before the connection
+	// logic is complete)
+	socket._onconnect()
+	if fn != nil {
+		fn(socket)
+	}
+
+	// fire user-set events
+	n.EmitReserved("connect", socket)
+	n.EmitReserved("connection", socket)
 }
 
 // Removes a client. Called by each `Socket`.
@@ -318,6 +326,23 @@ func (n *Namespace) _remove(socket *Socket) {
 //	})
 func (n *Namespace) Emit(ev string, args ...any) error {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).Emit(ev, args...)
+}
+
+// Emits an event and waits for an acknowledgement from all clients.
+//
+//	myNamespace := io.Of("/my-namespace")
+//
+//	myNamespace.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args ...any) {
+//		if args[0] == nil {
+//			fmt.Println(args[1]) // one response per client
+//		} else {
+//			// some servers did not acknowledge the event in the given delay
+//		}
+//	})
+//
+// Return:  a `func(func(...any))` that will be fulfilled when all clients have acknowledged the event
+func (n *Namespace) EmitWithAck(ev string, args ...any) func(func(...any)) {
+	return NewBroadcastOperator(n.adapter, nil, nil, nil).EmitWithAck(ev, args...)
 }
 
 // Sends a `message` event to all clients.
@@ -356,9 +381,9 @@ func (n *Namespace) Write(args ...any) NamespaceInterface {
 //	// acknowledgements (without binary content) are supported too:
 //	myNamespace.ServerSideEmit("ping", func(args ...any) {
 //		if args[0] != nil {
-//			// some clients did not acknowledge the event in the given delay
+//			// some servers did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]) // one response per client
+//			fmt.Println(args[1]) // one response per server (except the current one)
 //		}
 //	})
 //
@@ -373,6 +398,26 @@ func (n *Namespace) ServerSideEmit(ev string, args ...any) error {
 	n.adapter.ServerSideEmit(ev, args...)
 
 	return nil
+}
+
+// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
+//
+//	myNamespace := io.Of("/my-namespace")
+//
+//	myNamespace.Timeout(1000 * time.Millisecond).ServerSideEmitWithAck("some-event")(func(args ...any) {
+//		if args[0] == nil {
+//			fmt.Println(args[1]) // one response per client
+//		} else {
+//			// some servers did not acknowledge the event in the given delay
+//		}
+//	})
+//
+// Return: a `func(func(...any))` that will be fulfilled when all servers have acknowledged the event
+func (n *Namespace) ServerSideEmitWithAck(ev string, args ...any) func(func(...any)) {
+	return func(ack func(...any)) {
+		args = append(args, ack)
+		n.ServerSideEmit(ev, args...)
+	}
 }
 
 // Called when a packet is received from another Socket.IO server

@@ -114,10 +114,13 @@ type NamespaceInterface interface {
 	Except(...Room) *BroadcastOperator
 
 	// Adds a new client.
-	Add(*Client, any, func(*Socket)) *Socket
+	Add(*Client, any, func(*Socket))
 
 	// Emits to all clients.
 	Emit(string, ...any) error
+
+	// Emits an event and waits for an acknowledgement from all clients.
+	EmitWithAck(string, ...any) func(func(...any))
 
 	// Sends a `message` event to all clients.
 	Send(...any) NamespaceInterface
@@ -127,6 +130,9 @@ type NamespaceInterface interface {
 
 	// Emit a packet to other Socket.IO servers
 	ServerSideEmit(string, ...any) error
+
+	// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
+	ServerSideEmitWithAck(string, ...any) func(func(...any))
 
 	// Gets a list of clients.
 	AllSockets() (*types.Set[SocketId], error)

@@ -9,6 +9,8 @@ import (
 	"github.com/zishang520/socket.io/parser"
 )
 
+var parent_namespace_log = log.NewLog("socket.io:parent-namespace")
+
 var count uint64 = 0
 
 type ParentNamespace struct {
