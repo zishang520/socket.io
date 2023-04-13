@@ -526,8 +526,8 @@ func (s *Socket) _onclose(args ...any) *Socket {
 	socket_log.Debug("closing socket - reason %v", args[0])
 	s.EmitReserved("disconnecting", args...)
 	s._cleanup()
-	s.nsp._remove(s)
-	s.client._remove(s)
+	s.nsp.remove(s)
+	s.client.remove(s)
 	s.connected_mu.Lock()
 	s.connected = false
 	s.connected_mu.Unlock()

@@ -121,7 +121,7 @@ func (c *Client) _disconnect() {
 }
 
 // Removes a socket. Called by each `Socket`.
-func (c *Client) _remove(socket *Socket) {
+func (c *Client) remove(socket *Socket) {
 	if nsp, ok := c.sockets.Load(socket.Id()); ok {
 		c.sockets.Delete(socket.Id())
 		c.nsps.Delete(nsp.(*Socket).Nsp().Name())

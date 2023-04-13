@@ -30,6 +30,8 @@ type Namespace struct {
 	_fns    []func(*Socket, func(*ExtendedError))
 
 	_fns_mu sync.RWMutex
+
+	_remove func(socket *Socket)
 }
 
 func (n *Namespace) Sockets() *sync.Map {
@@ -113,6 +115,7 @@ func NewNamespace(server *Server, name string) *Namespace {
 	atomic.StoreUint64(&n._ids, 0)
 	n.server = server
 	n.name = name
+	n._remove = n.namespace_remove
 	n._initAdapter()
 
 	return n
@@ -300,7 +303,12 @@ func (n *Namespace) _doConnect(socket *Socket, fn func(*Socket)) {
 }
 
 // Removes a client. Called by each `Socket`.
-func (n *Namespace) _remove(socket *Socket) {
+func (n *Namespace) remove(socket *Socket) {
+	n._remove(socket)
+}
+
+// Removes a client. Called by each `Socket`.
+func (n *Namespace) namespace_remove(socket *Socket) {
 	if _, ok := n.sockets.LoadAndDelete(socket.Id()); !ok {
 		namespace_log.Debug("ignoring remove for %s", socket.Id())
 	}

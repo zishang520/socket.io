@@ -45,6 +45,7 @@ func (p *ParentNamespace) Emit(ev string, args ...any) error {
 }
 
 func (p *ParentNamespace) CreateChild(name string) *Namespace {
+	parent_namespace_log.Debug("creating child namespace %s", name)
 	namespace := NewNamespace(p.server, name)
 
 	namespace._fns_mu.RLock()
@@ -55,6 +56,24 @@ func (p *ParentNamespace) CreateChild(name string) *Namespace {
 	namespace.AddListener("connect", p.Listeners("connect")...)
 	namespace.AddListener("connection", p.Listeners("connection")...)
 	p.children.Add(namespace)
+
+	if p.server.Opts().CleanupEmptyChildNamespaces() {
+		namespace._remove = func(socket *Socket) {
+			namespace.namespace_remove(socket)
+			empty := true
+			namespace.sockets.Range(func(any, any) bool {
+				empty = false
+				return false
+			})
+			if empty {
+				parent_namespace_log.Debug("closing child namespace %s", name)
+				namespace.adapter.Close()
+				p.server._nsps.Delete(namespace.name)
+				p.children.Delete(namespace)
+			}
+		}
+	}
+
 	p.server._nsps.Store(name, namespace)
 	return namespace
 }
