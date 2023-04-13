@@ -17,8 +17,9 @@ import (
 )
 
 var (
-	SOCKET_RESERVED_EVENTS = types.NewSet("connect", "connect_error", "disconnect", "disconnecting", "newListener", "removeListener")
-	socket_log             = log.NewLog("socket.io:socket")
+	SOCKET_RESERVED_EVENTS         = types.NewSet("connect", "connect_error", "disconnect", "disconnecting", "newListener", "removeListener")
+	socket_log                     = log.NewLog("socket.io:socket")
+	RECOVERABLE_DISCONNECT_REASONS = types.NewSet("transport error", "transport close", "forced close", "ping timeout", "server shutting down", "forced server close")
 )
 
 type Handshake struct {
@@ -50,6 +51,9 @@ type Socket struct {
 
 	// An unique identifier for the session.
 	id SocketId
+	// Whether the connection state was recovered after a temporary disconnection. In that case, any missed packets will
+	// be transmitted to the client, the data attribute and the rooms will be restored.
+	recovered bool
 	// The handshake details.
 	handshake *Handshake
 
@@ -70,9 +74,13 @@ type Socket struct {
 	//	})
 	connected    bool
 	connected_mu sync.RWMutex
-	canJoin      bool
-	canJoin_mu   sync.RWMutex
+	// The session ID, which must not be shared (unlike {@link id}).
+	pid PrivateSessionId
 
+	canJoin    bool
+	canJoin_mu sync.RWMutex
+
+	// TODO: remove this unused reference
 	server                *Server
 	adapter               AdapterInterface
 	acks                  *sync.Map
@@ -93,6 +101,10 @@ func (s *Socket) Nsp() *Namespace {
 
 func (s *Socket) Id() SocketId {
 	return s.id
+}
+
+func (s *Socket) Recovered() bool {
+	return s.recovered
 }
 
 func (s *Socket) Client() *Client {
@@ -158,7 +170,7 @@ func (s *Socket) SetData(data any) {
 //			utils.Log().Info(`socket %s disconnected due to %s`, socket.Id(), reason[0])
 //		})
 //	})
-func NewSocket(nsp *Namespace, client *Client, auth any) *Socket {
+func NewSocket(nsp *Namespace, client *Client, auth any, previousSession *Session) *Socket {
 	s := &Socket{}
 	s.StrictEventEmitter = NewStrictEventEmitter()
 	s.nsp = nsp
@@ -172,15 +184,35 @@ func NewSocket(nsp *Namespace, client *Client, auth any) *Socket {
 	s.flags = &BroadcastFlags{}
 	s.server = nsp.Server()
 	s.adapter = s.nsp.Adapter()
-	if client.conn.Protocol() == 3 {
-		if name := nsp.Name(); name != "/" {
-			s.id = SocketId(name + "#" + client.id)
-		} else {
-			s.id = SocketId(client.id)
+	if previousSession != nil {
+		s.id = previousSession.Sid
+		s.pid = previousSession.Pid
+		for _, room := range previousSession.Rooms.Keys() {
+			s.Join(room)
 		}
+		s.data = previousSession.Data
+		for _, packet := range previousSession.MissedPackets {
+			s.packet(&parser.Packet{
+				Type: parser.EVENT,
+				Data: packet,
+			}, nil)
+		}
+		s.recovered = true
 	} else {
-		id, _ := utils.Base64Id().GenerateId()
-		s.id = SocketId(id) // don't reuse the Engine.IO id because it's sensitive information
+		if client.conn.Protocol() == 3 {
+			if name := nsp.Name(); name != "/" {
+				s.id = SocketId(name + "#" + client.id)
+			} else {
+				s.id = SocketId(client.id)
+			}
+		} else {
+			id, _ := utils.Base64Id().GenerateId()
+			s.id = SocketId(id) // don't reuse the Engine.IO id because it's sensitive information
+		}
+		if s.server.Opts().GetRawConnectionStateRecovery() != nil {
+			id, _ := utils.Base64Id().GenerateId()
+			s.pid = PrivateSessionId(id)
+		}
 	}
 	s.handshake = s.buildHandshake(auth)
 	return s
@@ -237,9 +269,51 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	flags := *s.flags
 	s.flags = &BroadcastFlags{}
 	s.flags_mu.Unlock()
-	s.notifyOutgoingListeners(packet)
-	s.packet(packet, &flags)
+
+	if s.nsp.Server().Opts().GetRawConnectionStateRecovery() != nil {
+		// this ensures the packet is stored and can be transmitted upon reconnection
+		s.adapter.Broadcast(packet, &BroadcastOptions{
+			Rooms:  types.NewSet[Room](Room(s.id)),
+			Except: types.NewSet[Room](),
+			Flags:  &flags,
+		})
+	} else {
+		s.notifyOutgoingListeners(packet)
+		s.packet(packet, &flags)
+	}
+
 	return nil
+}
+
+// Emits an event and waits for an acknowledgement
+//
+//	io.On("connection", func(args ...any) => {
+//		client := args[0].(*socket.Socket)
+//		// without timeout
+//		client.EmitWithAck("hello", "world")(func(args ...any) {
+//			if args[0] == nil {
+//				fmt.Println(args[1]) // one response per client
+//			} else {
+//				// some clients did not acknowledge the event in the given delay
+//			}
+//		})
+//
+//		// with a specific timeout
+//		client.Timeout(1000 * time.Millisecond).EmitWithAck("hello", "world")(func(args ...any) {
+//			if args[0] == nil {
+//				fmt.Println(args[1]) // one response per client
+//			} else {
+//				// some clients did not acknowledge the event in the given delay
+//			}
+//		})
+//	})
+//
+// Return:  a `func(func(...any))` that will be fulfilled when all clients have acknowledged the event
+func (s *Socket) EmitWithAck(ev string, args ...any) func(func(...any)) {
+	return func(ack func(...any)) {
+		args = append(args, ack)
+		s.Emit(ev, args...)
+	}
 }
 
 func (s *Socket) registerAckCallback(id uint64, ack func(...any)) {
@@ -421,6 +495,7 @@ func (s *Socket) _onconnect() {
 			Type: parser.CONNECT,
 			Data: map[string]any{
 				"sid": s.id,
+				"pid": s.pid,
 			},
 		}, nil)
 	}
@@ -525,6 +600,16 @@ func (s *Socket) _onclose(args ...any) *Socket {
 
 	socket_log.Debug("closing socket - reason %v", args[0])
 	s.EmitReserved("disconnecting", args...)
+
+	if s.server.Opts().GetRawConnectionStateRecovery() != nil && RECOVERABLE_DISCONNECT_REASONS.Has(args[0].(string)) {
+		socket_log.Debug("connection state recovery is enabled for sid %s", s.id)
+		s.adapter.PersistSession(&SessionToPersist{
+			Sid:   s.id,
+			Pid:   s.pid,
+			Rooms: types.NewSet[Room](s.Rooms().Keys()...),
+			Data:  s.data,
+		})
+	}
 	s._cleanup()
 	s.nsp.remove(s)
 	s.client.remove(s)

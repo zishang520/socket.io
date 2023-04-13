@@ -282,7 +282,7 @@ func (n *Namespace) _createSocket(client *Client, auth any) *Socket {
 			}
 		}
 	}
-	return NewSocket(n, client, auth)
+	return NewSocket(n, client, auth, nil)
 }
 
 func (n *Namespace) _doConnect(socket *Socket, fn func(*Socket)) {
