@@ -277,8 +277,6 @@ func (n *Namespace) _createSocket(client *Client, auth any) *Socket {
 			if session != nil {
 				namespace_log.Debug("connection state recovered for sid %s", session.Sid)
 				return NewSocket(n, client, auth, session)
-			} else {
-				namespace_log.Debug("unable to restore session state")
 			}
 		}
 	}

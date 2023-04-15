@@ -46,7 +46,12 @@ type Server struct {
 
 	_nsps *sync.Map
 
-	parentNsps      *sync.Map
+	parentNsps *sync.Map
+
+	// A subset of the {@link parentNsps} map, only containing {@link ParentNamespace} which are based on a regular
+	// expression.
+	parentNamespacesFromRegExp *sync.Map
+
 	_adapter        AdapterInterface
 	_serveClient    bool
 	opts            *ServerOptions
@@ -105,6 +110,7 @@ func NewServer(srv any, opts *ServerOptions) *Server {
 	s := &Server{}
 	s._nsps = &sync.Map{}
 	s.parentNsps = &sync.Map{}
+	s.parentNamespacesFromRegExp = &sync.Map{}
 
 	if opts == nil {
 		opts = DefaultServerOptions()
@@ -168,7 +174,6 @@ func (s *Server) _checkNamespace(name string, auth any, fn func(nsp *Namespace))
 			}
 			namespace := pnsp.(*ParentNamespace).CreateChild(name)
 			server_log.Debug("dynamic namespace %s was created", name)
-			s.sockets.EmitReserved("new_namespace", namespace)
 			fn(namespace)
 			end = false
 		})
@@ -448,6 +453,7 @@ func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 			next(nil, n.MatchString(nsp))
 		}
 		s.parentNsps.Store(ParentNspNameMatchFn(&nfn), parentNsp)
+		s.parentNamespacesFromRegExp.Store(n, parentNsp)
 		if fn != nil {
 			parentNsp.On("connect", fn)
 		}
@@ -468,9 +474,23 @@ func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 	}
 
 	var namespace *Namespace
+
 	if nsp, ok := s._nsps.Load(n); ok {
 		namespace = nsp.(*Namespace)
 	} else {
+		s.parentNamespacesFromRegExp.Range(func(regex any, parentNamespace any) bool {
+			if regex.(*regexp.Regexp).MatchString(n) {
+				server_log.Debug("attaching namespace %s to parent namespace %s", n, regex.(*regexp.Regexp).String())
+				namespace = parentNamespace.(*ParentNamespace).CreateChild(n)
+				return false
+			}
+			return true
+		})
+
+		if namespace != nil {
+			return namespace
+		}
+
 		server_log.Debug("initializing namespace %s", n)
 		namespace = NewNamespace(s, n)
 		s._nsps.Store(n, namespace)

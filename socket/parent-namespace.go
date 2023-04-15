@@ -20,6 +20,19 @@ type ParentNamespace struct {
 	children *types.Set[*Namespace]
 }
 
+// A parent namespace is a special {@link Namespace} that holds a list of child namespaces which were created either
+// with a regular expression or with a function.
+//
+//	parentNamespace := io.Of(regexp.MustCompile(`/dynamic-\d+`))
+//
+//	parentNamespace.On("connection", func(clients ...any) {
+//		client := clients[0].(*socket.Socket)
+//		childNamespace := client.Nsp()
+//	}
+//
+//	// will reach all the clients that are in one of the child namespaces, like "/dynamic-101"
+//
+//	parentNamespace.Emit("hello", "world")
 func NewParentNamespace(server *Server) *ParentNamespace {
 	p := &ParentNamespace{}
 	p.Namespace = NewNamespace(server, "/_"+strconv.FormatUint(atomic.AddUint64(&count, 1), 10))
@@ -76,6 +89,8 @@ func (p *ParentNamespace) CreateChild(name string) *Namespace {
 	}
 
 	p.server._nsps.Store(name, namespace)
+
+	p.server.Sockets().EmitReserved("new_namespace", namespace)
 	return namespace
 }
 

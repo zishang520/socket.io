@@ -1,7 +1,6 @@
 package socket
 
 import (
-	"sort"
 	"sync"
 	"time"
 
@@ -84,9 +83,15 @@ func (s *SessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 	defer s.mu_packets.RUnlock()
 
 	// Find the index of the packet with the given offset
-	index := sort.Search(len(s.packets), func(i int) bool { return s.packets[i].Id >= offset })
-	if index == len(s.packets) || s.packets[index].Id != offset {
-		// the offset may be too old
+	index := -1
+	for i, packet := range s.packets {
+		if packet.Id == offset {
+			index = i
+			break
+		}
+	}
+
+	if index == -1 {
 		return nil
 	}
 
