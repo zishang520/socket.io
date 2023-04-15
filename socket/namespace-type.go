@@ -32,14 +32,12 @@ func (s *SeesionData) GetPid() (pid string, ok bool) {
 		case []string:
 			if l := len(_pid); l > 0 {
 				pid = _pid[l-1]
-				ok = len(pid) > 0
 			}
 		case string:
 			pid = _pid
-			ok = len(pid) > 0
 		}
 	}
-	return pid, ok
+	return pid, len(pid) > 0
 }
 
 func (s *SeesionData) GetOffset() (offset string, ok bool) {
@@ -48,12 +46,10 @@ func (s *SeesionData) GetOffset() (offset string, ok bool) {
 		case []string:
 			if l := len(_offset); l > 0 {
 				offset = _offset[l-1]
-				ok = len(offset) > 0
 			}
 		case string:
 			offset = _offset
-			ok = len(offset) > 0
 		}
 	}
-	return offset, ok
+	return offset, len(offset) > 0
 }

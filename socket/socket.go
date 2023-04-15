@@ -190,7 +190,7 @@ func NewSocket(nsp *Namespace, client *Client, auth any, previousSession *Sessio
 		for _, room := range previousSession.Rooms.Keys() {
 			s.Join(room)
 		}
-		s.data = previousSession.Data
+		s.SetData(previousSession.Data)
 		for _, packet := range previousSession.MissedPackets {
 			s.packet(&parser.Packet{
 				Type: parser.EVENT,
@@ -607,7 +607,7 @@ func (s *Socket) _onclose(args ...any) *Socket {
 			Sid:   s.id,
 			Pid:   s.pid,
 			Rooms: types.NewSet[Room](s.Rooms().Keys()...),
-			Data:  s.data,
+			Data:  s.Data(),
 		})
 	}
 	s._cleanup()
