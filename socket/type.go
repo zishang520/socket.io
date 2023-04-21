@@ -76,7 +76,7 @@ type AdapterInterface interface {
 	PersistSession(*SessionToPersist)
 
 	// Restore the session and find the packets that were missed by the client.
-	RestoreSession(PrivateSessionId, string) *Session
+	RestoreSession(PrivateSessionId, string) (*Session, error)
 }
 
 type SocketDetails interface {

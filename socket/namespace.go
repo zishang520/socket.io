@@ -273,8 +273,10 @@ func (n *Namespace) _createSocket(client *Client, auth any) *Socket {
 		sessionId, has_sessionId := _auth.GetPid()
 		offset, has_offset := _auth.GetOffset()
 		if has_sessionId && has_offset && n.server.Opts().GetRawConnectionStateRecovery() != nil {
-			session := n.adapter.RestoreSession(PrivateSessionId(sessionId), offset)
-			if session != nil {
+			session, err := n.adapter.RestoreSession(PrivateSessionId(sessionId), offset)
+			if err != nil {
+				namespace_log.Debug("error while restoring session: %v", err)
+			} else if session != nil {
 				namespace_log.Debug("connection state recovered for sid %s", session.Sid)
 				return NewSocket(n, client, auth, session)
 			}

@@ -59,24 +59,24 @@ func (s *SessionAwareAdapter) PersistSession(session *SessionToPersist) {
 	s.sessions.Store(_session.Pid, _session)
 }
 
-func (s *SessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string) *Session {
+func (s *SessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string) (*Session, error) {
 	session, ok := s.sessions.Load(pid)
 	if !ok {
 		// the session may have expired
-		return nil
+		return nil, nil
 	}
 
 	_session, ok := session.(*SessionWithTimestamp)
 	if !ok {
 		// This session is not of type *SessionWithTimestamp
-		return nil
+		return nil, nil
 	}
 
 	hasExpired := _session.DisconnectedAt+s.maxDisconnectionDuration < time.Now().UnixMilli()
 	if hasExpired {
 		// the session has expired
 		s.sessions.Delete(pid)
-		return nil
+		return nil, nil
 	}
 
 	s.mu_packets.RLock()
@@ -92,7 +92,7 @@ func (s *SessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 	}
 
 	if index == -1 {
-		return nil
+		return nil, nil
 	}
 
 	// Use a pre-allocated slice to avoid memory allocation in the loop
@@ -111,7 +111,7 @@ func (s *SessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 	return &Session{
 		SessionToPersist: _session.SessionToPersist,
 		MissedPackets:    missedPackets[:missedNum],
-	}
+	}, nil
 }
 
 func (s *SessionAwareAdapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
