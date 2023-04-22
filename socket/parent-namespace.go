@@ -35,7 +35,7 @@ type ParentNamespace struct {
 //	parentNamespace.Emit("hello", "world")
 func NewParentNamespace(server *Server) *ParentNamespace {
 	p := &ParentNamespace{}
-	p.Namespace = NewNamespace(server, "/_"+strconv.FormatUint(atomic.AddUint64(&count, 1), 10))
+	p.Namespace = NewNamespace(server, "/_"+strconv.FormatUint(atomic.AddUint64(&count, 1)-1, 10))
 	p.children = types.NewSet[*Namespace]()
 	p._initAdapter()
 
