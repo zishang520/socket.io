@@ -43,12 +43,11 @@ func NewParentNamespace(server *Server) *ParentNamespace {
 }
 
 func (p *ParentNamespace) _initAdapter() {
-	broadcast := func(packet *parser.Packet, opts *BroadcastOptions) {
+	p.adapter.SetBroadcast(func(packet *parser.Packet, opts *BroadcastOptions) {
 		for _, nsp := range p.children.Keys() {
 			nsp.adapter.Broadcast(packet, opts)
 		}
-	}
-	p.adapter.SetBroadcast(broadcast)
+	})
 }
 
 func (p *ParentNamespace) Emit(ev string, args ...any) error {

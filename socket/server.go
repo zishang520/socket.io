@@ -23,7 +23,7 @@ import (
 	"github.com/zishang520/socket.io/parser"
 )
 
-const clientVersion = "4.5.1"
+const clientVersion = "6.4.1"
 
 var (
 	dotMapRegex = regexp.MustCompile(`\.map`)
@@ -52,7 +52,7 @@ type Server struct {
 	// expression.
 	parentNamespacesFromRegExp *sync.Map
 
-	_adapter        AdapterInterface
+	_adapter        AdapterConstructor
 	_serveClient    bool
 	opts            *ServerOptions
 	eio             engine.Server
@@ -119,26 +119,26 @@ func NewServer(srv any, opts *ServerOptions) *Server {
 	s.SetPath(opts.Path())
 	s.SetConnectTimeout(opts.ConnectTimeout())
 	s.SetServeClient(false != opts.ServeClient())
-	if _parser := opts.Parser(); _parser != nil {
-		s._parser = _parser
+	if opts.GetRawParser() != nil {
+		s._parser = opts.Parser()
 	} else {
 		s._parser = parser.NewParser()
 	}
 	s.encoder = s._parser.Encoder()
-	if _adapter := opts.Adapter(); _adapter != nil {
-		s.SetAdapter(_adapter)
+	s.opts = opts
+	if opts.GetRawAdapter() != nil {
+		s.SetAdapter(opts.Adapter())
 	} else {
 		if opts.GetRawConnectionStateRecovery() != nil {
-			s.SetAdapter(&SessionAwareAdapter{})
+			s.SetAdapter(&SessionAwareAdapterBuilder{})
 		} else {
-			s.SetAdapter(&Adapter{})
+			s.SetAdapter(&AdapterBuilder{})
 		}
 	}
 	s.sockets = s.Of("/", nil)
 
 	s.StrictEventEmitter = s.sockets.EventEmitter()
 
-	s.opts = opts
 	if srv != nil {
 		s.Attach(srv, nil)
 	}
@@ -204,7 +204,7 @@ func (s *Server) ConnectTimeout() time.Duration {
 }
 
 // Sets the adapter for rooms.
-func (s *Server) SetAdapter(v AdapterInterface) *Server {
+func (s *Server) SetAdapter(v AdapterConstructor) *Server {
 	s._adapter = v
 	s._nsps.Range(func(_, nsp any) bool {
 		nsp.(*Namespace)._initAdapter()
@@ -212,7 +212,7 @@ func (s *Server) SetAdapter(v AdapterInterface) *Server {
 	})
 	return s
 }
-func (s *Server) Adapter() AdapterInterface {
+func (s *Server) Adapter() AdapterConstructor {
 	return s._adapter
 }
 

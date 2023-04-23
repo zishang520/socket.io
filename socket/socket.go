@@ -82,7 +82,7 @@ type Socket struct {
 
 	// TODO: remove this unused reference
 	server                *Server
-	adapter               AdapterInterface
+	adapter               Adapter
 	acks                  *sync.Map
 	fns                   []func([]any, func(error))
 	flags                 *BroadcastFlags

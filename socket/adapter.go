@@ -10,7 +10,10 @@ import (
 	"github.com/zishang520/socket.io/parser"
 )
 
-type Adapter struct {
+type AdapterBuilder struct {
+}
+
+type adapter struct {
 	events.EventEmitter
 
 	nsp     NamespaceInterface
@@ -21,8 +24,8 @@ type Adapter struct {
 	_broadcast func(*parser.Packet, *BroadcastOptions)
 }
 
-func (*Adapter) New(nsp NamespaceInterface) AdapterInterface {
-	a := &Adapter{}
+func (*AdapterBuilder) New(nsp NamespaceInterface) Adapter {
+	a := &adapter{}
 	a.EventEmitter = events.New()
 	a.nsp = nsp
 	a.rooms = &sync.Map{}
@@ -33,33 +36,33 @@ func (*Adapter) New(nsp NamespaceInterface) AdapterInterface {
 	return a
 }
 
-func (a *Adapter) Rooms() *sync.Map {
+func (a *adapter) Rooms() *sync.Map {
 	return a.rooms
 }
 
-func (a *Adapter) Sids() *sync.Map {
+func (a *adapter) Sids() *sync.Map {
 	return a.sids
 }
 
-func (a *Adapter) Nsp() NamespaceInterface {
+func (a *adapter) Nsp() NamespaceInterface {
 	return a.nsp
 }
 
 // To be overridden
-func (a *Adapter) Init() {
+func (a *adapter) Init() {
 }
 
 // To be overridden
-func (a *Adapter) Close() {
+func (a *adapter) Close() {
 }
 
 // Returns the number of Socket.IO servers in the cluster
-func (a *Adapter) ServerCount() int64 {
+func (a *adapter) ServerCount() int64 {
 	return 1
 }
 
 // Adds a socket to a list of room.
-func (a *Adapter) AddAll(id SocketId, rooms *types.Set[Room]) {
+func (a *adapter) AddAll(id SocketId, rooms *types.Set[Room]) {
 	_rooms, _ := a.sids.LoadOrStore(id, types.NewSet[Room]())
 	for _, room := range rooms.Keys() {
 		_rooms.(*types.Set[Room]).Add(room)
@@ -75,14 +78,14 @@ func (a *Adapter) AddAll(id SocketId, rooms *types.Set[Room]) {
 }
 
 // Removes a socket from a room.
-func (a *Adapter) Del(id SocketId, room Room) {
+func (a *adapter) Del(id SocketId, room Room) {
 	if rooms, ok := a.sids.Load(id); ok {
 		rooms.(*types.Set[Room]).Delete(room)
 	}
 	a._del(room, id)
 }
 
-func (a *Adapter) _del(room Room, id SocketId) {
+func (a *adapter) _del(room Room, id SocketId) {
 	if ids, ok := a.rooms.Load(room); ok {
 		if ids.(*types.Set[SocketId]).Delete(id) {
 			a.Emit("leave-room", room, id)
@@ -96,7 +99,7 @@ func (a *Adapter) _del(room Room, id SocketId) {
 }
 
 // Removes a socket from all rooms it's joined.
-func (a *Adapter) DelAll(id SocketId) {
+func (a *adapter) DelAll(id SocketId) {
 	if rooms, ok := a.sids.Load(id); ok {
 		for _, room := range rooms.(*types.Set[Room]).Keys() {
 			a._del(room, id)
@@ -105,7 +108,7 @@ func (a *Adapter) DelAll(id SocketId) {
 	}
 }
 
-func (a *Adapter) SetBroadcast(broadcast func(*parser.Packet, *BroadcastOptions)) {
+func (a *adapter) SetBroadcast(broadcast func(*parser.Packet, *BroadcastOptions)) {
 	a._broadcast = broadcast
 }
 
@@ -115,8 +118,12 @@ func (a *Adapter) SetBroadcast(broadcast func(*parser.Packet, *BroadcastOptions)
 //   - `Flags` {*BroadcastFlags} flags for this packet
 //   - `Except` {*types.Set[Room]} sids that should be excluded
 //   - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
-func (a *Adapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
+func (a *adapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 	a._broadcast(packet, opts)
+}
+
+func (a *adapter) GetBroadcast() func(*parser.Packet, *BroadcastOptions) {
+	return a.broadcast
 }
 
 // Broadcasts a packet.
@@ -125,7 +132,7 @@ func (a *Adapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 //   - `Flags` {*BroadcastFlags} flags for this packet
 //   - `Except` {*types.Set[Room]} sids that should be excluded
 //   - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
-func (a *Adapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
+func (a *adapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 	flags := &BroadcastFlags{}
 	if opts != nil && opts.Flags != nil {
 		flags = opts.Flags
@@ -152,7 +159,7 @@ func (a *Adapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 //   - `Flags` {*BroadcastFlags} flags for this packet
 //   - `Except` {*types.Set[Room]} sids that should be excluded
 //   - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
-func (a *Adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions, clientCountCallback func(uint64), ack func(...any)) {
+func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions, clientCountCallback func(uint64), ack func(...any)) {
 	flags := &BroadcastFlags{}
 	if opts != nil && opts.Flags != nil {
 		flags = opts.Flags
@@ -183,7 +190,7 @@ func (a *Adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 }
 
 // Gets a list of sockets by sid.
-func (a *Adapter) Sockets(rooms *types.Set[Room]) *types.Set[SocketId] {
+func (a *adapter) Sockets(rooms *types.Set[Room]) *types.Set[SocketId] {
 	sids := types.NewSet[SocketId]()
 	a.apply(&BroadcastOptions{Rooms: rooms}, func(socket *Socket) {
 		sids.Add(socket.Id())
@@ -192,7 +199,7 @@ func (a *Adapter) Sockets(rooms *types.Set[Room]) *types.Set[SocketId] {
 }
 
 // Gets the list of rooms a given socket has joined.
-func (a *Adapter) SocketRooms(id SocketId) *types.Set[Room] {
+func (a *adapter) SocketRooms(id SocketId) *types.Set[Room] {
 	if rooms, ok := a.sids.Load(id); ok {
 		return rooms.(*types.Set[Room])
 	}
@@ -200,7 +207,7 @@ func (a *Adapter) SocketRooms(id SocketId) *types.Set[Room] {
 }
 
 // Returns the matching socket instances
-func (a *Adapter) FetchSockets(opts *BroadcastOptions) (sockets []any) {
+func (a *adapter) FetchSockets(opts *BroadcastOptions) (sockets []any) {
 	a.apply(opts, func(socket *Socket) {
 		sockets = append(sockets, socket)
 	})
@@ -208,14 +215,14 @@ func (a *Adapter) FetchSockets(opts *BroadcastOptions) (sockets []any) {
 }
 
 // Makes the matching socket instances join the specified rooms
-func (a *Adapter) AddSockets(opts *BroadcastOptions, rooms []Room) {
+func (a *adapter) AddSockets(opts *BroadcastOptions, rooms []Room) {
 	a.apply(opts, func(socket *Socket) {
 		socket.Join(rooms...)
 	})
 }
 
 // Makes the matching socket instances leave the specified rooms
-func (a *Adapter) DelSockets(opts *BroadcastOptions, rooms []Room) {
+func (a *adapter) DelSockets(opts *BroadcastOptions, rooms []Room) {
 	a.apply(opts, func(socket *Socket) {
 		for _, room := range rooms {
 			socket.Leave(room)
@@ -224,13 +231,13 @@ func (a *Adapter) DelSockets(opts *BroadcastOptions, rooms []Room) {
 }
 
 // Makes the matching socket instances disconnect
-func (a *Adapter) DisconnectSockets(opts *BroadcastOptions, status bool) {
+func (a *adapter) DisconnectSockets(opts *BroadcastOptions, status bool) {
 	a.apply(opts, func(socket *Socket) {
 		socket.Disconnect(status)
 	})
 }
 
-func (a *Adapter) apply(opts *BroadcastOptions, callback func(*Socket)) {
+func (a *adapter) apply(opts *BroadcastOptions, callback func(*Socket)) {
 	rooms := opts.Rooms
 	except := a.computeExceptSids(opts.Except)
 	if rooms != nil && rooms.Len() > 0 {
@@ -261,7 +268,7 @@ func (a *Adapter) apply(opts *BroadcastOptions, callback func(*Socket)) {
 	}
 }
 
-func (a *Adapter) computeExceptSids(exceptRooms *types.Set[Room]) *types.Set[SocketId] {
+func (a *adapter) computeExceptSids(exceptRooms *types.Set[Room]) *types.Set[SocketId] {
 	exceptSids := types.NewSet[SocketId]()
 	if exceptRooms != nil && exceptRooms.Len() > 0 {
 		for _, room := range exceptRooms.Keys() {
@@ -274,15 +281,15 @@ func (a *Adapter) computeExceptSids(exceptRooms *types.Set[Room]) *types.Set[Soc
 }
 
 // Send a packet to the other Socket.IO servers in the cluster
-func (a *Adapter) ServerSideEmit(ev string, args ...any) error {
+func (a *adapter) ServerSideEmit(ev string, args ...any) error {
 	utils.Log().Warning(`this adapter does not support the ServerSideEmit() functionality`)
 	return nil
 }
 
 // Save the client session in order to restore it upon reconnection.
-func (a *Adapter) PersistSession(session *SessionToPersist) {}
+func (a *adapter) PersistSession(session *SessionToPersist) {}
 
 // Restore the session and find the packets that were missed by the client.
-func (a *Adapter) RestoreSession(pid PrivateSessionId, offset string) (*Session, error) {
+func (a *adapter) RestoreSession(pid PrivateSessionId, offset string) (*Session, error) {
 	return nil, nil
 }

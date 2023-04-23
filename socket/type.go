@@ -9,9 +9,7 @@ import (
 	"github.com/zishang520/socket.io/parser"
 )
 
-type AdapterInterface interface {
-	New(NamespaceInterface) AdapterInterface
-
+type Adapter interface {
 	Rooms() *sync.Map
 	Sids() *sync.Map
 	Nsp() NamespaceInterface
@@ -35,6 +33,7 @@ type AdapterInterface interface {
 	DelAll(SocketId)
 
 	SetBroadcast(func(*parser.Packet, *BroadcastOptions))
+	GetBroadcast() func(*parser.Packet, *BroadcastOptions)
 	// Broadcasts a packet.
 	//
 	// Options:
@@ -79,6 +78,10 @@ type AdapterInterface interface {
 	RestoreSession(PrivateSessionId, string) (*Session, error)
 }
 
+type AdapterConstructor interface {
+	New(NamespaceInterface) Adapter
+}
+
 type SocketDetails interface {
 	Id() SocketId
 	Handshake() *Handshake
@@ -97,7 +100,7 @@ type NamespaceInterface interface {
 
 	Sockets() *sync.Map
 	Server() *Server
-	Adapter() AdapterInterface
+	Adapter() Adapter
 	Name() string
 	Ids() uint64
 

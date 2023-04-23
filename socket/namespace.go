@@ -25,7 +25,7 @@ type Namespace struct {
 
 	name    string
 	sockets *sync.Map
-	adapter AdapterInterface
+	adapter Adapter
 	server  *Server
 	_fns    []func(*Socket, func(*ExtendedError))
 
@@ -42,7 +42,7 @@ func (n *Namespace) Server() *Server {
 	return n.server
 }
 
-func (n *Namespace) Adapter() AdapterInterface {
+func (n *Namespace) Adapter() Adapter {
 	return n.adapter
 }
 

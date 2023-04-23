@@ -9,8 +9,11 @@ import (
 	"github.com/zishang520/socket.io/parser"
 )
 
-type SessionAwareAdapter struct {
-	*Adapter
+type SessionAwareAdapterBuilder struct {
+}
+
+type sessionAwareAdapter struct {
+	Adapter
 
 	maxDisconnectionDuration int64
 
@@ -19,14 +22,12 @@ type SessionAwareAdapter struct {
 	mu_packets sync.RWMutex
 }
 
-func (*SessionAwareAdapter) New(nsp NamespaceInterface) AdapterInterface {
-	s := &SessionAwareAdapter{}
-	s.Adapter = &Adapter{}
-	s.Adapter.New(nsp)
+func (*SessionAwareAdapterBuilder) New(nsp NamespaceInterface) Adapter {
+	s := &sessionAwareAdapter{}
+	s.Adapter = new(AdapterBuilder).New(nsp)
 	s.SetBroadcast(s.broadcast)
 
-	s.maxDisconnectionDuration =
-		nsp.Server().opts.ConnectionStateRecovery().MaxDisconnectionDuration()
+	s.maxDisconnectionDuration = nsp.Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration()
 
 	s.sessions = &sync.Map{}
 
@@ -54,12 +55,12 @@ func (*SessionAwareAdapter) New(nsp NamespaceInterface) AdapterInterface {
 	return s
 }
 
-func (s *SessionAwareAdapter) PersistSession(session *SessionToPersist) {
+func (s *sessionAwareAdapter) PersistSession(session *SessionToPersist) {
 	_session := &SessionWithTimestamp{SessionToPersist: session, DisconnectedAt: time.Now().UnixMilli()}
 	s.sessions.Store(_session.Pid, _session)
 }
 
-func (s *SessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string) (*Session, error) {
+func (s *sessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string) (*Session, error) {
 	session, ok := s.sessions.Load(pid)
 	if !ok {
 		// the session may have expired
@@ -114,13 +115,16 @@ func (s *SessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 	}, nil
 }
 
-func (s *SessionAwareAdapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
+func (s *sessionAwareAdapter) GetBroadcast() func(*parser.Packet, *BroadcastOptions) {
+	return s.broadcast
+}
+
+func (s *sessionAwareAdapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 	isEventPacket := packet.Type == parser.EVENT
 	// packets with acknowledgement are not stored because the acknowledgement function cannot be serialized and
 	// restored on another server upon reconnection
 	withoutAcknowledgement := packet.Id == nil
-	notVolatile := opts.Flags != nil && opts.Flags.Volatile == false
-
+	notVolatile := opts.Flags == nil || opts.Flags.Volatile == false
 	if isEventPacket && withoutAcknowledgement && notVolatile {
 		id := utils.YeastDate()
 		// the offset is stored at the end of the data array, so the client knows the ID of the last packet it has
@@ -137,7 +141,7 @@ func (s *SessionAwareAdapter) broadcast(packet *parser.Packet, opts *BroadcastOp
 			Opts:      opts,
 		})
 	}
-	s.Adapter.broadcast(packet, opts)
+	s.Adapter.GetBroadcast()(packet, opts)
 }
 
 func shouldIncludePacket(sessionRooms *types.Set[Room], opts *BroadcastOptions) bool {
