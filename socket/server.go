@@ -23,7 +23,7 @@ import (
 	"github.com/zishang520/socket.io/parser"
 )
 
-const clientVersion = "6.4.1"
+const clientVersion = "4.6.1"
 
 var (
 	dotMapRegex = regexp.MustCompile(`\.map`)
