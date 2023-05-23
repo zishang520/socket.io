@@ -1,5 +1,5 @@
 .PHONY: default deps fmt clean test
-export GOPATH:=$(shell pwd)/vendor
+# export GOPATH:=$(shell pwd)/vendor
 # Set the GOPROXY environment variable
 export GOPROXY=https://goproxy.io,direct
 # export http_proxy=socks5://127.0.0.1:1080
@@ -8,8 +8,8 @@ export GOPROXY=https://goproxy.io,direct
 default:
 
 deps:
-	go mod tidy -v
-# 	go mod vendor -v
+	go mod tidy
+	go mod vendor
 
 fmt:
 	go fmt -mod=mod ./...

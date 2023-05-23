@@ -3,7 +3,7 @@
 set "args=%*"
 pushd "%~dp0"
 setlocal ENABLEDELAYEDEXPANSION
-set GOPATH="%~dp0vendor"
+rem set GOPATH="%~dp0vendor"
 rem Set the GOPROXY environment variable
 Set GOPROXY=https://goproxy.io,direct
 rem set http_proxy=socks5://127.0.0.1:1080
@@ -21,8 +21,8 @@ goto default
     GOTO :EOF
 
 :deps
-    CALL go mod tidy -v
-    rem CALL go mod vendor -v
+    CALL go mod tidy
+    CALL go mod vendor
     GOTO :EOF
 
 :fmt
