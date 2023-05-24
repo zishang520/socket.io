@@ -261,7 +261,10 @@ func isPayloadValid(t PacketType, payload any) bool {
 		return ok
 	case EVENT, BINARY_EVENT:
 		data, ok := payload.([]any)
-		return ok && len(data) > 0
+		if ok && len(data) > 0 {
+			_, isString := data[0].(string)
+			return isString
+		}
 	case ACK, BINARY_ACK:
 		_, ok := payload.([]any)
 		return ok
