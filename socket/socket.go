@@ -273,7 +273,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	if s.nsp.Server().Opts().GetRawConnectionStateRecovery() != nil {
 		// this ensures the packet is stored and can be transmitted upon reconnection
 		s.adapter.Broadcast(packet, &BroadcastOptions{
-			Rooms:  types.NewSet[Room](Room(s.id)),
+			Rooms:  types.NewSet(Room(s.id)),
 			Except: types.NewSet[Room](),
 			Flags:  &flags,
 		})
@@ -606,7 +606,7 @@ func (s *Socket) _onclose(args ...any) *Socket {
 		s.adapter.PersistSession(&SessionToPersist{
 			Sid:   s.id,
 			Pid:   s.pid,
-			Rooms: types.NewSet[Room](s.Rooms().Keys()...),
+			Rooms: types.NewSet(s.Rooms().Keys()...),
 			Data:  s.Data(),
 		})
 	}
@@ -1059,5 +1059,5 @@ func (s *Socket) newBroadcastOperator() *BroadcastOperator {
 	flags := *s.flags
 	s.flags = &BroadcastFlags{}
 	s.flags_mu.Unlock()
-	return NewBroadcastOperator(s.adapter, types.NewSet[Room](), types.NewSet[Room](Room(s.id)), &flags)
+	return NewBroadcastOperator(s.adapter, types.NewSet[Room](), types.NewSet(Room(s.id)), &flags)
 }

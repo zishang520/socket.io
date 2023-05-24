@@ -393,7 +393,7 @@ func NewRemoteSocket(adapter Adapter, details SocketDetails) *RemoteSocket {
 	r.handshake = details.Handshake()
 	r.rooms = types.NewSet(details.Rooms().Keys()...)
 	r.data = details.Data()
-	r.operator = NewBroadcastOperator(adapter, types.NewSet[Room](Room(r.id)), types.NewSet[Room](), &BroadcastFlags{
+	r.operator = NewBroadcastOperator(adapter, types.NewSet(Room(r.id)), types.NewSet[Room](), &BroadcastFlags{
 		ExpectSingleResponse: true,
 	})
 
