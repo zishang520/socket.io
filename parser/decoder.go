@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/zishang520/engine.io-go-parser/types"
 	"github.com/zishang520/engine.io/events"
 	"github.com/zishang520/engine.io/log"
-	"github.com/zishang520/engine.io/types"
 )
 
 var parser_log = log.NewLog("socket.io:parser")

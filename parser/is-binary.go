@@ -4,7 +4,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/zishang520/engine.io/types"
+	"github.com/zishang520/engine.io-go-parser/types"
 )
 
 // Returns true if obj is a Buffer or a File.

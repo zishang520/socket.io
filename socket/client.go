@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"sync"
 
+	_types "github.com/zishang520/engine.io-go-parser/types"
 	"github.com/zishang520/engine.io/engine"
 	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
@@ -155,7 +156,7 @@ func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 	c.WriteToEngine(c.encoder.Encode(packet), opts)
 }
 
-func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *WriteOptions) {
+func (c *Client) WriteToEngine(encodedPackets []_types.BufferInterface, opts *WriteOptions) {
 	if opts.Volatile && !c.conn.Transport().Writable() {
 		client_log.Debug("volatile packet is discarded since the transport is not currently writable")
 		return
@@ -163,10 +164,10 @@ func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *Wri
 
 	for _, encodedPacket := range encodedPackets {
 		switch data := encodedPacket.(type) {
-		case *types.StringBuffer:
-			c.conn.Write(types.NewStringBuffer(data.Bytes()), &opts.Options, nil)
-		case *types.BytesBuffer:
-			c.conn.Write(types.NewBytesBuffer(data.Bytes()), &opts.Options, nil)
+		case *_types.StringBuffer:
+			c.conn.Write(_types.NewStringBuffer(data.Bytes()), &opts.Options, nil)
+		case *_types.BytesBuffer:
+			c.conn.Write(_types.NewBytesBuffer(data.Bytes()), &opts.Options, nil)
 		}
 	}
 }
