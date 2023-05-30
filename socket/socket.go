@@ -147,7 +147,7 @@ func (s *Socket) SetData(data any) {
 // Within each *socket.Namespace, you can also define arbitrary channels (called "rooms") that the *socket.Socket can
 // join and leave. That provides a convenient way to broadcast to a group of socket instances.
 //
-//	io.On("connection", On("connection", func(args ...any) {
+//	io.On("connection", func(args ...any) {
 //		socket := args[0].(*socket.Socket)
 //
 //		utils.Log().Info(`socket %s connected`, socket.Id())

@@ -3,7 +3,7 @@ package parser
 import (
 	"sync"
 
-	"github.com/zishang520/engine.io/types"
+	"github.com/zishang520/engine.io-go-parser/types"
 )
 
 // Protocol version.

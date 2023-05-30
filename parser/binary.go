@@ -5,7 +5,7 @@ import (
 	"io"
 
 	"github.com/mitchellh/mapstructure"
-	"github.com/zishang520/engine.io/types"
+	"github.com/zishang520/engine.io-go-parser/types"
 )
 
 type Placeholder struct {

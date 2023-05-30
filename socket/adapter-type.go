@@ -3,7 +3,7 @@ package socket
 import (
 	"time"
 
-	"github.com/zishang520/engine.io/packet"
+	"github.com/zishang520/engine.io-go-parser/packet"
 	"github.com/zishang520/engine.io/types"
 )
 
