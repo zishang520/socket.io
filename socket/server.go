@@ -217,6 +217,10 @@ func (s *Server) Adapter() AdapterConstructor {
 }
 
 func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
+	if s.engine != nil {
+		return s.engine
+	}
+
 	if opts == nil {
 		opts = DefaultServerOptions()
 	}
@@ -234,7 +238,7 @@ func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
 	// bind to engine events
 	s.Bind(s.eio)
 
-	return http.HandlerFunc(s.eio.ServeHTTP)
+	return s.eio
 }
 
 // Attaches socket.io to a server or port.
