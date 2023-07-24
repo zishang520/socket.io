@@ -6,7 +6,7 @@ import (
 
 	"github.com/zishang520/engine.io/events"
 	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/socket.io/parser"
+	"github.com/zishang520/socket.io-go-parser/parser"
 )
 
 type Adapter interface {

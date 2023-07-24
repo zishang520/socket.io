@@ -20,7 +20,7 @@ import (
 	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
 	"github.com/zishang520/engine.io/utils"
-	"github.com/zishang520/socket.io/parser"
+	"github.com/zishang520/socket.io-go-parser/parser"
 )
 
 const clientVersion = "4.6.1"

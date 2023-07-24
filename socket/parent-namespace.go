@@ -7,7 +7,7 @@ import (
 
 	"github.com/zishang520/engine.io/log"
 	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/socket.io/parser"
+	"github.com/zishang520/socket.io-go-parser/parser"
 )
 
 var parent_namespace_log = log.NewLog("socket.io:parent-namespace")

@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/zishang520/engine.io/config"
-	"github.com/zishang520/socket.io/parser"
+	"github.com/zishang520/socket.io-go-parser/parser"
 )
 
 type ServerOptionsInterface interface {

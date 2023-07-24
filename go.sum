@@ -1,5 +1,5 @@
-github.com/andybalholm/brotli v1.0.4 h1:V7DdXeJtZscaqfNuAdSRuRFzuiKlHSC/Zh3zl9qY3JY=
-github.com/andybalholm/brotli v1.0.4/go.mod h1:fO7iG3H7G2nSZ7m0zPUDn85XEX2GTukHGRSepvi9Eig=
+github.com/andybalholm/brotli v1.0.5 h1:8uQZIdzKmjc/iuPu7O2ioW48L81FgatrcpfFmiq/cCs=
+github.com/andybalholm/brotli v1.0.5/go.mod h1:fO7iG3H7G2nSZ7m0zPUDn85XEX2GTukHGRSepvi9Eig=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/gookit/color v1.5.0 h1:1Opow3+BWDwqor78DcJkJCIwnkviFi+rrOANki9BUFw=
@@ -19,6 +19,8 @@ github.com/zishang520/engine.io v1.5.1 h1:alhPAVamqoYaui4ArflKM7+t/RiJyafJ6clQsH
 github.com/zishang520/engine.io v1.5.1/go.mod h1:QG1ql9Eay9z9GcBwlvy0GbsU4PZYpBKek3IgNmTRtVI=
 github.com/zishang520/engine.io-go-parser v1.0.0 h1:SZGcgu/o0qFNSVskvqSdrib5VZTAUxQLVStXx0Lvgfg=
 github.com/zishang520/engine.io-go-parser v1.0.0/go.mod h1:YBIkLpDtU5PXpNMM0cUPX5GUY9Zyo2W1sEwKMbk2WY4=
+github.com/zishang520/socket.io-go-parser v1.0.0 h1:mWE0zyjPfXfLTzVjLeFvrvCwOJh9dfp8bXMZQT4cyVM=
+github.com/zishang520/socket.io-go-parser v1.0.0/go.mod h1:9ovlj5RDTGmkyVY3KjgEO6yJZISW1pqktfszzkzEtdQ=
 golang.org/x/net v0.10.0 h1:X2//UzNDwYmtCLn7To6G58Wr6f5ahEAQgKNzv9Y951M=
 golang.org/x/net v0.10.0/go.mod h1:0qNGK6F8kojg2nk9dLZ2mShWaEBan6FAoqfSigmmuDg=
 golang.org/x/sys v0.0.0-20210330210617-4fbd30eecc44/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
