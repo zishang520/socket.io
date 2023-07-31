@@ -24,23 +24,23 @@ var (
 
 type Handshake struct {
 	// The headers sent as part of the handshake
-	Headers *utils.ParameterBag
+	Headers *utils.ParameterBag `json:"headers,omitempty"`
 	// The date of creation (as string)
-	Time string
+	Time string `json:"time,omitempty"`
 	// The ip of the client
-	Address string
+	Address string `json:"address,omitempty"`
 	// Whether the connection is cross-domain
-	Xdomain bool
+	Xdomain bool `json:"xdomain,omitempty"`
 	// Whether the connection is secure
-	Secure bool
+	Secure bool `json:"secure,omitempty"`
 	// The date of creation (as unix timestamp)
-	Issued int64
+	Issued int64 `json:"issued,omitempty"`
 	// The request URL string
-	Url string
+	Url string `json:"url,omitempty"`
 	// The query object
-	Query *utils.ParameterBag
+	Query *utils.ParameterBag `json:"query,omitempty"`
 	// The auth object
-	Auth any
+	Auth any `json:"auth,omitempty"`
 }
 
 type Socket struct {

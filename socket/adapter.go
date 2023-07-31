@@ -207,7 +207,7 @@ func (a *adapter) SocketRooms(id SocketId) *types.Set[Room] {
 }
 
 // Returns the matching socket instances
-func (a *adapter) FetchSockets(opts *BroadcastOptions) (sockets []any) {
+func (a *adapter) FetchSockets(opts *BroadcastOptions) (sockets []SocketDetails) {
 	a.apply(opts, func(socket *Socket) {
 		sockets = append(sockets, socket)
 	})

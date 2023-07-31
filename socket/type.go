@@ -57,7 +57,7 @@ type Adapter interface {
 	SocketRooms(SocketId) *types.Set[Room]
 
 	// Returns the matching socket instances
-	FetchSockets(*BroadcastOptions) []any
+	FetchSockets(*BroadcastOptions) []SocketDetails
 
 	// Makes the matching socket instances join the specified rooms
 	AddSockets(*BroadcastOptions, []Room)
