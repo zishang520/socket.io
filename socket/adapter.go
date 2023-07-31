@@ -1,7 +1,6 @@
 package socket
 
 import (
-	"sync"
 	"sync/atomic"
 
 	"github.com/zishang520/engine.io/events"
@@ -17,8 +16,8 @@ type adapter struct {
 	events.EventEmitter
 
 	nsp     NamespaceInterface
-	rooms   *sync.Map
-	sids    *sync.Map
+	rooms   *types.Map[Room, *types.Set[SocketId]]
+	sids    *types.Map[SocketId, *types.Set[Room]]
 	encoder parser.Encoder
 
 	_broadcast func(*parser.Packet, *BroadcastOptions)
@@ -28,19 +27,19 @@ func (*AdapterBuilder) New(nsp NamespaceInterface) Adapter {
 	a := &adapter{}
 	a.EventEmitter = events.New()
 	a.nsp = nsp
-	a.rooms = &sync.Map{}
-	a.sids = &sync.Map{}
+	a.rooms = &types.Map[Room, *types.Set[SocketId]]{}
+	a.sids = &types.Map[SocketId, *types.Set[Room]]{}
 	a.encoder = nsp.Server().Encoder()
 	a._broadcast = a.broadcast
 
 	return a
 }
 
-func (a *adapter) Rooms() *sync.Map {
+func (a *adapter) Rooms() *types.Map[Room, *types.Set[SocketId]] {
 	return a.rooms
 }
 
-func (a *adapter) Sids() *sync.Map {
+func (a *adapter) Sids() *types.Map[SocketId, *types.Set[Room]] {
 	return a.sids
 }
 
@@ -65,13 +64,13 @@ func (a *adapter) ServerCount() int64 {
 func (a *adapter) AddAll(id SocketId, rooms *types.Set[Room]) {
 	_rooms, _ := a.sids.LoadOrStore(id, types.NewSet[Room]())
 	for _, room := range rooms.Keys() {
-		_rooms.(*types.Set[Room]).Add(room)
+		_rooms.Add(room)
 		ids, ok := a.rooms.LoadOrStore(room, types.NewSet[SocketId]())
 		if !ok {
 			a.Emit("create-room", room)
 		}
-		if !ids.(*types.Set[SocketId]).Has(id) {
-			ids.(*types.Set[SocketId]).Add(id)
+		if !ids.Has(id) {
+			ids.Add(id)
 			a.Emit("join-room", room, id)
 		}
 	}
@@ -80,17 +79,17 @@ func (a *adapter) AddAll(id SocketId, rooms *types.Set[Room]) {
 // Removes a socket from a room.
 func (a *adapter) Del(id SocketId, room Room) {
 	if rooms, ok := a.sids.Load(id); ok {
-		rooms.(*types.Set[Room]).Delete(room)
+		rooms.Delete(room)
 	}
 	a._del(room, id)
 }
 
 func (a *adapter) _del(room Room, id SocketId) {
 	if ids, ok := a.rooms.Load(room); ok {
-		if ids.(*types.Set[SocketId]).Delete(id) {
+		if ids.Delete(id) {
 			a.Emit("leave-room", room, id)
 		}
-		if ids.(*types.Set[SocketId]).Len() == 0 {
+		if ids.Len() == 0 {
 			if _, ok := a.rooms.LoadAndDelete(room); ok {
 				a.Emit("delete-room", room)
 			}
@@ -101,7 +100,7 @@ func (a *adapter) _del(room Room, id SocketId) {
 // Removes a socket from all rooms it's joined.
 func (a *adapter) DelAll(id SocketId) {
 	if rooms, ok := a.sids.Load(id); ok {
-		for _, room := range rooms.(*types.Set[Room]).Keys() {
+		for _, room := range rooms.Keys() {
 			a._del(room, id)
 		}
 		a.sids.Delete(id)
@@ -201,7 +200,7 @@ func (a *adapter) Sockets(rooms *types.Set[Room]) *types.Set[SocketId] {
 // Gets the list of rooms a given socket has joined.
 func (a *adapter) SocketRooms(id SocketId) *types.Set[Room] {
 	if rooms, ok := a.sids.Load(id); ok {
-		return rooms.(*types.Set[Room])
+		return rooms
 	}
 	return nil
 }
@@ -244,24 +243,24 @@ func (a *adapter) apply(opts *BroadcastOptions, callback func(*Socket)) {
 		ids := types.NewSet[SocketId]()
 		for _, room := range rooms.Keys() {
 			if _ids, ok := a.rooms.Load(room); ok {
-				for _, id := range _ids.(*types.Set[SocketId]).Keys() {
+				for _, id := range _ids.Keys() {
 					if ids.Has(id) || except.Has(id) {
 						continue
 					}
 					if socket, ok := a.nsp.Sockets().Load(id); ok {
-						callback(socket.(*Socket))
+						callback(socket)
 						ids.Add(id)
 					}
 				}
 			}
 		}
 	} else {
-		a.sids.Range(func(id any, _ any) bool {
-			if except.Has(id.(SocketId)) {
+		a.sids.Range(func(id SocketId, _ *types.Set[Room]) bool {
+			if except.Has(id) {
 				return true
 			}
 			if socket, ok := a.nsp.Sockets().Load(id); ok {
-				callback(socket.(*Socket))
+				callback(socket)
 			}
 			return true
 		})
@@ -273,7 +272,7 @@ func (a *adapter) computeExceptSids(exceptRooms *types.Set[Room]) *types.Set[Soc
 	if exceptRooms != nil && exceptRooms.Len() > 0 {
 		for _, room := range exceptRooms.Keys() {
 			if ids, ok := a.rooms.Load(room); ok {
-				exceptSids.Add(ids.(*types.Set[SocketId]).Keys()...)
+				exceptSids.Add(ids.Keys()...)
 			}
 		}
 	}

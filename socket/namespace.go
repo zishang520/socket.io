@@ -24,7 +24,7 @@ type Namespace struct {
 	*StrictEventEmitter
 
 	name    string
-	sockets *sync.Map
+	sockets *types.Map[SocketId, *Socket]
 	adapter Adapter
 	server  *Server
 	_fns    []func(*Socket, func(*ExtendedError))
@@ -34,7 +34,7 @@ type Namespace struct {
 	_remove func(socket *Socket)
 }
 
-func (n *Namespace) Sockets() *sync.Map {
+func (n *Namespace) Sockets() *types.Map[SocketId, *Socket] {
 	return n.sockets
 }
 
@@ -110,7 +110,7 @@ func (n *Namespace) EventEmitter() *StrictEventEmitter {
 func NewNamespace(server *Server, name string) *Namespace {
 	n := &Namespace{}
 	n.StrictEventEmitter = NewStrictEventEmitter()
-	n.sockets = &sync.Map{}
+	n.sockets = &types.Map[SocketId, *Socket]{}
 	n._fns = []func(*Socket, func(*ExtendedError)){}
 	atomic.StoreUint64(&n._ids, 0)
 	n.server = server

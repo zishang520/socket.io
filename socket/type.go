@@ -1,7 +1,6 @@
 package socket
 
 import (
-	"sync"
 	"time"
 
 	"github.com/zishang520/engine.io/events"
@@ -10,8 +9,8 @@ import (
 )
 
 type Adapter interface {
-	Rooms() *sync.Map
-	Sids() *sync.Map
+	Rooms() *types.Map[Room, *types.Set[SocketId]]
+	Sids() *types.Map[SocketId, *types.Set[Room]]
 	Nsp() NamespaceInterface
 
 	// To be overridden
@@ -98,7 +97,7 @@ type NamespaceInterface interface {
 	EmitUntyped(string, ...any)
 	Listeners(string) []events.Listener
 
-	Sockets() *sync.Map
+	Sockets() *types.Map[SocketId, *Socket]
 	Server() *Server
 	Adapter() Adapter
 	Name() string

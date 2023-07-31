@@ -17,7 +17,7 @@ type sessionAwareAdapter struct {
 
 	maxDisconnectionDuration int64
 
-	sessions   *sync.Map
+	sessions   *types.Map[PrivateSessionId, *SessionWithTimestamp]
 	packets    []*PersistedPacket
 	mu_packets sync.RWMutex
 }
@@ -29,12 +29,12 @@ func (*SessionAwareAdapterBuilder) New(nsp NamespaceInterface) Adapter {
 
 	s.maxDisconnectionDuration = nsp.Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration()
 
-	s.sessions = &sync.Map{}
+	s.sessions = &types.Map[PrivateSessionId, *SessionWithTimestamp]{}
 
 	timer := utils.SetInterval(func() {
 		threshold := time.Now().UnixMilli() - s.maxDisconnectionDuration
-		s.sessions.Range(func(sessionId any, session any) bool {
-			if session.(*SessionWithTimestamp).DisconnectedAt < threshold {
+		s.sessions.Range(func(sessionId PrivateSessionId, session *SessionWithTimestamp) bool {
+			if session.DisconnectedAt < threshold {
 				s.sessions.Delete(sessionId)
 			}
 			return true
@@ -67,13 +67,7 @@ func (s *sessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 		return nil, nil
 	}
 
-	_session, ok := session.(*SessionWithTimestamp)
-	if !ok {
-		// This session is not of type *SessionWithTimestamp
-		return nil, nil
-	}
-
-	hasExpired := _session.DisconnectedAt+s.maxDisconnectionDuration < time.Now().UnixMilli()
+	hasExpired := session.DisconnectedAt+s.maxDisconnectionDuration < time.Now().UnixMilli()
 	if hasExpired {
 		// the session has expired
 		s.sessions.Delete(pid)
@@ -102,7 +96,7 @@ func (s *sessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 	// Iterate over the packets and append the data of those that should be included
 	for i := index + 1; i < len(s.packets); i++ {
 		packet := s.packets[i]
-		if shouldIncludePacket(_session.Rooms, packet.Opts) {
+		if shouldIncludePacket(session.Rooms, packet.Opts) {
 			missedPackets = append(missedPackets, packet.Data)
 			missedNum++
 		}
@@ -110,7 +104,7 @@ func (s *sessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 
 	// Create a new Session object and return it
 	return &Session{
-		SessionToPersist: _session.SessionToPersist,
+		SessionToPersist: session.SessionToPersist,
 		MissedPackets:    missedPackets[:missedNum],
 	}, nil
 }

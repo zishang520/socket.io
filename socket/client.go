@@ -20,8 +20,8 @@ type Client struct {
 	server            *Server
 	encoder           parser.Encoder
 	decoder           parser.Decoder
-	sockets           *sync.Map
-	nsps              *sync.Map
+	sockets           *types.Map[SocketId, *Socket]
+	nsps              *types.Map[string, *Socket]
 	connectTimeout    *utils.Timer
 	mu_connectTimeout sync.Mutex
 }
@@ -33,8 +33,8 @@ func (c *Client) Conn() engine.Socket {
 // Client constructor.
 func NewClient(server *Server, conn engine.Socket) *Client {
 	c := &Client{}
-	c.sockets = &sync.Map{}
-	c.nsps = &sync.Map{}
+	c.sockets = &types.Map[SocketId, *Socket]{}
+	c.nsps = &types.Map[string, *Socket]{}
 	c.server = server
 	c.conn = conn
 	c.encoder = server.Encoder()
@@ -60,12 +60,7 @@ func (c *Client) setup() {
 	defer c.mu_connectTimeout.Unlock()
 
 	c.connectTimeout = utils.SetTimeOut(func() {
-		empty := true
-		c.nsps.Range(func(any, any) bool {
-			empty = false
-			return false
-		})
-		if empty {
+		if c.nsps.Len() == 0 {
 			client_log.Debug("no namespace joined yet, close the client")
 			c.close()
 		} else {
@@ -113,8 +108,8 @@ func (c *Client) doConnect(name string, auth any) {
 }
 
 func (c *Client) _disconnect() {
-	c.sockets.Range(func(id, socket any) bool {
-		socket.(*Socket).Disconnect(false)
+	c.sockets.Range(func(id SocketId, socket *Socket) bool {
+		socket.Disconnect(false)
 		c.sockets.Delete(id)
 		return true
 	})
@@ -125,7 +120,7 @@ func (c *Client) _disconnect() {
 func (c *Client) remove(socket *Socket) {
 	if nsp, ok := c.sockets.Load(socket.Id()); ok {
 		c.sockets.Delete(socket.Id())
-		c.nsps.Delete(nsp.(*Socket).Nsp().Name())
+		c.nsps.Delete(nsp.Nsp().Name())
 	} else {
 		client_log.Debug("ignoring remove for %s", socket.Id())
 	}
@@ -199,7 +194,7 @@ func (c *Client) ondecoded(args ...any) {
 	if !ok && packet.Type == parser.CONNECT {
 		c.connect(namespace, authPayload)
 	} else if ok && packet.Type != parser.CONNECT && packet.Type != parser.CONNECT_ERROR {
-		go socket.(*Socket)._onpacket(packet)
+		go socket._onpacket(packet)
 	} else {
 		client_log.Debug("invalid state (packet type: %s)", packet.Type.String())
 		c.close()
@@ -208,8 +203,8 @@ func (c *Client) ondecoded(args ...any) {
 
 // Handles an error.
 func (c *Client) onerror(args ...any) {
-	c.sockets.Range(func(_, socket any) bool {
-		socket.(*Socket)._onerror(args[0])
+	c.sockets.Range(func(_ SocketId, socket *Socket) bool {
+		socket._onerror(args[0])
 		return true
 	})
 	c.conn.Close(false)
@@ -221,8 +216,8 @@ func (c *Client) onclose(args ...any) {
 	// ignore a potential subsequent `close` event
 	c.destroy()
 	// `nsps` and `sockets` are cleaned up seamlessly
-	c.sockets.Range(func(id, socket any) bool {
-		socket.(*Socket)._onclose(args...)
+	c.sockets.Range(func(id SocketId, socket *Socket) bool {
+		socket._onclose(args...)
 		c.sockets.Delete(id)
 		return true
 	})

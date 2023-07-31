@@ -73,12 +73,7 @@ func (p *ParentNamespace) CreateChild(name string) *Namespace {
 	if p.server.Opts().CleanupEmptyChildNamespaces() {
 		namespace._remove = func(socket *Socket) {
 			namespace.namespace_remove(socket)
-			empty := true
-			namespace.sockets.Range(func(any, any) bool {
-				empty = false
-				return false
-			})
-			if empty {
+			if namespace.sockets.Len() == 0 {
 				parent_namespace_log.Debug("closing child namespace %s", name)
 				namespace.adapter.Close()
 				p.server._nsps.Delete(namespace.name)

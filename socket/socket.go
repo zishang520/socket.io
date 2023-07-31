@@ -83,7 +83,7 @@ type Socket struct {
 	// TODO: remove this unused reference
 	server                *Server
 	adapter               Adapter
-	acks                  *sync.Map
+	acks                  *types.Map[uint64, func(...any)]
 	fns                   []func([]any, func(error))
 	flags                 *BroadcastFlags
 	_anyListeners         []events.Listener
@@ -111,7 +111,7 @@ func (s *Socket) Client() *Client {
 	return s.client
 }
 
-func (s *Socket) Acks() *sync.Map {
+func (s *Socket) Acks() *types.Map[uint64, func(...any)] {
 	return s.acks
 }
 
@@ -179,7 +179,7 @@ func NewSocket(nsp *Namespace, client *Client, auth any, previousSession *Sessio
 	s.data = nil
 	s.connected = false
 	s.canJoin = true
-	s.acks = &sync.Map{}
+	s.acks = &types.Map[uint64, func(...any)]{}
 	s.fns = []func([]any, func(error)){}
 	s.flags = &BroadcastFlags{}
 	s.server = nsp.Server()
@@ -566,7 +566,7 @@ func (s *Socket) onack(packet *parser.Packet) {
 	if packet.Id != nil {
 		if ack, ok := s.acks.Load(*packet.Id); ok {
 			socket_log.Debug("calling ack %d with %v", *packet.Id, packet.Data)
-			(ack.(func(...any)))(packet.Data.([]any)...)
+			ack(packet.Data.([]any)...)
 			s.acks.Delete(*packet.Id)
 		} else {
 			socket_log.Debug("bad ack %d", *packet.Id)

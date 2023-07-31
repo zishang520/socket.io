@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/andybalholm/brotli"
@@ -44,13 +43,13 @@ type Server struct {
 	_parser parser.Parser
 	encoder parser.Encoder
 
-	_nsps *sync.Map
+	_nsps *types.Map[string, *Namespace]
 
-	parentNsps *sync.Map
+	parentNsps *types.Map[ParentNspNameMatchFn, *ParentNamespace]
 
 	// A subset of the {@link parentNsps} map, only containing {@link ParentNamespace} which are based on a regular
 	// expression.
-	parentNamespacesFromRegExp *sync.Map
+	parentNamespacesFromRegExp *types.Map[*regexp.Regexp, *ParentNamespace]
 
 	_adapter        AdapterConstructor
 	_serveClient    bool
@@ -108,9 +107,9 @@ func (s *Server) Opts() *ServerOptions {
 //	io.Listen(3000, nil)
 func NewServer(srv any, opts *ServerOptions) *Server {
 	s := &Server{}
-	s._nsps = &sync.Map{}
-	s.parentNsps = &sync.Map{}
-	s.parentNamespacesFromRegExp = &sync.Map{}
+	s._nsps = &types.Map[string, *Namespace]{}
+	s.parentNsps = &types.Map[ParentNspNameMatchFn, *ParentNamespace]{}
+	s.parentNamespacesFromRegExp = &types.Map[*regexp.Regexp, *ParentNamespace]{}
 
 	if opts == nil {
 		opts = DefaultServerOptions()
@@ -158,9 +157,9 @@ func (s *Server) ServeClient() bool {
 // Executes the middleware for an incoming namespace not already created on the server.
 func (s *Server) _checkNamespace(name string, auth any, fn func(nsp *Namespace)) {
 	end := true
-	s.parentNsps.Range(func(nextFn any, pnsp any) bool {
+	s.parentNsps.Range(func(nextFn ParentNspNameMatchFn, pnsp *ParentNamespace) bool {
 		status := false
-		(*(nextFn.(ParentNspNameMatchFn)))(name, auth, func(err error, allow bool) {
+		(*nextFn)(name, auth, func(err error, allow bool) {
 			if err != nil || !allow {
 				status = true
 				return
@@ -168,11 +167,11 @@ func (s *Server) _checkNamespace(name string, auth any, fn func(nsp *Namespace))
 			if nsp, ok := s._nsps.Load(name); ok {
 				// the namespace was created in the meantime
 				server_log.Debug("dynamic namespace %s already exists", name)
-				fn(nsp.(*Namespace))
+				fn(nsp)
 				end = false
 				return
 			}
-			namespace := pnsp.(*ParentNamespace).CreateChild(name)
+			namespace := pnsp.CreateChild(name)
 			server_log.Debug("dynamic namespace %s was created", name)
 			fn(namespace)
 			end = false
@@ -206,8 +205,8 @@ func (s *Server) ConnectTimeout() time.Duration {
 // Sets the adapter for rooms.
 func (s *Server) SetAdapter(v AdapterConstructor) *Server {
 	s._adapter = v
-	s._nsps.Range(func(_, nsp any) bool {
-		nsp.(*Namespace)._initAdapter()
+	s._nsps.Range(func(_ string, nsp *Namespace) bool {
+		nsp._initAdapter()
 		return true
 	})
 	return s
@@ -480,12 +479,12 @@ func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 	var namespace *Namespace
 
 	if nsp, ok := s._nsps.Load(n); ok {
-		namespace = nsp.(*Namespace)
+		namespace = nsp
 	} else {
-		s.parentNamespacesFromRegExp.Range(func(regex any, parentNamespace any) bool {
-			if regex.(*regexp.Regexp).MatchString(n) {
-				server_log.Debug("attaching namespace %s to parent namespace %s", n, regex.(*regexp.Regexp).String())
-				namespace = parentNamespace.(*ParentNamespace).CreateChild(n)
+		s.parentNamespacesFromRegExp.Range(func(regex *regexp.Regexp, parentNamespace *ParentNamespace) bool {
+			if regex.MatchString(n) {
+				server_log.Debug("attaching namespace %s to parent namespace %s", n, regex.String())
+				namespace = parentNamespace.CreateChild(n)
 				return false
 			}
 			return true
@@ -511,8 +510,8 @@ func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 
 // Closes server connection
 func (s *Server) Close(fn func()) {
-	s.sockets.Sockets().Range(func(_ any, socket any) bool {
-		socket.(*Socket)._onclose("server shutting down")
+	s.sockets.Sockets().Range(func(_ SocketId, socket *Socket) bool {
+		socket._onclose("server shutting down")
 		return true
 	})
 
