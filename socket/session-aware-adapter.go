@@ -118,7 +118,7 @@ func (s *sessionAwareAdapter) broadcast(packet *parser.Packet, opts *BroadcastOp
 	// packets with acknowledgement are not stored because the acknowledgement function cannot be serialized and
 	// restored on another server upon reconnection
 	withoutAcknowledgement := packet.Id == nil
-	notVolatile := opts.Flags == nil || opts.Flags.Volatile == false
+	notVolatile := opts == nil || opts.Flags == nil || opts.Flags.Volatile == false
 	if isEventPacket && withoutAcknowledgement && notVolatile {
 		id := utils.YeastDate()
 		// the offset is stored at the end of the data array, so the client knows the ID of the last packet it has
