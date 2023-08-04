@@ -7,7 +7,7 @@ retract v1.0.8
 require (
 	github.com/andybalholm/brotli v1.0.5
 	github.com/mitchellh/mapstructure v1.5.0
-	github.com/zishang520/engine.io v1.5.3
+	github.com/zishang520/engine.io v1.5.4
 	github.com/zishang520/engine.io-go-parser v1.2.0
 	github.com/zishang520/socket.io-go-parser v1.0.2
 )

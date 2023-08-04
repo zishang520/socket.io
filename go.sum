@@ -11,8 +11,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcUk=
 github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 h1:QldyIu/L63oPpyvQmHgvgickp1Yw510KJOqX7H24mg8=
 github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778/go.mod h1:2MuV+tbUrU1zIOPMxZ5EncGwgmMJsa+9ucAQZXxsObs=
-github.com/zishang520/engine.io v1.5.3 h1:GzXVAZzFmKbZKM9dklqJwfmKctH02VRlAvY24pfl+P8=
-github.com/zishang520/engine.io v1.5.3/go.mod h1:glf2z15RTUSBffpNrR1h8+mJZA0VvP18O6+p5axTOCU=
+github.com/zishang520/engine.io v1.5.4 h1:zv84xTi5ke1w5HzXWcdTfBlcNZpk3T/ynOG0wZQ7aIY=
+github.com/zishang520/engine.io v1.5.4/go.mod h1:glf2z15RTUSBffpNrR1h8+mJZA0VvP18O6+p5axTOCU=
 github.com/zishang520/engine.io-go-parser v1.2.0 h1:1EKi4quPEwuhRzbWIYW8t5kV4xePdYd42rBh10jyVG8=
 github.com/zishang520/engine.io-go-parser v1.2.0/go.mod h1:YBIkLpDtU5PXpNMM0cUPX5GUY9Zyo2W1sEwKMbk2WY4=
 github.com/zishang520/socket.io-go-parser v1.0.2 h1:YE6n8vCPBqf8Av+mt3emgeBnm0JlPwdVPzaCoA6BGFw=
