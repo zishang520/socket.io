@@ -83,7 +83,7 @@ type Socket struct {
 	// TODO: remove this unused reference
 	server                *Server
 	adapter               Adapter
-	acks                  *types.Map[uint64, func(...any)]
+	acks                  *types.Map[uint64, func([]any, error)]
 	fns                   []func([]any, func(error))
 	flags                 *BroadcastFlags
 	_anyListeners         []events.Listener
@@ -111,7 +111,7 @@ func (s *Socket) Client() *Client {
 	return s.client
 }
 
-func (s *Socket) Acks() *types.Map[uint64, func(...any)] {
+func (s *Socket) Acks() *types.Map[uint64, func([]any, error)] {
 	return s.acks
 }
 
@@ -179,7 +179,7 @@ func NewSocket(nsp *Namespace, client *Client, auth any, previousSession *Sessio
 	s.data = nil
 	s.connected = false
 	s.canJoin = true
-	s.acks = &types.Map[uint64, func(...any)]{}
+	s.acks = &types.Map[uint64, func([]any, error)]{}
 	s.fns = []func([]any, func(error)){}
 	s.flags = &BroadcastFlags{}
 	s.server = nsp.Server()
@@ -258,7 +258,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		Data: data,
 	}
 	// access last argument to see if it's an ACK callback
-	if fn, ok := data[data_len-1].(func(...any)); ok {
+	if fn, ok := data[data_len-1].(func([]any, error)); ok {
 		id := s.nsp.Ids()
 		socket_log.Debug("emitting packet with ack id %d", id)
 		packet.Data = data[:data_len-1]
@@ -290,33 +290,32 @@ func (s *Socket) Emit(ev string, args ...any) error {
 //	io.On("connection", func(args ...any) => {
 //		client := args[0].(*socket.Socket)
 //		// without timeout
-//		client.EmitWithAck("hello", "world")(func(args ...any) {
-//			if args[0] == nil {
-//				fmt.Println(args[1]) // one response per client
+//		client.EmitWithAck("hello", "world")(func(args []any, err error) {
+//			if err == nil {
+//				fmt.Println(args) // one response per client
 //			} else {
 //				// some clients did not acknowledge the event in the given delay
 //			}
 //		})
 //
 //		// with a specific timeout
-//		client.Timeout(1000 * time.Millisecond).EmitWithAck("hello", "world")(func(args ...any) {
-//			if args[0] == nil {
-//				fmt.Println(args[1]) // one response per client
+//		client.Timeout(1000 * time.Millisecond).EmitWithAck("hello", "world")(func(args []any, err error) {
+//			if err == nil {
+//				fmt.Println(args) // one response per client
 //			} else {
 //				// some clients did not acknowledge the event in the given delay
 //			}
 //		})
 //	})
 //
-// Return:  a `func(func(...any))` that will be fulfilled when all clients have acknowledged the event
-func (s *Socket) EmitWithAck(ev string, args ...any) func(func(...any)) {
-	return func(ack func(...any)) {
-		args = append(args, ack)
-		s.Emit(ev, args...)
+// Return:  a `func(func([]any, error))` that will be fulfilled when all clients have acknowledged the event
+func (s *Socket) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
+	return func(ack func([]any, error)) {
+		s.Emit(ev, append(args, ack)...)
 	}
 }
 
-func (s *Socket) registerAckCallback(id uint64, ack func(...any)) {
+func (s *Socket) registerAckCallback(id uint64, ack func([]any, error)) {
 	s.flags_mu.RLock()
 	timeout := s.flags.Timeout
 	s.flags_mu.RUnlock()
@@ -327,11 +326,11 @@ func (s *Socket) registerAckCallback(id uint64, ack func(...any)) {
 	timer := utils.SetTimeOut(func() {
 		socket_log.Debug("event with ack id %d has timed out after %d ms", id, *timeout/time.Millisecond)
 		s.acks.Delete(id)
-		ack(errors.New("operation has timed out"), nil)
+		ack(nil, errors.New("operation has timed out"))
 	}, *timeout)
-	s.acks.Store(id, func(args ...any) {
+	s.acks.Store(id, func(args []any, _ error) {
 		utils.ClearTimeout(timer)
-		ack(append([]any{nil}, args...)...)
+		ack(args, nil)
 	})
 }
 
@@ -546,9 +545,9 @@ func (s *Socket) onevent(packet *parser.Packet) {
 }
 
 // Produces an ack callback to emit with an event.
-func (s *Socket) ack(id uint64) func(...any) {
+func (s *Socket) ack(id uint64) func([]any, error) {
 	sent := int32(0)
-	return func(args ...any) {
+	return func(args []any, _ error) {
 		// prevent double callbacks
 		if atomic.CompareAndSwapInt32(&sent, 0, 1) {
 			socket_log.Debug("sending ack %v", args)
@@ -566,7 +565,7 @@ func (s *Socket) onack(packet *parser.Packet) {
 	if packet.Id != nil {
 		if ack, ok := s.acks.Load(*packet.Id); ok {
 			socket_log.Debug("calling ack %d with %v", *packet.Id, packet.Data)
-			ack(packet.Data.([]any)...)
+			ack(packet.Data.([]any), nil)
 			s.acks.Delete(*packet.Id)
 		} else {
 			socket_log.Debug("bad ack %d", *packet.Id)

@@ -168,7 +168,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Data: data,
 	}
 
-	ack, withAck := data[data_len-1].(func(...any))
+	ack, withAck := data[data_len-1].(func([]any, error))
 
 	if !withAck {
 		b.adapter.Broadcast(packet, &BroadcastOptions{
@@ -194,12 +194,12 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	timer := utils.SetTimeOut(func() {
 		atomic.StoreUint32(&timedOut, 1)
 		if b.flags.ExpectSingleResponse {
-			ack(errors.New("operation has timed out"), nil)
+			ack(nil, errors.New("operation has timed out"))
 		} else {
 			responsesMu.RLock()
 			defer responsesMu.RUnlock()
 
-			ack(errors.New("operation has timed out"), responses)
+			ack(responses, errors.New("operation has timed out"))
 		}
 	}, timeout)
 
@@ -216,7 +216,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 			if b.flags.ExpectSingleResponse {
 				ack(nil, nil)
 			} else {
-				ack(nil, responses)
+				ack(responses, nil)
 			}
 		}
 	}
@@ -230,7 +230,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		atomic.AddUint64(&expectedClientCount, clientCount)
 		atomic.AddInt64(&actualServerCount, 1)
 		checkCompleteness()
-	}, func(clientResponse ...any) {
+	}, func(clientResponse []any, _ error) {
 		// each client sends an acknowledgement
 		responsesMu.Lock()
 		responses = append(responses, clientResponse...)
@@ -244,19 +244,18 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 // Emits an event and waits for an acknowledgement from all clients.
 //
-//	io.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args ...any) {
-//		if args[0] == nil {
-//			fmt.Println(args[1]) // one response per client
+//	io.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args []any, err error) {
+//		if err == nil {
+//			fmt.Println(args) // one response per client
 //		} else {
 //			// some clients did not acknowledge the event in the given delay
 //		}
 //	})
 //
-// Return:  a `func(func(...any))` that will be fulfilled when all clients have acknowledged the event
-func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(func(...any)) {
-	return func(ack func(...any)) {
-		args = append(args, ack)
-		b.Emit(ev, args...)
+// Return:  a `func(func([]any, error))` that will be fulfilled when all clients have acknowledged the event
+func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
+	return func(ack func([]any, error)) {
+		b.Emit(ev, append(args, ack)...)
 	}
 }
 

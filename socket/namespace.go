@@ -340,16 +340,16 @@ func (n *Namespace) Emit(ev string, args ...any) error {
 //
 //	myNamespace := io.Of("/my-namespace")
 //
-//	myNamespace.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args ...any) {
-//		if args[0] == nil {
-//			fmt.Println(args[1]) // one response per client
+//	myNamespace.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args []any, err error) {
+//		if err == nil {
+//			fmt.Println(args) // one response per client
 //		} else {
 //			// some servers did not acknowledge the event in the given delay
 //		}
 //	})
 //
-// Return:  a `func(func(...any))` that will be fulfilled when all clients have acknowledged the event
-func (n *Namespace) EmitWithAck(ev string, args ...any) func(func(...any)) {
+// Return:  a `func(func([]any, error))` that will be fulfilled when all clients have acknowledged the event
+func (n *Namespace) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
 	return NewBroadcastOperator(n.adapter, nil, nil, nil).EmitWithAck(ev, args...)
 }
 
@@ -403,7 +403,7 @@ func (n *Namespace) ServerSideEmit(ev string, args ...any) error {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
 	}
 
-	n.adapter.ServerSideEmit(ev, args...)
+	n.adapter.ServerSideEmit(append([]any{ev}, args...))
 
 	return nil
 }
@@ -412,19 +412,18 @@ func (n *Namespace) ServerSideEmit(ev string, args ...any) error {
 //
 //	myNamespace := io.Of("/my-namespace")
 //
-//	myNamespace.Timeout(1000 * time.Millisecond).ServerSideEmitWithAck("some-event")(func(args ...any) {
-//		if args[0] == nil {
-//			fmt.Println(args[1]) // one response per client
+//	myNamespace.Timeout(1000 * time.Millisecond).ServerSideEmitWithAck("some-event")(func(args []any, err error) {
+//		if err == nil {
+//			fmt.Println(args) // one response per client
 //		} else {
 //			// some servers did not acknowledge the event in the given delay
 //		}
 //	})
 //
-// Return: a `func(func(...any))` that will be fulfilled when all servers have acknowledged the event
-func (n *Namespace) ServerSideEmitWithAck(ev string, args ...any) func(func(...any)) {
-	return func(ack func(...any)) {
-		args = append(args, ack)
-		n.ServerSideEmit(ev, args...)
+// Return: a `func(func([]any, error))` that will be fulfilled when all servers have acknowledged the event
+func (n *Namespace) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, error)) {
+	return func(ack func([]any, error)) {
+		n.ServerSideEmit(ev, append(args, ack)...)
 	}
 }
 

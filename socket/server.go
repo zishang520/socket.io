@@ -587,16 +587,16 @@ func (s *Server) Except(room ...Room) *BroadcastOperator {
 
 // Emits an event and waits for an acknowledgement from all clients.
 //
-//	io.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args ...any) {
-//		if args[0] == nil {
-//			fmt.Println(args[1]) // one response per client
+//	io.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args []any, err error) {
+//		if err == nil {
+//			fmt.Println(args) // one response per client
 //		} else {
 //			// some servers did not acknowledge the event in the given delay
 //		}
 //	})
 //
-// Return: a `func(func(...any))` that will be fulfilled when all servers have acknowledged the event
-func (s *Server) EmitWithAck(ev string, args ...any) func(func(...any)) {
+// Return: a `func(func([]any, error))` that will be fulfilled when all servers have acknowledged the event
+func (s *Server) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
 	return s.sockets.EmitWithAck(ev, args...)
 }
 
@@ -647,16 +647,16 @@ func (s *Server) ServerSideEmit(ev string, args ...any) error {
 
 // Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
 //
-//	io.Timeout(1000 * time.Millisecond).ServerSideEmitWithAck("some-event")(func(args ...any) {
-//		if args[0] == nil {
-//			fmt.Println(args[1]) // one response per client
+//	io.Timeout(1000 * time.Millisecond).ServerSideEmitWithAck("some-event")(func(args []any, err error) {
+//		if err == nil {
+//			fmt.Println(args) // one response per client
 //		} else {
 //			// some servers did not acknowledge the event in the given delay
 //		}
 //	})
 //
-// Return: a `func(func(...any))` that will be fulfilled when all servers have acknowledged the event
-func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(func(...any)) {
+// Return: a `func(func([]any, error))` that will be fulfilled when all servers have acknowledged the event
+func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, error)) {
 	return s.sockets.ServerSideEmitWithAck(ev, args...)
 }
 

@@ -47,7 +47,7 @@ type Adapter interface {
 	//  - `Flags` {*BroadcastFlags} flags for this packet
 	//  - `Except` {*types.Set[Room]} sids that should be excluded
 	//  - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
-	BroadcastWithAck(*parser.Packet, *BroadcastOptions, func(uint64), func(...any))
+	BroadcastWithAck(*parser.Packet, *BroadcastOptions, func(uint64), func([]any, error))
 
 	// Gets a list of sockets by sid.
 	Sockets(*types.Set[Room]) *types.Set[SocketId]
@@ -68,7 +68,7 @@ type Adapter interface {
 	DisconnectSockets(*BroadcastOptions, bool)
 
 	// Send a packet to the other Socket.IO servers in the cluster
-	ServerSideEmit(string, ...any) error
+	ServerSideEmit([]any) error
 
 	// Save the client session in order to restore it upon reconnection.
 	PersistSession(*SessionToPersist)
@@ -122,7 +122,7 @@ type NamespaceInterface interface {
 	Emit(string, ...any) error
 
 	// Emits an event and waits for an acknowledgement from all clients.
-	EmitWithAck(string, ...any) func(func(...any))
+	EmitWithAck(string, ...any) func(func([]any, error))
 
 	// Sends a `message` event to all clients.
 	Send(...any) NamespaceInterface
@@ -134,7 +134,7 @@ type NamespaceInterface interface {
 	ServerSideEmit(string, ...any) error
 
 	// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
-	ServerSideEmitWithAck(string, ...any) func(func(...any))
+	ServerSideEmitWithAck(string, ...any) func(func([]any, error))
 
 	// Gets a list of clients.
 	AllSockets() (*types.Set[SocketId], error)
