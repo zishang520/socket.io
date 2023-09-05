@@ -126,11 +126,11 @@ func (b *BroadcastOperator) Local() *BroadcastOperator {
 
 // Adds a timeout in milliseconds for the next operation
 //
-//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if args[0] != nil {
+//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
+//		if err != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]) // one response per client
+//			fmt.Println(args) // one response per client
 //		}
 //	})
 func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
@@ -148,11 +148,11 @@ func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
 //	io.To("room-101").Emit("foo", "bar")
 //
 //	// with an acknowledgement expected from all connected clients
-//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if args[0] != nil {
+//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
+//		if err != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]) // one response per client
+//			fmt.Println(args) // one response per client
 //		}
 //	})
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
@@ -405,8 +405,8 @@ func NewRemoteSocket(adapter Adapter, details SocketDetails) *RemoteSocket {
 //
 //	for _, socket := range sockets {
 //		if (someCondition) {
-//			socket.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//				if args[0] != nil {
+//			socket.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
+//				if err != nil {
 //					// the client did not acknowledge the event in the given delay
 //				}
 //			})

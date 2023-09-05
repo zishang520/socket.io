@@ -630,11 +630,11 @@ func (s *Server) Write(args ...any) *Server {
 //	})
 //
 //	// acknowledgements (without binary content) are supported too:
-//	io.ServerSideEmit("ping", func(args ...any) {
-//		if args[0] != nil {
+//	io.ServerSideEmit("ping", func(args []any, err error) {
+//		if err != nil {
 //			// some servers did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]) // one response per server (except the current one)
+//			fmt.Println(args) // one response per server (except the current one)
 //		}
 //	})
 //
@@ -698,11 +698,11 @@ func (s *Server) Local() *BroadcastOperator {
 
 // Adds a timeout in milliseconds for the next operation
 //
-//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if args[0] != nil {
+//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
+//		if err != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]) // one response per client
+//			fmt.Println(args) // one response per client
 //		}
 //	})
 func (s *Server) Timeout(timeout time.Duration) *BroadcastOperator {

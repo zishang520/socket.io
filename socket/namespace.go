@@ -325,11 +325,11 @@ func (n *Namespace) namespace_remove(socket *Socket) {
 //	myNamespace.To("room-101").Emit("foo", "bar")
 //
 //	// with an acknowledgement expected from all connected clients
-//	myNamespace.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if args[0] != nil {
+//	myNamespace.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
+//		if err != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]) // one response per client
+//			fmt.Println(args) // one response per client
 //		}
 //	})
 func (n *Namespace) Emit(ev string, args ...any) error {
@@ -387,11 +387,11 @@ func (n *Namespace) Write(args ...any) NamespaceInterface {
 //	})
 //
 //	// acknowledgements (without binary content) are supported too:
-//	myNamespace.ServerSideEmit("ping", func(args ...any) {
-//		if args[0] != nil {
+//	myNamespace.ServerSideEmit("ping", func(args []any, err error) {
+//		if err != nil {
 //			// some servers did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]) // one response per server (except the current one)
+//			fmt.Println(args) // one response per server (except the current one)
 //		}
 //	})
 //
@@ -470,11 +470,11 @@ func (n *Namespace) Local() *BroadcastOperator {
 
 // Adds a timeout in milliseconds for the next operation
 //
-//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args ...any) {
-//		if args[0] != nil {
+//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
+//		if err != nil {
 //			// some clients did not acknowledge the event in the given delay
 //		} else {
-//			fmt.Println(args[1]) // one response per client
+//			fmt.Println(args) // one response per client
 //		}
 //	})
 func (n *Namespace) Timeout(timeout time.Duration) *BroadcastOperator {

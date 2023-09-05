@@ -243,7 +243,7 @@ func (s *Socket) buildHandshake(auth any) *Handshake {
 //		socket.Emit("hello", 1, "2", map[string]any{"3": []string{"4"}, "5": types.NewBytesBuffer([]byte{6})})
 //
 //		// with an acknowledgement from the client
-//		socket.Emit("hello", "world", func(args ...any) {
+//		socket.Emit("hello", "world", func(args []any, err error) {
 //			// ...
 //		})
 //	})
@@ -725,8 +725,8 @@ func (s *Socket) Local() *BroadcastOperator {
 //
 //	io.On("connection", func(clients ...any) {
 //		socket := clients[0].(*socket.Socket)
-//		socket.Timeout(1000 * time.Millisecond).Emit("my-event", func(args ...any) {
-//			if args[0] != nil {
+//		socket.Timeout(1000 * time.Millisecond).Emit("my-event", func(args []any, err error) {
+//			if err != nil {
 //				// the client did not acknowledge the event in the given delay
 //			}
 //		})
