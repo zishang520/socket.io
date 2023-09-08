@@ -9,6 +9,8 @@ import (
 )
 
 type Adapter interface {
+	events.EventEmitter
+
 	Rooms() *types.Map[Room, *types.Set[SocketId]]
 	Sids() *types.Map[SocketId, *types.Set[Room]]
 	Nsp() NamespaceInterface
