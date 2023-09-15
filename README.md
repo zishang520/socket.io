@@ -52,7 +52,7 @@ Sample code:
 
 ```golang
 import (
-    "github.com/zishang520/socket.io/socket"
+    "github.com/zishang520/socket.io/v2/socket"
 )
 io.On("connection", func(clients ...any) {
     client := clients[0].(*socket.Socket)
@@ -85,7 +85,7 @@ package main
 import (
     "github.com/zishang520/engine.io/types"
     "github.com/zishang520/engine.io/utils"
-    "github.com/zishang520/socket.io/socket"
+    "github.com/zishang520/socket.io/v2/socket"
     "os"
     "os/signal"
     "syscall"
@@ -132,7 +132,7 @@ import (
     "os/signal"
     "syscall"
 
-    "github.com/zishang520/socket.io/socket"
+    "github.com/zishang520/socket.io/v2/socket"
 )
 
 func main() {

@@ -82,7 +82,7 @@ func (s *Server) Opts() *ServerOptions {
 //
 //	import (
 //		"github.com/zishang520/engine.io/utils"
-//		"github.com/zishang520/socket.io/socket"
+//		"github.com/zishang520/socket.io/v2/socket"
 //	)
 //
 //	io := socket.NewServer(nil, nil)
