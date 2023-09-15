@@ -58,7 +58,7 @@ type Adapter interface {
 	SocketRooms(SocketId) *types.Set[Room]
 
 	// Returns the matching socket instances
-	FetchSockets(*BroadcastOptions) []SocketDetails
+	FetchSockets(*BroadcastOptions) func(func([]SocketDetails, error))
 
 	// Makes the matching socket instances join the specified rooms
 	AddSockets(*BroadcastOptions, []Room)
@@ -156,7 +156,7 @@ type NamespaceInterface interface {
 	Timeout(time.Duration) *BroadcastOperator
 
 	// Returns the matching socket instances
-	FetchSockets() ([]*RemoteSocket, error)
+	FetchSockets() func(func([]*RemoteSocket, error))
 
 	// Makes the matching socket instances join the specified rooms
 	SocketsJoin(...Room)

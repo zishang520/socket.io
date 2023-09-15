@@ -273,36 +273,44 @@ func (b *BroadcastOperator) AllSockets() (*types.Set[SocketId], error) {
 //
 // Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
 //
-//	// return all Socket instances
-//	sockets := io.FetchSockets()
+//	io.FetchSockets()(func(sockets []*RemoteSocket, _ error){
+//		// return all Socket instances
+//	})
 //
 //	// return all Socket instances in the "room1" room
-//	sockets := io.In("room1").FetchSockets()
+//	io.In("room1").FetchSockets()(func(sockets []*RemoteSocket, _ error){
 //
-//	for _, socket := range sockets {
-//		fmt.Println(socket.Id())
-//		fmt.Println(socket.Handshake())
-//		fmt.Println(socket.Rooms())
-//		fmt.Println(socket.Data())
+//		for _, socket := range sockets {
+//			fmt.Println(socket.Id())
+//			fmt.Println(socket.Handshake())
+//			fmt.Println(socket.Rooms())
+//			fmt.Println(socket.Data())
 //
-//		socket.Emit("hello")
-//		socket.Join("room1")
-//		socket.Leave("room2")
-//		socket.Disconnect()
-//	}
-func (b *BroadcastOperator) FetchSockets() (remoteSockets []*RemoteSocket) {
-	for _, socket := range b.adapter.FetchSockets(&BroadcastOptions{
-		Rooms:  b.rooms,
-		Except: b.exceptRooms,
-		Flags:  b.flags,
-	}) {
-		if s, ok := socket.(*RemoteSocket); ok {
-			remoteSockets = append(remoteSockets, s)
-		} else if sd, sd_ok := socket.(SocketDetails); sd_ok {
-			remoteSockets = append(remoteSockets, NewRemoteSocket(b.adapter, sd))
-		}
+//			socket.Emit("hello")
+//			socket.Join("room1")
+//			socket.Leave("room2")
+//			socket.Disconnect()
+//		}
+//
+//	})
+func (b *BroadcastOperator) FetchSockets() func(func([]*RemoteSocket, error)) {
+	return func(callback func([]*RemoteSocket, error)) {
+		b.adapter.FetchSockets(&BroadcastOptions{
+			Rooms:  b.rooms,
+			Except: b.exceptRooms,
+			Flags:  b.flags,
+		})(func(sockets []SocketDetails, err error) {
+			remoteSockets := []*RemoteSocket{}
+			for _, socket := range sockets {
+				if s, ok := socket.(*RemoteSocket); ok {
+					remoteSockets = append(remoteSockets, s)
+				} else if sd, sd_ok := socket.(SocketDetails); sd_ok {
+					remoteSockets = append(remoteSockets, NewRemoteSocket(b.adapter, sd))
+				}
+			}
+			callback(remoteSockets, err)
+		})
 	}
-	return remoteSockets
 }
 
 // Makes the matching socket instances join the specified rooms.
@@ -401,21 +409,22 @@ func NewRemoteSocket(adapter Adapter, details SocketDetails) *RemoteSocket {
 
 // Adds a timeout in milliseconds for the next operation.
 //
-//	sockets :=  io.FetchSockets()
+//	io.FetchSockets()(func(sockets []*RemoteSocket, _ error){
 //
-//	for _, socket := range sockets {
-//		if (someCondition) {
-//			socket.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
-//				if err != nil {
-//					// the client did not acknowledge the event in the given delay
-//				}
-//			})
+//		for _, socket := range sockets {
+//			if (someCondition) {
+//				socket.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
+//					if err != nil {
+//						// the client did not acknowledge the event in the given delay
+//					}
+//				})
+//			}
 //		}
-//	}
 //
+//	})
 //	// Note: if possible, using a room instead of looping over all sockets is preferable
 //
-//	io.Timeout(1000 * time.Millisecond).To(someConditionRoom).Emit("some-event", func(error, args []any) {
+//	io.Timeout(1000 * time.Millisecond).To(someConditionRoom).Emit("some-event", func(args []any, err error) {
 //		// ...
 //	})
 //

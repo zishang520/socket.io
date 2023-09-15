@@ -713,24 +713,28 @@ func (s *Server) Timeout(timeout time.Duration) *BroadcastOperator {
 //
 // Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
 //
-//	// return all Socket instances
-//	sockets := io.FetchSockets()
+//	io.FetchSockets()(func(sockets []*RemoteSocket, _ error){
+//		// return all Socket instances
+//	})
 //
 //	// return all Socket instances in the "room1" room
-//	sockets := io.In("room1").FetchSockets()
+//	io.In("room1").FetchSockets()(func(sockets []*RemoteSocket, _ error){
 //
-//	for _, socket := range sockets {
-//		fmt.Println(socket.Id())
-//		fmt.Println(socket.Handshake())
-//		fmt.Println(socket.Rooms())
-//		fmt.Println(socket.Data())
+//		for _, socket := range sockets {
+//			fmt.Println(socket.Id())
+//			fmt.Println(socket.Handshake())
+//			fmt.Println(socket.Rooms())
+//			fmt.Println(socket.Data())
 //
-//		socket.Emit("hello")
-//		socket.Join("room1")
-//		socket.Leave("room2")
-//		socket.Disconnect()
-//	}
-func (s *Server) FetchSockets() ([]*RemoteSocket, error) {
+//			socket.Emit("hello")
+//			socket.Join("room1")
+//			socket.Leave("room2")
+//			socket.Disconnect()
+//		}
+//
+//	})
+
+func (s *Server) FetchSockets() func(func([]*RemoteSocket, error)) {
 	return s.sockets.FetchSockets()
 }
 

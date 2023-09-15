@@ -485,25 +485,28 @@ func (n *Namespace) Timeout(timeout time.Duration) *BroadcastOperator {
 //
 // Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
 //
-//	// return all Socket instances
-//	sockets := io.FetchSockets()
+//	io.FetchSockets()(func(sockets []*RemoteSocket, _ error){
+//		// return all Socket instances
+//	})
 //
 //	// return all Socket instances in the "room1" room
-//	sockets := io.In("room1").FetchSockets()
+//	io.In("room1").FetchSockets()(func(sockets []*RemoteSocket, _ error){
 //
-//	for _, socket := range sockets {
-//		fmt.Println(socket.Id())
-//		fmt.Println(socket.Handshake())
-//		fmt.Println(socket.Rooms())
-//		fmt.Println(socket.Data())
+//		for _, socket := range sockets {
+//			fmt.Println(socket.Id())
+//			fmt.Println(socket.Handshake())
+//			fmt.Println(socket.Rooms())
+//			fmt.Println(socket.Data())
 //
-//		socket.Emit("hello")
-//		socket.Join("room1")
-//		socket.Leave("room2")
-//		socket.Disconnect()
-//	}
-func (n *Namespace) FetchSockets() ([]*RemoteSocket, error) {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).FetchSockets(), nil
+//			socket.Emit("hello")
+//			socket.Join("room1")
+//			socket.Leave("room2")
+//			socket.Disconnect()
+//		}
+//
+//	})
+func (n *Namespace) FetchSockets() func(func([]*RemoteSocket, error)) {
+	return NewBroadcastOperator(n.adapter, nil, nil, nil).FetchSockets()
 }
 
 // Makes the matching socket instances join the specified rooms

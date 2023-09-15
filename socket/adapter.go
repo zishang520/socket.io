@@ -206,11 +206,14 @@ func (a *adapter) SocketRooms(id SocketId) *types.Set[Room] {
 }
 
 // Returns the matching socket instances
-func (a *adapter) FetchSockets(opts *BroadcastOptions) (sockets []SocketDetails) {
-	a.apply(opts, func(socket *Socket) {
-		sockets = append(sockets, socket)
-	})
-	return sockets
+func (a *adapter) FetchSockets(opts *BroadcastOptions) func(func([]SocketDetails, error)) {
+	return func(callback func([]SocketDetails, error)) {
+		sockets := []SocketDetails{}
+		a.apply(opts, func(socket *Socket) {
+			sockets = append(sockets, socket)
+		})
+		callback(sockets, nil)
+	}
 }
 
 // Makes the matching socket instances join the specified rooms
