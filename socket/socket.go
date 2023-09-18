@@ -24,23 +24,23 @@ var (
 
 type Handshake struct {
 	// The headers sent as part of the handshake
-	Headers *utils.ParameterBag `json:"headers,omitempty"`
+	Headers map[string][]string `json:"headers" mapstructure:"headers" msgpack:"headers"`
 	// The date of creation (as string)
-	Time string `json:"time,omitempty"`
+	Time string `json:"time" mapstructure:"time" msgpack:"time"`
 	// The ip of the client
-	Address string `json:"address,omitempty"`
+	Address string `json:"address" mapstructure:"address" msgpack:"address"`
 	// Whether the connection is cross-domain
-	Xdomain bool `json:"xdomain,omitempty"`
+	Xdomain bool `json:"xdomain" mapstructure:"xdomain" msgpack:"xdomain"`
 	// Whether the connection is secure
-	Secure bool `json:"secure,omitempty"`
+	Secure bool `json:"secure" mapstructure:"secure" msgpack:"secure"`
 	// The date of creation (as unix timestamp)
-	Issued int64 `json:"issued,omitempty"`
+	Issued int64 `json:"issued" mapstructure:"issued" msgpack:"issued"`
 	// The request URL string
-	Url string `json:"url,omitempty"`
+	Url string `json:"url" mapstructure:"url" msgpack:"url"`
 	// The query object
-	Query *utils.ParameterBag `json:"query,omitempty"`
+	Query map[string][]string `json:"query" mapstructure:"query" msgpack:"query"`
 	// The auth object
-	Auth any `json:"auth,omitempty"`
+	Auth any `json:"auth" mapstructure:"auth" msgpack:"auth"`
 }
 
 type Socket struct {
@@ -221,14 +221,14 @@ func NewSocket(nsp *Namespace, client *Client, auth any, previousSession *Sessio
 // Builds the `handshake` BC object
 func (s *Socket) buildHandshake(auth any) *Handshake {
 	return &Handshake{
-		Headers: s.Request().Headers(),
+		Headers: s.Request().Headers().All(),
 		Time:    time.Now().Format("2006-01-02 15:04:05"),
 		Address: s.Conn().RemoteAddress(),
 		Xdomain: s.Request().Headers().Peek("Origin") != "",
 		Secure:  s.Request().Secure(),
 		Issued:  time.Now().UnixMilli(),
 		Url:     s.Request().Request().RequestURI,
-		Query:   s.Request().Query(),
+		Query:   s.Request().Query().All(),
 		Auth:    auth,
 	}
 }

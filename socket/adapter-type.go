@@ -21,50 +21,50 @@ type Room string
 type WriteOptions struct {
 	packet.Options
 
-	Volatile     bool
-	PreEncoded   bool
-	WsPreEncoded string
+	Volatile     bool   `json:"volatile" mapstructure:"volatile" msgpack:"volatile"`
+	PreEncoded   bool   `json:"preEncoded" mapstructure:"preEncoded" msgpack:"preEncoded"`
+	WsPreEncoded string `json:"wsPreEncoded" mapstructure:"wsPreEncoded" msgpack:"wsPreEncoded"`
 }
 
 type BroadcastFlags struct {
 	WriteOptions
 
-	Local     bool
-	Broadcast bool
-	Binary    bool
-	Timeout   *time.Duration
+	Local     bool           `json:"local" mapstructure:"local" msgpack:"local"`
+	Broadcast bool           `json:"broadcast" mapstructure:"broadcast" msgpack:"broadcast"`
+	Binary    bool           `json:"binary" mapstructure:"binary" msgpack:"binary"`
+	Timeout   *time.Duration `json:"timeout,omitempty" mapstructure:"timeout,omitempty" msgpack:"timeout,omitempty"`
 
-	ExpectSingleResponse bool
+	ExpectSingleResponse bool `json:"expectSingleResponse" mapstructure:"expectSingleResponse" msgpack:"expectSingleResponse"`
 }
 
 type BroadcastOptions struct {
-	Rooms  *types.Set[Room]
-	Except *types.Set[Room]
-	Flags  *BroadcastFlags
+	Rooms  *types.Set[Room] `json:"rooms,omitempty" mapstructure:"rooms,omitempty" msgpack:"rooms,omitempty"`
+	Except *types.Set[Room] `json:"except,omitempty" mapstructure:"except,omitempty" msgpack:"except,omitempty"`
+	Flags  *BroadcastFlags  `json:"flags,omitempty" mapstructure:"flags,omitempty" msgpack:"flags,omitempty"`
 }
 
 type SessionToPersist struct {
-	Sid   SocketId
-	Pid   PrivateSessionId
-	Rooms *types.Set[Room]
-	Data  any
+	Sid   SocketId         `json:"sid" mapstructure:"sid" msgpack:"sid"`
+	Pid   PrivateSessionId `json:"pid" mapstructure:"pid" msgpack:"pid"`
+	Rooms *types.Set[Room] `json:"rooms,omitempty" mapstructure:"rooms,omitempty" msgpack:"rooms,omitempty"`
+	Data  any              `json:"data" mapstructure:"data" msgpack:"data"`
 }
 
 type Session struct {
 	*SessionToPersist
 
-	MissedPackets []any
+	MissedPackets []any `json:"missedPackets" mapstructure:"missedPackets" msgpack:"missedPackets"`
 }
 
 type PersistedPacket struct {
-	Id        string
-	EmittedAt int64
-	Data      any
-	Opts      *BroadcastOptions
+	Id        string            `json:"id" mapstructure:"id" msgpack:"id"`
+	EmittedAt int64             `json:"emittedAt" mapstructure:"emittedAt" msgpack:"emittedAt"`
+	Data      any               `json:"data" mapstructure:"data" msgpack:"data"`
+	Opts      *BroadcastOptions `json:"opts,omitempty" mapstructure:"opts,omitempty" msgpack:"opts,omitempty"`
 }
 
 type SessionWithTimestamp struct {
 	*SessionToPersist
 
-	DisconnectedAt int64
+	DisconnectedAt int64 `json:"disconnectedAt" mapstructure:"disconnectedAt" msgpack:"disconnectedAt"`
 }

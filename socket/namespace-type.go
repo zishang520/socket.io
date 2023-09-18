@@ -22,8 +22,8 @@ func (e *ExtendedError) Error() string {
 }
 
 type SeesionData struct {
-	Pid    any `json:"pid" mapstructure:"pid"`
-	Offset any `json:"offset" mapstructure:"offset"`
+	Pid    any `json:"pid" mapstructure:"pid" msgpack:"pid"`
+	Offset any `json:"offset" mapstructure:"offset" msgpack:"offset"`
 }
 
 func (s *SeesionData) GetPid() (pid string, ok bool) {
