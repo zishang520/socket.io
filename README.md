@@ -7,6 +7,7 @@
 
 Socket.IO enables real-time bidirectional event-based communication. It consists of:
 
+- **Support Socket.IO v4+ 🚀🚀🚀**
 - a Golang server (this repository)
 - a [Javascript client library](https://github.com/socketio/socket.io-client) for the browser (or a Node.js client)
 
