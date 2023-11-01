@@ -5,14 +5,16 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/zishang520/engine.io/log"
-	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/socket.io-go-parser/parser"
+	"github.com/zishang520/engine.io/v2/log"
+	"github.com/zishang520/engine.io/v2/types"
+	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
-var parent_namespace_log = log.NewLog("socket.io:parent-namespace")
+var (
+	parent_namespace_log = log.NewLog("socket.io:parent-namespace")
 
-var count uint64 = 0
+	count uint64 = 0
+)
 
 type ParentNamespace struct {
 	*Namespace

@@ -84,8 +84,8 @@ The following example attaches socket.io to a plain engine.io *types.CreateServe
 package main
 
 import (
-    "github.com/zishang520/engine.io/types"
-    "github.com/zishang520/engine.io/utils"
+    "github.com/zishang520/engine.io/v2/types"
+    "github.com/zishang520/engine.io/v2/utils"
     "github.com/zishang520/socket.io/v2/socket"
     "os"
     "os/signal"

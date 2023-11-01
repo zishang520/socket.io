@@ -1,7 +1,7 @@
 package socket
 
 import (
-	"github.com/zishang520/engine.io/events"
+	"github.com/zishang520/engine.io/v2/events"
 )
 
 // Strictly typed version of an `EventEmitter`. A `TypedEventEmitter` takes type

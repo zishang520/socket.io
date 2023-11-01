@@ -8,12 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zishang520/engine.io/engine"
-	"github.com/zishang520/engine.io/events"
-	"github.com/zishang520/engine.io/log"
-	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/engine.io/utils"
-	"github.com/zishang520/socket.io-go-parser/parser"
+	"github.com/zishang520/engine.io/v2/engine"
+	"github.com/zishang520/engine.io/v2/events"
+	"github.com/zishang520/engine.io/v2/log"
+	"github.com/zishang520/engine.io/v2/types"
+	"github.com/zishang520/engine.io/v2/utils"
+	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
 var (
@@ -22,78 +22,80 @@ var (
 	RECOVERABLE_DISCONNECT_REASONS = types.NewSet("transport error", "transport close", "forced close", "ping timeout", "server shutting down", "forced server close")
 )
 
-type Handshake struct {
-	// The headers sent as part of the handshake
-	Headers map[string][]string `json:"headers" mapstructure:"headers" msgpack:"headers"`
-	// The date of creation (as string)
-	Time string `json:"time" mapstructure:"time" msgpack:"time"`
-	// The ip of the client
-	Address string `json:"address" mapstructure:"address" msgpack:"address"`
-	// Whether the connection is cross-domain
-	Xdomain bool `json:"xdomain" mapstructure:"xdomain" msgpack:"xdomain"`
-	// Whether the connection is secure
-	Secure bool `json:"secure" mapstructure:"secure" msgpack:"secure"`
-	// The date of creation (as unix timestamp)
-	Issued int64 `json:"issued" mapstructure:"issued" msgpack:"issued"`
-	// The request URL string
-	Url string `json:"url" mapstructure:"url" msgpack:"url"`
-	// The query object
-	Query map[string][]string `json:"query" mapstructure:"query" msgpack:"query"`
-	// The auth object
-	Auth any `json:"auth" mapstructure:"auth" msgpack:"auth"`
-}
+type (
+	Handshake struct {
+		// The headers sent as part of the handshake
+		Headers map[string][]string `json:"headers" mapstructure:"headers" msgpack:"headers"`
+		// The date of creation (as string)
+		Time string `json:"time" mapstructure:"time" msgpack:"time"`
+		// The ip of the client
+		Address string `json:"address" mapstructure:"address" msgpack:"address"`
+		// Whether the connection is cross-domain
+		Xdomain bool `json:"xdomain" mapstructure:"xdomain" msgpack:"xdomain"`
+		// Whether the connection is secure
+		Secure bool `json:"secure" mapstructure:"secure" msgpack:"secure"`
+		// The date of creation (as unix timestamp)
+		Issued int64 `json:"issued" mapstructure:"issued" msgpack:"issued"`
+		// The request URL string
+		Url string `json:"url" mapstructure:"url" msgpack:"url"`
+		// The query object
+		Query map[string][]string `json:"query" mapstructure:"query" msgpack:"query"`
+		// The auth object
+		Auth any `json:"auth" mapstructure:"auth" msgpack:"auth"`
+	}
 
-type Socket struct {
-	*StrictEventEmitter
+	Socket struct {
+		*StrictEventEmitter
 
-	nsp    *Namespace
-	client *Client
+		nsp    *Namespace
+		client *Client
 
-	// An unique identifier for the session.
-	id SocketId
-	// Whether the connection state was recovered after a temporary disconnection. In that case, any missed packets will
-	// be transmitted to the client, the data attribute and the rooms will be restored.
-	recovered bool
-	// The handshake details.
-	handshake *Handshake
+		// An unique identifier for the session.
+		id SocketId
+		// Whether the connection state was recovered after a temporary disconnection. In that case, any missed packets will
+		// be transmitted to the client, the data attribute and the rooms will be restored.
+		recovered bool
+		// The handshake details.
+		handshake *Handshake
 
-	// Additional information that can be attached to the Socket instance and which will be used in the (*socket.Server).FetchSockets() method.
-	data    any
-	data_mu sync.RWMutex
+		// Additional information that can be attached to the Socket instance and which will be used in the (*socket.Server).FetchSockets() method.
+		data    any
+		data_mu sync.RWMutex
 
-	// Whether the socket is currently connected or not.
-	//
-	//	io.Use(func(socket *socket.Socket, next func(*ExtendedError)) {
-	//		fmt.Println(socket.Connected()) // false
-	//		next(nil)
-	//	})
-	//
-	//	io.On("connection", func(args ...any) {
-	//		socket := args[0].(*socket.Socket)
-	//		fmt.Println(socket.Connected()) // true
-	//	})
-	connected    bool
-	connected_mu sync.RWMutex
-	// The session ID, which must not be shared (unlike {@link id}).
-	pid PrivateSessionId
+		// Whether the socket is currently connected or not.
+		//
+		//	io.Use(func(socket *socket.Socket, next func(*ExtendedError)) {
+		//		fmt.Println(socket.Connected()) // false
+		//		next(nil)
+		//	})
+		//
+		//	io.On("connection", func(args ...any) {
+		//		socket := args[0].(*socket.Socket)
+		//		fmt.Println(socket.Connected()) // true
+		//	})
+		connected    bool
+		connected_mu sync.RWMutex
+		// The session ID, which must not be shared (unlike {@link id}).
+		pid PrivateSessionId
 
-	canJoin    bool
-	canJoin_mu sync.RWMutex
+		canJoin    bool
+		canJoin_mu sync.RWMutex
 
-	// TODO: remove this unused reference
-	server                *Server
-	adapter               Adapter
-	acks                  *types.Map[uint64, func([]any, error)]
-	fns                   []func([]any, func(error))
-	flags                 *BroadcastFlags
-	_anyListeners         []events.Listener
-	_anyOutgoingListeners []events.Listener
+		// TODO: remove this unused reference
+		server                *Server
+		adapter               Adapter
+		acks                  *types.Map[uint64, func([]any, error)]
+		fns                   []func([]any, func(error))
+		flags                 *BroadcastFlags
+		_anyListeners         []events.Listener
+		_anyOutgoingListeners []events.Listener
 
-	flags_mu                 sync.RWMutex
-	fns_mu                   sync.RWMutex
-	_anyListeners_mu         sync.RWMutex
-	_anyOutgoingListeners_mu sync.RWMutex
-}
+		flags_mu                 sync.RWMutex
+		fns_mu                   sync.RWMutex
+		_anyListeners_mu         sync.RWMutex
+		_anyOutgoingListeners_mu sync.RWMutex
+	}
+)
 
 func (s *Socket) Nsp() *Namespace {
 	return s.nsp
@@ -323,7 +325,7 @@ func (s *Socket) registerAckCallback(id uint64, ack func([]any, error)) {
 		s.acks.Store(id, ack)
 		return
 	}
-	timer := utils.SetTimeOut(func() {
+	timer := utils.SetTimeout(func() {
 		socket_log.Debug("event with ack id %d has timed out after %d ms", id, *timeout/time.Millisecond)
 		s.acks.Delete(id)
 		ack(nil, errors.New("operation has timed out"))

@@ -3,25 +3,27 @@ package socket
 import (
 	"sync/atomic"
 
-	"github.com/zishang520/engine.io/events"
-	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/engine.io/utils"
-	"github.com/zishang520/socket.io-go-parser/parser"
+	"github.com/zishang520/engine.io/v2/events"
+	"github.com/zishang520/engine.io/v2/types"
+	"github.com/zishang520/engine.io/v2/utils"
+	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
-type AdapterBuilder struct {
-}
+type (
+	AdapterBuilder struct {
+	}
 
-type adapter struct {
-	events.EventEmitter
+	adapter struct {
+		events.EventEmitter
 
-	nsp     NamespaceInterface
-	rooms   *types.Map[Room, *types.Set[SocketId]]
-	sids    *types.Map[SocketId, *types.Set[Room]]
-	encoder parser.Encoder
+		nsp     NamespaceInterface
+		rooms   *types.Map[Room, *types.Set[SocketId]]
+		sids    *types.Map[SocketId, *types.Set[Room]]
+		encoder parser.Encoder
 
-	_broadcast func(*parser.Packet, *BroadcastOptions)
-}
+		_broadcast func(*parser.Packet, *BroadcastOptions)
+	}
+)
 
 func (*AdapterBuilder) New(nsp NamespaceInterface) Adapter {
 	a := &adapter{}

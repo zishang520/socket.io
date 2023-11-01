@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/engine.io/utils"
-	"github.com/zishang520/socket.io-go-parser/parser"
+	"github.com/zishang520/engine.io/v2/types"
+	"github.com/zishang520/engine.io/v2/utils"
+	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
 type BroadcastOperator struct {
@@ -191,7 +191,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		timeout = *time
 	}
 
-	timer := utils.SetTimeOut(func() {
+	timer := utils.SetTimeout(func() {
 		atomic.StoreUint32(&timedOut, 1)
 		if b.flags.ExpectSingleResponse {
 			ack(nil, errors.New("operation has timed out"))

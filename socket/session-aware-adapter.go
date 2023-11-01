@@ -4,23 +4,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/engine.io/utils"
-	"github.com/zishang520/socket.io-go-parser/parser"
+	"github.com/zishang520/engine.io/v2/types"
+	"github.com/zishang520/engine.io/v2/utils"
+	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
-type SessionAwareAdapterBuilder struct {
-}
+type (
+	SessionAwareAdapterBuilder struct {
+	}
 
-type sessionAwareAdapter struct {
-	Adapter
+	sessionAwareAdapter struct {
+		Adapter
 
-	maxDisconnectionDuration int64
+		maxDisconnectionDuration int64
 
-	sessions   *types.Map[PrivateSessionId, *SessionWithTimestamp]
-	packets    []*PersistedPacket
-	mu_packets sync.RWMutex
-}
+		sessions   *types.Map[PrivateSessionId, *SessionWithTimestamp]
+		packets    []*PersistedPacket
+		mu_packets sync.RWMutex
+	}
+)
 
 func (*SessionAwareAdapterBuilder) New(nsp NamespaceInterface) Adapter {
 	s := &sessionAwareAdapter{}

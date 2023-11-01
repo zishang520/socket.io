@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"github.com/andybalholm/brotli"
-	"github.com/zishang520/engine.io/engine"
-	"github.com/zishang520/engine.io/log"
-	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/engine.io/utils"
-	"github.com/zishang520/socket.io-go-parser/parser"
+	"github.com/zishang520/engine.io/v2/engine"
+	"github.com/zishang520/engine.io/v2/log"
+	"github.com/zishang520/engine.io/v2/types"
+	"github.com/zishang520/engine.io/v2/utils"
+	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
 const clientVersion = "4.6.1"
@@ -29,38 +29,40 @@ var (
 	server_log  = log.NewLog("socket.io:server")
 )
 
-type ParentNspNameMatchFn *func(string, any, func(error, bool))
+type (
+	ParentNspNameMatchFn *func(string, any, func(error, bool))
 
-type Server struct {
-	*StrictEventEmitter
+	Server struct {
+		*StrictEventEmitter
 
-	sockets NamespaceInterface
-	// A reference to the underlying Engine.IO server.
-	//
-	//	clientsCount := io.Engine().ClientsCount()
-	engine engine.Server
+		sockets NamespaceInterface
+		// A reference to the underlying Engine.IO server.
+		//
+		//	clientsCount := io.Engine().ClientsCount()
+		engine engine.Server
 
-	_parser parser.Parser
-	encoder parser.Encoder
+		_parser parser.Parser
+		encoder parser.Encoder
 
-	_nsps *types.Map[string, *Namespace]
+		_nsps *types.Map[string, *Namespace]
 
-	parentNsps *types.Map[ParentNspNameMatchFn, *ParentNamespace]
+		parentNsps *types.Map[ParentNspNameMatchFn, *ParentNamespace]
 
-	// A subset of the {@link parentNsps} map, only containing {@link ParentNamespace} which are based on a regular
-	// expression.
-	parentNamespacesFromRegExp *types.Map[*regexp.Regexp, *ParentNamespace]
+		// A subset of the {@link parentNsps} map, only containing {@link ParentNamespace} which are based on a regular
+		// expression.
+		parentNamespacesFromRegExp *types.Map[*regexp.Regexp, *ParentNamespace]
 
-	_adapter        AdapterConstructor
-	_serveClient    bool
-	opts            *ServerOptions
-	eio             engine.Server
-	_path           string
-	clientPathRegex *regexp.Regexp
+		_adapter        AdapterConstructor
+		_serveClient    bool
+		opts            *ServerOptions
+		eio             engine.Server
+		_path           string
+		clientPathRegex *regexp.Regexp
 
-	_connectTimeout time.Duration
-	httpServer      *types.HttpServer
-}
+		_connectTimeout time.Duration
+		httpServer      *types.HttpServer
+	}
+)
 
 func (s *Server) Sockets() NamespaceInterface {
 	return s.sockets
@@ -81,7 +83,7 @@ func (s *Server) Opts() *ServerOptions {
 // Represents a Socket.IO server.
 //
 //	import (
-//		"github.com/zishang520/engine.io/utils"
+//		"github.com/zishang520/engine.io/v2/utils"
 //		"github.com/zishang520/socket.io/v2/socket"
 //	)
 //

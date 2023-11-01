@@ -5,11 +5,11 @@ import (
 	"sync"
 
 	_types "github.com/zishang520/engine.io-go-parser/types"
-	"github.com/zishang520/engine.io/engine"
-	"github.com/zishang520/engine.io/log"
-	"github.com/zishang520/engine.io/types"
-	"github.com/zishang520/engine.io/utils"
-	"github.com/zishang520/socket.io-go-parser/parser"
+	"github.com/zishang520/engine.io/v2/engine"
+	"github.com/zishang520/engine.io/v2/log"
+	"github.com/zishang520/engine.io/v2/types"
+	"github.com/zishang520/engine.io/v2/utils"
+	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
 var client_log = log.NewLog("socket.io:client")
@@ -59,7 +59,7 @@ func (c *Client) setup() {
 	c.mu_connectTimeout.Lock()
 	defer c.mu_connectTimeout.Unlock()
 
-	c.connectTimeout = utils.SetTimeOut(func() {
+	c.connectTimeout = utils.SetTimeout(func() {
 		if c.nsps.Len() == 0 {
 			client_log.Debug("no namespace joined yet, close the client")
 			c.close()

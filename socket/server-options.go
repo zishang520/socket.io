@@ -3,46 +3,73 @@ package socket
 import (
 	"time"
 
-	"github.com/zishang520/engine.io/config"
-	"github.com/zishang520/socket.io-go-parser/parser"
+	"github.com/zishang520/engine.io/v2/config"
+	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
-type ServerOptionsInterface interface {
-	config.ServerOptionsInterface
-	config.AttachOptionsInterface
+type (
+	ServerOptionsInterface interface {
+		config.ServerOptionsInterface
+		config.AttachOptionsInterface
 
-	SetServeClient(bool)
-	GetRawServeClient() *bool
-	ServeClient() bool
+		SetServeClient(bool)
+		GetRawServeClient() *bool
+		ServeClient() bool
 
-	SetAdapter(AdapterConstructor)
-	GetRawAdapter() AdapterConstructor
-	Adapter() AdapterConstructor
+		SetAdapter(AdapterConstructor)
+		GetRawAdapter() AdapterConstructor
+		Adapter() AdapterConstructor
 
-	SetParser(parser.Parser)
-	GetRawParser() parser.Parser
-	Parser() parser.Parser
+		SetParser(parser.Parser)
+		GetRawParser() parser.Parser
+		Parser() parser.Parser
 
-	SetConnectTimeout(time.Duration)
-	GetRawConnectTimeout() *time.Duration
-	ConnectTimeout() time.Duration
+		SetConnectTimeout(time.Duration)
+		GetRawConnectTimeout() *time.Duration
+		ConnectTimeout() time.Duration
 
-	SetConnectionStateRecovery(*ConnectionStateRecovery)
-	GetRawConnectionStateRecovery() *ConnectionStateRecovery
-	ConnectionStateRecovery() *ConnectionStateRecovery
+		SetConnectionStateRecovery(*ConnectionStateRecovery)
+		GetRawConnectionStateRecovery() *ConnectionStateRecovery
+		ConnectionStateRecovery() *ConnectionStateRecovery
 
-	SetCleanupEmptyChildNamespaces(bool)
-	GetRawCleanupEmptyChildNamespaces() *bool
-	CleanupEmptyChildNamespaces() bool
-}
+		SetCleanupEmptyChildNamespaces(bool)
+		GetRawCleanupEmptyChildNamespaces() *bool
+		CleanupEmptyChildNamespaces() bool
+	}
 
-type ConnectionStateRecovery struct {
-	// The backup duration of the sessions and the packets.
-	maxDisconnectionDuration *int64
+	ConnectionStateRecovery struct {
+		// The backup duration of the sessions and the packets.
+		maxDisconnectionDuration *int64
 
-	// Whether to skip middlewares upon successful connection state recovery.
-	skipMiddlewares *bool
-}
+		// Whether to skip middlewares upon successful connection state recovery.
+		skipMiddlewares *bool
+	}
+
+	ServerOptions struct {
+		config.ServerOptions
+		config.AttachOptions
+
+		// whether to serve the client files
+		serveClient *bool
+
+		// the adapter to use
+		adapter AdapterConstructor
+
+		// the parser to use
+		parser parser.Parser
+
+		// how many ms before a client without namespace is closed
+		connectTimeout *time.Duration
+
+		// Whether to enable the recovery of connection state when a client temporarily disconnects.
+		//
+		// The connection state includes the missed packets, the rooms the socket was in and the `data` attribute.
+		connectionStateRecovery *ConnectionStateRecovery
+
+		// Whether to remove child namespaces that have no sockets connected to them
+		cleanupEmptyChildNamespaces *bool
+	}
+)
 
 func (c *ConnectionStateRecovery) SetMaxDisconnectionDuration(maxDisconnectionDuration int64) {
 	c.maxDisconnectionDuration = &maxDisconnectionDuration
@@ -70,31 +97,6 @@ func (c *ConnectionStateRecovery) SkipMiddlewares() bool {
 	}
 
 	return *c.skipMiddlewares
-}
-
-type ServerOptions struct {
-	config.ServerOptions
-	config.AttachOptions
-
-	// whether to serve the client files
-	serveClient *bool
-
-	// the adapter to use
-	adapter AdapterConstructor
-
-	// the parser to use
-	parser parser.Parser
-
-	// how many ms before a client without namespace is closed
-	connectTimeout *time.Duration
-
-	// Whether to enable the recovery of connection state when a client temporarily disconnects.
-	//
-	// The connection state includes the missed packets, the rooms the socket was in and the `data` attribute.
-	connectionStateRecovery *ConnectionStateRecovery
-
-	// Whether to remove child namespaces that have no sockets connected to them
-	cleanupEmptyChildNamespaces *bool
 }
 
 func DefaultServerOptions() *ServerOptions {

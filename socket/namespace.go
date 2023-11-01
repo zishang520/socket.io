@@ -8,13 +8,15 @@ import (
 	"time"
 
 	"github.com/mitchellh/mapstructure"
-	"github.com/zishang520/engine.io/log"
-	"github.com/zishang520/engine.io/types"
+	"github.com/zishang520/engine.io/v2/log"
+	"github.com/zishang520/engine.io/v2/types"
 )
 
-var namespace_log = log.NewLog("socket.io:namespace")
+var (
+	namespace_log = log.NewLog("socket.io:namespace")
 
-var NAMESPACE_RESERVED_EVENTS = types.NewSet("connect", "connection", "new_namespace")
+	NAMESPACE_RESERVED_EVENTS = types.NewSet("connect", "connection", "new_namespace")
+)
 
 type Namespace struct {
 	// _ids has to be first in the struct to guarantee alignment for atomic
