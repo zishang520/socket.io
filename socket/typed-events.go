@@ -21,7 +21,6 @@ func (s *StrictEventEmitter) On(ev string, listeners ...events.Listener) error {
 }
 
 // Adds a one-time `listener` function as an event listener for `ev`.
-
 func (s *StrictEventEmitter) Once(ev string, listeners ...events.Listener) error {
 	return s.EventEmitter.Once(events.EventName(ev), listeners...)
 }

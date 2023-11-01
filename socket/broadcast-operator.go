@@ -261,7 +261,7 @@ func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(func([]any,
 
 // Gets a list of clients.
 //
-// Deprecated: this method will be removed in the next major release, please use *Server.ServerSideEmit or *BroadcastOperator.FetchSockets instead.
+// Deprecated: this method will be removed in the next major release, please use [Server.ServerSideEmit] or [FetchSockets] instead.
 func (b *BroadcastOperator) AllSockets() (*types.Set[SocketId], error) {
 	if b.adapter == nil {
 		return nil, errors.New("No adapter for this namespace, are you trying to get the list of clients of a dynamic namespace?")
