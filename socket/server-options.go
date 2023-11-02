@@ -8,6 +8,14 @@ import (
 )
 
 type (
+	ConnectionStateRecovery struct {
+		// The backup duration of the sessions and the packets.
+		maxDisconnectionDuration *int64
+
+		// Whether to skip middlewares upon successful connection state recovery.
+		skipMiddlewares *bool
+	}
+
 	ServerOptionsInterface interface {
 		config.ServerOptionsInterface
 		config.AttachOptionsInterface
@@ -35,14 +43,6 @@ type (
 		SetCleanupEmptyChildNamespaces(bool)
 		GetRawCleanupEmptyChildNamespaces() *bool
 		CleanupEmptyChildNamespaces() bool
-	}
-
-	ConnectionStateRecovery struct {
-		// The backup duration of the sessions and the packets.
-		maxDisconnectionDuration *int64
-
-		// Whether to skip middlewares upon successful connection state recovery.
-		skipMiddlewares *bool
 	}
 
 	ServerOptions struct {
@@ -240,7 +240,7 @@ func (s *ServerOptions) GetRawConnectTimeout() *time.Duration {
 }
 func (s *ServerOptions) ConnectTimeout() time.Duration {
 	if s.connectTimeout == nil {
-		return time.Duration(45000 * time.Millisecond)
+		return time.Duration(45_000 * time.Millisecond)
 	}
 
 	return *s.connectTimeout

@@ -38,7 +38,7 @@ func NewClient(server *Server, conn engine.Socket) *Client {
 	c.server = server
 	c.conn = conn
 	c.encoder = server.Encoder()
-	c.decoder = server._parser.Decoder()
+	c.decoder = server._parser.NewDecoder()
 	c.id = conn.Id()
 	c.setup()
 

@@ -22,7 +22,7 @@ import (
 	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
-const clientVersion = "4.6.1"
+const clientVersion = "4.7.2"
 
 var (
 	dotMapRegex = regexp.MustCompile(`\.map`)
@@ -35,49 +35,43 @@ type (
 	Server struct {
 		*StrictEventEmitter
 
+		// #readonly
 		sockets NamespaceInterface
 		// A reference to the underlying Engine.IO server.
 		//
 		//	clientsCount := io.Engine().ClientsCount()
-		engine engine.Server
-
+		engine engine.BaseServer
+		// @private
 		_parser parser.Parser
+		// @private
 		encoder parser.Encoder
-
+		// @private
 		_nsps *types.Map[string, *Namespace]
-
+		// @private
 		parentNsps *types.Map[ParentNspNameMatchFn, *ParentNamespace]
-
-		// A subset of the {@link parentNsps} map, only containing {@link ParentNamespace} which are based on a regular
+		// @private
+		//
+		// A subset of the {parentNsps} map, only containing {ParentNamespace} which are based on a regular
 		// expression.
 		parentNamespacesFromRegExp *types.Map[*regexp.Regexp, *ParentNamespace]
-
-		_adapter        AdapterConstructor
-		_serveClient    bool
+		_adapter                   AdapterConstructor
+		_serveClient               bool
+		// @private
+		// #readonly
 		opts            *ServerOptions
 		eio             engine.Server
 		_path           string
 		clientPathRegex *regexp.Regexp
-
+		// @private
 		_connectTimeout time.Duration
 		httpServer      *types.HttpServer
+		_corsMiddleware engine.Middleware
 	}
 )
 
-func (s *Server) Sockets() NamespaceInterface {
-	return s.sockets
-}
-
-func (s *Server) Engine() engine.Server {
-	return s.engine
-}
-
-func (s *Server) Encoder() parser.Encoder {
-	return s.encoder
-}
-
-func (s *Server) Opts() *ServerOptions {
-	return s.opts
+func MakeServer() *Server {
+	s := &Server{}
+	return s
 }
 
 // Represents a Socket.IO server.
@@ -108,9 +102,31 @@ func (s *Server) Opts() *ServerOptions {
 //	})
 //	io.Listen(3000, nil)
 func NewServer(srv any, opts *ServerOptions) *Server {
-	s := &Server{}
+	s := MakeServer()
+
+	s.Construct(srv, opts)
+
+	return s
+}
+
+func (s *Server) Sockets() NamespaceInterface {
+	return s.sockets
+}
+
+func (s *Server) Engine() engine.BaseServer {
+	return s.engine
+}
+
+func (s *Server) Encoder() parser.Encoder {
+	return s.encoder
+}
+
+func (s *Server) Construct(srv any, opts *ServerOptions) {
 	s._nsps = &types.Map[string, *Namespace]{}
 	s.parentNsps = &types.Map[ParentNspNameMatchFn, *ParentNamespace]{}
+
+	// A subset of the {parentNsps} map, only containing {ParentNamespace} which are based on a regular
+	// expression.
 	s.parentNamespacesFromRegExp = &types.Map[*regexp.Regexp, *ParentNamespace]{}
 
 	if opts == nil {
@@ -125,7 +141,7 @@ func NewServer(srv any, opts *ServerOptions) *Server {
 	} else {
 		s._parser = parser.NewParser()
 	}
-	s.encoder = s._parser.Encoder()
+	s.encoder = s._parser.NewEncoder()
 	s.opts = opts
 	if opts.GetRawAdapter() != nil {
 		s.SetAdapter(opts.Adapter())
@@ -144,19 +160,35 @@ func NewServer(srv any, opts *ServerOptions) *Server {
 		s.Attach(srv, nil)
 	}
 
-	return s
+	if s.opts.GetRawCors() != nil {
+		s._corsMiddleware = types.MiddlewareWrapper(s.opts.Cors())
+	}
+}
+
+func (s *Server) Opts() *ServerOptions {
+	return s.opts
 }
 
 // Sets/gets whether client code is being served.
+//
+// Param: v - whether to serve client code
 func (s *Server) SetServeClient(v bool) *Server {
 	s._serveClient = v
 	return s
 }
+
+// Return: self when setting or value when getting
 func (s *Server) ServeClient() bool {
 	return s._serveClient
 }
 
 // Executes the middleware for an incoming namespace not already created on the server.
+//
+// Param: name - name of incoming namespace
+//
+// Param: auth - the auth parameters
+//
+// Param: fn - callback
 func (s *Server) _checkNamespace(name string, auth any, fn func(nsp *Namespace)) {
 	end := true
 	s.parentNsps.Range(func(nextFn ParentNspNameMatchFn, pnsp *ParentNamespace) bool {
@@ -186,25 +218,34 @@ func (s *Server) _checkNamespace(name string, auth any, fn func(nsp *Namespace))
 }
 
 // Sets the client serving path.
+//
+// Param: v pathname
 func (s *Server) SetPath(v string) *Server {
 	s._path = strings.TrimRight(v, "/")
 	s.clientPathRegex = regexp.MustCompile(`^` + regexp.QuoteMeta(s._path) + `/socket\.io(\.msgpack|\.esm)?(\.min)?\.js(\.map)?(?:\?|$)`)
 	return s
 }
+
+// Return: self when setting or value when getting
 func (s *Server) Path() string {
 	return s._path
 }
 
 // Set the delay after which a client without namespace is closed
+//
+// Param: v
 func (s *Server) SetConnectTimeout(v time.Duration) *Server {
 	s._connectTimeout = v
 	return s
 }
+
 func (s *Server) ConnectTimeout() time.Duration {
 	return s._connectTimeout
 }
 
 // Sets the adapter for rooms.
+//
+// Param: v AdapterConstructor interface
 func (s *Server) SetAdapter(v AdapterConstructor) *Server {
 	s._adapter = v
 	s._nsps.Range(func(_ string, nsp *Namespace) bool {
@@ -213,41 +254,25 @@ func (s *Server) SetAdapter(v AdapterConstructor) *Server {
 	})
 	return s
 }
+
 func (s *Server) Adapter() AdapterConstructor {
 	return s._adapter
 }
 
-func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
-	if s.engine != nil {
-		return s.engine
-	}
-
-	if opts == nil {
-		opts = DefaultServerOptions()
-	}
-
-	// merge the options passed to the Socket.IO server
-	opts.Assign(s.opts)
-	// set engine.io path to `/socket.io`
-	if opts.GetRawPath() == nil {
-		opts.SetPath(s._path)
-	}
-
-	// initialize engine
-	server_log.Debug("creating engine.io instance with opts %v", opts)
-	s.eio = engine.NewServer(opts)
-	// bind to engine events
-	s.Bind(s.eio)
-
-	return s.eio
-}
-
 // Attaches socket.io to a server or port.
+//
+// Param: srv - server or port
+//
+// Param: opts - options passed to engine.io
 func (s *Server) Listen(srv any, opts *ServerOptions) *Server {
 	return s.Attach(srv, opts)
 }
 
 // Attaches socket.io to a server or port.
+//
+// Param: srv - server or port
+//
+// Param: opts - options passed to engine.io
 func (s *Server) Attach(srv any, opts *ServerOptions) *Server {
 	var server *types.HttpServer
 	switch address := srv.(type) {
@@ -255,14 +280,14 @@ func (s *Server) Attach(srv any, opts *ServerOptions) *Server {
 		_address := fmt.Sprintf(":%d", address)
 		// handle a port as a int
 		server_log.Debug("creating http server and binding to %s", _address)
-		server = types.CreateServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		server = types.NewWebServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "404 page not found", http.StatusNotFound)
 		}))
 		server.Listen(_address, nil)
 	case string:
 		// handle a port as a string
 		server_log.Debug("creating http server and binding to %s", address)
-		server = types.CreateServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		server = types.NewWebServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "404 page not found", http.StatusNotFound)
 		}))
 		server.Listen(address, nil)
@@ -286,7 +311,38 @@ func (s *Server) Attach(srv any, opts *ServerOptions) *Server {
 	return s
 }
 
+// Output http.Handler interface
+func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
+	// If an instance already exists, reuse it.
+	if s.eio != nil {
+		return s.eio
+	}
+
+	if opts == nil {
+		opts = DefaultServerOptions()
+	}
+
+	// merge the options passed to the Socket.IO server
+	opts.Assign(s.opts)
+	// set engine.io path to `/socket.io`
+	if opts.GetRawPath() == nil {
+		opts.SetPath(s._path)
+	}
+
+	// initialize engine
+	server_log.Debug("creating http.Handler-based engine with opts %v", opts)
+	s.eio = engine.NewServer(opts)
+	// bind to engine events
+	s.Bind(s.eio)
+
+	return s.eio
+}
+
 // Initialize engine
+//
+// Param: srv - the server to attach to
+//
+// Param: opts - options passed to engine.io
 func (s *Server) initEngine(srv *types.HttpServer, opts *ServerOptions) {
 	// initialize engine
 	server_log.Debug("creating engine.io instance with opts %v", opts)
@@ -309,7 +365,13 @@ func (s *Server) attachServe(srv *types.HttpServer, egs engine.Server, opts *Ser
 	server_log.Debug("attaching client serving req handler")
 	srv.HandleFunc(s._path+"/", func(w http.ResponseWriter, r *http.Request) {
 		if s.clientPathRegex.MatchString(r.URL.Path) {
-			s.serve(w, r)
+			if s._corsMiddleware != nil {
+				s._corsMiddleware(types.NewHttpContext(w, r), func(error) {
+					s.serve(w, r)
+				})
+			} else {
+				s.serve(w, r)
+			}
 		} else {
 			if opts.AddTrailingSlash() {
 				egs.ServeHTTP(w, r)
@@ -409,7 +471,9 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 }
 
 // Binds socket.io to an engine.io instance.
-func (s *Server) Bind(egs engine.Server) *Server {
+//
+// Param: engine engine.io (or compatible) server
+func (s *Server) Bind(egs engine.BaseServer) *Server {
 	s.engine = egs
 	s.engine.On("connection", s.onconnection)
 	return s
@@ -439,14 +503,17 @@ func (s *Server) onconnection(conns ...any) {
 //		namespace.Emit("hello")
 //	})
 //
-// Param: any - nsp name
+// Param: string | *regexp.Regexp | ParentNspNameMatchFn - nsp name
+//
 // Param: func(...any) - nsp `connection` ev handler
 func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 	switch n := name.(type) {
 	case ParentNspNameMatchFn:
 		parentNsp := NewParentNamespace(s)
 		server_log.Debug("initializing parent namespace %s", parentNsp.Name())
+
 		s.parentNsps.Store(n, parentNsp)
+
 		if fn != nil {
 			parentNsp.On("connect", fn)
 		}
@@ -454,11 +521,13 @@ func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 	case *regexp.Regexp:
 		parentNsp := NewParentNamespace(s)
 		server_log.Debug("initializing parent namespace %s", parentNsp.Name())
+
 		nfn := func(nsp string, _ any, next func(error, bool)) {
 			next(nil, n.MatchString(nsp))
 		}
 		s.parentNsps.Store(ParentNspNameMatchFn(&nfn), parentNsp)
 		s.parentNamespacesFromRegExp.Store(n, parentNsp)
+
 		if fn != nil {
 			parentNsp.On("connect", fn)
 		}
@@ -511,7 +580,9 @@ func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 }
 
 // Closes server connection
-func (s *Server) Close(fn func()) {
+//
+// Param: [fn] optional, called as `fn(error)` on error OR all conns closed
+func (s *Server) Close(fn func(error)) {
 	s.sockets.Sockets().Range(func(_ SocketId, socket *Socket) bool {
 		socket._onclose("server shutting down")
 		return true
@@ -522,12 +593,12 @@ func (s *Server) Close(fn func()) {
 	} else {
 		s.engine.Close()
 		if fn != nil {
-			fn()
+			fn(nil)
 		}
 	}
 }
 
-// Registers a middleware, which is a function that gets executed for every incoming {@link Socket}.
+// Registers a middleware, which is a function that gets executed for every incoming [Socket].
 //
 //	io.Use(func(socket *socket.Socket, next func(*socket.ExtendedError)) {
 //		// ...
@@ -552,19 +623,21 @@ func (s *Server) Use(fn func(*Socket, func(*ExtendedError))) *Server {
 //	// with multiple chained calls
 //	io.To("room-101").To("room-102").Emit("foo", "bar")
 //
-// Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+// Param: Room - a [Room], or a [Room] slice to expand
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Server) To(room ...Room) *BroadcastOperator {
 	return s.sockets.To(room...)
 }
 
-// Targets a room when emitting.
+// Targets a room when emitting. Similar to `to()`, but might feel clearer in some cases:
 //
 //	// disconnect all clients in the "room-101" room
 //	io.In("room-101").DisconnectSockets(false)
 //
-// Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+// Param: Room - a [Room], or a [Room] slice to expand
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Server) In(room ...Room) *BroadcastOperator {
 	return s.sockets.In(room...)
 }
@@ -581,8 +654,9 @@ func (s *Server) In(room ...Room) *BroadcastOperator {
 //	// with multiple chained calls
 //	io.Except("room-101").Except("room-102").Emit("foo", "bar")
 //
-// Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+// Param: Room - a [Room], or a [Room] slice to expand
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Server) Except(room ...Room) *BroadcastOperator {
 	return s.sockets.Except(room...)
 }
@@ -617,7 +691,7 @@ func (s *Server) Send(args ...any) *Server {
 	return s
 }
 
-// Sends a `message` event to all clients. Alias of Send.
+// Sends a `message` event to all clients. Alias of [Send].
 func (s *Server) Write(args ...any) *Server {
 	s.sockets.Emit("message", args...)
 	return s
@@ -643,6 +717,10 @@ func (s *Server) Write(args ...any) *Server {
 //	io.On("ping", func(args ...any) {
 //		args[0]("pong")
 //	})
+//
+// Param: ev - the event name
+//
+// Param: args - an slice of arguments, which may include an acknowledgement callback at the end
 func (s *Server) ServerSideEmit(ev string, args ...any) error {
 	return s.sockets.ServerSideEmit(ev, args...)
 }
@@ -657,6 +735,10 @@ func (s *Server) ServerSideEmit(ev string, args ...any) error {
 //		}
 //	})
 //
+// Param: ev - the event name
+//
+// Param: args - an array of arguments
+//
 // Return: a `func(func([]any, error))` that will be fulfilled when all servers have acknowledged the event
 func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, error)) {
 	return s.sockets.ServerSideEmitWithAck(ev, args...)
@@ -664,7 +746,7 @@ func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, 
 
 // Gets a list of socket ids.
 //
-// Deprecated: this method will be removed in the next major release, please use *Server.ServerSideEmit or *BroadcastOperator.FetchSockets instead.
+// Deprecated: this method will be removed in the next major release, please use [ServerSideEmit] or [FetchSockets] instead.
 func (s *Server) AllSockets() (*types.Set[SocketId], error) {
 	return s.sockets.AllSockets()
 }
@@ -674,7 +756,8 @@ func (s *Server) AllSockets() (*types.Set[SocketId], error) {
 //	io.Compress(false).Emit("hello")
 //
 // Param: bool - if `true`, compresses the sending data
-// Return: a new *BroadcastOperator instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Server) Compress(compress bool) *BroadcastOperator {
 	return s.sockets.Compress(compress)
 }
@@ -684,6 +767,8 @@ func (s *Server) Compress(compress bool) *BroadcastOperator {
 // and is in the middle of a request-response cycle).
 //
 //	io.Volatile().Emit("hello") // the clients may or may not receive it
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Server) Volatile() *BroadcastOperator {
 	return s.sockets.Volatile()
 }
@@ -693,7 +778,7 @@ func (s *Server) Volatile() *BroadcastOperator {
 //	// the “foo” event will be broadcast to all connected clients on this node
 //	io.Local().Emit("foo", "bar")
 //
-// Return: a new `*BroadcastOperator` instance for chaining
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Server) Local() *BroadcastOperator {
 	return s.sockets.Local()
 }
@@ -707,13 +792,15 @@ func (s *Server) Local() *BroadcastOperator {
 //			fmt.Println(args) // one response per client
 //		}
 //	})
+//
+// Param: timeout
 func (s *Server) Timeout(timeout time.Duration) *BroadcastOperator {
 	return s.sockets.Timeout(timeout)
 }
 
 // Returns the matching socket instances
 //
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
 //
 //	io.FetchSockets()(func(sockets []*RemoteSocket, _ error){
 //		// return all Socket instances
@@ -735,14 +822,13 @@ func (s *Server) Timeout(timeout time.Duration) *BroadcastOperator {
 //		}
 //
 //	})
-
 func (s *Server) FetchSockets() func(func([]*RemoteSocket, error)) {
 	return s.sockets.FetchSockets()
 }
 
 // Makes the matching socket instances join the specified rooms
 //
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
 //
 //	// make all socket instances join the "room1" room
 //	io.SocketsJoin("room1")
@@ -750,14 +836,14 @@ func (s *Server) FetchSockets() func(func([]*RemoteSocket, error)) {
 //	// make all socket instances in the "room1" room join the "room2" and "room3" rooms
 //	io.In("room1").SocketsJoin([]Room{"room2", "room3"}...)
 //
-// Param: Room - a `Room`, or a `Room` slice to expand
+// Param: Room - a [Room], or a [Room] slice to expand
 func (s *Server) SocketsJoin(room ...Room) {
 	s.sockets.SocketsJoin(room...)
 }
 
 // Makes the matching socket instances leave the specified rooms
 //
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
 //
 //	// make all socket instances leave the "room1" room
 //	io.SocketsLeave("room1")
@@ -765,20 +851,22 @@ func (s *Server) SocketsJoin(room ...Room) {
 //	// make all socket instances in the "room1" room leave the "room2" and "room3" rooms
 //	io.In("room1").SocketsLeave([]Room{"room2", "room3"}...)
 //
-// Param: Room - a `Room`, or a `Room` slice to expand
+// Param: Room - a [Room], or a [Room] slice to expand
 func (s *Server) SocketsLeave(room ...Room) {
 	s.sockets.SocketsLeave(room...)
 }
 
 // Makes the matching socket instances disconnect
 //
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
 //
 //	// make all socket instances disconnect (the connections might be kept alive for other namespaces)
 //	io.DisconnectSockets(false)
 //
 //	// make all socket instances in the "room1" room disconnect and close the underlying connections
 //	io.In("room1").DisconnectSockets(true)
+//
+// Param: close - whether to close the underlying connection
 func (s *Server) DisconnectSockets(status bool) {
 	s.sockets.DisconnectSockets(status)
 }
