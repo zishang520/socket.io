@@ -17,8 +17,8 @@ import (
 )
 
 var (
-	SOCKET_RESERVED_EVENTS         = types.NewSet("connect", "connect_error", "disconnect", "disconnecting", "newListener", "removeListener")
 	socket_log                     = log.NewLog("socket.io:socket")
+	SOCKET_RESERVED_EVENTS         = types.NewSet("connect", "connect_error", "disconnect", "disconnecting", "newListener", "removeListener")
 	RECOVERABLE_DISCONNECT_REASONS = types.NewSet("transport error", "transport close", "forced close", "ping timeout", "server shutting down", "forced server close")
 )
 
@@ -44,6 +44,36 @@ type (
 		Auth any `json:"auth" mapstructure:"auth" msgpack:"auth"`
 	}
 
+	// This is the main object for interacting with a client.
+	//
+	// A Socket belongs to a given [Namespace] and uses an underlying [Client] to communicate.
+	//
+	// Within each [Namespace], you can also define arbitrary channels (called "rooms") that the [Socket] can
+	// join and leave. That provides a convenient way to broadcast to a group of socket instances.
+	//
+	//	io.On("connection", func(args ...any) {
+	//		socket := args[0].(*socket.Socket)
+	//
+	//		utils.Log().Info(`socket %s connected`, socket.Id())
+	//
+	//		// send an event to the client
+	//		socket.Emit("foo", "bar")
+	//
+	//		socket.On("foobar", func(...any) {
+	//			// an event was received from the client
+	//		})
+	//
+	//		// join the room named "room1"
+	//		socket.Join("room1")
+	//
+	//		// broadcast to everyone in the room named "room1"
+	//		io.to("room1").Emit("hello")
+	//
+	//		// upon disconnection
+	//		socket.On("disconnect", func(reason ...any) {
+	//			utils.Log().Info(`socket %s disconnected due to %s`, socket.Id(), reason[0])
+	//		})
+	//	})
 	Socket struct {
 		*StrictEventEmitter
 
@@ -58,7 +88,8 @@ type (
 		// The handshake details.
 		handshake *Handshake
 
-		// Additional information that can be attached to the Socket instance and which will be used in the (*socket.Server).FetchSockets() method.
+		// Additional information that can be attached to the Socket instance and which will be used in the
+		// [Server.fetchSockets()] method.
 		data    any
 		data_mu sync.RWMutex
 
@@ -75,11 +106,9 @@ type (
 		//	})
 		connected    bool
 		connected_mu sync.RWMutex
-		// The session ID, which must not be shared (unlike {@link id}).
-		pid PrivateSessionId
 
-		canJoin    bool
-		canJoin_mu sync.RWMutex
+		// The session ID, which must not be shared (unlike [id]).
+		pid PrivateSessionId
 
 		// TODO: remove this unused reference
 		server                *Server
@@ -90,44 +119,62 @@ type (
 		_anyListeners         []events.Listener
 		_anyOutgoingListeners []events.Listener
 
-		flags_mu                 sync.RWMutex
+		canJoin    bool
+		canJoin_mu sync.RWMutex
+
 		fns_mu                   sync.RWMutex
+		flags_mu                 sync.RWMutex
 		_anyListeners_mu         sync.RWMutex
 		_anyOutgoingListeners_mu sync.RWMutex
 	}
 )
 
-func (s *Socket) Nsp() *Namespace {
-	return s.nsp
+func MakeSocket() *Socket {
+	s := &Socket{
+		StrictEventEmitter: NewStrictEventEmitter(),
+
+		// Initialize default value
+		acks:    &types.Map[uint64, func([]any, error)]{},
+		fns:     []func([]any, func(error)){},
+		flags:   &BroadcastFlags{},
+		canJoin: true,
+	}
+
+	return s
 }
 
+func NewSocket(nsp *Namespace, client *Client, auth any, previousSession *Session) *Socket {
+	s := MakeSocket()
+
+	s.Construct(nsp, client, auth, previousSession)
+
+	return s
+}
+
+// An unique identifier for the session.
 func (s *Socket) Id() SocketId {
 	return s.id
 }
 
+// Whether the connection state was recovered after a temporary disconnection. In that case, any missed packets will
+// be transmitted to the client, the data attribute and the rooms will be restored.
 func (s *Socket) Recovered() bool {
 	return s.recovered
 }
 
-func (s *Socket) Client() *Client {
-	return s.client
-}
-
-func (s *Socket) Acks() *types.Map[uint64, func([]any, error)] {
-	return s.acks
-}
-
+// The handshake details.
 func (s *Socket) Handshake() *Handshake {
 	return s.handshake
 }
 
-func (s *Socket) Connected() bool {
-	s.connected_mu.RLock()
-	defer s.connected_mu.RUnlock()
+// Additional information that can be attached to the Socket instance and which will be used in the
+// [Server.fetchSockets()] method.
+func (s *Socket) SetData(data any) {
+	s.data_mu.Lock()
+	defer s.data_mu.Unlock()
 
-	return s.connected
+	s.data = data
 }
-
 func (s *Socket) Data() any {
 	s.data_mu.RLock()
 	defer s.data_mu.RUnlock()
@@ -135,55 +182,40 @@ func (s *Socket) Data() any {
 	return s.data
 }
 
-func (s *Socket) SetData(data any) {
-	s.data_mu.Lock()
-	defer s.data_mu.Unlock()
-
-	s.data = data
-}
-
-// This is the main object for interacting with a client.
+// Whether the socket is currently connected or not.
 //
-// A Socket belongs to a given *socket.Namespace and uses an underlying *socket.Client to communicate.
-//
-// Within each *socket.Namespace, you can also define arbitrary channels (called "rooms") that the *socket.Socket can
-// join and leave. That provides a convenient way to broadcast to a group of socket instances.
+//	io.Use(func(socket *socket.Socket, next func(*ExtendedError)) {
+//		fmt.Println(socket.Connected()) // false
+//		next(nil)
+//	})
 //
 //	io.On("connection", func(args ...any) {
 //		socket := args[0].(*socket.Socket)
-//
-//		utils.Log().Info(`socket %s connected`, socket.Id())
-//
-//		// send an event to the client
-//		socket.Emit("foo", "bar")
-//
-//		socket.On("foobar", func(...any) {
-//			// an event was received from the client
-//		})
-//
-//		// join the room named "room1"
-//		socket.Join("room1")
-//
-//		// broadcast to everyone in the room named "room1"
-//		io.to("room1").Emit("hello")
-//
-//		// upon disconnection
-//		socket.On("disconnect", func(reason ...any) {
-//			utils.Log().Info(`socket %s disconnected due to %s`, socket.Id(), reason[0])
-//		})
+//		fmt.Println(socket.Connected()) // true
 //	})
-func NewSocket(nsp *Namespace, client *Client, auth any, previousSession *Session) *Socket {
-	s := &Socket{}
-	s.StrictEventEmitter = NewStrictEventEmitter()
+func (s *Socket) Connected() bool {
+	s.connected_mu.RLock()
+	defer s.connected_mu.RUnlock()
+
+	return s.connected
+}
+
+func (s *Socket) Acks() *types.Map[uint64, func([]any, error)] {
+	return s.acks
+}
+
+func (s *Socket) Nsp() *Namespace {
+	return s.nsp
+}
+
+func (s *Socket) Client() *Client {
+	return s.client
+}
+
+func (s *Socket) Construct(nsp *Namespace, client *Client, auth any, previousSession *Session) {
 	s.nsp = nsp
 	s.client = client
-	// Additional information that can be attached to the Socket instance and which will be used in the FetchSockets method
-	s.data = nil
-	s.connected = false
-	s.canJoin = true
-	s.acks = &types.Map[uint64, func([]any, error)]{}
-	s.fns = []func([]any, func(error)){}
-	s.flags = &BroadcastFlags{}
+
 	s.server = nsp.Server()
 	s.adapter = s.nsp.Adapter()
 	if previousSession != nil {
@@ -217,7 +249,11 @@ func NewSocket(nsp *Namespace, client *Client, auth any, previousSession *Sessio
 		}
 	}
 	s.handshake = s.buildHandshake(auth)
-	return s
+
+	// prevents crash when the socket receives an "error" event without listener
+	//
+	// Golang defines the error by itself. It seems that this logic is not needed?
+	s.On("error", func(...any) {})
 }
 
 // Builds the `handshake` BC object
@@ -354,7 +390,8 @@ func (s *Socket) registerAckCallback(id uint64, ack func([]any, error)) {
 //	})
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Socket) To(room ...Room) *BroadcastOperator {
 	return s.newBroadcastOperator().To(room...)
 }
@@ -368,7 +405,8 @@ func (s *Socket) To(room ...Room) *BroadcastOperator {
 //	});
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Socket) In(room ...Room) *BroadcastOperator {
 	return s.newBroadcastOperator().In(room...)
 }
@@ -389,7 +427,8 @@ func (s *Socket) In(room ...Room) *BroadcastOperator {
 //	})
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Socket) Except(room ...Room) *BroadcastOperator {
 	return s.newBroadcastOperator().Except(room...)
 }
@@ -419,6 +458,10 @@ func (s *Socket) Write(args ...any) *Socket {
 }
 
 // Writes a packet.
+//
+// Param:  packet - packet struct
+//
+// Param:  opts - options
 func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
 	packet.Nsp = s.nsp.Name()
 	if opts == nil {
@@ -441,12 +484,12 @@ func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
 func (s *Socket) Join(rooms ...Room) {
-	s.canJoin_mu.Lock()
+	s.canJoin_mu.RLock()
 	if !s.canJoin {
-		defer s.canJoin_mu.Unlock()
+		defer s.canJoin_mu.RUnlock()
 		return
 	}
-	s.canJoin_mu.Unlock()
+	s.canJoin_mu.RUnlock()
 
 	socket_log.Debug("join room %s", rooms)
 	s.adapter.AddAll(s.id, types.NewSet(rooms...))
@@ -508,23 +551,20 @@ func (s *Socket) _onpacket(packet *parser.Packet) {
 	switch packet.Type {
 	case parser.EVENT:
 		s.onevent(packet)
-		break
 	case parser.BINARY_EVENT:
 		s.onevent(packet)
-		break
 	case parser.ACK:
 		s.onack(packet)
-		break
 	case parser.BINARY_ACK:
 		s.onack(packet)
-		break
 	case parser.DISCONNECT:
 		s.ondisconnect()
-		break
 	}
 }
 
 // Called upon event packet.
+//
+// Param:  packet - packet struct
 func (s *Socket) onevent(packet *parser.Packet) {
 	args := packet.Data.([]any)
 	socket_log.Debug("emitting event %v", args)
@@ -547,18 +587,20 @@ func (s *Socket) onevent(packet *parser.Packet) {
 }
 
 // Produces an ack callback to emit with an event.
+//
+// Param: id - packet id
 func (s *Socket) ack(id uint64) func([]any, error) {
-	sent := int32(0)
+	sent := &sync.Once{}
 	return func(args []any, _ error) {
 		// prevent double callbacks
-		if atomic.CompareAndSwapInt32(&sent, 0, 1) {
+		sent.Do(func() {
 			socket_log.Debug("sending ack %v", args)
 			s.packet(&parser.Packet{
 				Id:   &id,
 				Type: parser.ACK,
 				Data: args,
 			}, nil)
-		}
+		})
 	}
 }
 
@@ -585,20 +627,21 @@ func (s *Socket) ondisconnect() {
 
 // Handles a client error.
 func (s *Socket) _onerror(err any) {
-	if s.ListenerCount("error") > 0 {
-		s.EmitReserved("error", err)
-	} else {
-		utils.Log().Error("Missing error handler on `socket`.")
-		utils.Log().Error("%v", err)
-	}
+	// FIXME the meaning of the "error" event is overloaded:
+	//  - it can be sent by the client (`socket.emit("error")`)
+	//  - it can be emitted when the connection encounters an error (an invalid packet for example)
+	//  - it can be emitted when a packet is rejected in a middleware (`socket.use()`)
+	s.EmitReserved("error", err)
 }
 
 // Called upon closing. Called by `Client`.
+//
+// Param: reason
+// Param: description
 func (s *Socket) _onclose(args ...any) *Socket {
 	if !s.Connected() {
 		return s
 	}
-
 	socket_log.Debug("closing socket - reason %v", args[0])
 	s.EmitReserved("disconnecting", args...)
 
@@ -612,7 +655,6 @@ func (s *Socket) _onclose(args ...any) *Socket {
 		})
 	}
 	s._cleanup()
-	s.nsp.remove(s)
 	s.client.remove(s)
 	s.connected_mu.Lock()
 	s.connected = false
@@ -624,6 +666,7 @@ func (s *Socket) _onclose(args ...any) *Socket {
 // Makes the socket leave all the rooms it was part of and prevents it from joining any other room
 func (s *Socket) _cleanup() {
 	s.leaveAll()
+	s.nsp.remove(s)
 	s.canJoin_mu.Lock()
 	s.canJoin = false
 	s.canJoin_mu.Unlock()
@@ -649,8 +692,7 @@ func (s *Socket) _error(err any) {
 //		socket.Disconnect(true)
 //	})
 //
-//	Param: bool - if `true`, closes the underlying connection
-//	Return: *Socket
+//	Param: status - if `true`, closes the underlying connection
 func (s *Socket) Disconnect(status bool) *Socket {
 	if !s.Connected() {
 		return s
@@ -672,6 +714,8 @@ func (s *Socket) Disconnect(status bool) *Socket {
 //		socket := clients[0].(*socket.Socket)
 //		socket.Compress(false).Emit("hello")
 //	})
+//
+// Param: compress - if `true`, compresses the sending data
 func (s *Socket) Compress(compress bool) *Socket {
 	s.flags_mu.Lock()
 	s.flags.Compress = compress
@@ -703,10 +747,9 @@ func (s *Socket) Volatile() *Socket {
 //		socket.Broadcast().Emit("foo", "bar")
 //	})
 //
-//	Return: a new *BroadcastOperator instance for chaining
+//	Return: a new [BroadcastOperator] instance for chaining
 func (s *Socket) Broadcast() *BroadcastOperator {
 	return s.newBroadcastOperator()
-
 }
 
 // Sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
@@ -717,7 +760,7 @@ func (s *Socket) Broadcast() *BroadcastOperator {
 //		socket.Local().Emit("foo", "bar")
 //	})
 //
-//	Return: a new *BroadcastOperator instance for chaining
+//	Return: a new [BroadcastOperator] instance for chaining
 func (s *Socket) Local() *BroadcastOperator {
 	return s.newBroadcastOperator().Local()
 }
@@ -744,15 +787,17 @@ func (s *Socket) Timeout(timeout time.Duration) *Socket {
 func (s *Socket) dispatch(event []any) {
 	socket_log.Debug("dispatching an event %v", event)
 	s.run(event, func(err error) {
-		if err != nil {
-			s._onerror(err)
-			return
-		}
-		if s.Connected() {
-			s.EmitUntyped(event[0].(string), event[1:]...)
-		} else {
-			socket_log.Debug("ignore packet received after disconnection")
-		}
+		go func(err error) {
+			if err != nil {
+				s._onerror(err)
+				return
+			}
+			if s.Connected() {
+				s.EmitUntyped(event[0].(string), event[1:]...)
+			} else {
+				socket_log.Debug("ignore packet received after disconnection")
+			}
+		}(err)
 	})
 }
 
@@ -775,6 +820,8 @@ func (s *Socket) dispatch(event []any) {
 //			}
 //		});
 //	});
+//
+// Param: fn - middleware function (event, next)
 func (s *Socket) Use(fn func([]any, func(error))) *Socket {
 	s.fns_mu.Lock()
 	defer s.fns_mu.Unlock()
@@ -784,7 +831,11 @@ func (s *Socket) Use(fn func([]any, func(error))) *Socket {
 }
 
 // Executes the middleware for an incoming event.
-func (s *Socket) run(event []any, fn func(err error)) {
+//
+// Pparam: event - event that will get emitted
+//
+// Pparam: fn - last fn call in the middleware
+func (s *Socket) run(event []any, fn func(error)) {
 	s.fns_mu.RLock()
 	fns := make([]func([]any, func(error)), len(s.fns))
 	copy(fns, s.fns)
@@ -795,12 +846,12 @@ func (s *Socket) run(event []any, fn func(err error)) {
 			fns[i](event, func(err error) {
 				// upon error, short-circuit
 				if err != nil {
-					go fn(err)
+					fn(err)
 					return
 				}
 				// if no middleware left, summon callback
 				if i >= length-1 {
-					go fn(nil)
+					fn(nil)
 					return
 				}
 				// go on to next
@@ -809,7 +860,7 @@ func (s *Socket) run(event []any, fn func(err error)) {
 		}
 		run(0)
 	} else {
-		go fn(nil)
+		fn(nil)
 	}
 }
 
@@ -823,11 +874,11 @@ func (s *Socket) Request() *types.HttpContext {
 	return s.client.Request()
 }
 
-// A reference to the underlying Client transport connection (Engine.IO Socket object).
+// A reference to the underlying Client transport connection (Engine.IO Socket interface).
 //
 //	io.On("connection", func(clients ...any) {
 //		socket := clients[0].(*socket.Socket)
-//		fmt.Println(socket.Conn().Transport().Name()) // prints "polling" or "websocket"
+//		fmt.Println(socket.Conn().Transport().Name()) // prints "polling" or "websocket" or "webtransport"
 //
 //		socket.Conn().Once("upgrade", func(...any) {
 //			fmt.Println(socket.Conn().Transport().Name()) // prints "websocket"
@@ -863,6 +914,8 @@ func (s *Socket) Rooms() *types.Set[Room] {
 //			fmt.Println(`got event `, events)
 //		})
 //	})
+//
+//	Param: events.Listener
 func (s *Socket) OnAny(listener events.Listener) *Socket {
 	s._anyListeners_mu.Lock()
 	defer s._anyListeners_mu.Unlock()
@@ -876,6 +929,8 @@ func (s *Socket) OnAny(listener events.Listener) *Socket {
 
 // Adds a listener that will be fired when any event is received. The event name is passed as the first argument to
 // the callback. The listener is added to the beginning of the listeners array.
+//
+//	Param: events.Listener
 func (s *Socket) PrependAny(listener events.Listener) *Socket {
 	s._anyListeners_mu.Lock()
 	defer s._anyListeners_mu.Unlock()
@@ -903,6 +958,8 @@ func (s *Socket) PrependAny(listener events.Listener) *Socket {
 //		// or remove all listeners
 //		socket.OffAny(nil)
 //	})
+//
+//	Param: events.Listener
 func (s *Socket) OffAny(listener events.Listener) *Socket {
 	s._anyListeners_mu.Lock()
 	defer s._anyListeners_mu.Unlock()

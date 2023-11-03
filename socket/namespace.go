@@ -160,12 +160,12 @@ func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 			fns[i](socket, func(err *ExtendedError) {
 				// upon error, short-circuit
 				if err != nil {
-					go fn(err)
+					fn(err)
 					return
 				}
 				// if no middleware left, summon callback
 				if i >= length-1 {
-					go fn(nil)
+					fn(nil)
 					return
 				}
 				// go on to next
@@ -174,7 +174,7 @@ func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 		}
 		run(0)
 	} else {
-		go fn(nil)
+		fn(nil)
 	}
 }
 
@@ -241,31 +241,33 @@ func (n *Namespace) Add(client *Client, auth any, fn func(*Socket)) {
 	}
 	// socket := NewSocket(n, client, query)
 	n.run(socket, func(err *ExtendedError) {
-		if "open" != client.conn.ReadyState() {
-			namespace_log.Debug("next called after client was closed - ignoring socket")
-			socket._cleanup()
-			return
-		}
-		if err != nil {
-			namespace_log.Debug("middleware error, sending CONNECT_ERROR packet to the client")
-			socket._cleanup()
-			if client.conn.Protocol() == 3 {
-				if e := err.Data(); e != nil {
-					socket._error(e)
-					return
-				}
-				socket._error(err.Error())
-				return
-			} else {
-				socket._error(map[string]any{
-					"message": err.Error(),
-					"data":    err.Data(),
-				})
+		go func(err *ExtendedError) {
+			if "open" != client.conn.ReadyState() {
+				namespace_log.Debug("next called after client was closed - ignoring socket")
+				socket._cleanup()
 				return
 			}
-		}
+			if err != nil {
+				namespace_log.Debug("middleware error, sending CONNECT_ERROR packet to the client")
+				socket._cleanup()
+				if client.conn.Protocol() == 3 {
+					if e := err.Data(); e != nil {
+						socket._error(e)
+						return
+					}
+					socket._error(err.Error())
+					return
+				} else {
+					socket._error(map[string]any{
+						"message": err.Error(),
+						"data":    err.Data(),
+					})
+					return
+				}
+			}
 
-		n._doConnect(socket, fn)
+			n._doConnect(socket, fn)
+		}(err)
 	})
 }
 

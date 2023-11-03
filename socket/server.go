@@ -32,6 +32,33 @@ var (
 type (
 	ParentNspNameMatchFn *func(string, any, func(error, bool))
 
+	// Represents a Socket.IO server.
+	//
+	//	import (
+	//		"github.com/zishang520/engine.io/v2/utils"
+	//		"github.com/zishang520/socket.io/v2/socket"
+	//	)
+	//
+	//	io := socket.NewServer(nil, nil)
+	//
+	//	io.On("connection", func(clients ...any) {
+	//		socket := clients[0].(*socket.Socket)
+	//
+	//		utils.Log().Info(`socket %s connected`, socket.Id())
+	//
+	//		// send an event to the client
+	//		socket.Emit("foo", "bar")
+	//
+	//		socket.On("foobar", func(...any) {
+	//			// an event was received from the client
+	//		})
+	//
+	//		// upon disconnection
+	//		socket.On("disconnect", func(reason ...any) {
+	//			utils.Log().Info(`socket %s disconnected due to %s`, socket.Id(), reason[0])
+	//		})
+	//	})
+	//	io.Listen(3000, nil)
 	Server struct {
 		*StrictEventEmitter
 
@@ -70,37 +97,14 @@ type (
 )
 
 func MakeServer() *Server {
-	s := &Server{}
+	s := &Server{
+		_nsps:                      &types.Map[string, *Namespace]{},
+		parentNsps:                 &types.Map[ParentNspNameMatchFn, *ParentNamespace]{},
+		parentNamespacesFromRegExp: &types.Map[*regexp.Regexp, *ParentNamespace]{},
+	}
 	return s
 }
 
-// Represents a Socket.IO server.
-//
-//	import (
-//		"github.com/zishang520/engine.io/v2/utils"
-//		"github.com/zishang520/socket.io/v2/socket"
-//	)
-//
-//	io := socket.NewServer(nil, nil)
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//
-//		utils.Log().Info(`socket %s connected`, socket.Id())
-//
-//		// send an event to the client
-//		socket.Emit("foo", "bar")
-//
-//		socket.On("foobar", func(...any) {
-//			// an event was received from the client
-//		})
-//
-//		// upon disconnection
-//		socket.On("disconnect", func(reason ...any) {
-//			utils.Log().Info(`socket %s disconnected due to %s`, socket.Id(), reason[0])
-//		})
-//	})
-//	io.Listen(3000, nil)
 func NewServer(srv any, opts *ServerOptions) *Server {
 	s := MakeServer()
 
@@ -122,20 +126,13 @@ func (s *Server) Encoder() parser.Encoder {
 }
 
 func (s *Server) Construct(srv any, opts *ServerOptions) {
-	s._nsps = &types.Map[string, *Namespace]{}
-	s.parentNsps = &types.Map[ParentNspNameMatchFn, *ParentNamespace]{}
-
-	// A subset of the {parentNsps} map, only containing {ParentNamespace} which are based on a regular
-	// expression.
-	s.parentNamespacesFromRegExp = &types.Map[*regexp.Regexp, *ParentNamespace]{}
-
 	if opts == nil {
 		opts = DefaultServerOptions()
 	}
 
 	s.SetPath(opts.Path())
 	s.SetConnectTimeout(opts.ConnectTimeout())
-	s.SetServeClient(false != opts.ServeClient())
+	s.SetServeClient(opts.ServeClient())
 	if opts.GetRawParser() != nil {
 		s._parser = opts.Parser()
 	} else {
