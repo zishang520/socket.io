@@ -15,7 +15,8 @@ import (
 var client_log = log.NewLog("socket.io:client")
 
 type Client struct {
-	conn              engine.Socket
+	conn engine.Socket
+
 	id                string
 	server            *Server
 	encoder           parser.Encoder
@@ -23,7 +24,24 @@ type Client struct {
 	sockets           *types.Map[SocketId, *Socket]
 	nsps              *types.Map[string, *Socket]
 	connectTimeout    *utils.Timer
-	mu_connectTimeout sync.Mutex
+	connectTimeout_mu sync.Mutex
+}
+
+func MakeClient() *Client {
+	c := &Client{
+		sockets: &types.Map[SocketId, *Socket]{},
+		nsps:    &types.Map[string, *Socket]{},
+	}
+
+	return c
+}
+
+func NewClient(server *Server, conn engine.Socket) *Client {
+	c := MakeClient()
+
+	c.Construct(server, conn)
+
+	return c
 }
 
 func (c *Client) Conn() engine.Socket {
@@ -31,20 +49,20 @@ func (c *Client) Conn() engine.Socket {
 }
 
 // Client constructor.
-func NewClient(server *Server, conn engine.Socket) *Client {
-	c := &Client{}
-	c.sockets = &types.Map[SocketId, *Socket]{}
-	c.nsps = &types.Map[string, *Socket]{}
+//
+// Param: server instance
+//
+// Param: conn
+func (c *Client) Construct(server *Server, conn engine.Socket) {
 	c.server = server
 	c.conn = conn
 	c.encoder = server.Encoder()
 	c.decoder = server._parser.NewDecoder()
 	c.id = conn.Id()
 	c.setup()
-
-	return c
 }
 
+// Return: the reference to the request that originated the Engine.IO connection
 func (c *Client) Request() *types.HttpContext {
 	return c.conn.Request()
 }
@@ -56,8 +74,8 @@ func (c *Client) setup() {
 	c.conn.On("error", c.onerror)
 	c.conn.On("close", c.onclose)
 
-	c.mu_connectTimeout.Lock()
-	defer c.mu_connectTimeout.Unlock()
+	c.connectTimeout_mu.Lock()
+	defer c.connectTimeout_mu.Unlock()
 
 	c.connectTimeout = utils.SetTimeout(func() {
 		if c.nsps.Len() == 0 {
@@ -70,6 +88,10 @@ func (c *Client) setup() {
 }
 
 // Connects a client to a namespace.
+//
+// Param: name - the namespace
+//
+// Param: auth - the auth parameters
 func (c *Client) connect(name string, auth any) {
 	if _, ok := c.server._nsps.Load(name); ok {
 		client_log.Debug("connecting to namespace %s", name)
@@ -84,7 +106,7 @@ func (c *Client) connect(name string, auth any) {
 			c._packet(&parser.Packet{
 				Type: parser.CONNECT_ERROR,
 				Nsp:  name,
-				Data: map[string]string{
+				Data: map[string]any{
 					"message": "Invalid namespace",
 				},
 			}, nil)
@@ -93,13 +115,17 @@ func (c *Client) connect(name string, auth any) {
 }
 
 // Connects a client to a namespace.
+//
+// Param: name - the namespace
+//
+// Param: auth - the auth parameters
 func (c *Client) doConnect(name string, auth any) {
 	nsp := c.server.Of(name, nil)
 	nsp.Add(c, auth, func(socket *Socket) {
 		c.sockets.Store(socket.Id(), socket)
 		c.nsps.Store(nsp.Name(), socket)
-		c.mu_connectTimeout.Lock()
-		defer c.mu_connectTimeout.Unlock()
+		c.connectTimeout_mu.Lock()
+		defer c.connectTimeout_mu.Unlock()
 		if c.connectTimeout != nil {
 			utils.ClearTimeout(c.connectTimeout)
 			c.connectTimeout = nil
@@ -107,6 +133,7 @@ func (c *Client) doConnect(name string, auth any) {
 	})
 }
 
+// Disconnects from all namespaces and closes transport.
 func (c *Client) _disconnect() {
 	c.sockets.Range(func(id SocketId, socket *Socket) bool {
 		socket.Disconnect(false)
@@ -230,8 +257,8 @@ func (c *Client) destroy() {
 	c.conn.RemoveListener("error", c.onerror)
 	c.conn.RemoveListener("close", c.onclose)
 	c.decoder.RemoveListener("decoded", c.ondecoded)
-	c.mu_connectTimeout.Lock()
-	defer c.mu_connectTimeout.Unlock()
+	c.connectTimeout_mu.Lock()
+	defer c.connectTimeout_mu.Unlock()
 	if c.connectTimeout != nil {
 		utils.ClearTimeout(c.connectTimeout)
 		c.connectTimeout = nil
