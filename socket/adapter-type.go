@@ -22,8 +22,8 @@ type (
 	WriteOptions struct {
 		packet.Options
 
-		Volatile     bool   `json:"volatile" mapstructure:"volatile" msgpack:"volatile"`
-		WsPreEncoded string `json:"wsPreEncoded" mapstructure:"wsPreEncoded" msgpack:"wsPreEncoded"`
+		Volatile   bool `json:"volatile" mapstructure:"volatile" msgpack:"volatile"`
+		PreEncoded bool `json:"preEncoded" mapstructure:"preEncoded" msgpack:"preEncoded"`
 	}
 
 	BroadcastFlags struct {

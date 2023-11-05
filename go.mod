@@ -8,7 +8,7 @@ require (
 	github.com/zishang520/engine.io-go-parser v1.2.3
 	github.com/zishang520/engine.io/v2 v2.0.2
 	github.com/zishang520/socket.io-go-parser/v2 v2.0.3
-)`
+)
 
 require (
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
