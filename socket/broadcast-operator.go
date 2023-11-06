@@ -333,7 +333,7 @@ func (b *BroadcastOperator) FetchSockets() func(func([]*RemoteSocket, error)) {
 
 // Makes the matching socket instances join the specified rooms.
 //
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
 //
 //	// make all socket instances join the "room1" room
 //	io.SocketsJoin("room1")
@@ -352,7 +352,7 @@ func (b *BroadcastOperator) SocketsJoin(room ...Room) {
 
 // Makes the matching socket instances leave the specified rooms.
 //
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
 //
 //	// make all socket instances leave the "room1" room
 //	io.SocketsLeave("room1")
@@ -371,13 +371,15 @@ func (b *BroadcastOperator) SocketsLeave(room ...Room) {
 
 // Makes the matching socket instances disconnect.
 //
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
 //
 //	// make all socket instances disconnect (the connections might be kept alive for other namespaces)
 //	io.DisconnectSockets(false)
 //
 //	// make all socket instances in the "room1" room disconnect and close the underlying connections
 //	io.In("room1").DisconnectSockets(true)
+//
+// Param: close - whether to close the underlying connection
 func (b *BroadcastOperator) DisconnectSockets(status bool) {
 	b.adapter.DisconnectSockets(&BroadcastOptions{
 		Rooms:  b.rooms,
@@ -386,6 +388,7 @@ func (b *BroadcastOperator) DisconnectSockets(status bool) {
 	}, status)
 }
 
+// Expose of subset of the attributes and methods of the Socket struct
 type RemoteSocket struct {
 	id        SocketId
 	handshake *Handshake
