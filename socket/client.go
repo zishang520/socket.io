@@ -137,9 +137,9 @@ func (c *Client) doConnect(name string, auth any) {
 func (c *Client) _disconnect() {
 	c.sockets.Range(func(id SocketId, socket *Socket) bool {
 		socket.Disconnect(false)
-		c.sockets.Delete(id)
 		return true
 	})
+	c.sockets.Clear()
 	c.close()
 }
 
@@ -172,8 +172,6 @@ func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 	if opts == nil {
 		opts = &WriteOptions{}
 	}
-
-	// packet // previous versions of the adapter incorrectly used socket.packet() instead of writeToEngine()
 
 	c.WriteToEngine(c.encoder.Encode(packet), opts)
 }
@@ -240,14 +238,17 @@ func (c *Client) onerror(args ...any) {
 // Called upon transport close.
 func (c *Client) onclose(args ...any) {
 	client_log.Debug("client close with reason %v", args[0])
+
 	// ignore a potential subsequent `close` event
 	c.destroy()
+
 	// `nsps` and `sockets` are cleaned up seamlessly
 	c.sockets.Range(func(id SocketId, socket *Socket) bool {
 		socket._onclose(args...)
-		c.sockets.Delete(id)
 		return true
 	})
+	c.sockets.Clear()
+
 	c.decoder.Destroy() // clean up decoder
 }
 
@@ -257,6 +258,7 @@ func (c *Client) destroy() {
 	c.conn.RemoveListener("error", c.onerror)
 	c.conn.RemoveListener("close", c.onclose)
 	c.decoder.RemoveListener("decoded", c.ondecoded)
+
 	c.connectTimeout_mu.Lock()
 	defer c.connectTimeout_mu.Unlock()
 	if c.connectTimeout != nil {
