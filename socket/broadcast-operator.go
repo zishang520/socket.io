@@ -19,26 +19,35 @@ type BroadcastOperator struct {
 	flags       *BroadcastFlags
 }
 
-func NewBroadcastOperator(adapter Adapter, rooms *types.Set[Room], exceptRooms *types.Set[Room], flags *BroadcastFlags) *BroadcastOperator {
-	b := &BroadcastOperator{}
-	b.adapter = adapter
-	if rooms == nil {
-		b.rooms = types.NewSet[Room]()
-	} else {
-		b.rooms = rooms
-	}
-	if exceptRooms == nil {
-		b.exceptRooms = types.NewSet[Room]()
-	} else {
-		b.exceptRooms = exceptRooms
-	}
-	if flags == nil {
-		b.flags = &BroadcastFlags{}
-	} else {
-		b.flags = flags
+func MakeBroadcastOperator() *BroadcastOperator {
+	b := &BroadcastOperator{
+		rooms:       types.NewSet[Room](),
+		exceptRooms: types.NewSet[Room](),
+		flags:       &BroadcastFlags{},
 	}
 
 	return b
+}
+
+func NewBroadcastOperator(adapter Adapter, rooms *types.Set[Room], exceptRooms *types.Set[Room], flags *BroadcastFlags) *BroadcastOperator {
+	b := MakeBroadcastOperator()
+
+	b.Construct(adapter, rooms, exceptRooms, flags)
+
+	return b
+}
+
+func (b *BroadcastOperator) Construct(adapter Adapter, rooms *types.Set[Room], exceptRooms *types.Set[Room], flags *BroadcastFlags) {
+	b.adapter = adapter
+	if rooms != nil {
+		b.rooms = rooms
+	}
+	if exceptRooms != nil {
+		b.exceptRooms = exceptRooms
+	}
+	if flags != nil {
+		b.flags = flags
+	}
 }
 
 // Targets a room when emitting.
@@ -54,7 +63,8 @@ func NewBroadcastOperator(adapter Adapter, rooms *types.Set[Room], exceptRooms *
 //	io.To("room-101").To("room-102").Emit("foo", "bar")
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (b *BroadcastOperator) To(room ...Room) *BroadcastOperator {
 	rooms := types.NewSet(b.rooms.Keys()...)
 	rooms.Add(room...)
@@ -67,7 +77,8 @@ func (b *BroadcastOperator) To(room ...Room) *BroadcastOperator {
 //	io.In("room-101").DisconnectSockets(false)
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (b *BroadcastOperator) In(room ...Room) *BroadcastOperator {
 	return b.To(room...)
 }
@@ -85,7 +96,8 @@ func (b *BroadcastOperator) In(room ...Room) *BroadcastOperator {
 //	io.Except("room-101").Except("room-102").Emit("foo", "bar")
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (b *BroadcastOperator) Except(room ...Room) *BroadcastOperator {
 	exceptRooms := types.NewSet(b.exceptRooms.Keys()...)
 	exceptRooms.Add(room...)
@@ -95,6 +107,10 @@ func (b *BroadcastOperator) Except(room ...Room) *BroadcastOperator {
 // Sets the compress flag.
 //
 //	io.Compress(false).Emit("hello")
+//
+// Param: compress - if `true`, compresses the sending data
+//
+// Return: a new [BroadcastOperator] instance
 func (b *BroadcastOperator) Compress(compress bool) *BroadcastOperator {
 	flags := *b.flags
 	flags.Compress = compress
@@ -117,7 +133,7 @@ func (b *BroadcastOperator) Volatile() *BroadcastOperator {
 //	// the “foo” event will be broadcast to all connected clients on this node
 //	io.Local().Emit("foo", "bar")
 //
-// Return: a new `*BroadcastOperator` instance for chaining
+// Return: a new [BroadcastOperator] instance for chaining
 func (b *BroadcastOperator) Local() *BroadcastOperator {
 	flags := *b.flags
 	flags.Local = true
@@ -133,6 +149,8 @@ func (b *BroadcastOperator) Local() *BroadcastOperator {
 //			fmt.Println(args) // one response per client
 //		}
 //	})
+//
+// Param: timeout
 func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
 	flags := *b.flags
 	flags.Timeout = &timeout
@@ -261,7 +279,7 @@ func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(func([]any,
 
 // Gets a list of clients.
 //
-// Deprecated: this method will be removed in the next major release, please use [Server.ServerSideEmit] or [FetchSockets] instead.
+// Deprecated: this method will be removed in the next major release, please use [Server#serverSideEmit] or [FetchSockets] instead.
 func (b *BroadcastOperator) AllSockets() (*types.Set[SocketId], error) {
 	if b.adapter == nil {
 		return nil, errors.New("No adapter for this namespace, are you trying to get the list of clients of a dynamic namespace?")
@@ -271,7 +289,7 @@ func (b *BroadcastOperator) AllSockets() (*types.Set[SocketId], error) {
 
 // Returns the matching socket instances. This method works across a cluster of several Socket.IO servers.
 //
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible Adapter.
+// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
 //
 //	io.FetchSockets()(func(sockets []*RemoteSocket, _ error){
 //		// return all Socket instances
