@@ -398,6 +398,19 @@ type RemoteSocket struct {
 	operator *BroadcastOperator
 }
 
+func MakeRemoteSocket() *RemoteSocket {
+	r := &RemoteSocket{}
+	return r
+}
+
+func NewRemoteSocket(adapter Adapter, details SocketDetails) *RemoteSocket {
+	r := MakeRemoteSocket()
+
+	r.Construct(adapter, details)
+
+	return r
+}
+
 func (r *RemoteSocket) Id() SocketId {
 	return r.id
 }
@@ -414,18 +427,14 @@ func (r *RemoteSocket) Data() any {
 	return r.data
 }
 
-func NewRemoteSocket(adapter Adapter, details SocketDetails) *RemoteSocket {
-	r := &RemoteSocket{}
-
+func (r *RemoteSocket) Construct(adapter Adapter, details SocketDetails) {
 	r.id = details.Id()
 	r.handshake = details.Handshake()
 	r.rooms = types.NewSet(details.Rooms().Keys()...)
 	r.data = details.Data()
 	r.operator = NewBroadcastOperator(adapter, types.NewSet(Room(r.id)), types.NewSet[Room](), &BroadcastFlags{
-		ExpectSingleResponse: true,
+		ExpectSingleResponse: true, // so that remoteSocket.Emit() with acknowledgement behaves like socket.Emit()
 	})
-
-	return r
 }
 
 // Adds a timeout in milliseconds for the next operation.
@@ -459,16 +468,22 @@ func (r *RemoteSocket) Emit(ev string, args ...any) error {
 }
 
 // Joins a room.
+//
+// Param: Room - a [Room], or a [Room] slice to expand
 func (r *RemoteSocket) Join(room ...Room) {
 	r.operator.SocketsJoin(room...)
 }
 
 // Leaves a room.
+//
+// Param: Room - a [Room], or a [Room] slice to expand
 func (r *RemoteSocket) Leave(room ...Room) {
 	r.operator.SocketsLeave(room...)
 }
 
 // Disconnects this client.
+//
+// Param: close - if `true`, closes the underlying connection
 func (r *RemoteSocket) Disconnect(status bool) *RemoteSocket {
 	r.operator.DisconnectSockets(status)
 	return r
