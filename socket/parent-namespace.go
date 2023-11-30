@@ -16,13 +16,7 @@ var (
 	count uint64 = 0
 )
 
-type ParentNamespace struct {
-	*Namespace
-
-	children *types.Set[*Namespace]
-}
-
-// A parent namespace is a special {@link Namespace} that holds a list of child namespaces which were created either
+// A parent namespace is a special [Namespace] that holds a list of child namespaces which were created either
 // with a regular expression or with a function.
 //
 //	parentNamespace := io.Of(regexp.MustCompile(`/dynamic-\d+`))
@@ -35,19 +29,39 @@ type ParentNamespace struct {
 //	// will reach all the clients that are in one of the child namespaces, like "/dynamic-101"
 //
 //	parentNamespace.Emit("hello", "world")
-func NewParentNamespace(server *Server) *ParentNamespace {
-	p := &ParentNamespace{}
-	p.Namespace = NewNamespace(server, "/_"+strconv.FormatUint(atomic.AddUint64(&count, 1)-1, 10))
-	p.children = types.NewSet[*Namespace]()
-	p._initAdapter()
+type ParentNamespace struct {
+	*Namespace
 
-	return p
+	children *types.Set[*Namespace]
 }
 
-func (p *ParentNamespace) _initAdapter() {
-	p.adapter.SetBroadcast(func(packet *parser.Packet, opts *BroadcastOptions) {
+func MakeParentNamespace() *ParentNamespace {
+	n := &ParentNamespace{
+		Namespace: MakeNamespace(),
+		children:  types.NewSet[*Namespace](),
+	}
+
+	n.Prototype(n)
+
+	return n
+}
+
+func NewParentNamespace(server *Server) *ParentNamespace {
+	n := MakeParentNamespace()
+
+	n.Construct(server, "/_"+strconv.FormatUint(atomic.AddUint64(&count, 1)-1, 10))
+
+	return n
+}
+
+func (n *ParentNamespace) Construct(server *Server, name string) {
+	n.Namespace.Construct(server, name)
+}
+
+func (p *ParentNamespace) InitAdapter() {
+	p.adapter = AdapterBroadcast(func(packet *parser.Packet, opts *BroadcastOptions) {
 		for _, nsp := range p.children.Keys() {
-			nsp.adapter.Broadcast(packet, opts)
+			nsp.Adapter().Broadcast(packet, opts)
 		}
 	})
 }
@@ -61,12 +75,12 @@ func (p *ParentNamespace) Emit(ev string, args ...any) error {
 
 func (p *ParentNamespace) CreateChild(name string) *Namespace {
 	parent_namespace_log.Debug("creating child namespace %s", name)
-	namespace := NewNamespace(p.server, name)
+	namespace := NewNamespace(p.Server(), name)
 
-	namespace._fns_mu.RLock()
-	namespace._fns = make([]func(*Socket, func(*ExtendedError)), len(p._fns))
-	copy(namespace._fns, p._fns)
-	namespace._fns_mu.RUnlock()
+	_p_fns := p.fns()
+	_fns := make([]func(*Socket, func(*ExtendedError)), len(_p_fns))
+	copy(_fns, _p_fns)
+	namespace.useFns(_fns)
 
 	namespace.AddListener("connect", p.Listeners("connect")...)
 	namespace.AddListener("connection", p.Listeners("connection")...)
@@ -84,9 +98,9 @@ func (p *ParentNamespace) CreateChild(name string) *Namespace {
 		}
 	}
 
-	p.server._nsps.Store(name, namespace)
+	p.Server()._nsps.Store(name, namespace)
 
-	p.server.Sockets().EmitReserved("new_namespace", namespace)
+	p.Server().Sockets().EmitReserved("new_namespace", namespace)
 	return namespace
 }
 

@@ -16,25 +16,47 @@ type (
 	adapter struct {
 		events.EventEmitter
 
+		// Prototype interface, used to implement interface method rewriting
+		_proto_ Adapter
+
 		nsp     NamespaceInterface
 		rooms   *types.Map[Room, *types.Set[SocketId]]
 		sids    *types.Map[SocketId, *types.Set[Room]]
 		encoder parser.Encoder
-
-		_broadcast func(*parser.Packet, *BroadcastOptions)
 	}
 )
 
 func (*AdapterBuilder) New(nsp NamespaceInterface) Adapter {
-	a := &adapter{}
-	a.EventEmitter = events.New()
-	a.nsp = nsp
-	a.rooms = &types.Map[Room, *types.Set[SocketId]]{}
-	a.sids = &types.Map[SocketId, *types.Set[Room]]{}
-	a.encoder = nsp.Server().Encoder()
-	a._broadcast = a.broadcast
+	return NewAdapterNew(nsp)
+}
+
+func MakeAdapter() Adapter {
+	a := &adapter{
+		EventEmitter: events.New(),
+
+		rooms: &types.Map[Room, *types.Set[SocketId]]{},
+		sids:  &types.Map[SocketId, *types.Set[Room]]{},
+	}
+
+	a.Prototype(a)
 
 	return a
+}
+
+func NewAdapterNew(nsp NamespaceInterface) Adapter {
+	n := MakeAdapter()
+
+	n.Construct(nsp)
+
+	return n
+}
+
+func (a *adapter) Prototype(_a Adapter) {
+	a._proto_ = _a
+}
+
+func (a *adapter) Proto() Adapter {
+	return a._proto_
 }
 
 func (a *adapter) Rooms() *types.Map[Room, *types.Set[SocketId]] {
@@ -47,6 +69,11 @@ func (a *adapter) Sids() *types.Map[SocketId, *types.Set[Room]] {
 
 func (a *adapter) Nsp() NamespaceInterface {
 	return a.nsp
+}
+
+func (a *adapter) Construct(nsp NamespaceInterface) {
+	a.nsp = nsp
+	a.encoder = nsp.Server().Encoder()
 }
 
 // To be overridden
@@ -109,10 +136,6 @@ func (a *adapter) DelAll(id SocketId) {
 	}
 }
 
-func (a *adapter) SetBroadcast(broadcast func(*parser.Packet, *BroadcastOptions)) {
-	a._broadcast = broadcast
-}
-
 // Broadcasts a packet.
 //
 // Options:
@@ -120,20 +143,6 @@ func (a *adapter) SetBroadcast(broadcast func(*parser.Packet, *BroadcastOptions)
 //   - `Except` {*types.Set[Room]} sids that should be excluded
 //   - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
 func (a *adapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
-	a._broadcast(packet, opts)
-}
-
-func (a *adapter) GetBroadcast() func(*parser.Packet, *BroadcastOptions) {
-	return a.broadcast
-}
-
-// Broadcasts a packet.
-//
-// Options:
-//   - `Flags` {*BroadcastFlags} flags for this packet
-//   - `Except` {*types.Set[Room]} sids that should be excluded
-//   - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
-func (a *adapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 	flags := &BroadcastFlags{}
 	if opts != nil && opts.Flags != nil {
 		flags = opts.Flags

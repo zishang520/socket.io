@@ -246,7 +246,7 @@ func (s *Server) ConnectTimeout() time.Duration {
 func (s *Server) SetAdapter(v AdapterConstructor) *Server {
 	s._adapter = v
 	s._nsps.Range(func(_ string, nsp *Namespace) bool {
-		nsp._initAdapter()
+		nsp.InitAdapter()
 		return true
 	})
 	return s
@@ -743,7 +743,7 @@ func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, 
 
 // Gets a list of socket ids.
 //
-// Deprecated: this method will be removed in the next major release, please use [ServerSideEmit] or [FetchSockets] instead.
+// Deprecated: this method will be removed in the next major release, please use [Server#ServerSideEmit] or [Server#FetchSockets] instead.
 func (s *Server) AllSockets() (*types.Set[SocketId], error) {
 	return s.sockets.AllSockets()
 }

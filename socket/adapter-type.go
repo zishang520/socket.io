@@ -4,7 +4,9 @@ import (
 	"time"
 
 	"github.com/zishang520/engine.io-go-parser/packet"
+	"github.com/zishang520/engine.io/v2/events"
 	"github.com/zishang520/engine.io/v2/types"
+	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
 type (
@@ -38,16 +40,16 @@ type (
 	}
 
 	BroadcastOptions struct {
-		Rooms  *types.Set[Room] `json:"rooms,omitempty" mapstructure:"rooms,omitempty" msgpack:"rooms,omitempty"`
-		Except *types.Set[Room] `json:"except,omitempty" mapstructure:"except,omitempty" msgpack:"except,omitempty"`
-		Flags  *BroadcastFlags  `json:"flags,omitempty" mapstructure:"flags,omitempty" msgpack:"flags,omitempty"`
+		Rooms  *types.Set[Room]
+		Except *types.Set[Room]
+		Flags  *BroadcastFlags `json:"flags,omitempty" mapstructure:"flags,omitempty" msgpack:"flags,omitempty"`
 	}
 
 	SessionToPersist struct {
 		Sid   SocketId         `json:"sid" mapstructure:"sid" msgpack:"sid"`
 		Pid   PrivateSessionId `json:"pid" mapstructure:"pid" msgpack:"pid"`
-		Rooms *types.Set[Room] `json:"rooms,omitempty" mapstructure:"rooms,omitempty" msgpack:"rooms,omitempty"`
-		Data  any              `json:"data" mapstructure:"data" msgpack:"data"`
+		Rooms *types.Set[Room]
+		Data  any `json:"data" mapstructure:"data" msgpack:"data"`
 	}
 
 	Session struct {
@@ -67,5 +69,86 @@ type (
 		*SessionToPersist
 
 		DisconnectedAt int64 `json:"disconnectedAt" mapstructure:"disconnectedAt" msgpack:"disconnectedAt"`
+	}
+
+	Adapter interface {
+		events.EventEmitter
+
+		// #prototype
+
+		Prototype(Adapter)
+		Proto() Adapter
+
+		Rooms() *types.Map[Room, *types.Set[SocketId]]
+		Sids() *types.Map[SocketId, *types.Set[Room]]
+		Nsp() NamespaceInterface
+
+		// Construct() should be called after calling Prototype()
+		Construct(NamespaceInterface)
+
+		// To be overridden
+		Init()
+
+		// To be overridden
+		Close()
+
+		// Returns the number of Socket.IO servers in the cluster
+		ServerCount() int64
+
+		// Adds a socket to a list of room.
+		AddAll(SocketId, *types.Set[Room])
+
+		// Removes a socket from a room.
+		Del(SocketId, Room)
+
+		// Removes a socket from all rooms it's joined.
+		DelAll(SocketId)
+
+		// Broadcasts a packet.
+		//
+		// Options:
+		//  - `Flags` {*BroadcastFlags} flags for this packet
+		//  - `Except` {*types.Set[Room]} sids that should be excluded
+		//  - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
+		Broadcast(*parser.Packet, *BroadcastOptions)
+
+		// Broadcasts a packet and expects multiple acknowledgements.
+		//
+		// Options:
+		//  - `Flags` {*BroadcastFlags} flags for this packet
+		//  - `Except` {*types.Set[Room]} sids that should be excluded
+		//  - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
+		BroadcastWithAck(*parser.Packet, *BroadcastOptions, func(uint64), func([]any, error))
+
+		// Gets a list of sockets by sid.
+		Sockets(*types.Set[Room]) *types.Set[SocketId]
+
+		// Gets the list of rooms a given socket has joined.
+		SocketRooms(SocketId) *types.Set[Room]
+
+		// Returns the matching socket instances
+		FetchSockets(*BroadcastOptions) func(func([]SocketDetails, error))
+
+		// Makes the matching socket instances join the specified rooms
+		AddSockets(*BroadcastOptions, []Room)
+
+		// Makes the matching socket instances leave the specified rooms
+		DelSockets(*BroadcastOptions, []Room)
+
+		// Makes the matching socket instances disconnect
+		DisconnectSockets(*BroadcastOptions, bool)
+
+		// Send a packet to the other Socket.IO servers in the cluster
+		ServerSideEmit([]any) error
+
+		// Save the client session in order to restore it upon reconnection.
+		PersistSession(*SessionToPersist)
+
+		// Restore the session and find the packets that were missed by the client.
+		RestoreSession(PrivateSessionId, string) (*Session, error)
+	}
+
+	AdapterConstructor interface {
+		New(NamespaceInterface) Adapter
 	}
 )

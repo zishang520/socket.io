@@ -1,5 +1,162 @@
 package socket
 
+import (
+	"time"
+
+	"github.com/zishang520/engine.io/v2/events"
+	"github.com/zishang520/engine.io/v2/types"
+)
+
+// A namespace is a communication channel that allows you to split the logic of your application over a single shared
+// connection.
+//
+// Each namespace has its own:
+//
+// - event handlers
+//
+//	io.Of("/orders").On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//		socket.On("order:list", func(...any){})
+//		socket.On("order:create", func(...any){})
+//	})
+//
+//	io.Of("/users").On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//		socket.On("user:list", func(...any){})
+//	})
+//
+// - rooms
+//
+//	orderNamespace := io.Of("/orders")
+//
+//	orderNamespace.On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//		socket.Join("room1")
+//		orderNamespace.To("room1").Emit("hello")
+//	})
+//
+//	userNamespace := io.Of("/users")
+//
+//	userNamespace.On("connection", func(args ...any) {
+//		socket := args[0].(*socket.Socket)
+//		socket.Join("room1") // distinct from the room in the "orders" namespace
+//		userNamespace.To("room1").Emit("holà")
+//	})
+//
+// - middlewares
+//
+//	orderNamespace := io.Of("/orders")
+//
+//	orderNamespace.Use(func(socket *socket.Socket, next func(*socket.ExtendedError)) {
+//		// ensure the socket has access to the "orders" namespace
+//	})
+//
+//	userNamespace := io.Of("/users")
+//
+//	userNamespace.Use(func(socket *socket.Socket, next func(*socket.ExtendedError)) {
+//		// ensure the socket has access to the "users" namespace
+//	})
+type NamespaceInterface interface {
+	On(string, ...events.Listener) error
+	Once(string, ...events.Listener) error
+	EmitReserved(string, ...any)
+	EmitUntyped(string, ...any)
+	Listeners(string) []events.Listener
+
+	// #prototype
+
+	Prototype(NamespaceInterface)
+	Proto() NamespaceInterface
+
+	// #getters
+
+	EventEmitter() *StrictEventEmitter
+	Sockets() *types.Map[SocketId, *Socket]
+	Server() *Server
+	Adapter() Adapter
+	Name() string
+	Ids() uint64
+
+	// Construct() should be called after calling Prototype()
+	Construct(*Server, string)
+
+	// @protected
+	//
+	// Initializes the `Adapter` for n nsp.
+	// Run upon changing adapter by `Server.Adapter`
+	// in addition to the constructor.
+	InitAdapter()
+
+	// Sets up namespace middleware.
+	Use(func(*Socket, func(*ExtendedError))) NamespaceInterface
+
+	// Targets a room when emitting.
+	To(...Room) *BroadcastOperator
+
+	// Targets a room when emitting.
+	In(...Room) *BroadcastOperator
+
+	// Excludes a room when emitting.
+	Except(...Room) *BroadcastOperator
+
+	// Adds a new client.
+	Add(*Client, any, func(*Socket))
+
+	// Emits to all clients.
+	Emit(string, ...any) error
+
+	// Emits an event and waits for an acknowledgement from all clients.
+	EmitWithAck(string, ...any) func(func([]any, error))
+
+	// Sends a `message` event to all clients.
+	Send(...any) NamespaceInterface
+
+	// Sends a `message` event to all clients.
+	Write(...any) NamespaceInterface
+
+	// Emit a packet to other Socket.IO servers
+	ServerSideEmit(string, ...any) error
+
+	// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
+	ServerSideEmitWithAck(string, ...any) func(func([]any, error))
+
+	// @private
+	//
+	// Called when a packet is received from another Socket.IO server
+	OnServerSideEmit(string, ...any)
+
+	// Gets a list of clients.
+	AllSockets() (*types.Set[SocketId], error)
+
+	// Sets the compress flag.
+	Compress(bool) *BroadcastOperator
+
+	// Sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to
+	// receive messages (because of network slowness or other issues, or because they’re connected through long polling
+	// and is in the middle of a request-response cycle).
+	Volatile() *BroadcastOperator
+
+	// Sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
+	Local() *BroadcastOperator
+
+	// Adds a timeout in milliseconds for the next operation
+	Timeout(time.Duration) *BroadcastOperator
+
+	// Returns the matching socket instances
+	//
+	// Deprecated: this method will be removed in the next major release, please use [Server.ServerSideEmit] or [BroadcastOperator.FetchSockets] instead.
+	FetchSockets() func(func([]*RemoteSocket, error))
+
+	// Makes the matching socket instances join the specified rooms
+	SocketsJoin(...Room)
+
+	// Makes the matching socket instances leave the specified rooms
+	SocketsLeave(...Room)
+
+	// Makes the matching socket instances disconnect
+	DisconnectSockets(bool)
+}
+
 type ExtendedError struct {
 	message string
 	data    any

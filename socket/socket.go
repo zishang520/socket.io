@@ -654,7 +654,7 @@ func (s *Socket) _onclose(args ...any) *Socket {
 		})
 	}
 	s._cleanup()
-	s.client.remove(s)
+	s.client._remove(s)
 	s.connected_mu.Lock()
 	s.connected = false
 	s.connected_mu.Unlock()

@@ -18,49 +18,7 @@ var (
 	NAMESPACE_RESERVED_EVENTS = types.NewSet("connect", "connection", "new_namespace")
 )
 
-type Namespace struct {
-	// _ids has to be first in the struct to guarantee alignment for atomic
-	// operations. http://golang.org/pkg/sync/atomic/#pkg-note-BUG
-	_ids uint64
-
-	*StrictEventEmitter
-
-	name    string
-	sockets *types.Map[SocketId, *Socket]
-	adapter Adapter
-	server  *Server
-	_fns    []func(*Socket, func(*ExtendedError))
-
-	_fns_mu sync.RWMutex
-
-	_remove func(socket *Socket)
-}
-
-func (n *Namespace) Sockets() *types.Map[SocketId, *Socket] {
-	return n.sockets
-}
-
-func (n *Namespace) Server() *Server {
-	return n.server
-}
-
-func (n *Namespace) Adapter() Adapter {
-	return n.adapter
-}
-
-func (n *Namespace) Name() string {
-	return n.name
-}
-
-func (n *Namespace) Ids() uint64 {
-	return atomic.AddUint64(&n._ids, 1)
-}
-
-func (n *Namespace) EventEmitter() *StrictEventEmitter {
-	return n.StrictEventEmitter
-}
-
-// A Namespace is a communication channel that allows you to split the logic of your application over a single shared
+// A namespace is a communication channel that allows you to split the logic of your application over a single shared
 // connection.
 //
 // Each namespace has its own:
@@ -109,28 +67,118 @@ func (n *Namespace) EventEmitter() *StrictEventEmitter {
 //	userNamespace.Use(func(socket *socket.Socket, next func(*socket.ExtendedError)) {
 //		// ensure the socket has access to the "users" namespace
 //	})
-func NewNamespace(server *Server, name string) *Namespace {
-	n := &Namespace{}
-	n.StrictEventEmitter = NewStrictEventEmitter()
-	n.sockets = &types.Map[SocketId, *Socket]{}
-	n._fns = []func(*Socket, func(*ExtendedError)){}
-	atomic.StoreUint64(&n._ids, 0)
-	n.server = server
-	n.name = name
+type Namespace struct {
+	// _ids has to be first in the struct to guarantee alignment for atomic
+	// operations. http://golang.org/pkg/sync/atomic/#pkg-note-BUG
+	_ids uint64
+
+	*StrictEventEmitter
+
+	// Prototype interface, used to implement interface method rewriting
+	_proto_ NamespaceInterface
+
+	// #readonly
+	// @public
+
+	name    string
+	sockets *types.Map[SocketId, *Socket]
+
+	adapter Adapter
+
+	// @private
+
+	server *Server
+
+	_fns    []func(*Socket, func(*ExtendedError))
+	_fns_mu sync.RWMutex
+
+	_remove func(socket *Socket)
+}
+
+func MakeNamespace() *Namespace {
+	n := &Namespace{
+		StrictEventEmitter: NewStrictEventEmitter(),
+
+		sockets: &types.Map[SocketId, *Socket]{},
+		_fns:    []func(*Socket, func(*ExtendedError)){},
+		_ids:    0,
+	}
+
 	n._remove = n.namespace_remove
-	n._initAdapter()
+	n.Prototype(n)
 
 	return n
 }
 
+func NewNamespace(server *Server, name string) *Namespace {
+	n := MakeNamespace()
+
+	n.Construct(server, name)
+
+	return n
+}
+
+func (n *Namespace) Prototype(_n NamespaceInterface) {
+	n._proto_ = _n
+}
+
+func (n *Namespace) Proto() NamespaceInterface {
+	return n._proto_
+}
+
+func (n *Namespace) EventEmitter() *StrictEventEmitter {
+	return n.StrictEventEmitter
+}
+
+func (n *Namespace) Sockets() *types.Map[SocketId, *Socket] {
+	return n.sockets
+}
+
+func (n *Namespace) Server() *Server {
+	return n.server
+}
+
+func (n *Namespace) Adapter() Adapter {
+	return n.adapter
+}
+
+func (n *Namespace) Name() string {
+	return n.name
+}
+
+func (n *Namespace) Ids() uint64 {
+	return atomic.AddUint64(&n._ids, 1)
+}
+
+func (n *Namespace) fns() []func(*Socket, func(*ExtendedError)) {
+	n._fns_mu.RLock()
+	defer n._fns_mu.RUnlock()
+
+	return n._fns
+}
+func (n *Namespace) useFns(_fns []func(*Socket, func(*ExtendedError))) {
+	n._fns_mu.Lock()
+	defer n._fns_mu.Unlock()
+
+	n._fns = _fns
+}
+
+func (n *Namespace) Construct(server *Server, name string) {
+	n.server = server
+	n.name = name
+	n.Proto().InitAdapter()
+}
+
+// @protected
+//
 // Initializes the `Adapter` for n nsp.
 // Run upon changing adapter by `Server.Adapter`
 // in addition to the constructor.
-func (n *Namespace) _initAdapter() {
+func (n *Namespace) InitAdapter() {
 	n.adapter = n.server.Adapter().New(n)
 }
 
-// Registers a middleware, which is a function that gets executed for every incoming {@link Socket}.
+// Registers a middleware, which is a function that gets executed for every incoming [Socket].
 //
 //	myNamespace := io.Of("/my-namespace")
 //
@@ -149,6 +197,10 @@ func (n *Namespace) Use(fn func(*Socket, func(*ExtendedError))) NamespaceInterfa
 }
 
 // Executes the middleware for an incoming client.
+//
+// Param: socket - the socket that will get added
+//
+// Param: fn - last fn call in the middleware
 func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 	n._fns_mu.RLock()
 	fns := make([]func(*Socket, func(*ExtendedError)), len(n._fns))
@@ -193,9 +245,10 @@ func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 //	myNamespace.To("room-101").To("room-102").Emit("foo", "bar")
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (n *Namespace) To(room ...Room) *BroadcastOperator {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).To(room...)
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).To(room...)
 }
 
 // Targets a room when emitting.
@@ -206,9 +259,10 @@ func (n *Namespace) To(room ...Room) *BroadcastOperator {
 //	myNamespace.In("room-101").DisconnectSockets(false)
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (n *Namespace) In(room ...Room) *BroadcastOperator {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).In(room...)
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).In(room...)
 }
 
 // Excludes a room when emitting.
@@ -226,9 +280,10 @@ func (n *Namespace) In(room ...Room) *BroadcastOperator {
 //	myNamespace.Except("room-101").Except("room-102").Emit("foo", "bar")
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-// Return: a new `*BroadcastOperator` instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (n *Namespace) Except(room ...Room) *BroadcastOperator {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).Except(room...)
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Except(room...)
 }
 
 // Adds a new client.
@@ -241,7 +296,7 @@ func (n *Namespace) Add(client *Client, auth any, fn func(*Socket)) {
 	}
 	// socket := NewSocket(n, client, query)
 	n.run(socket, func(err *ExtendedError) {
-		go func(err *ExtendedError) {
+		go func() {
 			if "open" != client.conn.ReadyState() {
 				namespace_log.Debug("next called after client was closed - ignoring socket")
 				socket._cleanup()
@@ -267,7 +322,7 @@ func (n *Namespace) Add(client *Client, auth any, fn func(*Socket)) {
 			}
 
 			n._doConnect(socket, fn)
-		}(err)
+		}()
 	})
 }
 
@@ -277,7 +332,7 @@ func (n *Namespace) _createSocket(client *Client, auth any) *Socket {
 		sessionId, has_sessionId := _auth.GetPid()
 		offset, has_offset := _auth.GetOffset()
 		if has_sessionId && has_offset && n.server.Opts().GetRawConnectionStateRecovery() != nil {
-			session, err := n.adapter.RestoreSession(PrivateSessionId(sessionId), offset)
+			session, err := n.Proto().Adapter().RestoreSession(PrivateSessionId(sessionId), offset)
 			if err != nil {
 				namespace_log.Debug("error while restoring session: %v", err)
 			} else if session != nil {
@@ -292,6 +347,7 @@ func (n *Namespace) _createSocket(client *Client, auth any) *Socket {
 func (n *Namespace) _doConnect(socket *Socket, fn func(*Socket)) {
 	// track socket
 	n.sockets.Store(socket.Id(), socket)
+
 	// it's paramount that the internal `onconnect` logic
 	// fires before user-set events to prevent state order
 	// violations (such as a disconnection before the connection
@@ -306,6 +362,8 @@ func (n *Namespace) _doConnect(socket *Socket, fn func(*Socket)) {
 	n.EmitReserved("connection", socket)
 }
 
+// @private
+//
 // Removes a client. Called by each `Socket`.
 func (n *Namespace) remove(socket *Socket) {
 	n._remove(socket)
@@ -336,8 +394,10 @@ func (n *Namespace) namespace_remove(socket *Socket) {
 //			fmt.Println(args) // one response per client
 //		}
 //	})
+//
+// Return: Always nil
 func (n *Namespace) Emit(ev string, args ...any) error {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).Emit(ev, args...)
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Emit(ev, args...)
 }
 
 // Emits an event and waits for an acknowledgement from all clients.
@@ -354,7 +414,7 @@ func (n *Namespace) Emit(ev string, args ...any) error {
 //
 // Return:  a `func(func([]any, error))` that will be fulfilled when all clients have acknowledged the event
 func (n *Namespace) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).EmitWithAck(ev, args...)
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).EmitWithAck(ev, args...)
 }
 
 // Sends a `message` event to all clients.
@@ -374,7 +434,7 @@ func (n *Namespace) Send(args ...any) NamespaceInterface {
 	return n
 }
 
-// Sends a `message` event to all clients. Alias of Send.
+// Sends a `message` event to all clients. Sends a `message` event. Alias of [Send].
 func (n *Namespace) Write(args ...any) NamespaceInterface {
 	n.Emit("message", args...)
 	return n
@@ -402,12 +462,16 @@ func (n *Namespace) Write(args ...any) NamespaceInterface {
 //	myNamespace.On("ping", func(args ...any) {
 //		args[0]("pong")
 //	})
+//
+// Param: ev - the event name
+//
+// Param: args - an slice of arguments, which may include an acknowledgement callback at the end
 func (n *Namespace) ServerSideEmit(ev string, args ...any) error {
 	if NAMESPACE_RESERVED_EVENTS.Has(ev) {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
 	}
 
-	n.adapter.ServerSideEmit(append([]any{ev}, args...))
+	n.Proto().Adapter().ServerSideEmit(append([]any{ev}, args...))
 
 	return nil
 }
@@ -432,15 +496,15 @@ func (n *Namespace) ServerSideEmitWithAck(ev string, args ...any) func(func([]an
 }
 
 // Called when a packet is received from another Socket.IO server
-func (n *Namespace) _onServerSideEmit(ev string, args ...any) {
+func (n *Namespace) OnServerSideEmit(ev string, args ...any) {
 	n.EmitUntyped(ev, args...)
 }
 
 // Gets a list of socket ids.
 //
-// Deprecated: this method will be removed in the next major release, please use *Server.ServerSideEmit or *BroadcastOperator.FetchSockets instead.
+// Deprecated: this method will be removed in the next major release, please use [Namespace#ServerSideEmit] or [Namespace#FetchSockets] instead.
 func (n *Namespace) AllSockets() (*types.Set[SocketId], error) {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).AllSockets()
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).AllSockets()
 }
 
 // Sets the compress flag.
@@ -448,28 +512,33 @@ func (n *Namespace) AllSockets() (*types.Set[SocketId], error) {
 //	io.Compress(false).Emit("hello")
 //
 // Param: bool - if `true`, compresses the sending data
-// Return: a new *BroadcastOperator instance for chaining
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (n *Namespace) Compress(compress bool) *BroadcastOperator {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).Compress(compress)
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Compress(compress)
 }
 
 // Sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to
 // receive messages (because of network slowness or other issues, or because they’re connected through long polling
 // and is in the middle of a request-response cycle).
 //
-//	io.Volatile().Emit("hello") // the clients may or may not receive it
+//	myNamespace := io.Of("/my-namespace")
+//
+//	myNamespace.Volatile().Emit("hello") // the clients may or may not receive it
 func (n *Namespace) Volatile() *BroadcastOperator {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).Volatile()
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Volatile()
 }
 
 // Sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
 //
-//	// the “foo” event will be broadcast to all connected clients on this node
-//	io.Local().Emit("foo", "bar")
+//	myNamespace := io.Of("/my-namespace")
 //
-// Return: a new `*BroadcastOperator` instance for chaining
+//	// the “foo” event will be broadcast to all connected clients on this node
+//	myNamespace.Local().Emit("foo", "bar")
+//
+// Return: a new [BroadcastOperator] instance for chaining
 func (n *Namespace) Local() *BroadcastOperator {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).Local()
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Local()
 }
 
 // Adds a timeout in milliseconds for the next operation
@@ -482,7 +551,7 @@ func (n *Namespace) Local() *BroadcastOperator {
 //		}
 //	})
 func (n *Namespace) Timeout(timeout time.Duration) *BroadcastOperator {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).Timeout(timeout)
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Timeout(timeout)
 }
 
 // Returns the matching socket instances
@@ -510,7 +579,7 @@ func (n *Namespace) Timeout(timeout time.Duration) *BroadcastOperator {
 //
 //	})
 func (n *Namespace) FetchSockets() func(func([]*RemoteSocket, error)) {
-	return NewBroadcastOperator(n.adapter, nil, nil, nil).FetchSockets()
+	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).FetchSockets()
 }
 
 // Makes the matching socket instances join the specified rooms
@@ -525,7 +594,7 @@ func (n *Namespace) FetchSockets() func(func([]*RemoteSocket, error)) {
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
 func (n *Namespace) SocketsJoin(room ...Room) {
-	NewBroadcastOperator(n.adapter, nil, nil, nil).SocketsJoin(room...)
+	NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).SocketsJoin(room...)
 }
 
 // Makes the matching socket instances leave the specified rooms
@@ -540,7 +609,7 @@ func (n *Namespace) SocketsJoin(room ...Room) {
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
 func (n *Namespace) SocketsLeave(room ...Room) {
-	NewBroadcastOperator(n.adapter, nil, nil, nil).SocketsLeave(room...)
+	NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).SocketsLeave(room...)
 }
 
 // Makes the matching socket instances disconnect
@@ -552,6 +621,8 @@ func (n *Namespace) SocketsLeave(room ...Room) {
 //
 //	// make all socket instances in the "room1" room disconnect and close the underlying connections
 //	io.In("room1").DisconnectSockets(true)
+//
+// Param: close - whether to close the underlying connection
 func (n *Namespace) DisconnectSockets(status bool) {
-	NewBroadcastOperator(n.adapter, nil, nil, nil).DisconnectSockets(status)
+	NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).DisconnectSockets(status)
 }
