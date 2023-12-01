@@ -25,13 +25,33 @@ type (
 )
 
 func (*SessionAwareAdapterBuilder) New(nsp NamespaceInterface) Adapter {
-	s := &sessionAwareAdapter{}
-	s.Adapter = new(AdapterBuilder).New(nsp)
-	s.SetBroadcast(s.broadcast)
+	return NewSessionAwareAdapter(nsp)
+}
 
+func MakeSessionAwareAdapter() Adapter {
+	s := &sessionAwareAdapter{
+		Adapter: MakeAdapter(),
+
+		sessions: &types.Map[PrivateSessionId, *SessionWithTimestamp]{},
+		packets:  []*PersistedPacket{},
+	}
+
+	s.Prototype(s)
+
+	return s
+}
+
+func NewSessionAwareAdapter(nsp NamespaceInterface) Adapter {
+	s := MakeSessionAwareAdapter()
+
+	s.Construct(nsp)
+
+	return s
+}
+
+func (s *sessionAwareAdapter) Construct(nsp NamespaceInterface) {
+	s.Adapter.Construct(nsp)
 	s.maxDisconnectionDuration = nsp.Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration()
-
-	s.sessions = &types.Map[PrivateSessionId, *SessionWithTimestamp]{}
 
 	timer := utils.SetInterval(func() {
 		threshold := time.Now().UnixMilli() - s.maxDisconnectionDuration
@@ -54,7 +74,6 @@ func (*SessionAwareAdapterBuilder) New(nsp NamespaceInterface) Adapter {
 	}, 60*1000*time.Millisecond)
 	// prevents the timer from keeping the process alive
 	timer.Unref()
-	return s
 }
 
 func (s *sessionAwareAdapter) PersistSession(session *SessionToPersist) {
@@ -111,11 +130,7 @@ func (s *sessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 	}, nil
 }
 
-func (s *sessionAwareAdapter) GetBroadcast() func(*parser.Packet, *BroadcastOptions) {
-	return s.broadcast
-}
-
-func (s *sessionAwareAdapter) broadcast(packet *parser.Packet, opts *BroadcastOptions) {
+func (s *sessionAwareAdapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 	isEventPacket := packet.Type == parser.EVENT
 	// packets with acknowledgement are not stored because the acknowledgement function cannot be serialized and
 	// restored on another server upon reconnection
@@ -137,7 +152,7 @@ func (s *sessionAwareAdapter) broadcast(packet *parser.Packet, opts *BroadcastOp
 			Opts:      opts,
 		})
 	}
-	s.Adapter.GetBroadcast()(packet, opts)
+	s.Adapter.Broadcast(packet, opts)
 }
 
 func shouldIncludePacket(sessionRooms *types.Set[Room], opts *BroadcastOptions) bool {

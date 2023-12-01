@@ -54,12 +54,8 @@ func NewParentNamespace(server *Server) *ParentNamespace {
 	return n
 }
 
-func (n *ParentNamespace) Construct(server *Server, name string) {
-	n.Namespace.Construct(server, name)
-}
-
 func (p *ParentNamespace) InitAdapter() {
-	p.adapter = AdapterBroadcast(func(packet *parser.Packet, opts *BroadcastOptions) {
+	p.adapter = BroadcastAdapter(func(packet *parser.Packet, opts *BroadcastOptions) {
 		for _, nsp := range p.children.Keys() {
 			nsp.Adapter().Broadcast(packet, opts)
 		}

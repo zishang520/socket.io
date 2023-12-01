@@ -3,6 +3,7 @@ package socket
 import (
 	"sync/atomic"
 
+	_types "github.com/zishang520/engine.io-go-parser/types"
 	"github.com/zishang520/engine.io/v2/events"
 	"github.com/zishang520/engine.io/v2/types"
 	"github.com/zishang520/engine.io/v2/utils"
@@ -154,7 +155,7 @@ func (a *adapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 	packetOpts.Compress = flags.Compress
 
 	packet.Nsp = a.nsp.Name()
-	encodedPackets := a.encoder.Encode(packet)
+	encodedPackets := a._encode(packet, packetOpts)
 	a.apply(opts, func(socket *Socket) {
 		if notifyOutgoingListeners := socket.NotifyOutgoingListeners(); notifyOutgoingListeners != nil {
 			notifyOutgoingListeners(packet)
@@ -184,7 +185,7 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 	// we can use the same id for each packet, since the _ids counter is common (no duplicate)
 	id := a.nsp.Ids()
 	packet.Id = &id
-	encodedPackets := a.encoder.Encode(packet)
+	encodedPackets := a._encode(packet, packetOpts)
 	clientCount := uint64(0)
 	a.apply(opts, func(socket *Socket) {
 		// track the total number of acknowledgements that are expected
@@ -197,6 +198,22 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 		socket.Client().WriteToEngine(encodedPackets, packetOpts)
 	})
 	clientCountCallback(atomic.LoadUint64(&clientCount))
+}
+
+func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []_types.BufferInterface {
+	encodedPackets := a.encoder.Encode(packet)
+
+	if len(encodedPackets) == 1 {
+		if p, ok := encodedPackets[0].(*_types.StringBuffer); ok {
+			// "4" being the "message" packet type in the Engine.IO protocol
+			data := _types.NewStringBufferString("4")
+			data.Write(p.Bytes())
+			// see https://github.com/websockets/ws/issues/617#issuecomment-283002469
+			packetOpts.WsPreEncodedFrame = data
+		}
+	}
+
+	return encodedPackets
 }
 
 // Gets a list of sockets by sid.
