@@ -1,7 +1,7 @@
 # socket.io
 
 [![Build Status](https://github.com/zishang520/socket.io/workflows/Go/badge.svg?branch=main)](https://github.com/zishang520/socket.io/actions)
-[![GoDoc](https://pkg.go.dev/badge/github.com/zishang520/socket.io/v2?utm_source=godoc)](https://pkg.go.dev/github.com/zishang520/socket.io)
+[![GoDoc](https://pkg.go.dev/badge/github.com/zishang520/socket.io/v2?utm_source=godoc)](https://pkg.go.dev/github.com/zishang520/socket.io/v2)
 
 ## Features
 
