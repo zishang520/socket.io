@@ -11,6 +11,7 @@ import (
 
 type (
 	SessionAwareAdapterBuilder struct {
+		AdapterConstructor
 	}
 
 	sessionAwareAdapter struct {

@@ -12,6 +12,7 @@ import (
 
 type (
 	AdapterBuilder struct {
+		AdapterConstructor
 	}
 
 	adapter struct {
