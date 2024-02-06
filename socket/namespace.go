@@ -430,12 +430,16 @@ func (n *Namespace) EmitWithAck(ev string, args ...any) func(func([]any, error))
 //	// this is equivalent to
 //	myNamespace.Emit("message", "hello")
 func (n *Namespace) Send(args ...any) NamespaceInterface {
+	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
+	// if you specify the EmitEvents, the type of args will be never.
 	n.Emit("message", args...)
 	return n
 }
 
 // Sends a `message` event to all clients. Sends a `message` event. Alias of [Send].
 func (n *Namespace) Write(args ...any) NamespaceInterface {
+	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
+	// if you specify the EmitEvents, the type of args will be never.
 	n.Emit("message", args...)
 	return n
 }

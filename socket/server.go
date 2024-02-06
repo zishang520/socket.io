@@ -684,12 +684,16 @@ func (s *Server) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
 //	// this is equivalent to
 //	io.Emit("message", "hello")
 func (s *Server) Send(args ...any) *Server {
+	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
+	// if you specify the EmitEvents, the type of args will be never.
 	s.sockets.Emit("message", args...)
 	return s
 }
 
 // Sends a `message` event to all clients. Alias of [Send].
 func (s *Server) Write(args ...any) *Server {
+	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
+	// if you specify the EmitEvents, the type of args will be never.
 	s.sockets.Emit("message", args...)
 	return s
 }
