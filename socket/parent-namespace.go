@@ -7,7 +7,6 @@ import (
 
 	"github.com/zishang520/engine.io/v2/log"
 	"github.com/zishang520/engine.io/v2/types"
-	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
 var (
@@ -55,11 +54,7 @@ func NewParentNamespace(server *Server) *ParentNamespace {
 }
 
 func (p *ParentNamespace) InitAdapter() {
-	p.adapter = BroadcastAdapter(func(packet *parser.Packet, opts *BroadcastOptions) {
-		for _, nsp := range p.children.Keys() {
-			nsp.Adapter().Broadcast(packet, opts)
-		}
-	})
+	p.adapter = NewParentBroadcastAdapter(p, p.children)
 }
 
 func (p *ParentNamespace) Emit(ev string, args ...any) error {
