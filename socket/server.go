@@ -580,8 +580,13 @@ func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 //
 // Param: [fn] optional, called as `fn(error)` on error OR all conns closed
 func (s *Server) Close(fn func(error)) {
-	s.sockets.Sockets().Range(func(_ SocketId, socket *Socket) bool {
-		socket._onclose("server shutting down")
+	s._nsps.Range(func(_ string, nsp *Namespace) bool {
+		nsp.Sockets().Range(func(_ SocketId, socket *Socket) bool {
+			socket._onclose("server shutting down")
+			return true
+		})
+
+		nsp.Adapter().Close()
 		return true
 	})
 
@@ -656,21 +661,6 @@ func (s *Server) In(room ...Room) *BroadcastOperator {
 // Return: a new [BroadcastOperator] instance for chaining
 func (s *Server) Except(room ...Room) *BroadcastOperator {
 	return s.sockets.Except(room...)
-}
-
-// Emits an event and waits for an acknowledgement from all clients.
-//
-//	io.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args []any, err error) {
-//		if err == nil {
-//			fmt.Println(args) // one response per client
-//		} else {
-//			// some servers did not acknowledge the event in the given delay
-//		}
-//	})
-//
-// Return: a `func(func([]any, error))` that will be fulfilled when all servers have acknowledged the event
-func (s *Server) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
-	return s.sockets.EmitWithAck(ev, args...)
 }
 
 // Sends a `message` event to all clients.

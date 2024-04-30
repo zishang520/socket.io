@@ -232,7 +232,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		if 0 == atomic.LoadUint32(&timedOut) && expectedServerCount == atomic.LoadInt64(&actualServerCount) && uint64(len(responses)) == atomic.LoadUint64(&expectedClientCount) {
 			utils.ClearTimeout(timer)
 			if b.flags.ExpectSingleResponse {
-				ack(responses[0], nil)
+				ack(responses[0].([]any), nil)
 			} else {
 				ack(responses, nil)
 			}

@@ -105,9 +105,6 @@ type NamespaceInterface interface {
 	// Emits to all clients.
 	Emit(string, ...any) error
 
-	// Emits an event and waits for an acknowledgement from all clients.
-	EmitWithAck(string, ...any) func(func([]any, error))
-
 	// Sends a `message` event to all clients.
 	Send(...any) NamespaceInterface
 

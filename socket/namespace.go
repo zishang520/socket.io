@@ -400,23 +400,6 @@ func (n *Namespace) Emit(ev string, args ...any) error {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Emit(ev, args...)
 }
 
-// Emits an event and waits for an acknowledgement from all clients.
-//
-//	myNamespace := io.Of("/my-namespace")
-//
-//	myNamespace.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args []any, err error) {
-//		if err == nil {
-//			fmt.Println(args) // one response per client
-//		} else {
-//			// some servers did not acknowledge the event in the given delay
-//		}
-//	})
-//
-// Return:  a `func(func([]any, error))` that will be fulfilled when all clients have acknowledged the event
-func (n *Namespace) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
-	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).EmitWithAck(ev, args...)
-}
-
 // Sends a `message` event to all clients.
 //
 // This method mimics the WebSocket.send() method.
