@@ -1,6 +1,6 @@
 module github.com/zishang520/socket.io/v2
 
-go 1.22
+go 1.22.2
 
 require (
 	github.com/andybalholm/brotli v1.1.0
