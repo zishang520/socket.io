@@ -5,9 +5,9 @@ go 1.22.2
 require (
 	github.com/andybalholm/brotli v1.1.0
 	github.com/mitchellh/mapstructure v1.5.0
-	github.com/zishang520/engine.io-go-parser v1.2.3
-	github.com/zishang520/engine.io/v2 v2.0.7
-	github.com/zishang520/socket.io-go-parser/v2 v2.0.5
+	github.com/zishang520/engine.io-go-parser v1.2.4
+	github.com/zishang520/engine.io/v2 v2.0.8
+	github.com/zishang520/socket.io-go-parser/v2 v2.0.7
 )
 
 require (
