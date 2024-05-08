@@ -1,4 +1,4 @@
-# socket.io
+# socket.io for golang
 
 [![Build Status](https://github.com/zishang520/socket.io/workflows/Go/badge.svg?branch=main)](https://github.com/zishang520/socket.io/actions)
 [![GoDoc](https://pkg.go.dev/badge/github.com/zishang520/socket.io/v2?utm_source=godoc)](https://pkg.go.dev/github.com/zishang520/socket.io/v2)
@@ -44,7 +44,7 @@ That functionality is achieved with timers set on both the server and the client
 
 Any serializable data structures can be emitted, including:
 
-- []byte and io.Reader
+- `[]byte` and `io.Reader`
 
 
 #### Simple and convenient API
