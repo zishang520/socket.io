@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -423,13 +422,23 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
+	// Construct the full, intended destination path
+	basePath := filepath.Dir(filepath.Dir(_file))
+	targetPath := filepath.Clean(filepath.Join(basePath, "client-dist", filename))
 
-	file, err := os.Open(filepath.FromSlash(path.Join(filepath.Dir(filepath.Dir(_file)), "client-dist", path.Clean("/"+filename))))
+	// Verify the target path is still within the intended directory boundary
+	if !strings.HasPrefix(targetPath, basePath) {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	file, err := os.Open(targetPath)
 	if err != nil {
 		server_log.Debug("File read failed: %v", err)
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
+	defer file.Close()
+
 	encoding := utils.Contains(r.Header.Get("Accept-Encoding"), []string{"gzip", "deflate", "br"})
 
 	switch encoding {
