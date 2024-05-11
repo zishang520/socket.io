@@ -43,6 +43,11 @@ type (
 		Auth any `json:"auth" mapstructure:"auth" msgpack:"auth"`
 	}
 
+	connectPayload struct {
+		Sid SocketId         `json:"sid" mapstructure:"sid" msgpack:"sid"`
+		Pid PrivateSessionId `json:"pid,omitempty" mapstructure:"pid,omitempty" msgpack:"pid,omitempty"`
+	}
+
 	// This is the main object for interacting with a client.
 	//
 	// A Socket belongs to a given [Namespace] and uses an underlying [Client] to communicate.
@@ -536,9 +541,9 @@ func (s *Socket) _onconnect() {
 	} else {
 		s.packet(&parser.Packet{
 			Type: parser.CONNECT,
-			Data: map[string]any{
-				"sid": s.id,
-				"pid": s.pid,
+			Data: &connectPayload{
+				Sid: s.id,
+				Pid: s.pid,
 			},
 		}, nil)
 	}
