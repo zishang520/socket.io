@@ -3,7 +3,6 @@ package socket
 import (
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -68,9 +67,7 @@ var (
 //		// ensure the socket has access to the "users" namespace
 //	})
 type Namespace struct {
-	// _ids has to be first in the struct to guarantee alignment for atomic
-	// operations. http://golang.org/pkg/sync/atomic/#pkg-note-BUG
-	_ids uint64
+	_ids atomic.Uint64
 
 	*StrictEventEmitter
 
@@ -89,8 +86,7 @@ type Namespace struct {
 
 	server *Server
 
-	_fns    []func(*Socket, func(*ExtendedError))
-	_fns_mu sync.RWMutex
+	_fns *types.Slice[func(*Socket, func(*ExtendedError))]
 
 	_remove func(socket *Socket)
 }
@@ -100,8 +96,7 @@ func MakeNamespace() *Namespace {
 		StrictEventEmitter: NewStrictEventEmitter(),
 
 		sockets: &types.Map[SocketId, *Socket]{},
-		_fns:    []func(*Socket, func(*ExtendedError)){},
-		_ids:    0,
+		_fns:    types.NewSlice[func(*Socket, func(*ExtendedError))](),
 	}
 
 	n._remove = n.namespace_remove
@@ -147,20 +142,7 @@ func (n *Namespace) Name() string {
 }
 
 func (n *Namespace) Ids() uint64 {
-	return atomic.AddUint64(&n._ids, 1)
-}
-
-func (n *Namespace) fns() []func(*Socket, func(*ExtendedError)) {
-	n._fns_mu.RLock()
-	defer n._fns_mu.RUnlock()
-
-	return n._fns
-}
-func (n *Namespace) useFns(_fns []func(*Socket, func(*ExtendedError))) {
-	n._fns_mu.Lock()
-	defer n._fns_mu.Unlock()
-
-	n._fns = _fns
+	return n._ids.Add(1)
 }
 
 func (n *Namespace) Construct(server *Server, name string) {
@@ -189,10 +171,7 @@ func (n *Namespace) InitAdapter() {
 //
 // Param: func(*ExtendedError) - the middleware function
 func (n *Namespace) Use(fn func(*Socket, func(*ExtendedError))) NamespaceInterface {
-	n._fns_mu.Lock()
-	defer n._fns_mu.Unlock()
-
-	n._fns = append(n._fns, fn)
+	n._fns.Push(fn)
 	return n
 }
 
@@ -202,10 +181,7 @@ func (n *Namespace) Use(fn func(*Socket, func(*ExtendedError))) NamespaceInterfa
 //
 // Param: fn - last fn call in the middleware
 func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
-	n._fns_mu.RLock()
-	fns := make([]func(*Socket, func(*ExtendedError)), len(n._fns))
-	copy(fns, n._fns)
-	n._fns_mu.RUnlock()
+	fns := n._fns.All()
 	if length := len(fns); length > 0 {
 		var run func(i int)
 		run = func(i int) {

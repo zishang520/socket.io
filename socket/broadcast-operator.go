@@ -3,7 +3,6 @@ package socket
 import (
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -200,9 +199,8 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 	packet.Data = data[:data_len-1]
 
-	timedOut := uint32(0)
-	responses := []any{}
-	var responsesMu sync.RWMutex
+	var timedOut atomic.Bool
+	responses := types.NewSlice[any]()
 	var timeout time.Duration
 
 	if time := b.flags.Timeout; time != nil {
@@ -210,31 +208,26 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	}
 
 	timer := utils.SetTimeout(func() {
-		atomic.StoreUint32(&timedOut, 1)
+		timedOut.Store(true)
 		if b.flags.ExpectSingleResponse {
 			ack(nil, errors.New("operation has timed out"))
 		} else {
-			responsesMu.RLock()
-			defer responsesMu.RUnlock()
-
-			ack(responses, errors.New("operation has timed out"))
+			ack(responses.All(), errors.New("operation has timed out"))
 		}
 	}, timeout)
 
 	expectedServerCount := int64(-1)
-	actualServerCount := int64(0)
-	expectedClientCount := uint64(0)
+	var actualServerCount atomic.Int64
+	var expectedClientCount atomic.Uint64
 
 	checkCompleteness := func() {
-		responsesMu.RLock()
-		defer responsesMu.RUnlock()
-
-		if 0 == atomic.LoadUint32(&timedOut) && expectedServerCount == atomic.LoadInt64(&actualServerCount) && uint64(len(responses)) == atomic.LoadUint64(&expectedClientCount) {
+		if !timedOut.Load() && expectedServerCount == actualServerCount.Load() && uint64(responses.Len()) == expectedClientCount.Load() {
 			utils.ClearTimeout(timer)
 			if b.flags.ExpectSingleResponse {
-				ack(responses[0].([]any), nil)
+				data, _ := responses.Get(0)
+				ack(data.([]any), nil)
 			} else {
-				ack(responses, nil)
+				ack(responses.All(), nil)
 			}
 		}
 	}
@@ -245,14 +238,12 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Flags:  b.flags,
 	}, func(clientCount uint64) {
 		// each Socket.IO server in the cluster sends the number of clients that were notified
-		atomic.AddUint64(&expectedClientCount, clientCount)
-		atomic.AddInt64(&actualServerCount, 1)
+		expectedClientCount.Add(clientCount)
+		actualServerCount.Add(1)
 		checkCompleteness()
 	}, func(clientResponse []any, _ error) {
 		// each client sends an acknowledgement
-		responsesMu.Lock()
-		responses = append(responses, clientResponse...)
-		responsesMu.Unlock()
+		responses.Push(clientResponse...)
 		checkCompleteness()
 	})
 	expectedServerCount = b.adapter.ServerCount()

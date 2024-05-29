@@ -1,7 +1,6 @@
 package socket
 
 import (
-	"sync"
 	"time"
 
 	"github.com/zishang520/engine.io/v2/types"
@@ -19,9 +18,8 @@ type (
 
 		maxDisconnectionDuration int64
 
-		sessions   *types.Map[PrivateSessionId, *SessionWithTimestamp]
-		packets    []*PersistedPacket
-		mu_packets sync.RWMutex
+		sessions *types.Map[PrivateSessionId, *SessionWithTimestamp]
+		packets  *types.Slice[*PersistedPacket]
 	}
 )
 
@@ -34,7 +32,7 @@ func MakeSessionAwareAdapter() Adapter {
 		Adapter: MakeAdapter(),
 
 		sessions: &types.Map[PrivateSessionId, *SessionWithTimestamp]{},
-		packets:  []*PersistedPacket{},
+		packets:  types.NewSlice[*PersistedPacket](),
 	}
 
 	s.Prototype(s)
@@ -62,16 +60,9 @@ func (s *sessionAwareAdapter) Construct(nsp NamespaceInterface) {
 			}
 			return true
 		})
-		s.mu_packets.Lock()
-		defer s.mu_packets.Unlock()
-
-		for i, packet := range s.packets {
-			if packet.EmittedAt < threshold {
-				copy(s.packets, s.packets[i+1:])
-				s.packets = s.packets[:len(s.packets)-i-1]
-				break
-			}
-		}
+		s.packets.RangeAndSplice(func(packet *PersistedPacket, i int) (bool, int, int, []*PersistedPacket) {
+			return packet.EmittedAt < threshold, 0, i + 1, nil
+		}, true)
 	}, 60*1000*time.Millisecond)
 	// prevents the timer from keeping the process alive
 	timer.Unref()
@@ -96,28 +87,25 @@ func (s *sessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 		return nil, nil
 	}
 
-	s.mu_packets.RLock()
-	defer s.mu_packets.RUnlock()
-
 	// Find the index of the packet with the given offset
-	index := -1
-	for i, packet := range s.packets {
-		if packet.Id == offset {
-			index = i
-			break
-		}
-	}
+	index := s.packets.FindIndex(func(packet *PersistedPacket) bool {
+		return packet.Id == offset
+	})
 
 	if index == -1 {
+		// the offset may be too old
 		return nil, nil
 	}
 
 	// Use a pre-allocated slice to avoid memory allocation in the loop
-	missedPackets := make([]any, 0, len(s.packets)-index-1)
+	missedPackets := make([]any, 0, s.packets.Len()-index-1)
 	missedNum := 0
 	// Iterate over the packets and append the data of those that should be included
-	for i := index + 1; i < len(s.packets); i++ {
-		packet := s.packets[i]
+	for i := index + 1; i < s.packets.Len(); i++ {
+		packet, err := s.packets.Get(i)
+		if err != nil {
+			break
+		}
 		if shouldIncludePacket(session.Rooms, packet.Opts) {
 			missedPackets = append(missedPackets, packet.Data)
 			missedNum++
@@ -143,10 +131,7 @@ func (s *sessionAwareAdapter) Broadcast(packet *parser.Packet, opts *BroadcastOp
 		// processed (and the format is backward-compatible)
 		packet.Data = append(packet.Data.([]any), id)
 
-		s.mu_packets.Lock()
-		defer s.mu_packets.Unlock()
-
-		s.packets = append(s.packets, &PersistedPacket{
+		s.packets.Push(&PersistedPacket{
 			Id:        id,
 			EmittedAt: time.Now().UnixMilli(),
 			Data:      packet.Data,

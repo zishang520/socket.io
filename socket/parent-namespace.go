@@ -12,7 +12,7 @@ import (
 var (
 	parent_namespace_log = log.NewLog("socket.io:parent-namespace")
 
-	count uint64 = 0
+	count atomic.Uint64
 )
 
 // A parent namespace is a special [Namespace] that holds a list of child namespaces which were created either
@@ -48,7 +48,7 @@ func MakeParentNamespace() *ParentNamespace {
 func NewParentNamespace(server *Server) *ParentNamespace {
 	n := MakeParentNamespace()
 
-	n.Construct(server, "/_"+strconv.FormatUint(atomic.AddUint64(&count, 1)-1, 10))
+	n.Construct(server, "/_"+strconv.FormatUint(count.Add(1)-1, 10))
 
 	return n
 }
@@ -68,10 +68,7 @@ func (p *ParentNamespace) CreateChild(name string) *Namespace {
 	parent_namespace_log.Debug("creating child namespace %s", name)
 	namespace := NewNamespace(p.Server(), name)
 
-	_p_fns := p.fns()
-	_fns := make([]func(*Socket, func(*ExtendedError)), len(_p_fns))
-	copy(_fns, _p_fns)
-	namespace.useFns(_fns)
+	namespace._fns.Replace(p._fns.All())
 
 	namespace.AddListener("connect", p.Listeners("connect")...)
 	namespace.AddListener("connection", p.Listeners("connection")...)

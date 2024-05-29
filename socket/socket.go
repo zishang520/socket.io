@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zishang520/engine.io/v2/engine"
@@ -94,8 +95,7 @@ type (
 
 		// Additional information that can be attached to the Socket instance and which will be used in the
 		// [Server.fetchSockets()] method.
-		data    any
-		data_mu sync.RWMutex
+		data atomic.Pointer[any]
 
 		// Whether the socket is currently connected or not.
 		//
@@ -108,8 +108,7 @@ type (
 		//		socket := args[0].(*socket.Socket)
 		//		fmt.Println(socket.Connected()) // true
 		//	})
-		connected    bool
-		connected_mu sync.RWMutex
+		connected atomic.Bool
 
 		// The session ID, which must not be shared (unlike [id]).
 		pid PrivateSessionId
@@ -118,18 +117,12 @@ type (
 		server                *Server
 		adapter               Adapter
 		acks                  *types.Map[uint64, func([]any, error)]
-		fns                   []func([]any, func(error))
-		flags                 *BroadcastFlags
-		_anyListeners         []events.Listener
-		_anyOutgoingListeners []events.Listener
+		fns                   *types.Slice[func([]any, func(error))]
+		flags                 atomic.Pointer[BroadcastFlags]
+		_anyListeners         *types.Slice[events.Listener]
+		_anyOutgoingListeners *types.Slice[events.Listener]
 
-		canJoin    bool
-		canJoin_mu sync.RWMutex
-
-		fns_mu                   sync.RWMutex
-		flags_mu                 sync.RWMutex
-		_anyListeners_mu         sync.RWMutex
-		_anyOutgoingListeners_mu sync.RWMutex
+		canJoin atomic.Bool
 	}
 )
 
@@ -138,11 +131,13 @@ func MakeSocket() *Socket {
 		StrictEventEmitter: NewStrictEventEmitter(),
 
 		// Initialize default value
-		acks:    &types.Map[uint64, func([]any, error)]{},
-		fns:     []func([]any, func(error)){},
-		flags:   &BroadcastFlags{},
-		canJoin: true,
+		acks:                  &types.Map[uint64, func([]any, error)]{},
+		fns:                   types.NewSlice[func([]any, func(error))](),
+		_anyListeners:         types.NewSlice[events.Listener](),
+		_anyOutgoingListeners: types.NewSlice[events.Listener](),
 	}
+	s.flags.Store(&BroadcastFlags{})
+	s.canJoin.Store(true)
 
 	return s
 }
@@ -174,16 +169,13 @@ func (s *Socket) Handshake() *Handshake {
 // Additional information that can be attached to the Socket instance and which will be used in the
 // [Server.fetchSockets()] method.
 func (s *Socket) SetData(data any) {
-	s.data_mu.Lock()
-	defer s.data_mu.Unlock()
-
-	s.data = data
+	s.data.Store(&data)
 }
 func (s *Socket) Data() any {
-	s.data_mu.RLock()
-	defer s.data_mu.RUnlock()
-
-	return s.data
+	if data := s.data.Load(); data != nil {
+		return *data
+	}
+	return nil
 }
 
 // Whether the socket is currently connected or not.
@@ -198,10 +190,7 @@ func (s *Socket) Data() any {
 //		fmt.Println(socket.Connected()) // true
 //	})
 func (s *Socket) Connected() bool {
-	s.connected_mu.RLock()
-	defer s.connected_mu.RUnlock()
-
-	return s.connected
+	return s.connected.Load()
 }
 
 func (s *Socket) Acks() *types.Map[uint64, func([]any, error)] {
@@ -307,10 +296,8 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		s.registerAckCallback(id, fn)
 		packet.Id = &id
 	}
-	s.flags_mu.Lock()
-	flags := *s.flags
-	s.flags = &BroadcastFlags{}
-	s.flags_mu.Unlock()
+	flags := *s.flags.Load()
+	s.flags.Store(&BroadcastFlags{})
 
 	if s.nsp.Server().Opts().GetRawConnectionStateRecovery() != nil {
 		// this ensures the packet is stored and can be transmitted upon reconnection
@@ -358,9 +345,7 @@ func (s *Socket) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
 }
 
 func (s *Socket) registerAckCallback(id uint64, ack func([]any, error)) {
-	s.flags_mu.RLock()
-	timeout := s.flags.Timeout
-	s.flags_mu.RUnlock()
+	timeout := s.flags.Load().Timeout
 	if timeout == nil {
 		s.acks.Store(id, ack)
 		return
@@ -488,12 +473,9 @@ func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
 func (s *Socket) Join(rooms ...Room) {
-	s.canJoin_mu.RLock()
-	if !s.canJoin {
-		defer s.canJoin_mu.RUnlock()
+	if !s.canJoin.Load() {
 		return
 	}
-	s.canJoin_mu.RUnlock()
 
 	socket_log.Debug("join room %s", rooms)
 	s.adapter.AddAll(s.id, types.NewSet(rooms...))
@@ -529,9 +511,7 @@ func (s *Socket) leaveAll() {
 func (s *Socket) _onconnect() {
 	socket_log.Debug("socket connected - writing packet")
 
-	s.connected_mu.Lock()
-	s.connected = true
-	s.connected_mu.Unlock()
+	s.connected.Store(true)
 
 	s.Join(Room(s.id))
 	if s.Conn().Protocol() == 3 {
@@ -576,16 +556,8 @@ func (s *Socket) onevent(packet *parser.Packet) {
 		socket_log.Debug("attaching ack callback to event")
 		args = append(args, s.ack(*packet.Id))
 	}
-	s._anyListeners_mu.RLock()
-	if s._anyListeners != nil && len(s._anyListeners) > 0 {
-		listeners := make([]events.Listener, len(s._anyListeners))
-		copy(listeners, s._anyListeners)
-		s._anyListeners_mu.RUnlock()
-		for _, listener := range listeners {
-			listener(args...)
-		}
-	} else {
-		s._anyListeners_mu.RUnlock()
+	for _, listener := range s._anyListeners.All() {
+		listener(args...)
 	}
 	s.dispatch(args)
 }
@@ -660,9 +632,7 @@ func (s *Socket) _onclose(args ...any) *Socket {
 	}
 	s._cleanup()
 	s.client._remove(s)
-	s.connected_mu.Lock()
-	s.connected = false
-	s.connected_mu.Unlock()
+	s.connected.Store(false)
 	s.EmitReserved("disconnect", args...)
 	return nil
 }
@@ -671,10 +641,7 @@ func (s *Socket) _onclose(args ...any) *Socket {
 func (s *Socket) _cleanup() {
 	s.leaveAll()
 	s.nsp.remove(s)
-	s.canJoin_mu.Lock()
-	s.canJoin = false
-	s.canJoin_mu.Unlock()
-
+	s.canJoin.Store(false)
 }
 
 // Produces an `error` packet.
@@ -721,9 +688,7 @@ func (s *Socket) Disconnect(status bool) *Socket {
 //
 // Param: compress - if `true`, compresses the sending data
 func (s *Socket) Compress(compress bool) *Socket {
-	s.flags_mu.Lock()
-	s.flags.Compress = compress
-	s.flags_mu.Unlock()
+	s.flags.Load().Compress = compress
 	return s
 }
 
@@ -736,9 +701,7 @@ func (s *Socket) Compress(compress bool) *Socket {
 //		socket.Volatile().Emit("hello") // the client may or may not receive it
 //	})
 func (s *Socket) Volatile() *Socket {
-	s.flags_mu.Lock()
-	s.flags.Volatile = true
-	s.flags_mu.Unlock()
+	s.flags.Load().Volatile = true
 	return s
 }
 
@@ -781,9 +744,7 @@ func (s *Socket) Local() *BroadcastOperator {
 //		})
 //	})
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
-	s.flags_mu.Lock()
-	s.flags.Timeout = &timeout
-	s.flags_mu.Unlock()
+	s.flags.Load().Timeout = &timeout
 	return s
 }
 
@@ -827,10 +788,7 @@ func (s *Socket) dispatch(event []any) {
 //
 // Param: fn - middleware function (event, next)
 func (s *Socket) Use(fn func([]any, func(error))) *Socket {
-	s.fns_mu.Lock()
-	defer s.fns_mu.Unlock()
-
-	s.fns = append(s.fns, fn)
+	s.fns.Push(fn)
 	return s
 }
 
@@ -840,10 +798,7 @@ func (s *Socket) Use(fn func([]any, func(error))) *Socket {
 //
 // Pparam: fn - last fn call in the middleware
 func (s *Socket) run(event []any, fn func(error)) {
-	s.fns_mu.RLock()
-	fns := make([]func([]any, func(error)), len(s.fns))
-	copy(fns, s.fns)
-	s.fns_mu.RUnlock()
+	fns := s.fns.All()
 	if length := len(fns); length > 0 {
 		var run func(i int)
 		run = func(i int) {
@@ -921,13 +876,7 @@ func (s *Socket) Rooms() *types.Set[Room] {
 //
 //	Param: events.Listener
 func (s *Socket) OnAny(listener events.Listener) *Socket {
-	s._anyListeners_mu.Lock()
-	defer s._anyListeners_mu.Unlock()
-
-	if s._anyListeners == nil {
-		s._anyListeners = []events.Listener{}
-	}
-	s._anyListeners = append(s._anyListeners, listener)
+	s._anyListeners.Push(listener)
 	return s
 }
 
@@ -936,13 +885,7 @@ func (s *Socket) OnAny(listener events.Listener) *Socket {
 //
 //	Param: events.Listener
 func (s *Socket) PrependAny(listener events.Listener) *Socket {
-	s._anyListeners_mu.Lock()
-	defer s._anyListeners_mu.Unlock()
-
-	if s._anyListeners == nil {
-		s._anyListeners = []events.Listener{}
-	}
-	s._anyListeners = append([]events.Listener{listener}, s._anyListeners...)
+	s._anyListeners.Unshift(listener)
 	return s
 }
 
@@ -965,23 +908,13 @@ func (s *Socket) PrependAny(listener events.Listener) *Socket {
 //
 //	Param: events.Listener
 func (s *Socket) OffAny(listener events.Listener) *Socket {
-	s._anyListeners_mu.Lock()
-	defer s._anyListeners_mu.Unlock()
-
-	if len(s._anyListeners) == 0 {
-		return s
-	}
 	if listener != nil {
-		listenerPointer := reflect.ValueOf(listener).Pointer()
-		for i, _listener := range s._anyListeners {
-			if listenerPointer == reflect.ValueOf(_listener).Pointer() {
-				copy(s._anyListeners[i:], s._anyListeners[i+1:])
-				s._anyListeners = s._anyListeners[:len(s._anyListeners)-1]
-				return s
-			}
-		}
+		anyListeners := reflect.ValueOf(listener).Pointer()
+		s._anyListeners.RangeAndSplice(func(listener events.Listener, i int) (bool, int, int, []events.Listener) {
+			return reflect.ValueOf(listener).Pointer() == anyListeners, i, 1, nil
+		})
 	} else {
-		s._anyListeners = []events.Listener{}
+		s._anyListeners.Clear()
 	}
 	return s
 }
@@ -989,13 +922,7 @@ func (s *Socket) OffAny(listener events.Listener) *Socket {
 // Returns an array of listeners that are listening for any event that is specified. This array can be manipulated,
 // e.g. to remove listeners.
 func (s *Socket) ListenersAny() []events.Listener {
-	s._anyListeners_mu.Lock()
-	defer s._anyListeners_mu.Unlock()
-
-	if s._anyListeners == nil {
-		s._anyListeners = []events.Listener{}
-	}
-	return s._anyListeners
+	return s._anyListeners.All()
 }
 
 // Adds a listener that will be fired when any event is sent. The event name is passed as the first argument to
@@ -1012,13 +939,7 @@ func (s *Socket) ListenersAny() []events.Listener {
 //
 //	Param: events.Listener
 func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
-	s._anyOutgoingListeners_mu.Lock()
-	defer s._anyOutgoingListeners_mu.Unlock()
-
-	if s._anyOutgoingListeners == nil {
-		s._anyOutgoingListeners = []events.Listener{}
-	}
-	s._anyOutgoingListeners = append(s._anyOutgoingListeners, listener)
+	s._anyOutgoingListeners.Push(listener)
 	return s
 }
 
@@ -1032,13 +953,7 @@ func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
 //		})
 //	})
 func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
-	s._anyOutgoingListeners_mu.Lock()
-	defer s._anyOutgoingListeners_mu.Unlock()
-
-	if s._anyOutgoingListeners == nil {
-		s._anyOutgoingListeners = []events.Listener{}
-	}
-	s._anyOutgoingListeners = append([]events.Listener{listener}, s._anyOutgoingListeners...)
+	s._anyOutgoingListeners.Unshift(listener)
 	return s
 }
 
@@ -1061,23 +976,13 @@ func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
 //
 //	Param: events.Listener - the catch-all listener
 func (s *Socket) OffAnyOutgoing(listener events.Listener) *Socket {
-	s._anyOutgoingListeners_mu.Lock()
-	defer s._anyOutgoingListeners_mu.Unlock()
-
-	if s._anyOutgoingListeners == nil {
-		return s
-	}
 	if listener != nil {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
-		for i, _listener := range s._anyOutgoingListeners {
-			if listenerPointer == reflect.ValueOf(_listener).Pointer() {
-				copy(s._anyOutgoingListeners[i:], s._anyOutgoingListeners[i+1:])
-				s._anyOutgoingListeners = s._anyOutgoingListeners[:len(s._anyOutgoingListeners)-1]
-				return s
-			}
-		}
+		s._anyOutgoingListeners.RangeAndSplice(func(listener events.Listener, i int) (bool, int, int, []events.Listener) {
+			return reflect.ValueOf(listener).Pointer() == listenerPointer, i, 1, nil
+		})
 	} else {
-		s._anyOutgoingListeners = []events.Listener{}
+		s._anyOutgoingListeners.Clear()
 	}
 	return s
 }
@@ -1085,31 +990,17 @@ func (s *Socket) OffAnyOutgoing(listener events.Listener) *Socket {
 // Returns an array of listeners that are listening for any event that is specified. This array can be manipulated,
 // e.g. to remove listeners.
 func (s *Socket) ListenersAnyOutgoing() []events.Listener {
-	s._anyOutgoingListeners_mu.Lock()
-	defer s._anyOutgoingListeners_mu.Unlock()
-
-	if s._anyOutgoingListeners == nil {
-		s._anyOutgoingListeners = []events.Listener{}
-	}
-	return s._anyOutgoingListeners
+	return s._anyOutgoingListeners.All()
 }
 
 // Notify the listeners for each packet sent (emit or broadcast)
 func (s *Socket) notifyOutgoingListeners(packet *parser.Packet) {
-	s._anyOutgoingListeners_mu.RLock()
-	if s._anyOutgoingListeners != nil && len(s._anyOutgoingListeners) > 0 {
-		listeners := make([]events.Listener, len(s._anyOutgoingListeners))
-		copy(listeners, s._anyOutgoingListeners)
-		s._anyOutgoingListeners_mu.RUnlock()
-		for _, listener := range listeners {
-			if args, ok := packet.Data.([]any); ok {
-				listener(args...)
-			} else {
-				listener(packet.Data)
-			}
+	for _, listener := range s._anyOutgoingListeners.All() {
+		if args, ok := packet.Data.([]any); ok {
+			listener(args...)
+		} else {
+			listener(packet.Data)
 		}
-	} else {
-		s._anyOutgoingListeners_mu.RUnlock()
 	}
 }
 func (s *Socket) NotifyOutgoingListeners() func(*parser.Packet) {
@@ -1117,9 +1008,7 @@ func (s *Socket) NotifyOutgoingListeners() func(*parser.Packet) {
 }
 
 func (s *Socket) newBroadcastOperator() *BroadcastOperator {
-	s.flags_mu.Lock()
-	flags := *s.flags
-	s.flags = &BroadcastFlags{}
-	s.flags_mu.Unlock()
+	flags := *s.flags.Load()
+	s.flags.Store(&BroadcastFlags{})
 	return NewBroadcastOperator(s.adapter, types.NewSet[Room](), types.NewSet(Room(s.id)), &flags)
 }

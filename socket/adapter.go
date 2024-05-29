@@ -187,10 +187,10 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 	id := a.nsp.Ids()
 	packet.Id = &id
 	encodedPackets := a._encode(packet, packetOpts)
-	clientCount := uint64(0)
+	var clientCount atomic.Uint64
 	a.apply(opts, func(socket *Socket) {
 		// track the total number of acknowledgements that are expected
-		atomic.AddUint64(&clientCount, 1)
+		clientCount.Add(1)
 		// call the ack callback for each client response
 		socket.Acks().Store(*packet.Id, ack)
 		if notifyOutgoingListeners := socket.NotifyOutgoingListeners(); notifyOutgoingListeners != nil {
@@ -198,7 +198,7 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 		}
 		socket.Client().WriteToEngine(encodedPackets, packetOpts)
 	})
-	clientCountCallback(atomic.LoadUint64(&clientCount))
+	clientCountCallback(clientCount.Load())
 }
 
 func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []_types.BufferInterface {

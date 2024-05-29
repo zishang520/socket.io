@@ -2,7 +2,7 @@ package socket
 
 import (
 	"net/url"
-	"sync"
+	"sync/atomic"
 
 	_types "github.com/zishang520/engine.io-go-parser/types"
 	"github.com/zishang520/engine.io/v2/engine"
@@ -17,14 +17,13 @@ var client_log = log.NewLog("socket.io:client")
 type Client struct {
 	conn engine.Socket
 
-	id                string
-	server            *Server
-	encoder           parser.Encoder
-	decoder           parser.Decoder
-	sockets           *types.Map[SocketId, *Socket]
-	nsps              *types.Map[string, *Socket]
-	connectTimeout    *utils.Timer
-	connectTimeout_mu sync.Mutex
+	id             string
+	server         *Server
+	encoder        parser.Encoder
+	decoder        parser.Decoder
+	sockets        *types.Map[SocketId, *Socket]
+	nsps           *types.Map[string, *Socket]
+	connectTimeout atomic.Pointer[utils.Timer]
 }
 
 func MakeClient() *Client {
@@ -74,17 +73,14 @@ func (c *Client) setup() {
 	c.conn.On("error", c.onerror)
 	c.conn.On("close", c.onclose)
 
-	c.connectTimeout_mu.Lock()
-	defer c.connectTimeout_mu.Unlock()
-
-	c.connectTimeout = utils.SetTimeout(func() {
+	c.connectTimeout.Store(utils.SetTimeout(func() {
 		if c.nsps.Len() == 0 {
 			client_log.Debug("no namespace joined yet, close the client")
 			c.close()
 		} else {
 			client_log.Debug("the client has already joined a namespace, nothing to do")
 		}
-	}, c.server._connectTimeout)
+	}, c.server._connectTimeout))
 }
 
 // Connects a client to a namespace.
@@ -124,11 +120,9 @@ func (c *Client) doConnect(name string, auth any) {
 	nsp.Add(c, auth, func(socket *Socket) {
 		c.sockets.Store(socket.Id(), socket)
 		c.nsps.Store(nsp.Name(), socket)
-		c.connectTimeout_mu.Lock()
-		defer c.connectTimeout_mu.Unlock()
-		if c.connectTimeout != nil {
-			utils.ClearTimeout(c.connectTimeout)
-			c.connectTimeout = nil
+		if connectTimeout := c.connectTimeout.Load(); connectTimeout != nil {
+			utils.ClearTimeout(connectTimeout)
+			c.connectTimeout.Store(nil)
 		}
 	})
 }
@@ -259,10 +253,8 @@ func (c *Client) destroy() {
 	c.conn.RemoveListener("close", c.onclose)
 	c.decoder.RemoveListener("decoded", c.ondecoded)
 
-	c.connectTimeout_mu.Lock()
-	defer c.connectTimeout_mu.Unlock()
-	if c.connectTimeout != nil {
-		utils.ClearTimeout(c.connectTimeout)
-		c.connectTimeout = nil
+	if connectTimeout := c.connectTimeout.Load(); connectTimeout != nil {
+		utils.ClearTimeout(connectTimeout)
+		c.connectTimeout.Store(nil)
 	}
 }
