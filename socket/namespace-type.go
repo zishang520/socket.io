@@ -56,7 +56,7 @@ import (
 //	userNamespace.Use(func(socket *socket.Socket, next func(*socket.ExtendedError)) {
 //		// ensure the socket has access to the "users" namespace
 //	})
-type NamespaceInterface interface {
+type Namespace interface {
 	On(string, ...events.Listener) error
 	Once(string, ...events.Listener) error
 	EmitReserved(string, ...any)
@@ -65,8 +65,8 @@ type NamespaceInterface interface {
 
 	// #prototype
 
-	Prototype(NamespaceInterface)
-	Proto() NamespaceInterface
+	Prototype(Namespace)
+	Proto() Namespace
 
 	// #getters
 
@@ -76,6 +76,7 @@ type NamespaceInterface interface {
 	Adapter() Adapter
 	Name() string
 	Ids() uint64
+	Fns() *types.Slice[func(*Socket, func(*ExtendedError))]
 
 	// Construct() should be called after calling Prototype()
 	Construct(*Server, string)
@@ -87,8 +88,11 @@ type NamespaceInterface interface {
 	// in addition to the constructor.
 	InitAdapter()
 
+	// Whether to remove child namespaces that have no sockets connected to them
+	Cleanup(func())
+
 	// Sets up namespace middleware.
-	Use(func(*Socket, func(*ExtendedError))) NamespaceInterface
+	Use(func(*Socket, func(*ExtendedError))) Namespace
 
 	// Targets a room when emitting.
 	To(...Room) *BroadcastOperator
@@ -106,10 +110,10 @@ type NamespaceInterface interface {
 	Emit(string, ...any) error
 
 	// Sends a `message` event to all clients.
-	Send(...any) NamespaceInterface
+	Send(...any) Namespace
 
 	// Sends a `message` event to all clients.
-	Write(...any) NamespaceInterface
+	Write(...any) Namespace
 
 	// Emit a packet to other Socket.IO servers
 	ServerSideEmit(string, ...any) error
@@ -152,6 +156,15 @@ type NamespaceInterface interface {
 
 	// Makes the matching socket instances disconnect
 	DisconnectSockets(bool)
+
+	// Removes a client. Called by each [Socket].
+	Remove(*Socket)
+}
+
+type ParentNamespace interface {
+	Namespace
+
+	CreateChild(string) Namespace
 }
 
 type ExtendedError struct {

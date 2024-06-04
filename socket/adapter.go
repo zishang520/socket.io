@@ -21,14 +21,14 @@ type (
 		// Prototype interface, used to implement interface method rewriting
 		_proto_ Adapter
 
-		nsp     NamespaceInterface
+		nsp     Namespace
 		rooms   *types.Map[Room, *types.Set[SocketId]]
 		sids    *types.Map[SocketId, *types.Set[Room]]
 		encoder parser.Encoder
 	}
 )
 
-func (*AdapterBuilder) New(nsp NamespaceInterface) Adapter {
+func (*AdapterBuilder) New(nsp Namespace) Adapter {
 	return NewAdapterNew(nsp)
 }
 
@@ -45,7 +45,7 @@ func MakeAdapter() Adapter {
 	return a
 }
 
-func NewAdapterNew(nsp NamespaceInterface) Adapter {
+func NewAdapterNew(nsp Namespace) Adapter {
 	n := MakeAdapter()
 
 	n.Construct(nsp)
@@ -69,11 +69,11 @@ func (a *adapter) Sids() *types.Map[SocketId, *types.Set[Room]] {
 	return a.sids
 }
 
-func (a *adapter) Nsp() NamespaceInterface {
+func (a *adapter) Nsp() Namespace {
 	return a.nsp
 }
 
-func (a *adapter) Construct(nsp NamespaceInterface) {
+func (a *adapter) Construct(nsp Namespace) {
 	a.nsp = nsp
 	a.encoder = nsp.Server().Encoder()
 }

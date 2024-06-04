@@ -66,13 +66,11 @@ var (
 //	userNamespace.Use(func(socket *socket.Socket, next func(*socket.ExtendedError)) {
 //		// ensure the socket has access to the "users" namespace
 //	})
-type Namespace struct {
-	_ids atomic.Uint64
-
+type namespace struct {
 	*StrictEventEmitter
 
 	// Prototype interface, used to implement interface method rewriting
-	_proto_ NamespaceInterface
+	_proto_ Namespace
 
 	// #readonly
 	// @public
@@ -83,29 +81,30 @@ type Namespace struct {
 	adapter Adapter
 
 	// @private
+	_ids atomic.Uint64
 
 	server *Server
 
 	_fns *types.Slice[func(*Socket, func(*ExtendedError))]
 
-	_remove func(socket *Socket)
+	_cleanup func()
 }
 
-func MakeNamespace() *Namespace {
-	n := &Namespace{
+func MakeNamespace() Namespace {
+	n := &namespace{
 		StrictEventEmitter: NewStrictEventEmitter(),
 
-		sockets: &types.Map[SocketId, *Socket]{},
-		_fns:    types.NewSlice[func(*Socket, func(*ExtendedError))](),
+		sockets:  &types.Map[SocketId, *Socket]{},
+		_fns:     types.NewSlice[func(*Socket, func(*ExtendedError))](),
+		_cleanup: nil,
 	}
 
-	n._remove = n.namespace_remove
 	n.Prototype(n)
 
 	return n
 }
 
-func NewNamespace(server *Server, name string) *Namespace {
+func NewNamespace(server *Server, name string) Namespace {
 	n := MakeNamespace()
 
 	n.Construct(server, name)
@@ -113,39 +112,43 @@ func NewNamespace(server *Server, name string) *Namespace {
 	return n
 }
 
-func (n *Namespace) Prototype(_n NamespaceInterface) {
+func (n *namespace) Prototype(_n Namespace) {
 	n._proto_ = _n
 }
 
-func (n *Namespace) Proto() NamespaceInterface {
+func (n *namespace) Proto() Namespace {
 	return n._proto_
 }
 
-func (n *Namespace) EventEmitter() *StrictEventEmitter {
+func (n *namespace) EventEmitter() *StrictEventEmitter {
 	return n.StrictEventEmitter
 }
 
-func (n *Namespace) Sockets() *types.Map[SocketId, *Socket] {
+func (n *namespace) Sockets() *types.Map[SocketId, *Socket] {
 	return n.sockets
 }
 
-func (n *Namespace) Server() *Server {
+func (n *namespace) Server() *Server {
 	return n.server
 }
 
-func (n *Namespace) Adapter() Adapter {
+func (n *namespace) Adapter() Adapter {
 	return n.adapter
 }
 
-func (n *Namespace) Name() string {
+func (n *namespace) Name() string {
 	return n.name
 }
 
-func (n *Namespace) Ids() uint64 {
+func (n *namespace) Ids() uint64 {
 	return n._ids.Add(1)
 }
 
-func (n *Namespace) Construct(server *Server, name string) {
+func (n *namespace) Fns() *types.Slice[func(*Socket, func(*ExtendedError))] {
+	return n._fns
+}
+
+func (n *namespace) Construct(server *Server, name string) {
 	n.server = server
 	n.name = name
 	n.Proto().InitAdapter()
@@ -154,9 +157,9 @@ func (n *Namespace) Construct(server *Server, name string) {
 // @protected
 //
 // Initializes the `Adapter` for n nsp.
-// Run upon changing adapter by `Server.Adapter`
+// Run upon changing adapter by [Server.Adapter]
 // in addition to the constructor.
-func (n *Namespace) InitAdapter() {
+func (n *namespace) InitAdapter() {
 	n.adapter = n.server.Adapter().New(n)
 }
 
@@ -170,7 +173,7 @@ func (n *Namespace) InitAdapter() {
 //	})
 //
 // Param: func(*ExtendedError) - the middleware function
-func (n *Namespace) Use(fn func(*Socket, func(*ExtendedError))) NamespaceInterface {
+func (n *namespace) Use(fn func(*Socket, func(*ExtendedError))) Namespace {
 	n._fns.Push(fn)
 	return n
 }
@@ -180,7 +183,7 @@ func (n *Namespace) Use(fn func(*Socket, func(*ExtendedError))) NamespaceInterfa
 // Param: socket - the socket that will get added
 //
 // Param: fn - last fn call in the middleware
-func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
+func (n *namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 	fns := n._fns.All()
 	if length := len(fns); length > 0 {
 		var run func(i int)
@@ -223,7 +226,7 @@ func (n *Namespace) run(socket *Socket, fn func(err *ExtendedError)) {
 // Param: Room - a `Room`, or a `Room` slice to expand
 //
 // Return: a new [BroadcastOperator] instance for chaining
-func (n *Namespace) To(room ...Room) *BroadcastOperator {
+func (n *namespace) To(room ...Room) *BroadcastOperator {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).To(room...)
 }
 
@@ -237,7 +240,7 @@ func (n *Namespace) To(room ...Room) *BroadcastOperator {
 // Param: Room - a `Room`, or a `Room` slice to expand
 //
 // Return: a new [BroadcastOperator] instance for chaining
-func (n *Namespace) In(room ...Room) *BroadcastOperator {
+func (n *namespace) In(room ...Room) *BroadcastOperator {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).In(room...)
 }
 
@@ -258,12 +261,12 @@ func (n *Namespace) In(room ...Room) *BroadcastOperator {
 // Param: Room - a `Room`, or a `Room` slice to expand
 //
 // Return: a new [BroadcastOperator] instance for chaining
-func (n *Namespace) Except(room ...Room) *BroadcastOperator {
+func (n *namespace) Except(room ...Room) *BroadcastOperator {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Except(room...)
 }
 
 // Adds a new client.
-func (n *Namespace) Add(client *Client, auth any, fn func(*Socket)) {
+func (n *namespace) Add(client *Client, auth any, fn func(*Socket)) {
 	namespace_log.Debug("adding socket to nsp %s", n.name)
 	socket := n._createSocket(client, auth)
 	if n.server.Opts().ConnectionStateRecovery().SkipMiddlewares() && socket.Recovered() && client.Conn().ReadyState() == "open" {
@@ -302,7 +305,7 @@ func (n *Namespace) Add(client *Client, auth any, fn func(*Socket)) {
 	})
 }
 
-func (n *Namespace) _createSocket(client *Client, auth any) *Socket {
+func (n *namespace) _createSocket(client *Client, auth any) *Socket {
 	var _auth *SeesionData
 	if mapstructure.Decode(auth, &_auth) == nil {
 		sessionId, has_sessionId := _auth.GetPid()
@@ -320,7 +323,7 @@ func (n *Namespace) _createSocket(client *Client, auth any) *Socket {
 	return NewSocket(n, client, auth, nil)
 }
 
-func (n *Namespace) _doConnect(socket *Socket, fn func(*Socket)) {
+func (n *namespace) _doConnect(socket *Socket, fn func(*Socket)) {
 	// track socket
 	n.sockets.Store(socket.Id(), socket)
 
@@ -338,17 +341,20 @@ func (n *Namespace) _doConnect(socket *Socket, fn func(*Socket)) {
 	n.EmitReserved("connection", socket)
 }
 
-// @private
-//
-// Removes a client. Called by each `Socket`.
-func (n *Namespace) remove(socket *Socket) {
-	n._remove(socket)
+// Whether to remove child namespaces that have no sockets connected to them
+func (n *namespace) Cleanup(cleanup func()) {
+	n._cleanup = cleanup
 }
 
-// Removes a client. Called by each `Socket`.
-func (n *Namespace) namespace_remove(socket *Socket) {
+// @private
+//
+// Removes a client. Called by each [Socket].
+func (n *namespace) Remove(socket *Socket) {
 	if _, ok := n.sockets.LoadAndDelete(socket.Id()); !ok {
 		namespace_log.Debug("ignoring remove for %s", socket.Id())
+	}
+	if n._cleanup != nil {
+		n._cleanup()
 	}
 }
 
@@ -372,7 +378,7 @@ func (n *Namespace) namespace_remove(socket *Socket) {
 //	})
 //
 // Return: Always nil
-func (n *Namespace) Emit(ev string, args ...any) error {
+func (n *namespace) Emit(ev string, args ...any) error {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Emit(ev, args...)
 }
 
@@ -388,7 +394,7 @@ func (n *Namespace) Emit(ev string, args ...any) error {
 //
 //	// this is equivalent to
 //	myNamespace.Emit("message", "hello")
-func (n *Namespace) Send(args ...any) NamespaceInterface {
+func (n *namespace) Send(args ...any) Namespace {
 	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
 	// if you specify the EmitEvents, the type of args will be never.
 	n.Emit("message", args...)
@@ -396,7 +402,7 @@ func (n *Namespace) Send(args ...any) NamespaceInterface {
 }
 
 // Sends a `message` event to all clients. Sends a `message` event. Alias of [Send].
-func (n *Namespace) Write(args ...any) NamespaceInterface {
+func (n *namespace) Write(args ...any) Namespace {
 	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
 	// if you specify the EmitEvents, the type of args will be never.
 	n.Emit("message", args...)
@@ -429,7 +435,7 @@ func (n *Namespace) Write(args ...any) NamespaceInterface {
 // Param: ev - the event name
 //
 // Param: args - an slice of arguments, which may include an acknowledgement callback at the end
-func (n *Namespace) ServerSideEmit(ev string, args ...any) error {
+func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 	if NAMESPACE_RESERVED_EVENTS.Has(ev) {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
 	}
@@ -452,21 +458,21 @@ func (n *Namespace) ServerSideEmit(ev string, args ...any) error {
 //	})
 //
 // Return: a `func(func([]any, error))` that will be fulfilled when all servers have acknowledged the event
-func (n *Namespace) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, error)) {
+func (n *namespace) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, error)) {
 	return func(ack func([]any, error)) {
 		n.ServerSideEmit(ev, append(args, ack)...)
 	}
 }
 
 // Called when a packet is received from another Socket.IO server
-func (n *Namespace) OnServerSideEmit(ev string, args ...any) {
+func (n *namespace) OnServerSideEmit(ev string, args ...any) {
 	n.EmitUntyped(ev, args...)
 }
 
 // Gets a list of socket ids.
 //
 // Deprecated: this method will be removed in the next major release, please use [Namespace#ServerSideEmit] or [Namespace#FetchSockets] instead.
-func (n *Namespace) AllSockets() (*types.Set[SocketId], error) {
+func (n *namespace) AllSockets() (*types.Set[SocketId], error) {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).AllSockets()
 }
 
@@ -477,7 +483,7 @@ func (n *Namespace) AllSockets() (*types.Set[SocketId], error) {
 // Param: bool - if `true`, compresses the sending data
 //
 // Return: a new [BroadcastOperator] instance for chaining
-func (n *Namespace) Compress(compress bool) *BroadcastOperator {
+func (n *namespace) Compress(compress bool) *BroadcastOperator {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Compress(compress)
 }
 
@@ -488,7 +494,7 @@ func (n *Namespace) Compress(compress bool) *BroadcastOperator {
 //	myNamespace := io.Of("/my-namespace")
 //
 //	myNamespace.Volatile().Emit("hello") // the clients may or may not receive it
-func (n *Namespace) Volatile() *BroadcastOperator {
+func (n *namespace) Volatile() *BroadcastOperator {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Volatile()
 }
 
@@ -500,7 +506,7 @@ func (n *Namespace) Volatile() *BroadcastOperator {
 //	myNamespace.Local().Emit("foo", "bar")
 //
 // Return: a new [BroadcastOperator] instance for chaining
-func (n *Namespace) Local() *BroadcastOperator {
+func (n *namespace) Local() *BroadcastOperator {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Local()
 }
 
@@ -513,7 +519,7 @@ func (n *Namespace) Local() *BroadcastOperator {
 //			fmt.Println(args) // one response per client
 //		}
 //	})
-func (n *Namespace) Timeout(timeout time.Duration) *BroadcastOperator {
+func (n *namespace) Timeout(timeout time.Duration) *BroadcastOperator {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).Timeout(timeout)
 }
 
@@ -541,7 +547,7 @@ func (n *Namespace) Timeout(timeout time.Duration) *BroadcastOperator {
 //		}
 //
 //	})
-func (n *Namespace) FetchSockets() func(func([]*RemoteSocket, error)) {
+func (n *namespace) FetchSockets() func(func([]*RemoteSocket, error)) {
 	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).FetchSockets()
 }
 
@@ -556,7 +562,7 @@ func (n *Namespace) FetchSockets() func(func([]*RemoteSocket, error)) {
 //	io.In("room1").SocketsJoin([]Room{"room2", "room3"}...)
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-func (n *Namespace) SocketsJoin(room ...Room) {
+func (n *namespace) SocketsJoin(room ...Room) {
 	NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).SocketsJoin(room...)
 }
 
@@ -571,7 +577,7 @@ func (n *Namespace) SocketsJoin(room ...Room) {
 //	io.In("room1").SocketsLeave([]Room{"room2", "room3"}...)
 //
 // Param: Room - a `Room`, or a `Room` slice to expand
-func (n *Namespace) SocketsLeave(room ...Room) {
+func (n *namespace) SocketsLeave(room ...Room) {
 	NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).SocketsLeave(room...)
 }
 
@@ -586,6 +592,6 @@ func (n *Namespace) SocketsLeave(room ...Room) {
 //	io.In("room1").DisconnectSockets(true)
 //
 // Param: close - whether to close the underlying connection
-func (n *Namespace) DisconnectSockets(status bool) {
+func (n *namespace) DisconnectSockets(status bool) {
 	NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).DisconnectSockets(status)
 }

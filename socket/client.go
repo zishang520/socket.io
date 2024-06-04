@@ -94,7 +94,7 @@ func (c *Client) connect(name string, auth any) {
 		c.doConnect(name, auth)
 		return
 	}
-	c.server._checkNamespace(name, auth, func(dynamicNspName *Namespace) {
+	c.server._checkNamespace(name, auth, func(dynamicNspName Namespace) {
 		if dynamicNspName != nil {
 			c.doConnect(name, auth)
 		} else {

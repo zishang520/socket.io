@@ -81,10 +81,10 @@ type (
 
 		Rooms() *types.Map[Room, *types.Set[SocketId]]
 		Sids() *types.Map[SocketId, *types.Set[Room]]
-		Nsp() NamespaceInterface
+		Nsp() Namespace
 
 		// Construct() should be called after calling Prototype()
-		Construct(NamespaceInterface)
+		Construct(Namespace)
 
 		// To be overridden
 		Init()
@@ -148,7 +148,15 @@ type (
 		RestoreSession(PrivateSessionId, string) (*Session, error)
 	}
 
+	SessionAwareAdapter interface {
+		Adapter
+	}
+
+	ParentBroadcastAdapter interface {
+		Adapter
+	}
+
 	AdapterConstructor interface {
-		New(NamespaceInterface) Adapter
+		New(Namespace) Adapter
 	}
 )

@@ -6,15 +6,25 @@ import (
 )
 
 type (
+	ParentBroadcastAdapterBuilder struct {
+		AdapterConstructor
+
+		Children *types.Set[Namespace]
+	}
+
 	// A dummy adapter that only supports broadcasting to child (concrete) namespaces.
 	parentBroadcastAdapter struct {
 		Adapter
 
-		children *types.Set[*Namespace]
+		children *types.Set[Namespace]
 	}
 )
 
-func MakeParentBroadcastAdapter(children *types.Set[*Namespace]) Adapter {
+func (b *ParentBroadcastAdapterBuilder) New(nsp Namespace) Adapter {
+	return NewParentBroadcastAdapter(nsp, b.Children)
+}
+
+func MakeParentBroadcastAdapter(children *types.Set[Namespace]) ParentBroadcastAdapter {
 	s := &parentBroadcastAdapter{
 		Adapter: MakeAdapter(),
 
@@ -26,7 +36,7 @@ func MakeParentBroadcastAdapter(children *types.Set[*Namespace]) Adapter {
 	return s
 }
 
-func NewParentBroadcastAdapter(nsp NamespaceInterface, children *types.Set[*Namespace]) Adapter {
+func NewParentBroadcastAdapter(nsp Namespace, children *types.Set[Namespace]) ParentBroadcastAdapter {
 	s := MakeParentBroadcastAdapter(children)
 
 	s.Construct(nsp)
@@ -34,7 +44,7 @@ func NewParentBroadcastAdapter(nsp NamespaceInterface, children *types.Set[*Name
 	return s
 }
 
-func (s *parentBroadcastAdapter) Construct(nsp NamespaceInterface) {
+func (s *parentBroadcastAdapter) Construct(nsp Namespace) {
 	s.Adapter.Construct(nsp)
 }
 

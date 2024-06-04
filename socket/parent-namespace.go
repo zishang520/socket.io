@@ -28,16 +28,18 @@ var (
 //	// will reach all the clients that are in one of the child namespaces, like "/dynamic-101"
 //
 //	parentNamespace.Emit("hello", "world")
-type ParentNamespace struct {
-	*Namespace
+type parentNamespace struct {
+	Namespace
 
-	children *types.Set[*Namespace]
+	adapter  Adapter
+	children *types.Set[Namespace]
 }
 
-func MakeParentNamespace() *ParentNamespace {
-	n := &ParentNamespace{
+func MakeParentNamespace() ParentNamespace {
+	n := &parentNamespace{
 		Namespace: MakeNamespace(),
-		children:  types.NewSet[*Namespace](),
+
+		children: types.NewSet[Namespace](),
 	}
 
 	n.Prototype(n)
@@ -45,7 +47,7 @@ func MakeParentNamespace() *ParentNamespace {
 	return n
 }
 
-func NewParentNamespace(server *Server) *ParentNamespace {
+func NewParentNamespace(server *Server) ParentNamespace {
 	n := MakeParentNamespace()
 
 	n.Construct(server, "/_"+strconv.FormatUint(count.Add(1)-1, 10))
@@ -53,37 +55,40 @@ func NewParentNamespace(server *Server) *ParentNamespace {
 	return n
 }
 
-func (p *ParentNamespace) InitAdapter() {
+func (p *parentNamespace) Adapter() Adapter {
+	return p.adapter
+}
+
+func (p *parentNamespace) InitAdapter() {
 	p.adapter = NewParentBroadcastAdapter(p, p.children)
 }
 
-func (p *ParentNamespace) Emit(ev string, args ...any) error {
+func (p *parentNamespace) Emit(ev string, args ...any) error {
 	for _, nsp := range p.children.Keys() {
 		nsp.Emit(ev, args...)
 	}
 	return nil
 }
 
-func (p *ParentNamespace) CreateChild(name string) *Namespace {
+func (p *parentNamespace) CreateChild(name string) Namespace {
 	parent_namespace_log.Debug("creating child namespace %s", name)
 	namespace := NewNamespace(p.Server(), name)
 
-	namespace._fns.Replace(p._fns.All())
+	namespace.Fns().Replace(p.Fns().All())
 
-	namespace.AddListener("connect", p.Listeners("connect")...)
-	namespace.AddListener("connection", p.Listeners("connection")...)
+	namespace.On("connect", p.Listeners("connect")...)
+	namespace.On("connection", p.Listeners("connection")...)
 	p.children.Add(namespace)
 
-	if p.server.Opts().CleanupEmptyChildNamespaces() {
-		namespace._remove = func(socket *Socket) {
-			namespace.namespace_remove(socket)
-			if namespace.sockets.Len() == 0 {
+	if p.Server().Opts().CleanupEmptyChildNamespaces() {
+		namespace.Cleanup(func() {
+			if namespace.Sockets().Len() == 0 {
 				parent_namespace_log.Debug("closing child namespace %s", name)
-				namespace.adapter.Close()
-				p.server._nsps.Delete(namespace.name)
+				namespace.Adapter().Close()
+				p.Server()._nsps.Delete(namespace.Name())
 				p.children.Delete(namespace)
 			}
-		}
+		})
 	}
 
 	p.Server()._nsps.Store(name, namespace)
@@ -92,7 +97,7 @@ func (p *ParentNamespace) CreateChild(name string) *Namespace {
 	return namespace
 }
 
-func (p *ParentNamespace) FetchSockets() func(func([]*RemoteSocket, error)) {
+func (p *parentNamespace) FetchSockets() func(func([]*RemoteSocket, error)) {
 	return func(callback func([]*RemoteSocket, error)) {
 		// note: we could make the FetchSockets() method work for dynamic namespaces created with a regex (by sending the
 		// regex to the other Socket.IO servers, and returning the sockets of each matching namespace for example), but

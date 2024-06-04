@@ -23,11 +23,11 @@ type (
 	}
 )
 
-func (*SessionAwareAdapterBuilder) New(nsp NamespaceInterface) Adapter {
+func (*SessionAwareAdapterBuilder) New(nsp Namespace) Adapter {
 	return NewSessionAwareAdapter(nsp)
 }
 
-func MakeSessionAwareAdapter() Adapter {
+func MakeSessionAwareAdapter() SessionAwareAdapter {
 	s := &sessionAwareAdapter{
 		Adapter: MakeAdapter(),
 
@@ -40,7 +40,7 @@ func MakeSessionAwareAdapter() Adapter {
 	return s
 }
 
-func NewSessionAwareAdapter(nsp NamespaceInterface) Adapter {
+func NewSessionAwareAdapter(nsp Namespace) SessionAwareAdapter {
 	s := MakeSessionAwareAdapter()
 
 	s.Construct(nsp)
@@ -48,7 +48,7 @@ func NewSessionAwareAdapter(nsp NamespaceInterface) Adapter {
 	return s
 }
 
-func (s *sessionAwareAdapter) Construct(nsp NamespaceInterface) {
+func (s *sessionAwareAdapter) Construct(nsp Namespace) {
 	s.Adapter.Construct(nsp)
 	s.maxDisconnectionDuration = nsp.Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration()
 

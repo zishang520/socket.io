@@ -62,7 +62,7 @@ type (
 		*StrictEventEmitter
 
 		// #readonly
-		sockets NamespaceInterface
+		sockets Namespace
 		// A reference to the underlying Engine.IO server.
 		//
 		//	clientsCount := io.Engine().ClientsCount()
@@ -72,14 +72,14 @@ type (
 		// @private
 		encoder parser.Encoder
 		// @private
-		_nsps *types.Map[string, *Namespace]
+		_nsps *types.Map[string, Namespace]
 		// @private
-		parentNsps *types.Map[ParentNspNameMatchFn, *ParentNamespace]
+		parentNsps *types.Map[ParentNspNameMatchFn, ParentNamespace]
 		// @private
 		//
 		// A subset of the {parentNsps} map, only containing {ParentNamespace} which are based on a regular
 		// expression.
-		parentNamespacesFromRegExp *types.Map[*regexp.Regexp, *ParentNamespace]
+		parentNamespacesFromRegExp *types.Map[*regexp.Regexp, ParentNamespace]
 		_adapter                   AdapterConstructor
 		_serveClient               bool
 		// @private
@@ -97,9 +97,9 @@ type (
 
 func MakeServer() *Server {
 	s := &Server{
-		_nsps:                      &types.Map[string, *Namespace]{},
-		parentNsps:                 &types.Map[ParentNspNameMatchFn, *ParentNamespace]{},
-		parentNamespacesFromRegExp: &types.Map[*regexp.Regexp, *ParentNamespace]{},
+		_nsps:                      &types.Map[string, Namespace]{},
+		parentNsps:                 &types.Map[ParentNspNameMatchFn, ParentNamespace]{},
+		parentNamespacesFromRegExp: &types.Map[*regexp.Regexp, ParentNamespace]{},
 	}
 	return s
 }
@@ -112,7 +112,7 @@ func NewServer(srv any, opts *ServerOptions) *Server {
 	return s
 }
 
-func (s *Server) Sockets() NamespaceInterface {
+func (s *Server) Sockets() Namespace {
 	return s.sockets
 }
 
@@ -185,9 +185,9 @@ func (s *Server) ServeClient() bool {
 // Param: auth - the auth parameters
 //
 // Param: fn - callback
-func (s *Server) _checkNamespace(name string, auth any, fn func(nsp *Namespace)) {
+func (s *Server) _checkNamespace(name string, auth any, fn func(nsp Namespace)) {
 	end := true
-	s.parentNsps.Range(func(nextFn ParentNspNameMatchFn, pnsp *ParentNamespace) bool {
+	s.parentNsps.Range(func(nextFn ParentNspNameMatchFn, pnsp ParentNamespace) bool {
 		status := false
 		(*nextFn)(name, auth, func(err error, allow bool) {
 			if err != nil || !allow {
@@ -244,7 +244,7 @@ func (s *Server) ConnectTimeout() time.Duration {
 // Param: v AdapterConstructor interface
 func (s *Server) SetAdapter(v AdapterConstructor) *Server {
 	s._adapter = v
-	s._nsps.Range(func(_ string, nsp *Namespace) bool {
+	s._nsps.Range(func(_ string, nsp Namespace) bool {
 		nsp.InitAdapter()
 		return true
 	})
@@ -341,7 +341,7 @@ func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
 // Param: opts - options passed to engine.io
 func (s *Server) initEngine(srv *types.HttpServer, opts *ServerOptions) {
 	// initialize engine
-	server_log.Debug("creating engine.io instance with opts %v", opts)
+	server_log.Debug("creating engine.io instance with opts %+v", opts)
 	s.eio = engine.Attach(srv, any(opts))
 
 	// attach static file serving
@@ -512,7 +512,7 @@ func (s *Server) onconnection(conns ...any) {
 // Param: string | *regexp.Regexp | ParentNspNameMatchFn - nsp name
 //
 // Param: func(...any) - nsp `connection` ev handler
-func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
+func (s *Server) Of(name any, fn func(...any)) Namespace {
 	switch n := name.(type) {
 	case ParentNspNameMatchFn:
 		parentNsp := NewParentNamespace(s)
@@ -553,12 +553,12 @@ func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 		n = "/"
 	}
 
-	var namespace *Namespace
+	var namespace Namespace
 
 	if nsp, ok := s._nsps.Load(n); ok {
 		namespace = nsp
 	} else {
-		s.parentNamespacesFromRegExp.Range(func(regex *regexp.Regexp, parentNamespace *ParentNamespace) bool {
+		s.parentNamespacesFromRegExp.Range(func(regex *regexp.Regexp, parentNamespace ParentNamespace) bool {
 			if regex.MatchString(n) {
 				server_log.Debug("attaching namespace %s to parent namespace %s", n, regex.String())
 				namespace = parentNamespace.CreateChild(n)
@@ -589,7 +589,7 @@ func (s *Server) Of(name any, fn func(...any)) NamespaceInterface {
 //
 // Param: [fn] optional, called as `fn(error)` on error OR all conns closed
 func (s *Server) Close(fn func(error)) {
-	s._nsps.Range(func(_ string, nsp *Namespace) bool {
+	s._nsps.Range(func(_ string, nsp Namespace) bool {
 		nsp.Sockets().Range(func(_ SocketId, socket *Socket) bool {
 			socket._onclose("server shutting down")
 			return true
