@@ -123,6 +123,7 @@ func main() {
     os.Exit(0)
 }
 ```
+
 other: Use [http.Handler](https://pkg.go.dev/net/http#Handler) interface
 ```golang
 package main
@@ -165,6 +166,160 @@ func main() {
 
     <-exit
     io.Close(nil)
+    os.Exit(0)
+}
+
+```
+
+other: Use fasthttp
+```golang
+package main
+
+import (
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "github.com/valyala/fasthttp"
+    "github.com/valyala/fasthttp/fasthttpadaptor"
+    "github.com/zishang520/engine.io/v2/log"
+    "github.com/zishang520/engine.io/v2/types"
+    "github.com/zishang520/socket.io/v2/socket"
+)
+
+func main() {
+    log.DEBUG = true
+    c := socket.DefaultServerOptions()
+    c.SetServeClient(true)
+    // c.SetConnectionStateRecovery(&socket.ConnectionStateRecovery{})
+    // c.SetAllowEIO3(true)
+    c.SetPingInterval(300 * time.Millisecond)
+    c.SetPingTimeout(200 * time.Millisecond)
+    c.SetMaxHttpBufferSize(1000000)
+    c.SetConnectTimeout(1000 * time.Millisecond)
+    c.SetCors(&types.Cors{
+        Origin:      "*",
+        Credentials: true,
+    })
+    socketio := socket.NewServer(nil, nil)
+    socketio.On("connection", func(clients ...interface{}) {
+        client := clients[0].(*socket.Socket)
+
+        client.On("message", func(args ...interface{}) {
+            client.Emit("message-back", args...)
+        })
+        client.Emit("auth", client.Handshake().Auth)
+
+        client.On("message-with-ack", func(args ...interface{}) {
+            ack := args[len(args)-1].(func([]any, error))
+            ack(args[:len(args)-1], nil)
+        })
+    })
+
+    socketio.Of("/custom", nil).On("connection", func(clients ...interface{}) {
+        client := clients[0].(*socket.Socket)
+        client.Emit("auth", client.Handshake().Auth)
+    })
+
+    go fasthttp.ListenAndServe(":3000", fasthttpadaptor.NewFastHTTPHandler(socketio.ServeHandler(c)))
+
+    exit := make(chan struct{})
+    SignalC := make(chan os.Signal)
+
+    signal.Notify(SignalC, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+    go func() {
+        for s := range SignalC {
+            switch s {
+            case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
+                close(exit)
+                return
+            }
+        }
+    }()
+
+    <-exit
+    socketio.Close(nil)
+    os.Exit(0)
+}
+
+```
+
+other: Use fiber
+```golang
+package main
+
+import (
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "github.com/gofiber/fiber/v2"
+    "github.com/gofiber/fiber/v2/middleware/adaptor"
+    "github.com/zishang520/engine.io/v2/log"
+    "github.com/zishang520/engine.io/v2/types"
+    "github.com/zishang520/socket.io/v2/socket"
+)
+
+func main() {
+    log.DEBUG = true
+    c := socket.DefaultServerOptions()
+    c.SetServeClient(true)
+    // c.SetConnectionStateRecovery(&socket.ConnectionStateRecovery{})
+    // c.SetAllowEIO3(true)
+    c.SetPingInterval(300 * time.Millisecond)
+    c.SetPingTimeout(200 * time.Millisecond)
+    c.SetMaxHttpBufferSize(1000000)
+    c.SetConnectTimeout(1000 * time.Millisecond)
+    c.SetCors(&types.Cors{
+        Origin:      "*",
+        Credentials: true,
+    })
+    socketio := socket.NewServer(nil, nil)
+    socketio.On("connection", func(clients ...interface{}) {
+        client := clients[0].(*socket.Socket)
+
+        client.On("message", func(args ...interface{}) {
+            client.Emit("message-back", args...)
+        })
+        client.Emit("auth", client.Handshake().Auth)
+
+        client.On("message-with-ack", func(args ...interface{}) {
+            ack := args[len(args)-1].(func([]any, error))
+            ack(args[:len(args)-1], nil)
+        })
+    })
+
+    socketio.Of("/custom", nil).On("connection", func(clients ...interface{}) {
+        client := clients[0].(*socket.Socket)
+        client.Emit("auth", client.Handshake().Auth)
+    })
+
+    app := fiber.New()
+
+    // app.Put("/socket.io", adaptor.HTTPHandler(socketio.ServeHandler(c))) // test
+    app.Get("/socket.io", adaptor.HTTPHandler(socketio.ServeHandler(c)))
+    app.Post("/socket.io", adaptor.HTTPHandler(socketio.ServeHandler(c)))
+
+    go app.Listen(":3000")
+
+    exit := make(chan struct{})
+    SignalC := make(chan os.Signal)
+
+    signal.Notify(SignalC, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+    go func() {
+        for s := range SignalC {
+            switch s {
+            case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
+                close(exit)
+                return
+            }
+        }
+    }()
+
+    <-exit
+    socketio.Close(nil)
     os.Exit(0)
 }
 
