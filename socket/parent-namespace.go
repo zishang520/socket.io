@@ -60,7 +60,7 @@ func (p *parentNamespace) Adapter() Adapter {
 }
 
 func (p *parentNamespace) InitAdapter() {
-	p.adapter = NewParentBroadcastAdapter(p, p.children)
+	p.adapter = NewParentBroadcastAdapter(p)
 }
 
 func (p *parentNamespace) Emit(ev string, args ...any) error {
@@ -68,6 +68,10 @@ func (p *parentNamespace) Emit(ev string, args ...any) error {
 		nsp.Emit(ev, args...)
 	}
 	return nil
+}
+
+func (p *parentNamespace) Children() *types.Set[Namespace] {
+	return p.children
 }
 
 func (p *parentNamespace) CreateChild(name string) Namespace {

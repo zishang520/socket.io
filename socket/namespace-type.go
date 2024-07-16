@@ -164,6 +164,7 @@ type Namespace interface {
 type ParentNamespace interface {
 	Namespace
 
+	Children() *types.Set[Namespace]
 	CreateChild(string) Namespace
 }
 

@@ -29,7 +29,7 @@ type (
 )
 
 func (*AdapterBuilder) New(nsp Namespace) Adapter {
-	return NewAdapterNew(nsp)
+	return NewAdapter(nsp)
 }
 
 func MakeAdapter() Adapter {
@@ -45,7 +45,7 @@ func MakeAdapter() Adapter {
 	return a
 }
 
-func NewAdapterNew(nsp Namespace) Adapter {
+func NewAdapter(nsp Namespace) Adapter {
 	n := MakeAdapter()
 
 	n.Construct(nsp)
