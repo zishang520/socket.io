@@ -45,8 +45,8 @@ github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 h1:QldyIu/L63oPpyvQmHg
 github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778/go.mod h1:2MuV+tbUrU1zIOPMxZ5EncGwgmMJsa+9ucAQZXxsObs=
 github.com/zishang520/engine.io-go-parser v1.2.5 h1:Disf4rvNQzDsgoC+3yuwuFx5A7JNWlPp+QLUW32WDtc=
 github.com/zishang520/engine.io-go-parser v1.2.5/go.mod h1:G1DciRIGH4/S7x01DIdZQaXrk09ZeRgEw5e/Z9ms4Is=
-github.com/zishang520/engine.io/v2 v2.1.1 h1:PZYi3/XW6jJh6yzVoF19JifgmMVggbLskSDNpXtaOFk=
-github.com/zishang520/engine.io/v2 v2.1.1/go.mod h1:FnXtT+k/6g2uOb9MpqY71DhV7COwlCH5DCbczn6Q3K8=
+github.com/zishang520/engine.io/v2 v2.2.1 h1:ItQFiL5diYkwt0Mic9jIW37HQ1ftjFVpx2D6ilYQ4UQ=
+github.com/zishang520/engine.io/v2 v2.2.1/go.mod h1:P+mMlVDwBlklONOIjtCkBYM47DMew+TKEUsqKH7o23A=
 github.com/zishang520/socket.io-go-parser/v2 v2.1.0 h1:YaTul861UxdTtq/v7XKmF52gWmDOqwugKBlFyiifKCE=
 github.com/zishang520/socket.io-go-parser/v2 v2.1.0/go.mod h1:zmToGML+lCjSjyGZMuVtnvgnFOnDuAxJZKwfDDDHiqI=
 go.uber.org/mock v0.4.0 h1:VcM4ZOtdbR4f6VXfiOpwpVJDL6lCReaZ6mw31wqh7KU=
