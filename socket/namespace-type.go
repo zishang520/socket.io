@@ -189,12 +189,12 @@ func (e *ExtendedError) Error() string {
 	return e.message
 }
 
-type SeesionData struct {
-	Pid    any `json:"pid" mapstructure:"pid" msgpack:"pid"`
-	Offset any `json:"offset" mapstructure:"offset" msgpack:"offset"`
+type SessionData struct {
+	Pid    any `json:"pid" msgpack:"pid"`
+	Offset any `json:"offset" msgpack:"offset"`
 }
 
-func (s *SeesionData) GetPid() (pid string, ok bool) {
+func (s *SessionData) GetPid() (pid string, ok bool) {
 	if s != nil && s.Pid != nil {
 		switch _pid := s.Pid.(type) {
 		case []string:
@@ -208,7 +208,7 @@ func (s *SeesionData) GetPid() (pid string, ok bool) {
 	return pid, len(pid) > 0
 }
 
-func (s *SeesionData) GetOffset() (offset string, ok bool) {
+func (s *SessionData) GetOffset() (offset string, ok bool) {
 	if s != nil && s.Offset != nil {
 		switch _offset := s.Offset.(type) {
 		case []string:

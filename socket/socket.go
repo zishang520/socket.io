@@ -25,28 +25,23 @@ var (
 type (
 	Handshake struct {
 		// The headers sent as part of the handshake
-		Headers map[string][]string `json:"headers" mapstructure:"headers" msgpack:"headers"`
+		Headers map[string][]string `json:"headers" msgpack:"headers"`
 		// The date of creation (as string)
-		Time string `json:"time" mapstructure:"time" msgpack:"time"`
+		Time string `json:"time" msgpack:"time"`
 		// The ip of the client
-		Address string `json:"address" mapstructure:"address" msgpack:"address"`
+		Address string `json:"address" msgpack:"address"`
 		// Whether the connection is cross-domain
-		Xdomain bool `json:"xdomain" mapstructure:"xdomain" msgpack:"xdomain"`
+		Xdomain bool `json:"xdomain" msgpack:"xdomain"`
 		// Whether the connection is secure
-		Secure bool `json:"secure" mapstructure:"secure" msgpack:"secure"`
+		Secure bool `json:"secure" msgpack:"secure"`
 		// The date of creation (as unix timestamp)
-		Issued int64 `json:"issued" mapstructure:"issued" msgpack:"issued"`
+		Issued int64 `json:"issued" msgpack:"issued"`
 		// The request URL string
-		Url string `json:"url" mapstructure:"url" msgpack:"url"`
+		Url string `json:"url" msgpack:"url"`
 		// The query object
-		Query map[string][]string `json:"query" mapstructure:"query" msgpack:"query"`
+		Query map[string][]string `json:"query" msgpack:"query"`
 		// The auth object
-		Auth any `json:"auth" mapstructure:"auth" msgpack:"auth"`
-	}
-
-	connectPayload struct {
-		Sid SocketId         `json:"sid" mapstructure:"sid" msgpack:"sid"`
-		Pid PrivateSessionId `json:"pid,omitempty" mapstructure:"pid,omitempty" msgpack:"pid,omitempty"`
+		Auth any `json:"auth" msgpack:"auth"`
 	}
 
 	// This is the main object for interacting with a client.
@@ -521,7 +516,10 @@ func (s *Socket) _onconnect() {
 	} else {
 		s.packet(&parser.Packet{
 			Type: parser.CONNECT,
-			Data: &connectPayload{
+			Data: &struct {
+				Sid SocketId         `json:"sid" msgpack:"sid"`
+				Pid PrivateSessionId `json:"pid,omitempty" msgpack:"pid,omitempty"`
+			}{
 				Sid: s.id,
 				Pid: s.pid,
 			},
