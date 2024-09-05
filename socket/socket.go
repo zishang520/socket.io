@@ -661,7 +661,7 @@ func (s *Socket) _error(err any) {
 //		socket.Disconnect(true)
 //	})
 //
-//	Param: status - if `true`, closes the underlying connection
+// Param: status - if `true`, closes the underlying connection
 func (s *Socket) Disconnect(status bool) *Socket {
 	if !s.Connected() {
 		return s
@@ -712,7 +712,7 @@ func (s *Socket) Volatile() *Socket {
 //		socket.Broadcast().Emit("foo", "bar")
 //	})
 //
-//	Return: a new [BroadcastOperator] instance for chaining
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Socket) Broadcast() *BroadcastOperator {
 	return s.newBroadcastOperator()
 }
@@ -725,7 +725,7 @@ func (s *Socket) Broadcast() *BroadcastOperator {
 //		socket.Local().Emit("foo", "bar")
 //	})
 //
-//	Return: a new [BroadcastOperator] instance for chaining
+// Return: a new [BroadcastOperator] instance for chaining
 func (s *Socket) Local() *BroadcastOperator {
 	return s.newBroadcastOperator().Local()
 }

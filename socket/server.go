@@ -602,7 +602,9 @@ func (s *Server) Close(fn func(error)) {
 	if s.httpServer != nil {
 		s.httpServer.Close(fn)
 	} else {
-		s.engine.Close()
+		if s.engine != nil {
+			s.engine.Close()
+		}
 		if fn != nil {
 			fn(nil)
 		}
