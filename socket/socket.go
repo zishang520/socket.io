@@ -23,6 +23,10 @@ var (
 )
 
 type (
+	Ack = func([]any, error)
+
+	Middleware = func(event []any, next func(error))
+
 	Handshake struct {
 		// The headers sent as part of the handshake
 		Headers map[string][]string `json:"headers" msgpack:"headers"`
@@ -111,8 +115,8 @@ type (
 		// TODO: remove this unused reference
 		server                *Server
 		adapter               Adapter
-		acks                  *types.Map[uint64, func([]any, error)]
-		fns                   *types.Slice[func([]any, func(error))]
+		acks                  *types.Map[uint64, Ack]
+		fns                   *types.Slice[Middleware]
 		flags                 atomic.Pointer[BroadcastFlags]
 		_anyListeners         *types.Slice[events.Listener]
 		_anyOutgoingListeners *types.Slice[events.Listener]
@@ -126,8 +130,8 @@ func MakeSocket() *Socket {
 		StrictEventEmitter: NewStrictEventEmitter(),
 
 		// Initialize default value
-		acks:                  &types.Map[uint64, func([]any, error)]{},
-		fns:                   types.NewSlice[func([]any, func(error))](),
+		acks:                  &types.Map[uint64, Ack]{},
+		fns:                   types.NewSlice[Middleware](),
 		_anyListeners:         types.NewSlice[events.Listener](),
 		_anyOutgoingListeners: types.NewSlice[events.Listener](),
 	}
@@ -188,7 +192,7 @@ func (s *Socket) Connected() bool {
 	return s.connected.Load()
 }
 
-func (s *Socket) Acks() *types.Map[uint64, func([]any, error)] {
+func (s *Socket) Acks() *types.Map[uint64, Ack] {
 	return s.acks
 }
 
@@ -284,7 +288,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		Data: data,
 	}
 	// access last argument to see if it's an ACK callback
-	if fn, ok := data[data_len-1].(func([]any, error)); ok {
+	if fn, ok := data[data_len-1].(Ack); ok {
 		id := s.nsp.Ids()
 		socket_log.Debug("emitting packet with ack id %d", id)
 		packet.Data = data[:data_len-1]
@@ -332,14 +336,14 @@ func (s *Socket) Emit(ev string, args ...any) error {
 //		})
 //	})
 //
-// Return:  a `func(func([]any, error))` that will be fulfilled when all clients have acknowledged the event
-func (s *Socket) EmitWithAck(ev string, args ...any) func(func([]any, error)) {
-	return func(ack func([]any, error)) {
+// Return:  a `func(socket.Ack)` that will be fulfilled when all clients have acknowledged the event
+func (s *Socket) EmitWithAck(ev string, args ...any) func(Ack) {
+	return func(ack Ack) {
 		s.Emit(ev, append(args, ack)...)
 	}
 }
 
-func (s *Socket) registerAckCallback(id uint64, ack func([]any, error)) {
+func (s *Socket) registerAckCallback(id uint64, ack Ack) {
 	timeout := s.flags.Load().Timeout
 	if timeout == nil {
 		s.acks.Store(id, ack)
@@ -563,7 +567,7 @@ func (s *Socket) onevent(packet *parser.Packet) {
 // Produces an ack callback to emit with an event.
 //
 // Param: id - packet id
-func (s *Socket) ack(id uint64) func([]any, error) {
+func (s *Socket) ack(id uint64) Ack {
 	sent := &sync.Once{}
 	return func(args []any, _ error) {
 		// prevent double callbacks
@@ -785,7 +789,7 @@ func (s *Socket) dispatch(event []any) {
 //	});
 //
 // Param: fn - middleware function (event, next)
-func (s *Socket) Use(fn func([]any, func(error))) *Socket {
+func (s *Socket) Use(fn Middleware) *Socket {
 	s.fns.Push(fn)
 	return s
 }

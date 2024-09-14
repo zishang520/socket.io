@@ -481,16 +481,28 @@ func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 //		}
 //	})
 //
-// Return: a `func(func([]any, error))` that will be fulfilled when all servers have acknowledged the event
-func (n *namespace) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, error)) {
-	return func(ack func([]any, error)) {
+// Return: a `func(socket.Ack)` that will be fulfilled when all servers have acknowledged the event
+func (n *namespace) ServerSideEmitWithAck(ev string, args ...any) func(Ack) {
+	return func(ack Ack) {
 		n.ServerSideEmit(ev, append(args, ack)...)
 	}
 }
 
 // Called when a packet is received from another Socket.IO server
-func (n *namespace) OnServerSideEmit(ev string, args ...any) {
-	n.EmitUntyped(ev, args...)
+func (n *namespace) OnServerSideEmit(args []any) {
+	// Convert the first argument to a string and pass the rest as args
+	if len(args) == 0 {
+		return // No arguments provided
+	}
+
+	ev, ok := args[0].(string)
+	if !ok {
+		// Handle error, the first argument should be a string
+		return
+	}
+
+	// Remove the first argument (event name) and pass the rest
+	n.EmitUntyped(ev, args[1:]...)
 }
 
 // Gets a list of socket ids.

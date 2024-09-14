@@ -15,6 +15,7 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/zishang520/engine.io/v2/engine"
+	"github.com/zishang520/engine.io/v2/events"
 	"github.com/zishang520/engine.io/v2/log"
 	"github.com/zishang520/engine.io/v2/types"
 	"github.com/zishang520/engine.io/v2/utils"
@@ -439,7 +440,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	}
 	defer file.Close()
 
-	encoding := utils.Contains(r.Header.Get("Accept-Encoding"), []string{"gzip", "deflate", "br"})
+	encoding := utils.Contains(r.Header.Get("Accept-Encoding"), []string{"gzip", "deflate", "br" /*, "zstd"*/})
 
 	switch encoding {
 	case "br":
@@ -470,6 +471,13 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 		w.Header().Set("Content-Encoding", "deflate")
 		w.WriteHeader(http.StatusOK)
 		io.Copy(fl, file)
+
+		// TODO: Implement zstd support.
+		// Go's standard library does not yet support zstd compression (see issue: https://github.com/golang/go/issues/62513).
+		// Consider using the klauspost/compress library for a high-performance implementation:
+		// https://github.com/klauspost/compress/tree/master/zstd
+		// case "zstd":
+
 	default:
 		w.WriteHeader(http.StatusOK)
 		io.Copy(w, file)
@@ -512,7 +520,7 @@ func (s *Server) onconnection(conns ...any) {
 // Param: string | *regexp.Regexp | ParentNspNameMatchFn - nsp name
 //
 // Param: func(...any) - nsp `connection` ev handler
-func (s *Server) Of(name any, fn func(...any)) Namespace {
+func (s *Server) Of(name any, fn events.Listener) Namespace {
 	switch n := name.(type) {
 	case ParentNspNameMatchFn:
 		parentNsp := NewParentNamespace(s)
@@ -741,8 +749,8 @@ func (s *Server) ServerSideEmit(ev string, args ...any) error {
 //
 // Param: args - an array of arguments
 //
-// Return: a `func(func([]any, error))` that will be fulfilled when all servers have acknowledged the event
-func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, error)) {
+// Return: a `func(socket.Ack)` that will be fulfilled when all servers have acknowledged the event
+func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(Ack) {
 	return s.sockets.ServerSideEmitWithAck(ev, args...)
 }
 

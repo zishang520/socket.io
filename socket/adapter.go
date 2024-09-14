@@ -12,7 +12,6 @@ import (
 
 type (
 	AdapterBuilder struct {
-		AdapterConstructor
 	}
 
 	adapter struct {
@@ -171,7 +170,7 @@ func (a *adapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 //   - `Flags` {*BroadcastFlags} flags for this packet
 //   - `Except` {*types.Set[Room]} sids that should be excluded
 //   - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
-func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions, clientCountCallback func(uint64), ack func([]any, error)) {
+func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions, clientCountCallback func(uint64), ack Ack) {
 	flags := &BroadcastFlags{}
 	if opts != nil && opts.Flags != nil {
 		flags = opts.Flags
@@ -269,8 +268,16 @@ func (a *adapter) DisconnectSockets(opts *BroadcastOptions, status bool) {
 }
 
 func (a *adapter) apply(opts *BroadcastOptions, callback func(*Socket)) {
+	if opts == nil {
+		opts = &BroadcastOptions{
+			Rooms:  types.NewSet[Room](),
+			Except: types.NewSet[Room](),
+		}
+	}
+
 	rooms := opts.Rooms
 	except := a.computeExceptSids(opts.Except)
+
 	if rooms != nil && rooms.Len() > 0 {
 		ids := types.NewSet[SocketId]()
 		for _, room := range rooms.Keys() {
@@ -312,7 +319,7 @@ func (a *adapter) computeExceptSids(exceptRooms *types.Set[Room]) *types.Set[Soc
 }
 
 // Send a packet to the other Socket.IO servers in the cluster
-func (a *adapter) ServerSideEmit(args []any) error {
+func (a *adapter) ServerSideEmit(packet []any) error {
 	utils.Log().Warning(`this adapter does not support the ServerSideEmit() functionality`)
 	return nil
 }

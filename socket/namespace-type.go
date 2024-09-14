@@ -119,12 +119,12 @@ type Namespace interface {
 	ServerSideEmit(string, ...any) error
 
 	// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
-	ServerSideEmitWithAck(string, ...any) func(func([]any, error))
+	ServerSideEmitWithAck(string, ...any) func(Ack)
 
 	// @private
 	//
 	// Called when a packet is received from another Socket.IO server
-	OnServerSideEmit(string, ...any)
+	OnServerSideEmit([]any)
 
 	// Gets a list of clients.
 	AllSockets() (*types.Set[SocketId], error)
