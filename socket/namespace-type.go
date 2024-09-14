@@ -7,6 +7,8 @@ import (
 	"github.com/zishang520/engine.io/v2/types"
 )
 
+type NamespaceMiddleware = func(*Socket, func(*ExtendedError))
+
 // A namespace is a communication channel that allows you to split the logic of your application over a single shared
 // connection.
 //
@@ -76,7 +78,7 @@ type Namespace interface {
 	Adapter() Adapter
 	Name() string
 	Ids() uint64
-	Fns() *types.Slice[func(*Socket, func(*ExtendedError))]
+	Fns() *types.Slice[NamespaceMiddleware]
 
 	// Construct() should be called after calling Prototype()
 	Construct(*Server, string)
@@ -89,10 +91,10 @@ type Namespace interface {
 	InitAdapter()
 
 	// Whether to remove child namespaces that have no sockets connected to them
-	Cleanup(func())
+	Cleanup(types.Callable)
 
 	// Sets up namespace middleware.
-	Use(func(*Socket, func(*ExtendedError))) Namespace
+	Use(NamespaceMiddleware) Namespace
 
 	// Targets a room when emitting.
 	To(...Room) *BroadcastOperator
@@ -119,12 +121,12 @@ type Namespace interface {
 	ServerSideEmit(string, ...any) error
 
 	// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
-	ServerSideEmitWithAck(string, ...any) func(func([]any, error))
+	ServerSideEmitWithAck(string, ...any) func(Ack) error
 
 	// @private
 	//
 	// Called when a packet is received from another Socket.IO server
-	OnServerSideEmit(string, ...any)
+	OnServerSideEmit([]any)
 
 	// Gets a list of clients.
 	AllSockets() (*types.Set[SocketId], error)

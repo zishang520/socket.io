@@ -177,12 +177,7 @@ func (c *Client) WriteToEngine(encodedPackets []_types.BufferInterface, opts *Wr
 	}
 
 	for _, encodedPacket := range encodedPackets {
-		switch data := encodedPacket.(type) {
-		case *_types.StringBuffer:
-			c.conn.Write(_types.NewStringBuffer(data.Bytes()), &opts.Options, nil)
-		case *_types.BytesBuffer:
-			c.conn.Write(_types.NewBytesBuffer(data.Bytes()), &opts.Options, nil)
-		}
+		c.conn.Write(encodedPacket.Clone(), &opts.Options, nil)
 	}
 }
 

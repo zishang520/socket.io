@@ -6,7 +6,6 @@ import (
 
 type (
 	ParentBroadcastAdapterBuilder struct {
-		AdapterConstructor
 	}
 
 	// A dummy adapter that only supports broadcasting to child (concrete) namespaces.

@@ -40,16 +40,16 @@ type (
 	}
 
 	BroadcastOptions struct {
-		Rooms  *types.Set[Room]
-		Except *types.Set[Room]
-		Flags  *BroadcastFlags `json:"flags,omitempty" msgpack:"flags,omitempty"`
+		Rooms  *types.Set[Room] `json:"rooms,omitempty" msgpack:"rooms,omitempty"`
+		Except *types.Set[Room] `json:"except,omitempty" msgpack:"except,omitempty"`
+		Flags  *BroadcastFlags  `json:"flags,omitempty" msgpack:"flags,omitempty"`
 	}
 
 	SessionToPersist struct {
 		Sid   SocketId         `json:"sid" msgpack:"sid"`
 		Pid   PrivateSessionId `json:"pid" msgpack:"pid"`
-		Rooms *types.Set[Room]
-		Data  any `json:"data" msgpack:"data"`
+		Rooms *types.Set[Room] `json:"rooms,omitempty" msgpack:"rooms,omitempty"`
+		Data  any              `json:"data" msgpack:"data"`
 	}
 
 	Session struct {
@@ -118,7 +118,7 @@ type (
 		//  - `Flags` {*BroadcastFlags} flags for this packet
 		//  - `Except` {*types.Set[Room]} sids that should be excluded
 		//  - `Rooms` {*types.Set[Room]} list of rooms to broadcast to
-		BroadcastWithAck(*parser.Packet, *BroadcastOptions, func(uint64), func([]any, error))
+		BroadcastWithAck(*parser.Packet, *BroadcastOptions, func(uint64), Ack)
 
 		// Gets a list of sockets by sid.
 		Sockets(*types.Set[Room]) *types.Set[SocketId]

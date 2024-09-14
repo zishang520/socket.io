@@ -84,9 +84,9 @@ type namespace struct {
 
 	server *Server
 
-	_fns *types.Slice[func(*Socket, func(*ExtendedError))]
+	_fns *types.Slice[NamespaceMiddleware]
 
-	_cleanup func()
+	_cleanup types.Callable
 }
 
 func MakeNamespace() Namespace {
@@ -94,7 +94,7 @@ func MakeNamespace() Namespace {
 		StrictEventEmitter: NewStrictEventEmitter(),
 
 		sockets:  &types.Map[SocketId, *Socket]{},
-		_fns:     types.NewSlice[func(*Socket, func(*ExtendedError))](),
+		_fns:     types.NewSlice[NamespaceMiddleware](),
 		_cleanup: nil,
 	}
 
@@ -143,7 +143,7 @@ func (n *namespace) Ids() uint64 {
 	return n._ids.Add(1)
 }
 
-func (n *namespace) Fns() *types.Slice[func(*Socket, func(*ExtendedError))] {
+func (n *namespace) Fns() *types.Slice[NamespaceMiddleware] {
 	return n._fns
 }
 
@@ -172,7 +172,7 @@ func (n *namespace) InitAdapter() {
 //	})
 //
 // Param: func(*ExtendedError) - the middleware function
-func (n *namespace) Use(fn func(*Socket, func(*ExtendedError))) Namespace {
+func (n *namespace) Use(fn NamespaceMiddleware) Namespace {
 	n._fns.Push(fn)
 	return n
 }
@@ -464,9 +464,7 @@ func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
 	}
 
-	n.Proto().Adapter().ServerSideEmit(append([]any{ev}, args...))
-
-	return nil
+	return n.Proto().Adapter().ServerSideEmit(append([]any{ev}, args...))
 }
 
 // Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
@@ -481,16 +479,28 @@ func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 //		}
 //	})
 //
-// Return: a `func(func([]any, error))` that will be fulfilled when all servers have acknowledged the event
-func (n *namespace) ServerSideEmitWithAck(ev string, args ...any) func(func([]any, error)) {
-	return func(ack func([]any, error)) {
-		n.ServerSideEmit(ev, append(args, ack)...)
+// Return: a `func(socket.Ack)` that will be fulfilled when all servers have acknowledged the event
+func (n *namespace) ServerSideEmitWithAck(ev string, args ...any) func(Ack) error {
+	return func(ack Ack) error {
+		return n.ServerSideEmit(ev, append(args, ack)...)
 	}
 }
 
 // Called when a packet is received from another Socket.IO server
-func (n *namespace) OnServerSideEmit(ev string, args ...any) {
-	n.EmitUntyped(ev, args...)
+func (n *namespace) OnServerSideEmit(args []any) {
+	// Convert the first argument to a string and pass the rest as args
+	if len(args) == 0 {
+		return // No arguments provided
+	}
+
+	ev, ok := args[0].(string)
+	if !ok {
+		// Handle error, the first argument should be a string
+		return
+	}
+
+	// Remove the first argument (event name) and pass the rest
+	n.EmitUntyped(ev, args[1:]...)
 }
 
 // Gets a list of socket ids.
