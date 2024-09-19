@@ -627,7 +627,7 @@ func (s *Server) Close(fn func(error)) {
 //	})
 //
 // Param: func(*ExtendedError) - the middleware function
-func (s *Server) Use(fn func(*Socket, func(*ExtendedError))) *Server {
+func (s *Server) Use(fn NamespaceMiddleware) *Server {
 	s.sockets.Use(fn)
 	return s
 }

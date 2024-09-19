@@ -84,9 +84,9 @@ type namespace struct {
 
 	server *Server
 
-	_fns *types.Slice[func(*Socket, func(*ExtendedError))]
+	_fns *types.Slice[NamespaceMiddleware]
 
-	_cleanup func()
+	_cleanup types.Callable
 }
 
 func MakeNamespace() Namespace {
@@ -94,7 +94,7 @@ func MakeNamespace() Namespace {
 		StrictEventEmitter: NewStrictEventEmitter(),
 
 		sockets:  &types.Map[SocketId, *Socket]{},
-		_fns:     types.NewSlice[func(*Socket, func(*ExtendedError))](),
+		_fns:     types.NewSlice[NamespaceMiddleware](),
 		_cleanup: nil,
 	}
 
@@ -143,7 +143,7 @@ func (n *namespace) Ids() uint64 {
 	return n._ids.Add(1)
 }
 
-func (n *namespace) Fns() *types.Slice[func(*Socket, func(*ExtendedError))] {
+func (n *namespace) Fns() *types.Slice[NamespaceMiddleware] {
 	return n._fns
 }
 
@@ -172,7 +172,7 @@ func (n *namespace) InitAdapter() {
 //	})
 //
 // Param: func(*ExtendedError) - the middleware function
-func (n *namespace) Use(fn func(*Socket, func(*ExtendedError))) Namespace {
+func (n *namespace) Use(fn NamespaceMiddleware) Namespace {
 	n._fns.Push(fn)
 	return n
 }

@@ -195,7 +195,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			return
 		}
 		called := sync.Once{}
-		callback := func(arg ...any) {
+		callback := socket.Ack(func(arg []any, _ error) {
 			// only one argument is expected
 			called.Do(func() {
 				adapter_log.Debug("[%s] calling acknowledgement with %v", c.uid, arg)
@@ -207,7 +207,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					},
 				})
 			})
-		}
+		})
 
 		c.Nsp().OnServerSideEmit(append(packet, callback))
 

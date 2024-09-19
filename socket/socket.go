@@ -25,7 +25,7 @@ var (
 type (
 	Ack = func([]any, error)
 
-	Middleware = func(event []any, next func(error))
+	SocketMiddleware = func([]any, func(error))
 
 	Handshake struct {
 		// The headers sent as part of the handshake
@@ -116,7 +116,7 @@ type (
 		server                *Server
 		adapter               Adapter
 		acks                  *types.Map[uint64, Ack]
-		fns                   *types.Slice[Middleware]
+		fns                   *types.Slice[SocketMiddleware]
 		flags                 atomic.Pointer[BroadcastFlags]
 		_anyListeners         *types.Slice[events.Listener]
 		_anyOutgoingListeners *types.Slice[events.Listener]
@@ -131,7 +131,7 @@ func MakeSocket() *Socket {
 
 		// Initialize default value
 		acks:                  &types.Map[uint64, Ack]{},
-		fns:                   types.NewSlice[Middleware](),
+		fns:                   types.NewSlice[SocketMiddleware](),
 		_anyListeners:         types.NewSlice[events.Listener](),
 		_anyOutgoingListeners: types.NewSlice[events.Listener](),
 	}
@@ -789,7 +789,7 @@ func (s *Socket) dispatch(event []any) {
 //	});
 //
 // Param: fn - middleware function (event, next)
-func (s *Socket) Use(fn Middleware) *Socket {
+func (s *Socket) Use(fn SocketMiddleware) *Socket {
 	s.fns.Push(fn)
 	return s
 }

@@ -105,8 +105,8 @@ type (
 	}
 
 	ClusterAckRequest struct {
-		ClientCountCallback func(clientCount uint64)
-		Ack                 func(args []any, err error)
+		ClientCountCallback func(uint64)
+		Ack                 socket.Ack
 	}
 )
 
