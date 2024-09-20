@@ -14,20 +14,38 @@ var adapter_log = log.NewLog("socket.io-adapter")
 
 // Encode BroadcastOptions into PacketOptions
 func EncodeOptions(opts *socket.BroadcastOptions) *PacketOptions {
-	return &PacketOptions{
-		Rooms:  opts.Rooms.Keys(),  // Convert the set to a slice of strings
-		Except: opts.Except.Keys(), // Convert the set to a slice of strings
-		Flags:  opts.Flags,         // Pass flags as is
+	p := &PacketOptions{}
+	if opts == nil {
+		return p
 	}
+
+	if opts.Rooms != nil {
+		p.Rooms = opts.Rooms.Keys() // Convert the set to a slice of strings
+	}
+	if opts.Except != nil {
+		p.Except = opts.Except.Keys() // Convert the set to a slice of strings
+	}
+	if opts.Flags != nil {
+		p.Flags = opts.Flags // Pass flags as is
+	}
+	return p
 }
 
 // Decode PacketOptions back into BroadcastOptions
 func DecodeOptions(opts *PacketOptions) *socket.BroadcastOptions {
-	return &socket.BroadcastOptions{
-		Rooms:  types.NewSet(opts.Rooms...),  // Convert slice to set
-		Except: types.NewSet(opts.Except...), // Convert slice to set
-		Flags:  opts.Flags,                   // Pass flags as is
+	b := &socket.BroadcastOptions{
+		Rooms:  types.NewSet[socket.Room](),
+		Except: types.NewSet[socket.Room](),
 	}
+	if opts == nil {
+		return b
+	}
+
+	b.Rooms.Add(opts.Rooms...)   // Convert slice to set
+	b.Except.Add(opts.Except...) // Convert slice to set
+	b.Flags = opts.Flags         // Pass flags as is
+
+	return b
 }
 
 func RandomId() (string, error) {
