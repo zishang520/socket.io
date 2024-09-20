@@ -257,7 +257,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		if request, ok := c.requests.Load(data.RequestId); ok {
 			request.Current.Add(1)
 			request.Responses.Push(SliceMap(data.Sockets, func(client *SocketResponse) any {
-				return socket.SocketDetails(NewClusterSocket(client))
+				return socket.SocketDetails(NewRemoteSocket(client))
 			})...)
 
 			if request.Current.Load() == request.Expected {

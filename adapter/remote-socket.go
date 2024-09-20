@@ -6,43 +6,43 @@ import (
 )
 
 // Expose of subset of the attributes and methods of the Socket struct
-type ClusterSocket struct {
+type RemoteSocket struct {
 	id        socket.SocketId
 	handshake *socket.Handshake
 	rooms     *types.Set[socket.Room]
 	data      any
 }
 
-func MakeClusterSocket() *ClusterSocket {
-	r := &ClusterSocket{}
+func MakeRemoteSocket() *RemoteSocket {
+	r := &RemoteSocket{}
 	return r
 }
 
-func NewClusterSocket(details *SocketResponse) *ClusterSocket {
-	r := MakeClusterSocket()
+func NewRemoteSocket(details *SocketResponse) *RemoteSocket {
+	r := MakeRemoteSocket()
 
 	r.Construct(details)
 
 	return r
 }
 
-func (r *ClusterSocket) Id() socket.SocketId {
+func (r *RemoteSocket) Id() socket.SocketId {
 	return r.id
 }
 
-func (r *ClusterSocket) Handshake() *socket.Handshake {
+func (r *RemoteSocket) Handshake() *socket.Handshake {
 	return r.handshake
 }
 
-func (r *ClusterSocket) Rooms() *types.Set[socket.Room] {
+func (r *RemoteSocket) Rooms() *types.Set[socket.Room] {
 	return r.rooms
 }
 
-func (r *ClusterSocket) Data() any {
+func (r *RemoteSocket) Data() any {
 	return r.data
 }
 
-func (r *ClusterSocket) Construct(details *SocketResponse) {
+func (r *RemoteSocket) Construct(details *SocketResponse) {
 	r.id = details.Id
 	r.handshake = details.Handshake
 	r.rooms = types.NewSet(details.Rooms...)

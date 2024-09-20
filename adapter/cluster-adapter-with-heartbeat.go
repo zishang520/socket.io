@@ -279,7 +279,7 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 		adapter_log.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
 		if request, ok := a.customRequests.Load(data.RequestId); ok {
 			request.Responses.Push(SliceMap(data.Sockets, func(client *SocketResponse) any {
-				return socket.SocketDetails(NewClusterSocket(client))
+				return socket.SocketDetails(NewRemoteSocket(client))
 			})...)
 
 			request.MissingUids.Delete(response.Uid)
