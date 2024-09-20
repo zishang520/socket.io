@@ -1,12 +1,12 @@
 package socket
 
 import (
+	"fmt"
 	"sync/atomic"
 
 	_types "github.com/zishang520/engine.io-go-parser/types"
 	"github.com/zishang520/engine.io/v2/events"
 	"github.com/zishang520/engine.io/v2/types"
-	"github.com/zishang520/engine.io/v2/utils"
 	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
@@ -320,8 +320,7 @@ func (a *adapter) computeExceptSids(exceptRooms *types.Set[Room]) *types.Set[Soc
 
 // Send a packet to the other Socket.IO servers in the cluster
 func (a *adapter) ServerSideEmit(packet []any) error {
-	utils.Log().Warning(`this adapter does not support the ServerSideEmit() functionality`)
-	return nil
+	return fmt.Errorf(`this adapter does not support the ServerSideEmit() functionality`)
 }
 
 // Save the client session in order to restore it upon reconnection.

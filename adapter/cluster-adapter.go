@@ -472,6 +472,10 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 }
 
 func (c *clusterAdapter) ServerSideEmit(packet []any) error {
+	if len(packet) == 0 {
+		return fmt.Errorf("packet cannot be empty")
+	}
+
 	data_len := len(packet)
 	ack, withAck := packet[data_len-1].(socket.Ack)
 	if !withAck {

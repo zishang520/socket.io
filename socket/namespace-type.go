@@ -121,7 +121,7 @@ type Namespace interface {
 	ServerSideEmit(string, ...any) error
 
 	// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
-	ServerSideEmitWithAck(string, ...any) func(Ack)
+	ServerSideEmitWithAck(string, ...any) func(Ack) error
 
 	// @private
 	//

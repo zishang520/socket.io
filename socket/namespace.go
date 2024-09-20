@@ -464,9 +464,7 @@ func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
 	}
 
-	n.Proto().Adapter().ServerSideEmit(append([]any{ev}, args...))
-
-	return nil
+	return n.Proto().Adapter().ServerSideEmit(append([]any{ev}, args...))
 }
 
 // Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
@@ -482,9 +480,9 @@ func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 //	})
 //
 // Return: a `func(socket.Ack)` that will be fulfilled when all servers have acknowledged the event
-func (n *namespace) ServerSideEmitWithAck(ev string, args ...any) func(Ack) {
-	return func(ack Ack) {
-		n.ServerSideEmit(ev, append(args, ack)...)
+func (n *namespace) ServerSideEmitWithAck(ev string, args ...any) func(Ack) error {
+	return func(ack Ack) error {
+		return n.ServerSideEmit(ev, append(args, ack)...)
 	}
 }
 

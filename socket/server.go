@@ -22,7 +22,7 @@ import (
 	"github.com/zishang520/socket.io-go-parser/v2/parser"
 )
 
-const clientVersion = "4.7.2"
+const clientVersion = "4.7.5"
 
 var (
 	dotMapRegex = regexp.MustCompile(`\.map`)
@@ -750,7 +750,7 @@ func (s *Server) ServerSideEmit(ev string, args ...any) error {
 // Param: args - an array of arguments
 //
 // Return: a `func(socket.Ack)` that will be fulfilled when all servers have acknowledged the event
-func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(Ack) {
+func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(Ack) error {
 	return s.sockets.ServerSideEmitWithAck(ev, args...)
 }
 
