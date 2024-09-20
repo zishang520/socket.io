@@ -13,7 +13,7 @@ import (
 var adapter_log = log.NewLog("socket.io-adapter")
 
 // Encode BroadcastOptions into PacketOptions
-func encodeOptions(opts *socket.BroadcastOptions) *PacketOptions {
+func EncodeOptions(opts *socket.BroadcastOptions) *PacketOptions {
 	return &PacketOptions{
 		Rooms:  opts.Rooms.Keys(),  // Convert the set to a slice of strings
 		Except: opts.Except.Keys(), // Convert the set to a slice of strings
@@ -22,7 +22,7 @@ func encodeOptions(opts *socket.BroadcastOptions) *PacketOptions {
 }
 
 // Decode PacketOptions back into BroadcastOptions
-func decodeOptions(opts *PacketOptions) *socket.BroadcastOptions {
+func DecodeOptions(opts *PacketOptions) *socket.BroadcastOptions {
 	return &socket.BroadcastOptions{
 		Rooms:  types.NewSet(opts.Rooms...),  // Convert slice to set
 		Except: types.NewSet(opts.Except...), // Convert slice to set
@@ -30,7 +30,7 @@ func decodeOptions(opts *PacketOptions) *socket.BroadcastOptions {
 	}
 }
 
-func randomId() (string, error) {
+func RandomId() (string, error) {
 	r := make([]byte, 8)
 	if _, err := rand.Read(r); err != nil {
 		return "", err
@@ -38,7 +38,7 @@ func randomId() (string, error) {
 	return hex.EncodeToString(r), nil
 }
 
-func uid2(length int) (string, error) {
+func Uid2(length int) (string, error) {
 	r := make([]byte, length)
 	if _, err := rand.Read(r); err != nil {
 		return "", err
@@ -46,7 +46,7 @@ func uid2(length int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(r), nil
 }
 
-func sliceMap[I any, O any](i []I, converter func(I) O) (o []O) {
+func SliceMap[I any, O any](i []I, converter func(I) O) (o []O) {
 	for _, _i := range i {
 		o = append(o, converter(_i))
 	}
@@ -54,7 +54,7 @@ func sliceMap[I any, O any](i []I, converter func(I) O) (o []O) {
 }
 
 // Tap calls the given function with the given value, then returns the value.
-func tap[T any](value T, callback func(T)) T {
+func Tap[T any](value T, callback func(T)) T {
 	if callback != nil {
 		callback(value)
 	}

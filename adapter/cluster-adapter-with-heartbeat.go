@@ -167,7 +167,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		return nil
 	}
 
-	requestId, err := randomId()
+	requestId, err := RandomId()
 
 	if err != nil {
 		return err
@@ -188,7 +188,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		Resolve: func(data *types.Slice[any]) {
 			ack(data.All(), nil)
 		},
-		Timeout: tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+		Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 			t.Store(timeout)
 		}),
 		MissingUids: types.NewSet(a.nodesMap.Keys()...),
@@ -227,7 +227,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 				return
 			}
 
-			requestId, _ := randomId()
+			requestId, _ := RandomId()
 
 			t := DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
@@ -244,15 +244,15 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 			a.customRequests.Store(requestId, &CustomClusterRequest{
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
-					cb(sliceMap(data.All(), func(i any) socket.SocketDetails {
+					cb(SliceMap(data.All(), func(i any) socket.SocketDetails {
 						return i.(socket.SocketDetails)
 					}), nil)
 				},
-				Timeout: tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+				Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 					t.Store(timeout)
 				}),
 				MissingUids: types.NewSet(a.nodesMap.Keys()...),
-				Responses: types.NewSlice(sliceMap(localSockets, func(client socket.SocketDetails) any {
+				Responses: types.NewSlice(SliceMap(localSockets, func(client socket.SocketDetails) any {
 					return client
 				})...),
 			})
@@ -260,7 +260,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 			a.Publish(&ClusterMessage{
 				Type: FETCH_SOCKETS,
 				Data: &FetchSocketsMessage{
-					Opts:      encodeOptions(opts),
+					Opts:      EncodeOptions(opts),
 					RequestId: requestId,
 				},
 			})
@@ -278,7 +278,7 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 		}
 		adapter_log.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
 		if request, ok := a.customRequests.Load(data.RequestId); ok {
-			request.Responses.Push(sliceMap(data.Sockets, func(client *SocketResponse) any {
+			request.Responses.Push(SliceMap(data.Sockets, func(client *SocketResponse) any {
 				return socket.SocketDetails(NewClusterSocket(client))
 			})...)
 

@@ -66,7 +66,7 @@ func (c *clusterAdapter) Uid() ServerId {
 func (c *clusterAdapter) Construct(nsp socket.Namespace) {
 	c.Adapter.Construct(nsp)
 
-	uid, _ := randomId()
+	uid, _ := RandomId()
 	c.uid = ServerId(uid)
 }
 
@@ -93,7 +93,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 		if withAck {
 			c.Adapter.BroadcastWithAck(
 				data.Packet,
-				decodeOptions(data.Opts),
+				DecodeOptions(data.Opts),
 				func(clientCount uint64) {
 					adapter_log.Debug("[%s] waiting for %d client acknowledgements", c.uid, clientCount)
 					c.PublishResponse(message.Uid, &ClusterResponse{
@@ -116,7 +116,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 				},
 			)
 		} else {
-			opts := decodeOptions(data.Opts)
+			opts := DecodeOptions(data.Opts)
 			c.addOffsetIfNecessary(data.Packet, opts, offset)
 			c.Adapter.Broadcast(data.Packet, opts)
 		}
@@ -127,7 +127,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			adapter_log.Debug("[%s] invalid data for SOCKETS_JOIN message", c.uid)
 			return
 		}
-		c.Adapter.AddSockets(decodeOptions(data.Opts), data.Rooms)
+		c.Adapter.AddSockets(DecodeOptions(data.Opts), data.Rooms)
 
 	case SOCKETS_LEAVE:
 		data, ok := message.Data.(*SocketsJoinLeaveMessage)
@@ -135,7 +135,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			adapter_log.Debug("[%s] invalid data for SOCKETS_LEAVE message", c.uid)
 			return
 		}
-		c.Adapter.DelSockets(decodeOptions(data.Opts), data.Rooms)
+		c.Adapter.DelSockets(DecodeOptions(data.Opts), data.Rooms)
 
 	case DISCONNECT_SOCKETS:
 		data, ok := message.Data.(*DisconnectSocketsMessage)
@@ -144,7 +144,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			return
 		}
 		c.Adapter.DisconnectSockets(
-			decodeOptions(data.Opts),
+			DecodeOptions(data.Opts),
 			data.Close,
 		)
 
@@ -159,7 +159,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			c.uid,
 			data.Opts,
 		)
-		c.Adapter.FetchSockets(decodeOptions(data.Opts))(
+		c.Adapter.FetchSockets(DecodeOptions(data.Opts))(
 			func(localSockets []socket.SocketDetails, err error) {
 				if err != nil {
 					adapter_log.Debug("FETCH_SOCKETS Adapter.OnMessage error: %s", err.Error())
@@ -169,7 +169,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					Type: FETCH_SOCKETS_RESPONSE,
 					Data: &FetchSocketsResponse{
 						RequestId: data.RequestId,
-						Sockets: sliceMap(localSockets, func(client socket.SocketDetails) *SocketResponse {
+						Sockets: SliceMap(localSockets, func(client socket.SocketDetails) *SocketResponse {
 							return &SocketResponse{
 								Id:        client.Id(),
 								Handshake: client.Handshake(),
@@ -256,7 +256,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		adapter_log.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
 		if request, ok := c.requests.Load(data.RequestId); ok {
 			request.Current.Add(1)
-			request.Responses.Push(sliceMap(data.Sockets, func(client *SocketResponse) any {
+			request.Responses.Push(SliceMap(data.Sockets, func(client *SocketResponse) any {
 				return socket.SocketDetails(NewClusterSocket(client))
 			})...)
 
@@ -297,7 +297,7 @@ func (c *clusterAdapter) Broadcast(packet *parser.Packet, opts *socket.Broadcast
 			Type: BROADCAST,
 			Data: &BroadcastMessage{
 				Packet: packet,
-				Opts:   encodeOptions(opts),
+				Opts:   EncodeOptions(opts),
 			},
 		})
 		if err != nil {
@@ -331,7 +331,7 @@ func (c *clusterAdapter) addOffsetIfNecessary(packet *parser.Packet, opts *socke
 func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.BroadcastOptions, clientCountCallback func(uint64), ack socket.Ack) {
 	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
 	if !onlyLocal {
-		requestId, _ := randomId()
+		requestId, _ := RandomId()
 
 		c.ackRequests.Store(requestId, &ClusterAckRequest{
 			ClientCountCallback: clientCountCallback,
@@ -343,7 +343,7 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 			Data: &BroadcastMessage{
 				Packet:    packet,
 				RequestId: &requestId,
-				Opts:      encodeOptions(opts),
+				Opts:      EncodeOptions(opts),
 			},
 		})
 
@@ -369,7 +369,7 @@ func (c *clusterAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socke
 		_, err := c.PublishAndReturnOffset(&ClusterMessage{
 			Type: SOCKETS_JOIN,
 			Data: &SocketsJoinLeaveMessage{
-				Opts:  encodeOptions(opts),
+				Opts:  EncodeOptions(opts),
 				Rooms: rooms,
 			},
 		})
@@ -388,7 +388,7 @@ func (c *clusterAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socke
 		_, err := c.PublishAndReturnOffset(&ClusterMessage{
 			Type: SOCKETS_LEAVE,
 			Data: &SocketsJoinLeaveMessage{
-				Opts:  encodeOptions(opts),
+				Opts:  EncodeOptions(opts),
 				Rooms: rooms,
 			},
 		})
@@ -407,7 +407,7 @@ func (c *clusterAdapter) DisconnectSockets(opts *socket.BroadcastOptions, state 
 		_, err := c.PublishAndReturnOffset(&ClusterMessage{
 			Type: DISCONNECT_SOCKETS,
 			Data: &DisconnectSocketsMessage{
-				Opts:  encodeOptions(opts),
+				Opts:  EncodeOptions(opts),
 				Close: state,
 			},
 		})
@@ -429,7 +429,7 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 				return
 			}
 
-			requestId, _ := randomId()
+			requestId, _ := RandomId()
 
 			t := DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
@@ -446,16 +446,16 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 			c.requests.Store(requestId, &ClusterRequest{
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
-					callback(sliceMap(data.All(), func(i any) socket.SocketDetails {
+					callback(SliceMap(data.All(), func(i any) socket.SocketDetails {
 						return i.(socket.SocketDetails)
 					}), nil)
 				},
-				Timeout: tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+				Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 					t.Store(timeout)
 				}),
 				Current:  &atomic.Int64{},
 				Expected: expectedResponseCount,
-				Responses: types.NewSlice(sliceMap(localSockets, func(client socket.SocketDetails) any {
+				Responses: types.NewSlice(SliceMap(localSockets, func(client socket.SocketDetails) any {
 					return client
 				})...),
 			})
@@ -463,7 +463,7 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 			c.Publish(&ClusterMessage{
 				Type: FETCH_SOCKETS,
 				Data: &FetchSocketsMessage{
-					Opts:      encodeOptions(opts),
+					Opts:      EncodeOptions(opts),
 					RequestId: requestId,
 				},
 			})
@@ -493,7 +493,7 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 		return nil
 	}
 
-	requestId, err := randomId()
+	requestId, err := RandomId()
 
 	if err != nil {
 		return err
@@ -514,7 +514,7 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 		Resolve: func(data *types.Slice[any]) {
 			ack(data.All(), nil)
 		},
-		Timeout: tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+		Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 			t.Store(timeout)
 		}),
 		Current:   &atomic.Int64{},
