@@ -98,7 +98,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					adapter_log.Debug("[%s] waiting for %d client acknowledgements", c.uid, clientCount)
 					c.PublishResponse(message.Uid, &ClusterResponse{
 						Type: BROADCAST_CLIENT_COUNT,
-						Data: &BroadcastClientCount{
+						Data: &BroadcastClientCountResponse{
 							RequestId:   *data.RequestId,
 							ClientCount: clientCount,
 						},
@@ -226,7 +226,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 	switch response.Type {
 	case BROADCAST_CLIENT_COUNT:
-		data, ok := response.Data.(*BroadcastClientCount)
+		data, ok := response.Data.(*BroadcastClientCountResponse)
 		if !ok {
 			adapter_log.Debug("[%s] invalid data for BROADCAST_CLIENT_COUNT message", c.uid)
 			return

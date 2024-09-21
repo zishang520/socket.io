@@ -94,7 +94,7 @@ type (
 		Packet    []any  `json:"packet,omitempty" msgpack:"packet,omitempty"`
 	}
 
-	BroadcastClientCount struct {
+	BroadcastClientCountResponse struct {
 		RequestId   string `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
 		ClientCount uint64 `json:"clientCount,omitempty" msgpack:"clientCount,omitempty"`
 	}
