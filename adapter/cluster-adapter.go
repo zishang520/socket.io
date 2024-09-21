@@ -108,7 +108,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					adapter_log.Debug("[%s] received acknowledgement with value %v", c.uid, args)
 					c.PublishResponse(message.Uid, &ClusterResponse{
 						Type: BROADCAST_ACK,
-						Data: &BroadcastAck{
+						Data: &BroadcastAckResponse{
 							RequestId: *data.RequestId,
 							Packet:    args,
 						},
@@ -237,7 +237,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		}
 
 	case BROADCAST_ACK:
-		data, ok := response.Data.(*BroadcastAck)
+		data, ok := response.Data.(*BroadcastAckResponse)
 		if !ok {
 			adapter_log.Debug("[%s] invalid data for BROADCAST_ACK message", c.uid)
 			return

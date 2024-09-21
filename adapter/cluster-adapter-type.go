@@ -99,7 +99,7 @@ type (
 		ClientCount uint64 `json:"clientCount,omitempty" msgpack:"clientCount,omitempty"`
 	}
 
-	BroadcastAck struct {
+	BroadcastAckResponse struct {
 		RequestId string `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
 		Packet    []any  `json:"packet,omitempty" msgpack:"packet,omitempty"`
 	}
