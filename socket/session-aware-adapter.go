@@ -10,7 +10,6 @@ import (
 
 type (
 	SessionAwareAdapterBuilder struct {
-		AdapterConstructor
 	}
 
 	sessionAwareAdapter struct {
@@ -69,8 +68,7 @@ func (s *sessionAwareAdapter) Construct(nsp Namespace) {
 }
 
 func (s *sessionAwareAdapter) PersistSession(session *SessionToPersist) {
-	_session := &SessionWithTimestamp{SessionToPersist: session, DisconnectedAt: time.Now().UnixMilli()}
-	s.sessions.Store(_session.Pid, _session)
+	s.sessions.Store(session.Pid, &SessionWithTimestamp{SessionToPersist: session, DisconnectedAt: time.Now().UnixMilli()})
 }
 
 func (s *sessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string) (*Session, error) {

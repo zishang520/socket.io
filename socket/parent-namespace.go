@@ -55,6 +55,10 @@ func NewParentNamespace(server *Server) ParentNamespace {
 	return n
 }
 
+func (p *parentNamespace) Children() *types.Set[Namespace] {
+	return p.children
+}
+
 func (p *parentNamespace) Adapter() Adapter {
 	return p.adapter
 }
@@ -68,10 +72,6 @@ func (p *parentNamespace) Emit(ev string, args ...any) error {
 		nsp.Emit(ev, args...)
 	}
 	return nil
-}
-
-func (p *parentNamespace) Children() *types.Set[Namespace] {
-	return p.children
 }
 
 func (p *parentNamespace) CreateChild(name string) Namespace {
@@ -98,6 +98,7 @@ func (p *parentNamespace) CreateChild(name string) Namespace {
 	p.Server()._nsps.Store(name, namespace)
 
 	p.Server().Sockets().EmitReserved("new_namespace", namespace)
+
 	return namespace
 }
 

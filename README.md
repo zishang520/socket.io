@@ -212,7 +212,7 @@ func main() {
         client.Emit("auth", client.Handshake().Auth)
 
         client.On("message-with-ack", func(args ...interface{}) {
-            ack := args[len(args)-1].(func([]any, error))
+            ack := args[len(args)-1].(socket.Ack)
             ack(args[:len(args)-1], nil)
         })
     })
@@ -286,7 +286,7 @@ func main() {
         client.Emit("auth", client.Handshake().Auth)
 
         client.On("message-with-ack", func(args ...interface{}) {
-            ack := args[len(args)-1].(func([]any, error))
+            ack := args[len(args)-1].(socket.Ack)
             ack(args[:len(args)-1], nil)
         })
     })
