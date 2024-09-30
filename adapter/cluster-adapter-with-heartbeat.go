@@ -12,7 +12,7 @@ import (
 
 type (
 	ClusterAdapterWithHeartbeatBuilder struct {
-		Opts *ClusterAdapterOptions
+		Opts ClusterAdapterOptionsInterface
 	}
 
 	clusterAdapterWithHeartbeat struct {
@@ -45,7 +45,7 @@ func MakeClusterAdapterWithHeartbeat() ClusterAdapterWithHeartbeat {
 	return c
 }
 
-func NewClusterAdapterWithHeartbeat(nsp socket.Namespace, opts *ClusterAdapterOptions) ClusterAdapterWithHeartbeat {
+func NewClusterAdapterWithHeartbeat(nsp socket.Namespace, opts any) ClusterAdapterWithHeartbeat {
 	c := MakeClusterAdapterWithHeartbeat()
 
 	c.SetOpts(opts)
@@ -55,11 +55,10 @@ func NewClusterAdapterWithHeartbeat(nsp socket.Namespace, opts *ClusterAdapterOp
 	return c
 }
 
-func (a *clusterAdapterWithHeartbeat) SetOpts(opts *ClusterAdapterOptions) {
-	if opts == nil {
-		opts = DefaultClusterAdapterOptions()
+func (a *clusterAdapterWithHeartbeat) SetOpts(opts any) {
+	if options, ok := opts.(ClusterAdapterOptionsInterface); ok {
+		a._opts.Assign(options)
 	}
-	a._opts.Assign(opts)
 }
 
 func (a *clusterAdapterWithHeartbeat) Construct(nsp socket.Namespace) {

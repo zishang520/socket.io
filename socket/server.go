@@ -85,7 +85,7 @@ type (
 		_serveClient               bool
 		// @private
 		// #readonly
-		opts            *ServerOptions
+		opts            ServerOptionsInterface
 		eio             engine.Server
 		_path           string
 		clientPathRegex *regexp.Regexp
@@ -105,7 +105,7 @@ func MakeServer() *Server {
 	return s
 }
 
-func NewServer(srv any, opts *ServerOptions) *Server {
+func NewServer(srv any, opts ServerOptionsInterface) *Server {
 	s := MakeServer()
 
 	s.Construct(srv, opts)
@@ -125,7 +125,7 @@ func (s *Server) Encoder() parser.Encoder {
 	return s.encoder
 }
 
-func (s *Server) Construct(srv any, opts *ServerOptions) {
+func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 	if opts == nil {
 		opts = DefaultServerOptions()
 	}
@@ -162,7 +162,7 @@ func (s *Server) Construct(srv any, opts *ServerOptions) {
 	}
 }
 
-func (s *Server) Opts() *ServerOptions {
+func (s *Server) Opts() ServerOptionsInterface {
 	return s.opts
 }
 
@@ -340,10 +340,10 @@ func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
 // Param: srv - the server to attach to
 //
 // Param: opts - options passed to engine.io
-func (s *Server) initEngine(srv *types.HttpServer, opts *ServerOptions) {
+func (s *Server) initEngine(srv *types.HttpServer, opts ServerOptionsInterface) {
 	// initialize engine
 	server_log.Debug("creating engine.io instance with opts %+v", opts)
-	s.eio = engine.Attach(srv, any(opts))
+	s.eio = engine.Attach(srv, opts)
 
 	// attach static file serving
 	if s._serveClient {
@@ -358,7 +358,7 @@ func (s *Server) initEngine(srv *types.HttpServer, opts *ServerOptions) {
 }
 
 // Attaches the static file serving.
-func (s *Server) attachServe(srv *types.HttpServer, egs engine.Server, opts *ServerOptions) {
+func (s *Server) attachServe(srv *types.HttpServer, egs engine.Server, opts ServerOptionsInterface) {
 	server_log.Debug("attaching client serving req handler")
 	srv.HandleFunc(s._path+"/", func(w http.ResponseWriter, r *http.Request) {
 		if s.clientPathRegex.MatchString(r.URL.Path) {

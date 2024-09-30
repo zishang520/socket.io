@@ -15,4 +15,10 @@ type (
 		MissingUids *types.Set[ServerId]
 		Responses   *types.Slice[any]
 	}
+
+	ClusterAdapterWithHeartbeat interface {
+		ClusterAdapter
+
+		SetOpts(any)
+	}
 )
