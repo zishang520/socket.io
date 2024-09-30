@@ -71,7 +71,7 @@ func (c *Client) setup() {
 	c.decoder.On("decoded", c.ondecoded)
 	c.conn.On("data", c.ondata)
 	c.conn.On("error", c.onerror)
-	c.conn.On("close", c.onclose)
+	c.conn.Once("close", c.onclose)
 
 	c.connectTimeout.Store(utils.SetTimeout(func() {
 		if c.nsps.Len() == 0 {

@@ -602,20 +602,22 @@ func (s *Server) Close(fn func(error)) {
 			socket._onclose("server shutting down")
 			return true
 		})
-
 		nsp.Adapter().Close()
 		return true
 	})
 
 	if s.httpServer != nil {
 		s.httpServer.Close(fn)
-	} else {
-		if s.engine != nil {
-			s.engine.Close()
-		}
-		if fn != nil {
-			fn(nil)
-		}
+		// The engine has been closed through the close event processing, and the subsequent process is exited here.
+		return
+	}
+
+	if s.engine != nil {
+		s.engine.Close()
+	}
+
+	if fn != nil {
+		fn(nil)
 	}
 }
 

@@ -9,8 +9,6 @@ type (
 
 	SessionAwareAdapter = socket.SessionAwareAdapter
 
-	AdapterConstructor = socket.AdapterConstructor
-
 	// A cluster-ready adapter. Any extending interface must:
 	//
 	// - implement [ClusterAdapter.DoPublish] and [ClusterAdapter.DoPublishResponse]
