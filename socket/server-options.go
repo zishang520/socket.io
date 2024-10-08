@@ -148,37 +148,35 @@ func (s *ServerOptions) Assign(data ServerOptionsInterface) (ServerOptionsInterf
 	if s.GetRawAllowEIO3() == nil {
 		s.SetAllowEIO3(data.AllowEIO3())
 	}
-
 	if s.GetRawPath() == nil {
 		s.SetPath(data.Path())
 	}
-
 	if s.GetRawDestroyUpgradeTimeout() == nil {
 		s.SetDestroyUpgradeTimeout(data.DestroyUpgradeTimeout())
 	}
-
 	if s.GetRawDestroyUpgrade() == nil {
 		s.SetDestroyUpgrade(data.DestroyUpgrade())
 	}
-
 	if s.GetRawAddTrailingSlash() == nil {
 		s.SetAddTrailingSlash(data.AddTrailingSlash())
 	}
-
 	if s.GetRawServeClient() == nil {
 		s.SetServeClient(data.ServeClient())
 	}
-
 	if s.GetRawAdapter() == nil {
 		s.SetAdapter(data.Adapter())
 	}
-
 	if s.GetRawParser() == nil {
 		s.SetParser(data.Parser())
 	}
-
 	if s.GetRawConnectTimeout() == nil {
 		s.SetConnectTimeout(data.ConnectTimeout())
+	}
+	if s.GetRawConnectionStateRecovery() == nil {
+		s.SetConnectionStateRecovery(data.ConnectionStateRecovery())
+	}
+	if s.GetRawCleanupEmptyChildNamespaces() == nil {
+		s.SetCleanupEmptyChildNamespaces(data.CleanupEmptyChildNamespaces())
 	}
 
 	return s, nil
