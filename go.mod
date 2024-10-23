@@ -3,7 +3,7 @@ module github.com/zishang520/socket.io/v2
 go 1.23.1
 
 require (
-	github.com/andybalholm/brotli v1.1.0
+	github.com/andybalholm/brotli v1.1.1
 	github.com/zishang520/engine.io-go-parser v1.2.7
 	github.com/zishang520/engine.io/v2 v2.2.4
 	github.com/zishang520/socket.io-go-parser/v2 v2.2.2

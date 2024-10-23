@@ -2,6 +2,7 @@ package socket
 
 import (
 	"net/url"
+	"sync"
 	"sync/atomic"
 
 	_types "github.com/zishang520/engine.io-go-parser/types"
@@ -24,6 +25,8 @@ type Client struct {
 	sockets        *types.Map[SocketId, *Socket]
 	nsps           *types.Map[string, *Socket]
 	connectTimeout atomic.Pointer[utils.Timer]
+
+	mu sync.Mutex
 }
 
 func MakeClient() *Client {
@@ -171,6 +174,9 @@ func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 }
 
 func (c *Client) WriteToEngine(encodedPackets []_types.BufferInterface, opts *WriteOptions) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if opts.Volatile && !c.conn.Transport().Writable() {
 		client_log.Debug("volatile packet is discarded since the transport is not currently writable")
 		return
