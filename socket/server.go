@@ -684,6 +684,15 @@ func (s *Server) Except(room ...Room) *BroadcastOperator {
 	return s.sockets.Except(room...)
 }
 
+// Emits to all clients.
+//
+//	// the “foo” event will be broadcast to all connected clients
+//	io.Emit("foo", "bar")
+func (s *Server) Emit(ev string, args ...any) *Server {
+	s.sockets.Emit(ev, args...)
+	return s
+}
+
 // Sends a `message` event to all clients.
 //
 // This method mimics the WebSocket.send() method.
