@@ -171,7 +171,7 @@ func main() {
 
 ```
 
-other: Use fasthttp
+other: Use fasthttp (fasthttp version 1.56.0+ is required)
 ```golang
 package main
 
@@ -245,7 +245,7 @@ func main() {
 
 ```
 
-other: Use fiber
+other: Use fiber (fasthttp version 1.56.0+ is required)
 ```golang
 package main
 
