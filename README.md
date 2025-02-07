@@ -325,6 +325,121 @@ func main() {
 
 ```
 
+other: Use gin(Not necessary) + webtransport
+```golang
+package main
+
+import (
+    "net/http"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "github.com/gin-gonic/gin"
+    "github.com/zishang520/engine.io/v2/engine"
+    "github.com/zishang520/engine.io/v2/log"
+    "github.com/zishang520/engine.io/v2/types"
+    "github.com/zishang520/engine.io/v2/webtransport"
+    "github.com/zishang520/socket.io/v2/socket"
+)
+
+func main() {
+    log.DEBUG = true
+    c := socket.DefaultServerOptions()
+    c.SetServeClient(true)
+    // c.SetConnectionStateRecovery(&socket.ConnectionStateRecovery{})
+    // c.SetAllowEIO3(true)
+    c.SetPingInterval(300 * time.Millisecond)
+    c.SetPingTimeout(200 * time.Millisecond)
+    c.SetMaxHttpBufferSize(1000000)
+    c.SetConnectTimeout(1000 * time.Millisecond)
+    c.SetTransports(types.NewSet("polling", "webtransport"))
+    c.SetCors(&types.Cors{
+        Origin:      "*",
+        Credentials: true,
+    })
+    socketio := socket.NewServer(nil, nil)
+    socketio.On("connection", func(clients ...interface{}) {
+        client := clients[0].(*socket.Socket)
+
+        client.On("message", func(args ...interface{}) {
+            client.Emit("message-back", args...)
+        })
+        client.Emit("auth", client.Handshake().Auth)
+
+        client.On("message-with-ack", func(args ...interface{}) {
+            ack := args[len(args)-1].(socket.Ack)
+            ack(args[:len(args)-1], nil)
+        })
+    })
+
+    socketio.Of("/custom", nil).On("connection", func(clients ...interface{}) {
+        client := clients[0].(*socket.Socket)
+        client.Emit("auth", client.Handshake().Auth)
+    })
+
+    app := gin.Default()
+
+    // app.Put("/socket.io", adaptor.HTTPHandler(socketio.ServeHandler(c))) // test
+    app.POST("/socket.io/*f", gin.WrapH(socketio.ServeHandler(c)))
+    app.GET("/socket.io/*f", gin.WrapH(socketio.ServeHandler(c)))
+    go app.Run(":8080")
+
+    // WebTransport start
+    // WebTransport uses udp, so you need to enable the new service.
+    customServer := types.NewWebServer(nil)
+    // A certificate is required and cannot be a self-signed certificate.
+    wts := customServer.ListenWebTransportTLS(":443", "domain.cer", "domain.key", nil, nil)
+
+    // Here is the core logic of the WebTransport handshake.
+    customServer.HandleFunc(socketio.Path()+"/", func(w http.ResponseWriter, r *http.Request) {
+        if webtransport.IsWebTransportUpgrade(r) {
+            // You need to call socketio.ServeHandler(nil) before this, otherwise you cannot get the Engine instance.
+            socketio.Engine().(engine.Server).OnWebTransportSession(types.NewHttpContext(w, r), wts)
+        } else {
+            customServer.DefaultHandler.ServeHTTP(w, r)
+        }
+    })
+    // WebTransport end
+
+    exit := make(chan struct{})
+    SignalC := make(chan os.Signal)
+
+    signal.Notify(SignalC, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+    go func() {
+        for s := range SignalC {
+            switch s {
+            case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
+                close(exit)
+                return
+            }
+        }
+    }()
+
+    <-exit
+    socketio.Close(nil)
+    os.Exit(0)
+}
+
+```
+
+WebTransport client (js):
+```javascript
+const manager = new io.Manager("https://domain", {
+    transports: ['webtransport'],
+});
+
+const socket = manager.socket("/", {
+    reconnectionDelayMax: 10000,
+    auth: { token: "123" },
+    query: {
+        "my-key": "my-value"
+    }
+});
+```
+
+
 ## Documentation
 
 Please see the documentation [here](https://pkg.go.dev/github.com/zishang520/socket.io/v2).
