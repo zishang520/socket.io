@@ -45,10 +45,10 @@ github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZ
 github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
 github.com/zishang520/engine.io-go-parser v1.2.7 h1:pnJr/9kOmOLBJcUQpOnRfR1q3UJAQudkeF4wLyqbtnM=
 github.com/zishang520/engine.io-go-parser v1.2.7/go.mod h1:WRsjNz1Oi04dqGcvjpW0t6/B2KIuDSrTBvCZDs7r3XY=
-github.com/zishang520/engine.io/v2 v2.3.1 h1:bCIWmaGryMj/tfXhHmi1TLKXFn10lZRCq9efXas3CUY=
-github.com/zishang520/engine.io/v2 v2.3.1/go.mod h1:x7VxDhkuEHrQ+DIkNutOIMHOKz2UkTEw0yQxOwhtkfw=
-github.com/zishang520/socket.io-go-parser/v2 v2.3.0 h1:qPNF4mb1YuK3rHUu0LXn0g6J9QF3an4ZxH7kIszQW/w=
-github.com/zishang520/socket.io-go-parser/v2 v2.3.0/go.mod h1:csE8SudAorwaAui+weVsC+MmYVnH4ckNgprhzXpBkvc=
+github.com/zishang520/engine.io/v2 v2.3.3 h1:mw4HPxAV7WNuyLgF2Eo3/EccOMiUclXZFFPaJD5d1tU=
+github.com/zishang520/engine.io/v2 v2.3.3/go.mod h1:w2uR7UMC56VZwvP2sZigsrAEkIHgCBxiSujAmSsYq+A=
+github.com/zishang520/socket.io-go-parser/v2 v2.3.1 h1:+BlBz1DhCiUAbdMRso5tHARSwHSRiqOGZNZgmGnn5ig=
+github.com/zishang520/socket.io-go-parser/v2 v2.3.1/go.mod h1:4tj/IGbB3Ko4/uNIjJHYMOE7JKDQhZsqQ6W7mu66Nt8=
 go.uber.org/mock v0.5.0 h1:KAMbZvZPyBPWgD14IrIQ38QCyjwpvVVV6K/bHl1IwQU=
 go.uber.org/mock v0.5.0/go.mod h1:ge71pBPLYDk7QIi1LupWxdAykm7KIEFchiOqd6z7qMM=
 golang.org/x/crypto v0.31.0 h1:ihbySMvVjLAeSH1IbfcRTkD/iNscyz8rGzjF/E5hV6U=

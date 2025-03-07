@@ -5,7 +5,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	_types "github.com/zishang520/engine.io-go-parser/types"
 	"github.com/zishang520/engine.io/v2/engine"
 	"github.com/zishang520/engine.io/v2/log"
 	"github.com/zishang520/engine.io/v2/types"
@@ -173,7 +172,7 @@ func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 	c.WriteToEngine(c.encoder.Encode(packet), opts)
 }
 
-func (c *Client) WriteToEngine(encodedPackets []_types.BufferInterface, opts *WriteOptions) {
+func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *WriteOptions) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

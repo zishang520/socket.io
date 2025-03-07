@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	_types "github.com/zishang520/engine.io-go-parser/types"
 	"github.com/zishang520/engine.io/v2/events"
 	"github.com/zishang520/engine.io/v2/types"
 	"github.com/zishang520/socket.io-go-parser/v2/parser"
@@ -200,13 +199,13 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 	clientCountCallback(clientCount.Load())
 }
 
-func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []_types.BufferInterface {
+func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []types.BufferInterface {
 	encodedPackets := a.encoder.Encode(packet)
 
 	if len(encodedPackets) == 1 {
-		if p, ok := encodedPackets[0].(*_types.StringBuffer); ok {
+		if p, ok := encodedPackets[0].(*types.StringBuffer); ok {
 			// "4" being the "message" packet type in the Engine.IO protocol
-			data := _types.NewStringBufferString("4")
+			data := types.NewStringBufferString("4")
 			data.Write(p.Bytes())
 			// see https://github.com/websockets/ws/issues/617#issuecomment-283002469
 			packetOpts.WsPreEncodedFrame = data
