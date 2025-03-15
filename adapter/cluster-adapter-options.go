@@ -36,11 +36,11 @@ func (s *ClusterAdapterOptions) Assign(data ClusterAdapterOptionsInterface) (Clu
 	if data == nil {
 		return s, nil
 	}
-	if s.GetRawHeartbeatInterval() == nil {
+	if data.GetRawHeartbeatInterval() != nil {
 		s.SetHeartbeatInterval(data.HeartbeatInterval())
 	}
 
-	if s.GetRawHeartbeatTimeout() == nil {
+	if data.GetRawHeartbeatTimeout() != nil {
 		s.SetHeartbeatTimeout(data.HeartbeatTimeout())
 	}
 

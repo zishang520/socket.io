@@ -79,7 +79,7 @@ func (c *ConnectionStateRecovery) GetRawMaxDisconnectionDuration() *int64 {
 }
 func (c *ConnectionStateRecovery) MaxDisconnectionDuration() int64 {
 	if c.maxDisconnectionDuration == nil {
-		return 120000
+		return 120_000
 	}
 
 	return *c.maxDisconnectionDuration
@@ -109,73 +109,73 @@ func (s *ServerOptions) Assign(data ServerOptionsInterface) (ServerOptionsInterf
 		return s, nil
 	}
 
-	if s.GetRawPingTimeout() == nil {
+	if data.GetRawPingTimeout() != nil {
 		s.SetPingTimeout(data.PingTimeout())
 	}
-	if s.GetRawPingInterval() == nil {
+	if data.GetRawPingInterval() != nil {
 		s.SetPingInterval(data.PingInterval())
 	}
-	if s.GetRawUpgradeTimeout() == nil {
+	if data.GetRawUpgradeTimeout() != nil {
 		s.SetUpgradeTimeout(data.UpgradeTimeout())
 	}
-	if s.GetRawMaxHttpBufferSize() == nil {
+	if data.GetRawMaxHttpBufferSize() != nil {
 		s.SetMaxHttpBufferSize(data.MaxHttpBufferSize())
 	}
-	if s.GetRawAllowRequest() == nil {
+	if data.GetRawAllowRequest() != nil {
 		s.SetAllowRequest(data.AllowRequest())
 	}
-	if s.GetRawTransports() == nil {
+	if data.GetRawTransports() != nil {
 		s.SetTransports(data.Transports())
 	}
-	if s.GetRawAllowUpgrades() == nil {
+	if data.GetRawAllowUpgrades() != nil {
 		s.SetAllowUpgrades(data.AllowUpgrades())
 	}
-	if s.GetRawPerMessageDeflate() == nil {
+	if data.GetRawPerMessageDeflate() != nil {
 		s.SetPerMessageDeflate(data.PerMessageDeflate())
 	}
-	if s.GetRawHttpCompression() == nil {
+	if data.GetRawHttpCompression() != nil {
 		s.SetHttpCompression(data.HttpCompression())
 	}
-	if s.GetRawInitialPacket() == nil {
+	if data.GetRawInitialPacket() != nil {
 		s.SetInitialPacket(data.InitialPacket())
 	}
-	if s.GetRawCookie() == nil {
+	if data.GetRawCookie() != nil {
 		s.SetCookie(data.Cookie())
 	}
-	if s.GetRawCors() == nil {
+	if data.GetRawCors() != nil {
 		s.SetCors(data.Cors())
 	}
-	if s.GetRawAllowEIO3() == nil {
+	if data.GetRawAllowEIO3() != nil {
 		s.SetAllowEIO3(data.AllowEIO3())
 	}
-	if s.GetRawPath() == nil {
+	if data.GetRawPath() != nil {
 		s.SetPath(data.Path())
 	}
-	if s.GetRawDestroyUpgradeTimeout() == nil {
+	if data.GetRawDestroyUpgradeTimeout() != nil {
 		s.SetDestroyUpgradeTimeout(data.DestroyUpgradeTimeout())
 	}
-	if s.GetRawDestroyUpgrade() == nil {
+	if data.GetRawDestroyUpgrade() != nil {
 		s.SetDestroyUpgrade(data.DestroyUpgrade())
 	}
-	if s.GetRawAddTrailingSlash() == nil {
+	if data.GetRawAddTrailingSlash() != nil {
 		s.SetAddTrailingSlash(data.AddTrailingSlash())
 	}
-	if s.GetRawServeClient() == nil {
+	if data.GetRawServeClient() != nil {
 		s.SetServeClient(data.ServeClient())
 	}
-	if s.GetRawAdapter() == nil {
+	if data.GetRawAdapter() != nil {
 		s.SetAdapter(data.Adapter())
 	}
-	if s.GetRawParser() == nil {
+	if data.GetRawParser() != nil {
 		s.SetParser(data.Parser())
 	}
-	if s.GetRawConnectTimeout() == nil {
+	if data.GetRawConnectTimeout() != nil {
 		s.SetConnectTimeout(data.ConnectTimeout())
 	}
-	if s.GetRawConnectionStateRecovery() == nil {
+	if data.GetRawConnectionStateRecovery() != nil {
 		s.SetConnectionStateRecovery(data.ConnectionStateRecovery())
 	}
-	if s.GetRawCleanupEmptyChildNamespaces() == nil {
+	if data.GetRawCleanupEmptyChildNamespaces() != nil {
 		s.SetCleanupEmptyChildNamespaces(data.CleanupEmptyChildNamespaces())
 	}
 
