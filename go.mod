@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	github.com/andybalholm/brotli v1.1.1
-	github.com/zishang520/engine.io-go-parser v1.3.1
+	github.com/zishang520/engine.io-go-parser v1.3.2
 	github.com/zishang520/engine.io/v2 v2.4.4
 	github.com/zishang520/socket.io-go-parser/v2 v2.4.2
 )
