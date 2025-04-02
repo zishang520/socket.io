@@ -3,7 +3,6 @@ package socket
 import (
 	"compress/flate"
 	"compress/gzip"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -306,7 +305,7 @@ func (s *Server) Attach(srv any, opts *ServerOptions) *Server {
 	case *types.HttpServer:
 		server = address
 	default:
-		panic(errors.New(fmt.Sprintf("You are trying to attach socket.io to an express request handler %T. Please pass a *types.HttpServer instance.", address)))
+		panic(fmt.Errorf("trying to attach socket.io to express request handler %T, please pass a *types.HttpServer instance", address))
 	}
 	if opts == nil {
 		opts = DefaultServerOptions()

@@ -174,7 +174,7 @@ func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
 //	})
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	if SOCKET_RESERVED_EVENTS.Has(ev) {
-		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
+		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 	// set up packet object
 	data := append([]any{ev}, args...)
@@ -273,7 +273,7 @@ func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(Ack) {
 // Deprecated: this method will be removed in the next major release, please use [Server#ServerSideEmit] or [FetchSockets] instead.
 func (b *BroadcastOperator) AllSockets() (*types.Set[SocketId], error) {
 	if b.adapter == nil {
-		return nil, errors.New("No adapter for this namespace, are you trying to get the list of clients of a dynamic namespace?")
+		return nil, errors.New("no adapter for this namespace, are you trying to get the list of clients of a dynamic namespace?")
 	}
 	return b.adapter.Sockets(b.rooms), nil
 }
@@ -313,8 +313,8 @@ func (b *BroadcastOperator) FetchSockets() func(func([]*RemoteSocket, error)) {
 			for _, socket := range sockets {
 				if s, ok := socket.(*RemoteSocket); ok {
 					remoteSockets = append(remoteSockets, s)
-				} else if sd, sd_ok := socket.(SocketDetails); sd_ok {
-					remoteSockets = append(remoteSockets, NewRemoteSocket(b.adapter, sd))
+				} else {
+					remoteSockets = append(remoteSockets, NewRemoteSocket(b.adapter, socket))
 				}
 			}
 			callback(remoteSockets, err)

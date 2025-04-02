@@ -1,7 +1,6 @@
 package socket
 
 import (
-	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -274,7 +273,7 @@ func (n *namespace) Add(client *Client, auth any, fn func(*Socket)) {
 	}
 	n.run(socket, func(err *ExtendedError) {
 		go func() {
-			if "open" != client.conn.ReadyState() {
+			if client.conn.ReadyState() != "open" {
 				namespace_log.Debug("next called after client was closed - ignoring socket")
 				socket._cleanup()
 				return
@@ -460,7 +459,7 @@ func (n *namespace) Write(args ...any) Namespace {
 // Param: args - an slice of arguments, which may include an acknowledgement callback at the end
 func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 	if NAMESPACE_RESERVED_EVENTS.Has(ev) {
-		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
+		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
 	return n.Proto().Adapter().ServerSideEmit(append([]any{ev}, args...))

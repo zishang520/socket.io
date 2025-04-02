@@ -151,7 +151,7 @@ func (c *Client) _remove(socket *Socket) {
 
 // Closes the underlying connection.
 func (c *Client) close() {
-	if "open" == c.conn.ReadyState() {
+	if c.conn.ReadyState() == "open" {
 		client_log.Debug("forcing transport close")
 		c.conn.Close(false)
 		c.onclose("forced server close")

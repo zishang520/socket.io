@@ -152,7 +152,9 @@ func TestSetAndGetConnectTimeout(t *testing.T) {
 	rawTimeout := opts.GetRawConnectTimeout()
 	if rawTimeout == nil {
 		t.Error("Expected GetRawConnectTimeout to return non-nil value")
+		return
 	}
+
 	if *rawTimeout != testTimeout {
 		t.Errorf("GetRawConnectTimeout() = %v, want %v", *rawTimeout, testTimeout)
 	}
@@ -184,6 +186,7 @@ func TestSetAndGetCleanupEmptyChildNamespaces(t *testing.T) {
 	rawValue := opts.GetRawCleanupEmptyChildNamespaces()
 	if rawValue == nil {
 		t.Error("Expected GetRawCleanupEmptyChildNamespaces to return non-nil value")
+		return
 	}
 	if *rawValue != true {
 		t.Error("Expected GetRawCleanupEmptyChildNamespaces to return true")
@@ -252,6 +255,7 @@ func TestMaxDisconnectionDurationOperations(t *testing.T) {
 	rawDuration := recovery.GetRawMaxDisconnectionDuration()
 	if rawDuration == nil {
 		t.Error("Expected GetRawMaxDisconnectionDuration to return non-nil value")
+		return
 	}
 	if *rawDuration != testDuration {
 		t.Errorf("GetRawMaxDisconnectionDuration() = %v, want %v", *rawDuration, testDuration)
@@ -289,6 +293,7 @@ func TestConnectionStateRecoverySkipMiddlewaresOperations(t *testing.T) {
 	rawValue := recovery.GetRawSkipMiddlewares()
 	if rawValue == nil {
 		t.Error("Expected GetRawSkipMiddlewares to return non-nil value")
+		return
 	}
 	if *rawValue != true {
 		t.Error("Expected GetRawSkipMiddlewares to return true")

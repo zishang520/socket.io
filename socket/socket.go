@@ -279,7 +279,7 @@ func (s *Socket) buildHandshake(auth any) *Handshake {
 //	})
 func (s *Socket) Emit(ev string, args ...any) error {
 	if SOCKET_RESERVED_EVENTS.Has(ev) {
-		return errors.New(fmt.Sprintf(`"%s" is a reserved event name`, ev))
+		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 	data := append([]any{ev}, args...)
 	data_len := len(data)
@@ -455,7 +455,6 @@ func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
 	if opts == nil {
 		opts = &BroadcastFlags{}
 	}
-	opts.Compress = false != opts.Compress
 	s.client._packet(packet, &opts.WriteOptions)
 }
 
