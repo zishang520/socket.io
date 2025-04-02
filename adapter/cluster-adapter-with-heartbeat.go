@@ -59,6 +59,10 @@ func (a *clusterAdapterWithHeartbeat) SetOpts(opts any) {
 	if options, ok := opts.(ClusterAdapterOptionsInterface); ok {
 		a._opts.Assign(options)
 	}
+}
+
+func (a *clusterAdapterWithHeartbeat) Construct(nsp socket.Namespace) {
+	a.ClusterAdapter.Construct(nsp)
 
 	if a._opts.GetRawHeartbeatInterval() == nil {
 		a._opts.SetHeartbeatInterval(5_000 * time.Millisecond)
@@ -67,10 +71,7 @@ func (a *clusterAdapterWithHeartbeat) SetOpts(opts any) {
 	if a._opts.GetRawHeartbeatTimeout() == nil {
 		a._opts.SetHeartbeatTimeout(10_000)
 	}
-}
 
-func (a *clusterAdapterWithHeartbeat) Construct(nsp socket.Namespace) {
-	a.ClusterAdapter.Construct(nsp)
 	a.cleanupTimer.Store(utils.SetInterval(func() {
 		now := time.Now().UnixMilli()
 		a.nodesMap.Range(func(uid ServerId, lastSeen int64) bool {
