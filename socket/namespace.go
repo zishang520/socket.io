@@ -268,11 +268,10 @@ func (n *namespace) Except(room ...Room) *BroadcastOperator {
 func (n *namespace) Add(client *Client, auth any, fn func(*Socket)) {
 	namespace_log.Debug("adding socket to nsp %s", n.name)
 	socket := n._createSocket(client, auth)
-	if n.server.Opts().ConnectionStateRecovery().SkipMiddlewares() && socket.Recovered() && client.Conn().ReadyState() == "open" {
+	if connectionStateRecovery := n.server.Opts().ConnectionStateRecovery(); connectionStateRecovery != nil && connectionStateRecovery.SkipMiddlewares() && socket.Recovered() && client.Conn().ReadyState() == "open" {
 		n._doConnect(socket, fn)
 		return
 	}
-	// socket := NewSocket(n, client, query)
 	n.run(socket, func(err *ExtendedError) {
 		go func() {
 			if "open" != client.conn.ReadyState() {

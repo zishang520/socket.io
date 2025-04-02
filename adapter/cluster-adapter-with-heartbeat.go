@@ -59,6 +59,14 @@ func (a *clusterAdapterWithHeartbeat) SetOpts(opts any) {
 	if options, ok := opts.(ClusterAdapterOptionsInterface); ok {
 		a._opts.Assign(options)
 	}
+
+	if a._opts.GetRawHeartbeatInterval() == nil {
+		a._opts.SetHeartbeatInterval(5_000 * time.Millisecond)
+	}
+
+	if a._opts.GetRawHeartbeatTimeout() == nil {
+		a._opts.SetHeartbeatTimeout(10_000)
+	}
 }
 
 func (a *clusterAdapterWithHeartbeat) Construct(nsp socket.Namespace) {

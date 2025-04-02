@@ -49,7 +49,11 @@ func NewSessionAwareAdapter(nsp Namespace) SessionAwareAdapter {
 
 func (s *sessionAwareAdapter) Construct(nsp Namespace) {
 	s.Adapter.Construct(nsp)
-	s.maxDisconnectionDuration = nsp.Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration()
+	if connectionStateRecovery := nsp.Server().Opts().ConnectionStateRecovery(); connectionStateRecovery != nil {
+		s.maxDisconnectionDuration = connectionStateRecovery.MaxDisconnectionDuration()
+	} else {
+		s.maxDisconnectionDuration = 2 * 60 * 1000
+	}
 
 	timer := utils.SetInterval(func() {
 		threshold := time.Now().UnixMilli() - s.maxDisconnectionDuration

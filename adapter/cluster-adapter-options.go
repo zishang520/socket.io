@@ -55,7 +55,7 @@ func (s *ClusterAdapterOptions) GetRawHeartbeatInterval() *time.Duration {
 }
 func (s *ClusterAdapterOptions) HeartbeatInterval() time.Duration {
 	if s.heartbeatInterval == nil {
-		return time.Duration(5_000 * time.Millisecond)
+		return 0
 	}
 
 	return *s.heartbeatInterval
@@ -69,7 +69,7 @@ func (s *ClusterAdapterOptions) GetRawHeartbeatTimeout() *int64 {
 }
 func (s *ClusterAdapterOptions) HeartbeatTimeout() int64 {
 	if s.heartbeatTimeout == nil {
-		return 10_000
+		return 0
 	}
 
 	return *s.heartbeatTimeout

@@ -131,8 +131,16 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 		opts = DefaultServerOptions()
 	}
 
-	s.SetPath(opts.Path())
-	s.SetConnectTimeout(opts.ConnectTimeout())
+	if opts.GetRawPath() != nil {
+		s.SetPath(opts.Path())
+	} else {
+		s.SetPath("/socket.io")
+	}
+	if opts.GetRawConnectTimeout() != nil {
+		s.SetConnectTimeout(opts.ConnectTimeout())
+	} else {
+		s.SetConnectTimeout(45_000 * time.Millisecond)
+	}
 	s.SetServeClient(opts.ServeClient())
 	if opts.GetRawParser() != nil {
 		s._parser = opts.Parser()
@@ -140,16 +148,22 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 		s._parser = parser.NewParser()
 	}
 	s.encoder = s._parser.NewEncoder()
-	s.opts = opts
 	if opts.GetRawAdapter() != nil {
 		s.SetAdapter(opts.Adapter())
 	} else {
-		if opts.GetRawConnectionStateRecovery() != nil {
+		if connectionStateRecovery := opts.ConnectionStateRecovery(); connectionStateRecovery != nil {
+			if connectionStateRecovery.GetRawMaxDisconnectionDuration() == nil {
+				connectionStateRecovery.SetMaxDisconnectionDuration(2 * 60 * 1000)
+			}
+			if connectionStateRecovery.GetRawSkipMiddlewares() == nil {
+				connectionStateRecovery.SetSkipMiddlewares(true)
+			}
 			s.SetAdapter(&SessionAwareAdapterBuilder{})
 		} else {
 			s.SetAdapter(&AdapterBuilder{})
 		}
 	}
+	s.opts = opts
 	s.sockets = s.Of("/", nil)
 
 	s.StrictEventEmitter = s.sockets.EventEmitter()

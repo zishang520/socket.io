@@ -80,57 +80,10 @@ func (s *ServerOptions) Assign(data ServerOptionsInterface) ServerOptionsInterfa
 		return s
 	}
 
-	if data.GetRawPingTimeout() != nil {
-		s.SetPingTimeout(data.PingTimeout())
-	}
-	if data.GetRawPingInterval() != nil {
-		s.SetPingInterval(data.PingInterval())
-	}
-	if data.GetRawUpgradeTimeout() != nil {
-		s.SetUpgradeTimeout(data.UpgradeTimeout())
-	}
-	if data.GetRawMaxHttpBufferSize() != nil {
-		s.SetMaxHttpBufferSize(data.MaxHttpBufferSize())
-	}
-	if data.GetRawAllowRequest() != nil {
-		s.SetAllowRequest(data.AllowRequest())
-	}
-	if data.GetRawTransports() != nil {
-		s.SetTransports(data.Transports())
-	}
-	if data.GetRawAllowUpgrades() != nil {
-		s.SetAllowUpgrades(data.AllowUpgrades())
-	}
-	if data.GetRawPerMessageDeflate() != nil {
-		s.SetPerMessageDeflate(data.PerMessageDeflate())
-	}
-	if data.GetRawHttpCompression() != nil {
-		s.SetHttpCompression(data.HttpCompression())
-	}
-	if data.GetRawInitialPacket() != nil {
-		s.SetInitialPacket(data.InitialPacket())
-	}
-	if data.GetRawCookie() != nil {
-		s.SetCookie(data.Cookie())
-	}
-	if data.GetRawCors() != nil {
-		s.SetCors(data.Cors())
-	}
-	if data.GetRawAllowEIO3() != nil {
-		s.SetAllowEIO3(data.AllowEIO3())
-	}
-	if data.GetRawPath() != nil {
-		s.SetPath(data.Path())
-	}
-	if data.GetRawDestroyUpgradeTimeout() != nil {
-		s.SetDestroyUpgradeTimeout(data.DestroyUpgradeTimeout())
-	}
-	if data.GetRawDestroyUpgrade() != nil {
-		s.SetDestroyUpgrade(data.DestroyUpgrade())
-	}
-	if data.GetRawAddTrailingSlash() != nil {
-		s.SetAddTrailingSlash(data.AddTrailingSlash())
-	}
+	s.ServerOptions.Assign(data)
+
+	s.AttachOptions.Assign(data)
+
 	if data.GetRawServeClient() != nil {
 		s.SetServeClient(data.ServeClient())
 	}
@@ -161,7 +114,7 @@ func (c *ConnectionStateRecovery) GetRawMaxDisconnectionDuration() *int64 {
 }
 func (c *ConnectionStateRecovery) MaxDisconnectionDuration() int64 {
 	if c.maxDisconnectionDuration == nil {
-		return 120_000
+		return 0
 	}
 
 	return *c.maxDisconnectionDuration
@@ -175,18 +128,10 @@ func (c *ConnectionStateRecovery) GetRawSkipMiddlewares() *bool {
 }
 func (c *ConnectionStateRecovery) SkipMiddlewares() bool {
 	if c.skipMiddlewares == nil {
-		return true
+		return false
 	}
 
 	return *c.skipMiddlewares
-}
-
-func (s *ServerOptions) Path() string {
-	if s.GetRawPath() == nil {
-		return "/socket.io"
-	}
-
-	return s.AttachOptions.Path()
 }
 
 func (s *ServerOptions) SetServeClient(serveClient bool) {
@@ -197,7 +142,7 @@ func (s *ServerOptions) GetRawServeClient() *bool {
 }
 func (s *ServerOptions) ServeClient() bool {
 	if s.serveClient == nil {
-		return true
+		return false
 	}
 
 	return *s.serveClient
@@ -210,9 +155,6 @@ func (s *ServerOptions) GetRawAdapter() AdapterConstructor {
 	return s.adapter
 }
 func (s *ServerOptions) Adapter() AdapterConstructor {
-	if s.adapter == nil {
-		return &AdapterBuilder{}
-	}
 	return s.adapter
 }
 
@@ -223,9 +165,6 @@ func (s *ServerOptions) GetRawParser() parser.Parser {
 	return s.parser
 }
 func (s *ServerOptions) Parser() parser.Parser {
-	if s.parser == nil {
-		return parser.NewParser()
-	}
 	return s.parser
 }
 
@@ -237,7 +176,7 @@ func (s *ServerOptions) GetRawConnectTimeout() *time.Duration {
 }
 func (s *ServerOptions) ConnectTimeout() time.Duration {
 	if s.connectTimeout == nil {
-		return time.Duration(45_000 * time.Millisecond)
+		return 0
 	}
 
 	return *s.connectTimeout
@@ -250,10 +189,6 @@ func (s *ServerOptions) GetRawConnectionStateRecovery() *ConnectionStateRecovery
 	return s.connectionStateRecovery
 }
 func (s *ServerOptions) ConnectionStateRecovery() *ConnectionStateRecovery {
-	if s.connectionStateRecovery == nil {
-		return &ConnectionStateRecovery{}
-	}
-
 	return s.connectionStateRecovery
 }
 
