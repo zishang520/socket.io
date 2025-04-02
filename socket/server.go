@@ -147,6 +147,7 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 		s._parser = parser.NewParser()
 	}
 	s.encoder = s._parser.NewEncoder()
+	s.opts = opts
 	if opts.GetRawAdapter() != nil {
 		s.SetAdapter(opts.Adapter())
 	} else {
@@ -162,7 +163,6 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 			s.SetAdapter(&AdapterBuilder{})
 		}
 	}
-	s.opts = opts
 	s.sockets = s.Of("/", nil)
 
 	s.StrictEventEmitter = s.sockets.EventEmitter()
