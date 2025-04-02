@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
 	"github.com/zishang520/engine.io/v2/engine"
 	"github.com/zishang520/engine.io/v2/events"
 	"github.com/zishang520/engine.io/v2/log"
@@ -440,17 +441,17 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	}
 	defer file.Close()
 
-	encoding := utils.Contains(r.Header.Get("Accept-Encoding"), []string{"gzip", "deflate", "br" /*, "zstd"*/})
+	encoding := utils.Contains(r.Header.Get("Accept-Encoding"), []string{"gzip", "deflate", "br", "zstd"})
 
 	switch encoding {
 	case "br":
-		br := brotli.NewWriterLevel(w, 1)
+		br := brotli.NewWriterLevel(w, brotli.DefaultCompression)
 		defer br.Close()
 		w.Header().Set("Content-Encoding", "br")
 		w.WriteHeader(http.StatusOK)
 		io.Copy(br, file)
 	case "gzip":
-		gz, err := gzip.NewWriterLevel(w, 1)
+		gz, err := gzip.NewWriterLevel(w, gzip.DefaultCompression)
 		if err != nil {
 			server_log.Debug("Failed to compress data: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -461,7 +462,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusOK)
 		io.Copy(gz, file)
 	case "deflate":
-		fl, err := flate.NewWriter(w, 1)
+		fl, err := flate.NewWriter(w, flate.DefaultCompression)
 		if err != nil {
 			server_log.Debug("Failed to compress data: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -471,13 +472,17 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 		w.Header().Set("Content-Encoding", "deflate")
 		w.WriteHeader(http.StatusOK)
 		io.Copy(fl, file)
-
-		// TODO: Implement zstd support.
-		// Go's standard library does not yet support zstd compression (see issue: https://github.com/golang/go/issues/62513).
-		// Consider using the klauspost/compress library for a high-performance implementation:
-		// https://github.com/klauspost/compress/tree/master/zstd
-		// case "zstd":
-
+	case "zstd":
+		zd, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedDefault))
+		if err != nil {
+			server_log.Debug("Failed to compress data: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		defer zd.Close()
+		w.Header().Set("Content-Encoding", "zstd")
+		w.WriteHeader(http.StatusOK)
+		io.Copy(zd, file)
 	default:
 		w.WriteHeader(http.StatusOK)
 		io.Copy(w, file)

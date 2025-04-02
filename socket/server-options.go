@@ -71,42 +71,13 @@ type (
 	}
 )
 
-func (c *ConnectionStateRecovery) SetMaxDisconnectionDuration(maxDisconnectionDuration int64) {
-	c.maxDisconnectionDuration = &maxDisconnectionDuration
-}
-func (c *ConnectionStateRecovery) GetRawMaxDisconnectionDuration() *int64 {
-	return c.maxDisconnectionDuration
-}
-func (c *ConnectionStateRecovery) MaxDisconnectionDuration() int64 {
-	if c.maxDisconnectionDuration == nil {
-		return 120_000
-	}
-
-	return *c.maxDisconnectionDuration
-}
-
-func (c *ConnectionStateRecovery) SetSkipMiddlewares(skipMiddlewares bool) {
-	c.skipMiddlewares = &skipMiddlewares
-}
-func (c *ConnectionStateRecovery) GetRawSkipMiddlewares() *bool {
-	return c.skipMiddlewares
-}
-func (c *ConnectionStateRecovery) SkipMiddlewares() bool {
-	if c.skipMiddlewares == nil {
-		return true
-	}
-
-	return *c.skipMiddlewares
-}
-
 func DefaultServerOptions() *ServerOptions {
-	a := &ServerOptions{}
-	return a
+	return &ServerOptions{}
 }
 
-func (s *ServerOptions) Assign(data ServerOptionsInterface) (ServerOptionsInterface, error) {
+func (s *ServerOptions) Assign(data ServerOptionsInterface) ServerOptionsInterface {
 	if data == nil {
-		return s, nil
+		return s
 	}
 
 	if data.GetRawPingTimeout() != nil {
@@ -179,7 +150,35 @@ func (s *ServerOptions) Assign(data ServerOptionsInterface) (ServerOptionsInterf
 		s.SetCleanupEmptyChildNamespaces(data.CleanupEmptyChildNamespaces())
 	}
 
-	return s, nil
+	return s
+}
+
+func (c *ConnectionStateRecovery) SetMaxDisconnectionDuration(maxDisconnectionDuration int64) {
+	c.maxDisconnectionDuration = &maxDisconnectionDuration
+}
+func (c *ConnectionStateRecovery) GetRawMaxDisconnectionDuration() *int64 {
+	return c.maxDisconnectionDuration
+}
+func (c *ConnectionStateRecovery) MaxDisconnectionDuration() int64 {
+	if c.maxDisconnectionDuration == nil {
+		return 120_000
+	}
+
+	return *c.maxDisconnectionDuration
+}
+
+func (c *ConnectionStateRecovery) SetSkipMiddlewares(skipMiddlewares bool) {
+	c.skipMiddlewares = &skipMiddlewares
+}
+func (c *ConnectionStateRecovery) GetRawSkipMiddlewares() *bool {
+	return c.skipMiddlewares
+}
+func (c *ConnectionStateRecovery) SkipMiddlewares() bool {
+	if c.skipMiddlewares == nil {
+		return true
+	}
+
+	return *c.skipMiddlewares
 }
 
 func (s *ServerOptions) Path() string {

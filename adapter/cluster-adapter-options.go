@@ -32,9 +32,9 @@ func DefaultClusterAdapterOptions() *ClusterAdapterOptions {
 	return &ClusterAdapterOptions{}
 }
 
-func (s *ClusterAdapterOptions) Assign(data ClusterAdapterOptionsInterface) (ClusterAdapterOptionsInterface, error) {
+func (s *ClusterAdapterOptions) Assign(data ClusterAdapterOptionsInterface) ClusterAdapterOptionsInterface {
 	if data == nil {
-		return s, nil
+		return s
 	}
 	if data.GetRawHeartbeatInterval() != nil {
 		s.SetHeartbeatInterval(data.HeartbeatInterval())
@@ -44,7 +44,7 @@ func (s *ClusterAdapterOptions) Assign(data ClusterAdapterOptionsInterface) (Clu
 		s.SetHeartbeatTimeout(data.HeartbeatTimeout())
 	}
 
-	return s, nil
+	return s
 }
 
 func (s *ClusterAdapterOptions) SetHeartbeatInterval(heartbeatInterval time.Duration) {
