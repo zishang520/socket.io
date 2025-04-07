@@ -6,7 +6,7 @@ require (
 	github.com/andybalholm/brotli v1.1.1
 	github.com/klauspost/compress v1.18.0
 	github.com/zishang520/engine.io-go-parser v1.3.2
-	github.com/zishang520/engine.io/v2 v2.4.9
+	github.com/zishang520/engine.io/v2 v2.4.10
 	github.com/zishang520/socket.io-go-parser/v2 v2.4.4
 )
 
