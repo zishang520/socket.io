@@ -384,7 +384,7 @@ func (s *Server) attachServe(srv *types.HttpServer, egs engine.Server, opts Serv
 				s.serve(w, r)
 			}
 		} else {
-			if opts.AddTrailingSlash() {
+			if opts.GetRawAddTrailingSlash() == nil || opts.AddTrailingSlash() {
 				egs.ServeHTTP(w, r)
 			} else {
 				srv.DefaultHandler.ServeHTTP(w, r)
