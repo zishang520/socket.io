@@ -9,7 +9,7 @@ Socket.IO enables real-time bidirectional event-based communication. It consists
 
 - **Support Socket.IO v4+ 🚀🚀🚀**
 - a Golang server (this repository)
-- a [Javascript client library](https://github.com/socketio/socket.io-client) for the browser (or a Node.js client)
+- a [Golang client library](https://github.com/zishang520/socket.io-client-go)
 
 Some implementations in other languages are also available:
 
@@ -19,6 +19,7 @@ Some implementations in other languages are also available:
 - [Dart](https://github.com/rikulo/socket.io-client-dart)
 - [Python](https://github.com/miguelgrinberg/python-socketio)
 - [.NET](https://github.com/doghappy/socket.io-client-csharp)
+- [Golang](https://github.com/zishang520/socket.io-client-go)
 
 Its main features are:
 
@@ -32,7 +33,7 @@ For this purpose, it relies on [Engine.IO for golang](https://github.com/zishang
 
 #### Auto-reconnection support
 
-Unless instructed otherwise a disconnected client will try to reconnect forever, until the server is available again. Please see the available reconnection options [here](https://socket.io/docs/v3/client-api/#new-Manager-url-options).
+Unless instructed otherwise a disconnected client will try to reconnect forever, until the server is available again. Please see the available reconnection options [here](https://pkg.go.dev/github.com/zishang520/socket.io-client-go/socket#Options).
 
 #### Disconnection detection
 
