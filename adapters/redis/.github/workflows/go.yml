@@ -1,0 +1,45 @@
+name: Go
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli -a root ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 3
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: "1.24.x"
+
+      - name: Wait for Redis to be ready
+        run: |
+          for i in {1..10}; do
+            if echo "PING" | nc -w 2 localhost 6379 > /dev/null; then
+              echo "Redis is ready";
+              break;
+            fi;
+            echo "Waiting for Redis...";
+            sleep 3;
+          done
+
+      - name: Test
+        env:
+          REDIS_HOST: "localhost"
+          REDIS_PORT: "6379"
+          REDIS_PASSWORD: "root"
+        run: go test -v ./...
