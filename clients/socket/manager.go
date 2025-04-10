@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/clients/engine/v3"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
-	tools "github.com/zishang520/socket.io/servers/engine/v3/utils"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	tools "github.com/zishang520/socket.io/v3/pkg/utils"
 	"github.com/zishang520/socket.io/clients/socket/v3/utils"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 )

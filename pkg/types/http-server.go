@@ -3,13 +3,13 @@ package types
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/zishang520/socket.io/servers/engine/v3/errors"
 	"github.com/zishang520/webtransport-go"
 )
 
@@ -74,7 +74,7 @@ func (s *HttpServer) Close(fn func(error)) (err error) {
 		case *webtransport.Server:
 			serverErr = srv.Close()
 		default:
-			serverErr = errors.New("unknown server type").Err()
+			serverErr = errors.New("unknown server type")
 		}
 		if serverErr != nil && closingErr == nil {
 			closingErr = serverErr

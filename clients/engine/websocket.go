@@ -13,7 +13,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 // WebSocket implements the WebSocket transport for Engine.IO.

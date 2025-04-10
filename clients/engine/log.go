@@ -1,7 +1,7 @@
 // Package engine implements the Engine.IO client transport layer.
 package engine
 
-import "github.com/zishang520/socket.io/servers/engine/v3/log"
+import "github.com/zishang520/socket.io/v3/pkg/log"
 
 // Log implements formatted logging for Engine.IO components.
 type Log struct {

@@ -26,8 +26,8 @@ import (
     "log"
     "time"
     eio "github.com/zishang520/socket.io/clients/engine/v3"
-    "github.com/zishang520/socket.io/servers/engine/v3/utils"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
+    "github.com/zishang520/socket.io/v3/pkg/utils"
+    "github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 func main() {
@@ -60,7 +60,7 @@ package main
 import (
     "github.com/zishang520/socket.io/clients/engine/v3"
     "github.com/zishang520/socket.io/clients/engine/v3/transports"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
+    "github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 func main() {

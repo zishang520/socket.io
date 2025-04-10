@@ -11,11 +11,10 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/config"
 	"github.com/zishang520/socket.io/servers/engine/v3/errors"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
-	"github.com/zishang520/socket.io/servers/engine/v3/utils"
-	webtrans "github.com/zishang520/socket.io/servers/engine/v3/webtransport"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
+	webtrans "github.com/zishang520/socket.io/v3/pkg/webtransport"
 	"github.com/zishang520/webtransport-go"
 )
 
@@ -61,7 +60,7 @@ func (s *server) CreateTransport(transportName string, ctx *types.HttpContext) (
 	if transport, ok := transports.Transports()[transportName]; ok {
 		return transport.New(ctx), nil
 	}
-	return nil, errors.New("unsupported transportName").Err()
+	return nil, errors.ErrUnsupportedTransport
 }
 
 // Handles an Engine.IO HTTP request.
@@ -108,7 +107,7 @@ func (s *server) HandleUpgrade(ctx *types.HttpContext) {
 			return
 		}
 
-		wsc := &types.WebSocketConn{EventEmitter: events.New()}
+		wsc := &types.WebSocketConn{EventEmitter: types.NewEventEmitter()}
 
 		ws := &websocket.Upgrader{
 			ReadBufferSize:    1024,
@@ -237,7 +236,7 @@ func (s *server) OnWebTransportSession(ctx *types.HttpContext, wt *webtransport.
 	wtc := webtrans.NewConn(session, stream, true, 0, 0, nil, nil, nil)
 	wtc.SetReadLimit(s.Opts().MaxHttpBufferSize())
 
-	ctx.WebTransport = &types.WebTransportConn{EventEmitter: events.New(), Conn: wtc}
+	ctx.WebTransport = &types.WebTransportConn{EventEmitter: types.NewEventEmitter(), Conn: wtc}
 
 	mt, message, err := wtc.NextReader()
 	if err != nil {

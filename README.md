@@ -85,8 +85,8 @@ The following example attaches socket.io to a plain engine.io *types.CreateServe
 package main
 
 import (
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
-    "github.com/zishang520/socket.io/servers/engine/v3/utils"
+    "github.com/zishang520/socket.io/v3/pkg/types"
+    "github.com/zishang520/socket.io/v3/pkg/utils"
     "github.com/zishang520/socket.io/servers/socket/v3"
     "os"
     "os/signal"
@@ -184,8 +184,8 @@ import (
 
     "github.com/valyala/fasthttp"
     "github.com/valyala/fasthttp/fasthttpadaptor"
-    "github.com/zishang520/socket.io/servers/engine/v3/log"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
+    "github.com/zishang520/socket.io/v3/pkg/log"
+    "github.com/zishang520/socket.io/v3/pkg/types"
     "github.com/zishang520/socket.io/servers/socket/v3"
 )
 
@@ -258,8 +258,8 @@ import (
 
     "github.com/gofiber/fiber/v2"
     "github.com/gofiber/fiber/v2/middleware/adaptor"
-    "github.com/zishang520/socket.io/servers/engine/v3/log"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
+    "github.com/zishang520/socket.io/v3/pkg/log"
+    "github.com/zishang520/socket.io/v3/pkg/types"
     "github.com/zishang520/socket.io/servers/socket/v3"
 )
 
@@ -339,9 +339,9 @@ import (
 
     "github.com/gin-gonic/gin"
     "github.com/zishang520/socket.io/servers/engine/v3"
-    "github.com/zishang520/socket.io/servers/engine/v3/log"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
-    "github.com/zishang520/socket.io/servers/engine/v3/webtransport"
+    "github.com/zishang520/socket.io/v3/pkg/log"
+    "github.com/zishang520/socket.io/v3/pkg/types"
+    "github.com/zishang520/socket.io/v3/pkg/webtransport"
     "github.com/zishang520/socket.io/servers/socket/v3"
 )
 

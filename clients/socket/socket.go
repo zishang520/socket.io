@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
-	"github.com/zishang520/socket.io/servers/engine/v3/utils"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
@@ -97,10 +97,10 @@ type Socket struct {
 	subs atomic.Pointer[types.Slice[types.Callable]]
 
 	// _anyListeners stores listeners that catch all incoming events.
-	_anyListeners *types.Slice[events.Listener]
+	_anyListeners *types.Slice[types.EventListener]
 
 	// _anyOutgoingListeners stores listeners that catch all outgoing events.
-	_anyOutgoingListeners *types.Slice[events.Listener]
+	_anyOutgoingListeners *types.Slice[types.EventListener]
 }
 
 func MakeSocket() *Socket {
@@ -111,8 +111,8 @@ func MakeSocket() *Socket {
 		sendBuffer:            types.NewSlice[*Packet](),
 		_queue:                types.NewSlice[*QueuedPacket](),
 		acks:                  &types.Map[uint64, socket.Ack]{},
-		_anyListeners:         types.NewSlice[events.Listener](),
-		_anyOutgoingListeners: types.NewSlice[events.Listener](),
+		_anyListeners:         types.NewSlice[types.EventListener](),
+		_anyOutgoingListeners: types.NewSlice[types.EventListener](),
 	}
 
 	r.flags.Store(&Flags{})
@@ -606,7 +606,7 @@ func (s *Socket) emitEvent(args []any) {
 	for _, listener := range s._anyListeners.All() {
 		listener(args...)
 	}
-	s.EventEmitter.Emit(events.EventName(args[0].(string)), args[1:]...)
+	s.EventEmitter.Emit(types.EventName(args[0].(string)), args[1:]...)
 	if _pid := s._pid.Load(); _pid != nil && _pid != "" {
 		if args_len := len(args); args_len > 0 {
 			if lastOffset, ok := args[args_len-1].(string); ok {
@@ -794,7 +794,7 @@ func (s *Socket) Timeout(timeout time.Duration) *Socket {
 //	socket.OnAny(func(...any) {
 //	  fmt.Println("got event")
 //	})
-func (s *Socket) OnAny(listener events.Listener) *Socket {
+func (s *Socket) OnAny(listener types.EventListener) *Socket {
 	s._anyListeners.Push(listener)
 	return s
 }
@@ -808,7 +808,7 @@ func (s *Socket) OnAny(listener events.Listener) *Socket {
 //	socket.PrependAny(func(...any) {
 //	  fmt.Println("got event")
 //	})
-func (s *Socket) PrependAny(listener events.Listener) *Socket {
+func (s *Socket) PrependAny(listener types.EventListener) *Socket {
 	s._anyListeners.Unshift(listener)
 	return s
 }
@@ -829,10 +829,10 @@ func (s *Socket) PrependAny(listener events.Listener) *Socket {
 //
 //	// or remove all listeners
 //	socket.OffAny()
-func (s *Socket) OffAny(listener events.Listener) *Socket {
+func (s *Socket) OffAny(listener types.EventListener) *Socket {
 	if listener != nil {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
-		s._anyListeners.RangeAndSplice(func(_listener events.Listener, i int) (bool, int, int, []events.Listener) {
+		s._anyListeners.RangeAndSplice(func(_listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
 			return reflect.ValueOf(listener).Pointer() == listenerPointer, i, 1, nil
 		})
 	} else {
@@ -843,7 +843,7 @@ func (s *Socket) OffAny(listener events.Listener) *Socket {
 
 // ListenersAny returns an array of listeners that are listening for any event that is specified. This array can be manipulated,
 // e.g. to remove listeners.
-func (s *Socket) ListenersAny() []events.Listener {
+func (s *Socket) ListenersAny() []types.EventListener {
 	return s._anyListeners.All()
 }
 
@@ -858,7 +858,7 @@ func (s *Socket) ListenersAny() []events.Listener {
 //	socket.OnAnyOutgoing(func(...any) {
 //	  fmt.Println("sent event")
 //	})
-func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
+func (s *Socket) OnAnyOutgoing(listener types.EventListener) *Socket {
 	s._anyOutgoingListeners.Push(listener)
 	return s
 }
@@ -874,7 +874,7 @@ func (s *Socket) OnAnyOutgoing(listener events.Listener) *Socket {
 //	socket.PrependAnyOutgoing(func(...any) {
 //	  fmt.Println("sent event")
 //	})
-func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
+func (s *Socket) PrependAnyOutgoing(listener types.EventListener) *Socket {
 	s._anyOutgoingListeners.Unshift(listener)
 	return s
 }
@@ -895,10 +895,10 @@ func (s *Socket) PrependAnyOutgoing(listener events.Listener) *Socket {
 //
 //	// or remove all listeners
 //	socket.OffAnyOutgoing()
-func (s *Socket) OffAnyOutgoing(listener events.Listener) *Socket {
+func (s *Socket) OffAnyOutgoing(listener types.EventListener) *Socket {
 	if listener != nil {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
-		s._anyOutgoingListeners.RangeAndSplice(func(_listener events.Listener, i int) (bool, int, int, []events.Listener) {
+		s._anyOutgoingListeners.RangeAndSplice(func(_listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
 			return reflect.ValueOf(listener).Pointer() == listenerPointer, i, 1, nil
 		})
 	} else {
@@ -909,7 +909,7 @@ func (s *Socket) OffAnyOutgoing(listener events.Listener) *Socket {
 
 // ListenersAnyOutgoing returns an array of listeners that are listening for any event that is specified. This array can be manipulated,
 // e.g. to remove listeners.
-func (s *Socket) ListenersAnyOutgoing() []events.Listener {
+func (s *Socket) ListenersAnyOutgoing() []types.EventListener {
 	return s._anyOutgoingListeners.All()
 }
 

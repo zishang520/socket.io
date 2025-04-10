@@ -3,8 +3,7 @@ package socket
 import (
 	"time"
 
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 type NamespaceMiddleware = func(*Socket, func(*ExtendedError))
@@ -59,11 +58,11 @@ type NamespaceMiddleware = func(*Socket, func(*ExtendedError))
 //		// ensure the socket has access to the "users" namespace
 //	})
 type Namespace interface {
-	On(string, ...events.Listener) error
-	Once(string, ...events.Listener) error
+	On(string, ...types.EventListener) error
+	Once(string, ...types.EventListener) error
 	EmitReserved(string, ...any)
 	EmitUntyped(string, ...any)
-	Listeners(string) []events.Listener
+	Listeners(string) []types.EventListener
 
 	// #prototype
 

@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 type (
@@ -14,7 +13,7 @@ type (
 	}
 
 	adapter struct {
-		events.EventEmitter
+		types.EventEmitter
 
 		// Prototype interface, used to implement interface method rewriting
 		_proto_ Adapter
@@ -32,7 +31,7 @@ func (*AdapterBuilder) New(nsp Namespace) Adapter {
 
 func MakeAdapter() Adapter {
 	a := &adapter{
-		EventEmitter: events.New(),
+		EventEmitter: types.NewEventEmitter(),
 
 		rooms: &types.Map[Room, *types.Set[SocketId]]{},
 		sids:  &types.Map[SocketId, *types.Set[Room]]{},

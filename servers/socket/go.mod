@@ -8,6 +8,7 @@ require (
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0
+	github.com/zishang520/socket.io/v3 v3.0.0
 )
 
 require (
@@ -38,3 +39,5 @@ replace github.com/zishang520/socket.io/parsers/socket/v3 => ../../parsers/socke
 replace github.com/zishang520/socket.io/servers/engine/v3 => ../../servers/engine
 
 replace github.com/zishang520/socket.io/parsers/engine/v3 => ../../parsers/engine
+
+replace github.com/zishang520/socket.io/v3 => ../../

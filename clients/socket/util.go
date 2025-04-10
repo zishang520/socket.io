@@ -3,11 +3,11 @@ package socket
 import (
 	"fmt"
 
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-func on(evt events.EventEmitter, ev events.EventName, fn events.Listener) types.Callable {
+func on(evt types.EventEmitter, ev types.EventName, fn types.EventListener) types.Callable {
 	evt.On(ev, fn)
 	return func() {
 		evt.RemoveListener(ev, fn)

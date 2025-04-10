@@ -24,8 +24,8 @@ import (
 
     "github.com/zishang520/socket.io/servers/engine/v3/config"
     "github.com/zishang520/socket.io/servers/engine/v3"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
-    "github.com/zishang520/socket.io/servers/engine/v3/utils"
+    "github.com/zishang520/socket.io/v3/pkg/types"
+    "github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 func main() {
@@ -82,8 +82,8 @@ import (
 
     "github.com/zishang520/socket.io/servers/engine/v3/config"
     "github.com/zishang520/socket.io/servers/engine/v3"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
-    "github.com/zishang520/socket.io/servers/engine/v3/utils"
+    "github.com/zishang520/socket.io/v3/pkg/types"
+    "github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 func main() {
@@ -142,8 +142,8 @@ import (
     "github.com/gorilla/websocket"
     "github.com/zishang520/socket.io/servers/engine/v3/config"
     "github.com/zishang520/socket.io/servers/engine/v3"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
-    "github.com/zishang520/socket.io/servers/engine/v3/utils"
+    "github.com/zishang520/socket.io/v3/pkg/types"
+    "github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 func main() {
@@ -213,8 +213,8 @@ import (
 
     "github.com/zishang520/socket.io/servers/engine/v3/config"
     "github.com/zishang520/socket.io/servers/engine/v3"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
-    "github.com/zishang520/socket.io/servers/engine/v3/utils"
+    "github.com/zishang520/socket.io/v3/pkg/types"
+    "github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 func main() {
@@ -277,9 +277,9 @@ import (
     "github.com/gorilla/websocket"
     "github.com/zishang520/socket.io/servers/engine/v3/config"
     "github.com/zishang520/socket.io/servers/engine/v3"
-    "github.com/zishang520/socket.io/servers/engine/v3/types"
-    "github.com/zishang520/socket.io/servers/engine/v3/utils"
-    "github.com/zishang520/socket.io/servers/engine/v3/webtransport"
+    "github.com/zishang520/socket.io/v3/pkg/types"
+    "github.com/zishang520/socket.io/v3/pkg/utils"
+    "github.com/zishang520/socket.io/v3/pkg/webtransport"
 )
 
 func main() {
@@ -354,9 +354,9 @@ import (
 
  "github.com/zishang520/socket.io/clients/engine/v3"
  "github.com/zishang520/socket.io/clients/engine/v3/transports"
- "github.com/zishang520/socket.io/servers/engine/v3/log"
- "github.com/zishang520/socket.io/servers/engine/v3/types"
- "github.com/zishang520/socket.io/servers/engine/v3/utils"
+ "github.com/zishang520/socket.io/v3/pkg/log"
+ "github.com/zishang520/socket.io/v3/pkg/types"
+ "github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 func main() {
@@ -465,7 +465,7 @@ These are exposed by `import "github.com/zishang520/socket.io/servers/engine/v3"
 ```golang
 import "github.com/zishang520/socket.io/servers/engine/v3/config"
 import "github.com/zishang520/socket.io/servers/engine/v3"
-import "github.com/zishang520/socket.io/servers/engine/v3/types"
+import "github.com/zishang520/socket.io/v3/pkg/types"
 
 var httpServer *types.HttpServer // previously created with `types.NewWebServer(nil);`.
 var eioServer engine.Server
@@ -526,7 +526,7 @@ server.On('connection', func(...any) {});
 
 #### engine.Server
 
-The main server/manager. _Inherits from events.EventEmitter_.
+The main server/manager. _Inherits from types.EventEmitter_.
 
 ##### Events
 
@@ -601,7 +601,7 @@ to a single process.
       - `SetCookie(*http.Cookie)`: configuration of the cookie that
         contains the client sid to send as part of handshake response
         headers. This cookie might be used for sticky-session. Defaults to not sending any cookie (`nil`).
-      - `SetCors(*types.Cors)`: the options that will be forwarded to the cors module. See [there](https://pkg.go.dev/github.com/zishang520/socket.io/servers/engine/v3/types#Cors) for all available options. Defaults to no CORS allowed.
+      - `SetCors(*types.Cors)`: the options that will be forwarded to the cors module. See [there](https://pkg.go.dev/github.com/zishang520/socket.io/v3/pkg/types#Cors) for all available options. Defaults to no CORS allowed.
       - `SetInitialPacket(io.Reader)`: an optional packet which will be concatenated to the handshake packet emitted by Engine.IO.
       - `SetAllowEIO3(bool)`: whether to support v3 Engine.IO clients (defaults to `false`)
 - `Close`
@@ -638,7 +638,7 @@ to a single process.
 
 #### engine.Socket
 
-A representation of a client. _Inherits from events.EventEmitter_.
+A representation of a client. _Inherits from types.EventEmitter_.
 
 ##### Events
 

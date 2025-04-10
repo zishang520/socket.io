@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -9,8 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/zishang520/socket.io/servers/engine/v3/errors"
-	"github.com/zishang520/socket.io/servers/engine/v3/utils"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var (
@@ -105,7 +105,7 @@ func (c *HttpContext) Write(wb []byte) (int, error) {
 	defer c.mu.Unlock()
 
 	if c.IsDone() {
-		return 0, errors.New("you cannot write data repeatedly").Err()
+		return 0, errors.New("you cannot write data repeatedly")
 	}
 	defer c.Flush()
 

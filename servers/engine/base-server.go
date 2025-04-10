@@ -8,11 +8,10 @@ import (
 
 	"github.com/zishang520/socket.io/servers/engine/v3/config"
 	"github.com/zishang520/socket.io/servers/engine/v3/errors"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/log"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
-	"github.com/zishang520/socket.io/servers/engine/v3/utils"
+	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var (
@@ -28,7 +27,7 @@ var (
 )
 
 type baseServer struct {
-	events.EventEmitter
+	types.EventEmitter
 
 	// Prototype interface, used to implement interface method rewriting
 	_proto_ BaseServer
@@ -42,7 +41,7 @@ type baseServer struct {
 
 func MakeBaseServer() BaseServer {
 	baseServer := &baseServer{
-		EventEmitter: events.New(),
+		EventEmitter: types.NewEventEmitter(),
 
 		clients: &types.Map[string, Socket]{},
 	}
@@ -341,5 +340,5 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 
 // abstract
 func (*baseServer) CreateTransport(string, *types.HttpContext) (transports.Transport, error) {
-	return nil, errors.New("CreateTransport interface is not implemented").Err()
+	return nil, errors.ErrTransportNotImplemented
 }

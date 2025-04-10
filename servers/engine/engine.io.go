@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 const Protocol = parser.Protocol

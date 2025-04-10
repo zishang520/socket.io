@@ -9,9 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/log"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 var (
@@ -28,13 +27,13 @@ var (
 
 // A socket.io Decoder instance
 type decoder struct {
-	events.EventEmitter
+	types.EventEmitter
 
 	reconstructor atomic.Pointer[binaryReconstructor]
 }
 
 func NewDecoder() Decoder {
-	return &decoder{EventEmitter: events.New()}
+	return &decoder{EventEmitter: types.NewEventEmitter()}
 }
 
 // Decodes an encoded packet string into packet JSON.

@@ -2,7 +2,7 @@ module github.com/zishang520/socket.io/parsers/socket/v3
 
 go 1.24.1
 
-require github.com/zishang520/socket.io/servers/engine/v3 v3.0.0
+require github.com/zishang520/socket.io/v3 v3.0.0
 
 require (
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
@@ -15,7 +15,6 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
-	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0 // indirect
 	github.com/zishang520/webtransport-go v0.8.6 // indirect
 	go.uber.org/mock v0.5.0 // indirect
 	golang.org/x/crypto v0.35.0 // indirect
@@ -31,3 +30,5 @@ require (
 replace github.com/zishang520/socket.io/servers/engine/v3 => ../../servers/engine
 
 replace github.com/zishang520/socket.io/parsers/engine/v3 => ../../parsers/engine
+
+replace github.com/zishang520/socket.io/v3 => ../../

@@ -30,7 +30,7 @@ Compatibility table:
 package main
 
 import (
-  "github.com/zishang520/socket.io/servers/engine/v3/utils"
+  "github.com/zishang520/socket.io/v3/pkg/utils"
   "github.com/zishang520/socket.io/parsers/socket/v3/parser"
 )
 
@@ -66,7 +66,7 @@ func main() {
 package main
 
 import (
-  "github.com/zishang520/socket.io/servers/engine/v3/utils"
+  "github.com/zishang520/socket.io/v3/pkg/utils"
   "github.com/zishang520/socket.io/parsers/socket/v3/parser"
 )
 

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
-	"github.com/zishang520/socket.io/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 func TestParserv3(t *testing.T) {

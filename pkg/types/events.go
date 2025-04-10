@@ -14,13 +14,13 @@ type (
 	// EventName is just a type of string, it's the event name
 	EventName string
 	// Listener is the type of a Listener, it's a func which receives any,optional, arguments from the caller/emmiter
-	Listener func(...any)
+	EventListener func(...any)
 	// Events the type for registered listeners, it's just a map[string][]func(...any)
-	Events map[EventName][]Listener
+	Events map[EventName][]EventListener
 	// EventEmitter is the message/or/event manager
 	EventEmitter interface {
 		// AddListener is an alias for .On(eventName, listener).
-		AddListener(EventName, ...Listener) error
+		AddListener(EventName, ...EventListener) error
 		// Emit fires a particular event,
 		// Synchronously calls each of the listeners registered for the event named
 		// eventName, in the order they were registered,
@@ -32,19 +32,19 @@ type (
 		// ListenerCount returns the length of all registered listeners to a particular event
 		ListenerCount(EventName) int
 		// Listeners returns a copy of the array of listeners for the event named eventName.
-		Listeners(EventName) []Listener
+		Listeners(EventName) []EventListener
 		// On registers a particular listener for an event, func receiver parameter(s) is/are optional
-		On(EventName, ...Listener) error
+		On(EventName, ...EventListener) error
 		// Once adds a one time listener function for the event named eventName.
 		// The next time eventName is triggered, this listener is removed and then invoked.
-		Once(EventName, ...Listener) error
+		Once(EventName, ...EventListener) error
 		// RemoveAllListeners removes all listeners, or those of the specified eventName.
 		// Note that it will remove the event itself.
 		// Returns an indicator if event and listeners were found before the remove.
 		RemoveAllListeners(EventName) bool
 		// RemoveListener removes given listener from the event named eventName.
 		// Returns an indicator whether listener was removed
-		RemoveListener(EventName, Listener) bool
+		RemoveListener(EventName, EventListener) bool
 		// Clear removes all events and all listeners, restores Events to an empty value
 		Clear()
 		// Len returns the length of all registered events
@@ -52,7 +52,7 @@ type (
 	}
 
 	eventEntry struct {
-		fn  Listener
+		fn  EventListener
 		ptr uintptr
 	}
 
@@ -92,7 +92,7 @@ func (e *emmiter) addListeners(evt EventName, listeners []*eventEntry) error {
 	return nil
 }
 
-func (e *emmiter) AddListener(evt EventName, listeners ...Listener) error {
+func (e *emmiter) AddListener(evt EventName, listeners ...EventListener) error {
 	if len(listeners) == 0 {
 		return nil
 	}
@@ -109,7 +109,7 @@ func (e *emmiter) AddListener(evt EventName, listeners ...Listener) error {
 }
 
 // Alias: [AddListener]
-func (e *emmiter) On(evt EventName, listeners ...Listener) error {
+func (e *emmiter) On(evt EventName, listeners ...EventListener) error {
 	return e.AddListener(evt, listeners...)
 }
 
@@ -143,14 +143,14 @@ func (e *emmiter) ListenerCount(evt EventName) int {
 	return evtEntry.Len()
 }
 
-func (e *emmiter) Listeners(evt EventName) []Listener {
+func (e *emmiter) Listeners(evt EventName) []EventListener {
 	evtEntry, ok := e.evtListeners.Load(evt)
 	if !ok {
 		return nil
 	}
 
 	datas := evtEntry.All()
-	listeners := make([]Listener, len(datas))
+	listeners := make([]EventListener, len(datas))
 	for i, l := range datas {
 		listeners[i] = l.fn
 	}
@@ -163,7 +163,7 @@ type oneTimeListener struct {
 
 	evt     EventName
 	emitter *emmiter
-	fn      Listener
+	fn      EventListener
 }
 
 func (l *oneTimeListener) execute(vals ...any) {
@@ -173,7 +173,7 @@ func (l *oneTimeListener) execute(vals ...any) {
 	})
 }
 
-func (e *emmiter) Once(evt EventName, listeners ...Listener) error {
+func (e *emmiter) Once(evt EventName, listeners ...EventListener) error {
 	if len(listeners) == 0 {
 		return nil
 	}
@@ -190,7 +190,7 @@ func (e *emmiter) Once(evt EventName, listeners ...Listener) error {
 }
 
 // RemoveListener removes the specified listener from the listener array for the event named eventName.
-func (e *emmiter) RemoveListener(evt EventName, listener Listener) bool {
+func (e *emmiter) RemoveListener(evt EventName, listener EventListener) bool {
 	if listener == nil {
 		return false
 	}

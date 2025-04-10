@@ -7,7 +7,7 @@ import (
 
 	client "github.com/zishang520/socket.io/clients/engine/v3/transports"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/clients/socket/v3"
 	socket_server "github.com/zishang520/socket.io/servers/socket/v3"
 )

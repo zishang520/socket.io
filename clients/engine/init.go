@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/log"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
-	"github.com/zishang520/socket.io/servers/engine/v3/utils"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // Logger instances for different components of the Engine.IO client.

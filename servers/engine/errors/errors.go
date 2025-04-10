@@ -1,33 +1,18 @@
 package errors
 
-type Error struct {
-	Message     string
-	Description error
-	Type        string
-	errs        []error
-}
+import (
+	"errors"
+	"fmt"
+)
 
-func (e *Error) Err() error {
-	return e
-}
+var (
+	ErrTransportFailure = errors.New("transport failure")
 
-func (e *Error) Error() string {
-	return e.Message
-}
+	ErrUnsupportedTransport    = errors.New("unsupported transport name")
+	ErrTransportNotImplemented = errors.New("transport creation not implemented")
+	ErrInvalidHeartbeat        = errors.New("invalid heartbeat direction")
+)
 
-func (e *Error) Unwrap() []error {
-	return e.errs
-}
-
-func New(message string) *Error {
-	return &Error{Message: message}
-}
-
-func NewTransportError(reason string, description error) *Error {
-	return &Error{
-		Message:     reason,
-		Description: description,
-		Type:        "TransportError",
-		errs:        []error{description},
-	}
+func NewTransportError(reason string, description error) error {
+	return fmt.Errorf("%w: %s (%w)", ErrTransportFailure, reason, description)
 }

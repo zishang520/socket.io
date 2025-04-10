@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 func TestAttachOptionsDefauleValue(t *testing.T) {

@@ -16,10 +16,9 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/log"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
-	"github.com/zishang520/socket.io/servers/engine/v3/utils"
+	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 const clientVersion = "4.7.5"
@@ -35,7 +34,7 @@ type (
 	// Represents a Socket.IO server.
 	//
 	//	import (
-	//		"github.com/zishang520/socket.io/servers/engine/v3/utils"
+	//		"github.com/zishang520/socket.io/v3/pkg/utils"
 	//		"github.com/zishang520/socket.io/servers/socket/v3"
 	//	)
 	//
@@ -538,7 +537,7 @@ func (s *Server) onconnection(conns ...any) {
 // Param: string | *regexp.Regexp | ParentNspNameMatchFn - nsp name
 //
 // Param: func(...any) - nsp `connection` ev handler
-func (s *Server) Of(name any, fn events.Listener) Namespace {
+func (s *Server) Of(name any, fn types.EventListener) Namespace {
 	switch n := name.(type) {
 	case ParentNspNameMatchFn:
 		parentNsp := NewParentNamespace(s)

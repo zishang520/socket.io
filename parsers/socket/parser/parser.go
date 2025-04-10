@@ -1,8 +1,7 @@
 package parser
 
 import (
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 // Encoder defines an interface for socket.io encoding.
@@ -13,7 +12,7 @@ type (
 
 	// Decoder defines an interface for socket.io decoding.
 	Decoder interface {
-		events.EventEmitter
+		types.EventEmitter
 
 		Add(any) error
 		Destroy()

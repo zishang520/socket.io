@@ -14,10 +14,9 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/log"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
-	"github.com/zishang520/socket.io/servers/engine/v3/utils"
+	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var polling_log = log.NewLog("engine:polling")
@@ -90,7 +89,7 @@ func (p *polling) onPollRequest(ctx *types.HttpContext) {
 
 	polling_log.Debug("setting request")
 
-	onClose := events.Listener(func(...any) {
+	onClose := types.EventListener(func(...any) {
 		p.SetWritable(false)
 		p.OnError("poll connection closed prematurely", nil)
 	})

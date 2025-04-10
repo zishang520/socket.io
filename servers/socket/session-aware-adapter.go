@@ -3,9 +3,9 @@ package socket
 import (
 	"time"
 
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
-	"github.com/zishang520/socket.io/servers/engine/v3/utils"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 type (

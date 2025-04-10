@@ -1,7 +1,7 @@
 package types
 
 import (
-	"github.com/zishang520/socket.io/servers/engine/v3/webtransport"
+	"github.com/zishang520/socket.io/v3/pkg/webtransport"
 	wt "github.com/zishang520/webtransport-go"
 )
 

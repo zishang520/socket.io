@@ -6,15 +6,14 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/errors"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/log"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 var transport_log = log.NewLog("engine:transport")
 
 type transport struct {
-	events.EventEmitter
+	types.EventEmitter
 
 	// Prototype interface, used to implement interface method rewriting
 	_proto_ Transport
@@ -41,7 +40,7 @@ type transport struct {
 
 func MakeTransport() Transport {
 	t := &transport{
-		EventEmitter: events.New(),
+		EventEmitter: types.NewEventEmitter(),
 	}
 	t._readyState.Store("open")
 
@@ -172,9 +171,9 @@ func (t *transport) Close(fn ...types.Callable) {
 // Called with a transport error.
 func (t *transport) OnError(msg string, desc error) {
 	if t.ListenerCount("error") > 0 {
-		t.Emit("error", errors.NewTransportError(msg, desc).Err())
+		t.Emit("error", errors.NewTransportError(msg, desc))
 	} else {
-		transport_log.Debug("ignored transport error %s (%s)", msg, desc)
+		transport_log.Debug("ignored transport error %s (%v)", msg, desc)
 	}
 }
 

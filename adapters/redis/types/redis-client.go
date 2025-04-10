@@ -4,11 +4,11 @@ import (
 	"context"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 type RedisClient struct {
-	events.EventEmitter
+	types.EventEmitter
 
 	Client  redis.UniversalClient
 	Context context.Context
@@ -16,7 +16,7 @@ type RedisClient struct {
 
 func NewRedisClient(ctx context.Context, redis redis.UniversalClient) *RedisClient {
 	return &RedisClient{
-		EventEmitter: events.New(),
+		EventEmitter: types.NewEventEmitter(),
 		Client:       redis,
 		Context:      ctx,
 	}

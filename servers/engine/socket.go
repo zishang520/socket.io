@@ -10,17 +10,16 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/servers/engine/v3/errors"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
-	"github.com/zishang520/socket.io/servers/engine/v3/log"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
-	"github.com/zishang520/socket.io/servers/engine/v3/utils"
+	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var socket_log = log.NewLog("engine:socket")
 
 type socket struct {
-	events.EventEmitter
+	types.EventEmitter
 
 	// The revision of the protocol:
 	//
@@ -110,7 +109,7 @@ func (s *socket) SetReadyState(state string) {
 // Client class.
 func MakeSocket() Socket {
 	s := &socket{
-		EventEmitter: events.New(),
+		EventEmitter: types.NewEventEmitter(),
 
 		writeBuffer:    types.NewSlice[*packet.Packet](),
 		packetsFn:      types.NewSlice[SendCallback](),
@@ -203,7 +202,7 @@ func (s *socket) onPacket(data *packet.Packet) {
 	switch data.Type {
 	case packet.PING:
 		if s.Transport().Protocol() != 3 {
-			s.onError(errors.New("invalid heartbeat direction").Err())
+			s.onError(errors.ErrInvalidHeartbeat)
 			return
 		}
 		socket_log.Debug("got ping")
@@ -212,7 +211,7 @@ func (s *socket) onPacket(data *packet.Packet) {
 		s.Emit("heartbeat")
 	case packet.PONG:
 		if s.Transport().Protocol() == 3 {
-			s.onError(errors.New("invalid heartbeat direction").Err())
+			s.onError(errors.ErrInvalidHeartbeat)
 			return
 		}
 		socket_log.Debug("got pong")
@@ -308,7 +307,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 	s.upgrading.Store(true)
 
 	var check, cleanup func()
-	var onPacket, onError, onTransportClose, onClose events.Listener
+	var onPacket, onError, onTransportClose, onClose types.EventListener
 	var upgradeTimeoutTimer, checkIntervalTimer atomic.Pointer[utils.Timer]
 
 	onPacket = func(datas ...any) {

@@ -6,9 +6,8 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/servers/engine/v3/config"
-	"github.com/zishang520/socket.io/servers/engine/v3/events"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
-	"github.com/zishang520/socket.io/servers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/webtransport-go"
 )
 
@@ -22,7 +21,7 @@ type (
 	BaseServer interface {
 		// Extends
 
-		events.EventEmitter
+		types.EventEmitter
 
 		// Prototype
 
@@ -107,7 +106,7 @@ type (
 	Socket interface {
 		// Extends
 
-		events.EventEmitter
+		types.EventEmitter
 
 		// Setters
 
