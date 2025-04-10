@@ -30,11 +30,6 @@ func (t *Timer) Unref() {
 	}, t)
 }
 
-// Deprecated: this method will be removed in the next major release, please use SetTimeout instead.
-func SetTimeOut(fn func(), sleep time.Duration) *Timer {
-	return SetTimeout(fn, sleep)
-}
-
 func SetTimeout(fn func(), sleep time.Duration) *Timer {
 	timer := &Timer{
 		timer:  time.NewTimer(sleep),

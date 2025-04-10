@@ -145,11 +145,6 @@ type Namespace interface {
 	// Adds a timeout in milliseconds for the next operation
 	Timeout(time.Duration) *BroadcastOperator
 
-	// Returns the matching socket instances
-	//
-	// Deprecated: this method will be removed in the next major release, please use [Server.ServerSideEmit] or [BroadcastOperator.FetchSockets] instead.
-	FetchSockets() func(func([]*RemoteSocket, error))
-
 	// Makes the matching socket instances join the specified rooms
 	SocketsJoin(...Room)
 

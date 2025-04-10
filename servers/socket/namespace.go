@@ -501,13 +501,6 @@ func (n *namespace) OnServerSideEmit(args []any) {
 	n.EmitUntyped(ev, args[1:]...)
 }
 
-// Gets a list of socket ids.
-//
-// Deprecated: this method will be removed in the next major release, please use [Namespace#ServerSideEmit] or [Namespace#FetchSockets] instead.
-func (n *namespace) AllSockets() (*types.Set[SocketId], error) {
-	return NewBroadcastOperator(n.Proto().Adapter(), nil, nil, nil).AllSockets()
-}
-
 // Sets the compress flag.
 //
 //	io.Compress(false).Emit("hello")

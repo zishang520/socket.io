@@ -8,13 +8,6 @@ import (
 const (
 	// Version current version number
 	EventVersion = "0.0.3"
-	// DefaultMaxListeners is the number of max listeners per event
-	// default EventEmitters will print a warning if more than x listeners are
-	// added to it. This is a useful default which helps finding memory leaks.
-	// Defaults to 0, which means unlimited
-	//
-	// Deprecated: No longer limit the number of event listeners.
-	EventDefaultMaxListeners = 0
 )
 
 type (
@@ -36,11 +29,6 @@ type (
 		// EventNames returns an array listing the events for which the emitter has registered listeners.
 		// The values in the array will be strings.
 		EventNames() []EventName
-		// GetMaxListeners returns the max listeners for this emmiter
-		// see SetMaxListeners
-		//
-		// Deprecated: No longer limit the number of event listeners.
-		GetMaxListeners() uint
 		// ListenerCount returns the length of all registered listeners to a particular event
 		ListenerCount(EventName) int
 		// Listeners returns a copy of the array of listeners for the event named eventName.
@@ -59,11 +47,6 @@ type (
 		RemoveListener(EventName, Listener) bool
 		// Clear removes all events and all listeners, restores Events to an empty value
 		Clear()
-		// SetMaxListeners obviously this function allows the MaxListeners
-		// to be decrease or increase. Set to zero for unlimited
-		//
-		// Deprecated: No longer limit the number of event listeners.
-		SetMaxListeners(uint)
 		// Len returns the length of all registered events
 		Len() int
 	}
@@ -97,15 +80,6 @@ func NewEventEmitter() EventEmitter {
 	}
 
 	return emmiter
-}
-
-// Deprecated: No longer limit the number of event listeners.
-func (e *emmiter) SetMaxListeners(n uint) {
-}
-
-// Deprecated: No longer limit the number of event listeners.
-func (e *emmiter) GetMaxListeners() uint {
-	return EventDefaultMaxListeners
 }
 
 func (e *emmiter) addListeners(evt EventName, listeners []*eventEntry) error {

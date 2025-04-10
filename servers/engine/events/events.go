@@ -9,14 +9,6 @@ import (
 const (
 	// Version current version number
 	Version = types.EventVersion
-
-	// DefaultMaxListeners is the number of max listeners per event
-	// default EventEmitters will print a warning if more than x listeners are
-	// added to it. This is a useful default which helps finding memory leaks.
-	// Defaults to 0, which means unlimited
-	//
-	// Deprecated: No longer limit the number of event listeners.
-	DefaultMaxListeners = types.EventDefaultMaxListeners
 )
 
 type (
@@ -36,20 +28,6 @@ func New() EventEmitter {
 }
 
 var defaultEventEmitter = New()
-
-// SetMaxListeners sets the max listeners for the default event emitter
-//
-// Deprecated: No longer limit the number of event listeners.
-func SetMaxListeners(n uint) {
-	defaultEventEmitter.SetMaxListeners(n)
-}
-
-// GetMaxListeners returns the max listeners for the default event emitter
-//
-// Deprecated: No longer limit the number of event listeners.
-func GetMaxListeners() uint {
-	return defaultEventEmitter.GetMaxListeners()
-}
 
 // AddListener adds listeners to the default event emitter
 func AddListener(evt EventName, listeners ...Listener) error {

@@ -30,11 +30,6 @@ func NewWebServer(defaultHandler http.Handler) *HttpServer {
 	return s
 }
 
-// Deprecated: this method will be removed in the next major release, please use [NewWebServer] instead.
-func CreateServer(defaultHandler http.Handler) *HttpServer {
-	return NewWebServer(defaultHandler)
-}
-
 func (s *HttpServer) httpServer(addr string, handler http.Handler) *http.Server {
 	server := &http.Server{Addr: addr, Handler: handler}
 

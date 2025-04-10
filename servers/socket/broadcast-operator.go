@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/types"
 	"github.com/zishang520/socket.io/servers/engine/v3/utils"
-	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 )
 
 type BroadcastOperator struct {
@@ -266,16 +266,6 @@ func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(Ack) {
 	return func(ack Ack) {
 		b.Emit(ev, append(args, ack)...)
 	}
-}
-
-// Gets a list of clients.
-//
-// Deprecated: this method will be removed in the next major release, please use [Server#ServerSideEmit] or [FetchSockets] instead.
-func (b *BroadcastOperator) AllSockets() (*types.Set[SocketId], error) {
-	if b.adapter == nil {
-		return nil, errors.New("no adapter for this namespace, are you trying to get the list of clients of a dynamic namespace?")
-	}
-	return b.adapter.Sockets(b.rooms), nil
 }
 
 // Returns the matching socket instances. This method works across a cluster of several Socket.IO servers.

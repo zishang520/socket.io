@@ -14,12 +14,12 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3"
 	"github.com/zishang520/socket.io/servers/engine/v3/events"
 	"github.com/zishang520/socket.io/servers/engine/v3/log"
 	"github.com/zishang520/socket.io/servers/engine/v3/types"
 	"github.com/zishang520/socket.io/servers/engine/v3/utils"
-	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 )
 
 const clientVersion = "4.7.5"
@@ -781,13 +781,6 @@ func (s *Server) ServerSideEmit(ev string, args ...any) error {
 // Return: a `func(socket.Ack)` that will be fulfilled when all servers have acknowledged the event
 func (s *Server) ServerSideEmitWithAck(ev string, args ...any) func(Ack) error {
 	return s.sockets.ServerSideEmitWithAck(ev, args...)
-}
-
-// Gets a list of socket ids.
-//
-// Deprecated: this method will be removed in the next major release, please use [Server#ServerSideEmit] or [Server#FetchSockets] instead.
-func (s *Server) AllSockets() (*types.Set[SocketId], error) {
-	return s.sockets.AllSockets()
 }
 
 // Sets the compress flag.
