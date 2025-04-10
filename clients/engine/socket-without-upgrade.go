@@ -18,6 +18,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
+	"github.com/zishang520/socket.io/v3/pkg/events"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -76,8 +77,8 @@ type socketWithoutUpgrade struct {
 	_maxPayload                int64                       // Maximum payload size allowed
 	_pingTimeoutTimer          atomic.Pointer[utils.Timer] // Timer for ping timeout
 	_pingTimeoutTime           atomic.Value                // Timestamp for ping timeout expiration
-	_beforeunloadEventListener types.Listener              // Event listener for page unload
-	_offlineEventListener      types.Listener              // Event listener for offline status
+	_beforeunloadEventListener types.EventListener         // Event listener for page unload
+	_offlineEventListener      types.EventListener         // Event listener for offline status
 
 	// Connection configuration (read-only)
 	secure            bool                     // Whether to use secure connection
@@ -603,7 +604,7 @@ func (s *socketWithoutUpgrade) Close() SocketWithoutUpgrade {
 		s.Transport().Close()
 	}
 
-	var cleanupAndClose types.Listener
+	var cleanupAndClose types.EventListener
 	cleanupAndClose = func(...any) {
 		s.RemoveListener("upgrade", cleanupAndClose)
 		s.RemoveListener("upgradeError", cleanupAndClose)

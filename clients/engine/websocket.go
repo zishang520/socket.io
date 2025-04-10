@@ -223,9 +223,11 @@ func (w *websocket) write(packets []*packet.Packet) {
 	// no need for encodePayload
 	for _, packet := range packets {
 		// always creates a new object since ws modifies it
-		compress := false
+		compress := true
 		if packet.Options != nil {
-			compress = packet.Options.Compress
+			if packet.Options.Compress != nil && !*packet.Options.Compress {
+				compress = false
+			}
 
 			if w.Opts().PerMessageDeflate() == nil && packet.Options.WsPreEncodedFrame != nil {
 				mt := ws.BinaryMessage
