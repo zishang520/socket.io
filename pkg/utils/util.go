@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+func Ptr[T any](v T) *T {
+	return &v
+}
+
 func Value(value string, _default string) string {
 	if value == "" {
 		return _default

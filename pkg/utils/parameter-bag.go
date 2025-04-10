@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"slices"
 	"sync"
 )
 
@@ -23,7 +24,7 @@ func (p *ParameterBag) All() map[string][]string {
 
 	_tmp := make(map[string][]string, len(p.parameters))
 	for k, v := range p.parameters {
-		_tmp[k] = append([]string(nil), v...)
+		_tmp[k] = slices.Clone(v)
 	}
 
 	return _tmp
@@ -55,7 +56,7 @@ func (p *ParameterBag) With(parameters map[string][]string) {
 	defer p.mu.Unlock()
 
 	for k, v := range parameters {
-		p.parameters[k] = append([]string(nil), v...)
+		p.parameters[k] = slices.Clone(v)
 	}
 }
 
@@ -111,7 +112,7 @@ func (p *ParameterBag) Gets(key string, _default ...[]string) ([]string, bool) {
 	defer p.mu.RUnlock()
 
 	if v, ok := p.parameters[key]; ok {
-		return append([]string(nil), v...), true
+		return slices.Clone(v), true
 	}
 	if len(_default) > 0 {
 		return _default[0], false

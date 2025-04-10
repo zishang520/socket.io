@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
-	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
