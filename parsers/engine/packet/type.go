@@ -10,9 +10,7 @@ type (
 	Type string
 
 	Options struct {
-		Compress bool `json:"compress" msgpack:"compress"`
-		// Deprecated: this method will be removed in the next major release, please use [Options.WsPreEncodedFrame] instead.
-		WsPreEncoded      types.BufferInterface
+		Compress          *bool                 `json:"compress,omitempty" msgpack:"compress,omitempty"`
 		WsPreEncodedFrame types.BufferInterface `json:"wsPreEncodedFrame,omitempty" msgpack:"wsPreEncodedFrame,omitempty"`
 	}
 
@@ -20,9 +18,6 @@ type (
 		Type    Type      `json:"type" msgpack:"type"`
 		Data    io.Reader `json:"data,omitempty" msgpack:"data,omitempty"`
 		Options *Options  `json:"options,omitempty" msgpack:"options,omitempty"`
-
-		// Deprecated: this method will be removed in the next major release, please use [Options.WsPreEncodedFrame] instead.
-		WsPreEncoded types.BufferInterface
 	}
 )
 
