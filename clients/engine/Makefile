@@ -6,7 +6,7 @@ default:
 
 deps:
 	go mod tidy
-	go mod vendor
+	go work sync
 
 fmt:
 	go fmt -mod=mod ./...

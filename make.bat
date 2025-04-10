@@ -23,7 +23,6 @@ goto default
 :deps
     CALL go mod tidy
     CALL go work sync
-    CALL go work vendor
     GOTO :EOF
 
 :fmt
