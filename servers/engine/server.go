@@ -103,7 +103,7 @@ func (s *server) HandleRequest(ctx *types.HttpContext) {
 func (s *server) HandleUpgrade(ctx *types.HttpContext) {
 	callback := func(codeMessage *types.CodeMessage, errorContext map[string]any) {
 		if codeMessage != nil {
-			s.emitAbortRequest(ctx, codeMessage, errorContext)
+			s.emitAbortUpgrade(ctx, codeMessage, errorContext)
 			return
 		}
 

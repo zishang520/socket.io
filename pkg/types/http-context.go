@@ -182,7 +182,7 @@ func (c *HttpContext) GetHost() (string, error) {
 				return "", nil
 			}
 			c.isHostValid = false
-			return "", errors.New(fmt.Sprintf(`Invalid host "%s".`, host)).Err()
+			return "", fmt.Errorf(`Invalid host "%s".`, host)
 		}
 	}
 	return host, nil

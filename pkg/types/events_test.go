@@ -11,7 +11,7 @@ import (
 var _event = NewEventEmitter()
 
 var testEvents = Events{
-	"user_created": []Listener{
+	"user_created": []EventListener{
 		func(payload ...any) {
 			fmt.Printf("A new User just created!\n")
 		},
@@ -19,12 +19,12 @@ var testEvents = Events{
 			fmt.Printf("A new User just created, *from second event listener\n")
 		},
 	},
-	"user_joined": []Listener{func(payload ...any) {
+	"user_joined": []EventListener{func(payload ...any) {
 		user := payload[0].(string)
 		room := payload[1].(string)
 		fmt.Printf("%s joined to room: %s\n", user, room)
 	}},
-	"user_left": []Listener{func(payload ...any) {
+	"user_left": []EventListener{func(payload ...any) {
 		user := payload[0].(string)
 		room := payload[1].(string)
 		fmt.Printf("%s left from the room: %s\n", user, room)

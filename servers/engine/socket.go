@@ -481,7 +481,13 @@ func (s *socket) sendPacket(
 		socket_log.Debug(`sending packet "%s" (%p)`, packetType, data)
 
 		if options == nil {
-			options = &packet.Options{Compress: true}
+			options = &packet.Options{}
+		}
+
+		if options.Compress == nil || *options.Compress {
+			options.Compress = utils.Ptr(true)
+		} else {
+			options.Compress = utils.Ptr(false)
 		}
 
 		packet := &packet.Packet{

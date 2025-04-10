@@ -230,13 +230,14 @@ func (p *polling) send(packets []*packet.Packet) {
 		p.shouldClose.Store(nil)
 	}
 
-	option := &packet.Options{Compress: false}
+	compress := false
 	for _, packetData := range packets {
-		if packetData.Options != nil && packetData.Options.Compress {
-			option.Compress = true
+		if packetData.Options != nil && packetData.Options.Compress != nil && *packetData.Options.Compress {
+			compress = true
 			break
 		}
 	}
+	option := &packet.Options{Compress: utils.Ptr(compress)}
 
 	if p.Protocol() == 3 {
 		data, _ := p.Parser().EncodePayload(packets, p.SupportsBinary())
@@ -287,7 +288,7 @@ func (p *polling) DoWrite(ctx *types.HttpContext, data types.BufferInterface, op
 		io.Copy(ctx, data)
 	}
 
-	if p.HttpCompression() == nil || options == nil || !options.Compress {
+	if p.HttpCompression() == nil || (options != nil && options.Compress != nil && !*options.Compress) {
 		respond(data, strconv.Itoa(data.Len()))
 		return
 	}
