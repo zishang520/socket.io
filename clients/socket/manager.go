@@ -7,10 +7,9 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/clients/engine/v3"
-	"github.com/zishang520/socket.io/v3/pkg/types"
-	tools "github.com/zishang520/socket.io/v3/pkg/utils"
-	"github.com/zishang520/socket.io/clients/socket/v3/utils"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 type Engine = engine.Socket
@@ -307,7 +306,7 @@ func (m *Manager) Open(fn func(error)) *Manager {
 		manager_log.Debug("connect attempt will timeout after %v", timeout)
 
 		// set timer
-		timer := tools.SetTimeout(func() {
+		timer := utils.SetTimeout(func() {
 			manager_log.Debug("connect attempt timed out after %v", timeout)
 			openSubDestroy()
 			onError(errors.New("timeout"))
@@ -319,7 +318,7 @@ func (m *Manager) Open(fn func(error)) *Manager {
 		}
 
 		m.subs.Push(func() {
-			tools.ClearTimeout(timer)
+			utils.ClearTimeout(timer)
 		})
 	}
 
@@ -491,7 +490,7 @@ func (m *Manager) reconnect() {
 		manager_log.Debug("will wait %dms before reconnect attempt", delay)
 
 		m._reconnecting.Store(true)
-		timer := tools.SetTimeout(func() {
+		timer := utils.SetTimeout(func() {
 			if m.skipReconnect.Load() {
 				return
 			}
@@ -522,7 +521,7 @@ func (m *Manager) reconnect() {
 		}
 
 		m.subs.Push(func() {
-			tools.ClearTimeout(timer)
+			utils.ClearTimeout(timer)
 		})
 	}
 }

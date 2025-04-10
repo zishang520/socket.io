@@ -688,7 +688,7 @@ func (s *Socket) Disconnect(status bool) *Socket {
 //
 // Param: compress - if `true`, compresses the sending data
 func (s *Socket) Compress(compress bool) *Socket {
-	s.flags.Load().Compress = compress
+	s.flags.Load().Compress = &compress
 	return s
 }
 

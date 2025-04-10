@@ -127,9 +127,6 @@ type Namespace interface {
 	// Called when a packet is received from another Socket.IO server
 	OnServerSideEmit([]any)
 
-	// Gets a list of clients.
-	AllSockets() (*types.Set[SocketId], error)
-
 	// Sets the compress flag.
 	Compress(bool) *BroadcastOperator
 
@@ -143,6 +140,9 @@ type Namespace interface {
 
 	// Adds a timeout in milliseconds for the next operation
 	Timeout(time.Duration) *BroadcastOperator
+
+	// Returns the matching socket instances
+	FetchSockets() func(func([]*RemoteSocket, error))
 
 	// Makes the matching socket instances join the specified rooms
 	SocketsJoin(...Room)

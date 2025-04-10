@@ -6,6 +6,7 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 func TestBroadcastFlagsInheritance(t *testing.T) {
@@ -14,7 +15,7 @@ func TestBroadcastFlagsInheritance(t *testing.T) {
 			Volatile:   true,
 			PreEncoded: false,
 			Options: packet.Options{
-				Compress: true,
+				Compress: utils.Ptr(true),
 			},
 		},
 		Local:     true,
@@ -37,7 +38,7 @@ func TestBroadcastFlagsInheritance(t *testing.T) {
 	if flags.Binary != true {
 		t.Errorf("Expected Binary to be true, got %v", flags.Binary)
 	}
-	if flags.Options.Compress != true {
+	if flags.Options.Compress != nil && *flags.Options.Compress != true {
 		t.Errorf("Expected Options.Compress to be true, got %v", flags.Options.Compress)
 	}
 }

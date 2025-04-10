@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
-	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 func on(evt types.EventEmitter, ev types.EventName, fn types.EventListener) types.Callable {

@@ -203,7 +203,7 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 }
 
 // Called with a subscription message
-func (r *redisAdapter) onMessage(pattern string, channel string, msg []byte) {
+func (r *redisAdapter) onMessage(_ string, channel string, msg []byte) {
 	if len(channel) == 0 || len(channel) <= len(r.channel) {
 		redis_log.Debug("ignore channel shorter than expected")
 		return
@@ -482,7 +482,7 @@ func (r *redisAdapter) publishResponse(request *Request, response []byte) {
 }
 
 // Called on response from another node
-func (r *redisAdapter) onResponse(channel string, msg []byte) {
+func (r *redisAdapter) onResponse(_ string, msg []byte) {
 	var response *Response
 
 	// if the buffer starts with a "{" character

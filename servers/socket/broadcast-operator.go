@@ -112,7 +112,7 @@ func (b *BroadcastOperator) Except(room ...Room) *BroadcastOperator {
 // Return: a new [BroadcastOperator] instance
 func (b *BroadcastOperator) Compress(compress bool) *BroadcastOperator {
 	flags := *b.flags
-	flags.Compress = compress
+	flags.Compress = &compress
 	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, &flags)
 }
 
