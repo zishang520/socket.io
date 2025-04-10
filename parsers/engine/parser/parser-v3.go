@@ -9,8 +9,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
-	"github.com/zishang520/socket.io/parsers/engine/v3/types"
-	"github.com/zishang520/socket.io/parsers/engine/v3/utils"
+	"github.com/zishang520/socket.io/v3/types"
+	"github.com/zishang520/socket.io/v3/utils"
 )
 
 type parserv3 struct{}

@@ -3,7 +3,7 @@ package packet
 import (
 	"io"
 
-	"github.com/zishang520/socket.io/parsers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/types"
 )
 
 type (

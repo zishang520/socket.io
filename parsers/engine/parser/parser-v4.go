@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
-	"github.com/zishang520/socket.io/parsers/engine/v3/types"
+	"github.com/zishang520/socket.io/v3/types"
 )
 
 type parserv4 struct{}
