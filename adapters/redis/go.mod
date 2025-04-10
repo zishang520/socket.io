@@ -8,6 +8,7 @@ require (
 	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.0
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0
 	github.com/zishang520/socket.io/servers/socket/v3 v3.0.0
+	github.com/zishang520/socket.io/v3 v3.0.0
 )
 
 require (
@@ -16,12 +17,14 @@ require (
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
 	github.com/google/pprof v0.0.0-20230821062121-407c9e7a662f // indirect
+	github.com/gookit/color v1.5.4 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/onsi/ginkgo/v2 v2.12.0 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.50.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
+	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0 // indirect
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0 // indirect
 	github.com/zishang520/webtransport-go v0.8.6 // indirect
@@ -36,11 +39,14 @@ require (
 	golang.org/x/tools v0.22.0 // indirect
 )
 
-replace github.com/zishang520/socket.io/parsers/socket/v3 => ../../parsers/socket
+replace github.com/zishang520/socket.io/v3 => ../../
 
+replace github.com/zishang520/socket.io/parsers/socket/v3 => ../../parsers/socket
 
 replace github.com/zishang520/socket.io/servers/socket/v3 => ../../servers/socket
 
 replace github.com/zishang520/socket.io/parsers/engine/v3 => ../../parsers/engine
+
+replace github.com/zishang520/socket.io/servers/engine/v3 => ../../servers/engine
 
 replace github.com/zishang520/socket.io/adapters/adapter/v3 => ../../adapters/adapter

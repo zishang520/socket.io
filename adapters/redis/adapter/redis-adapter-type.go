@@ -4,16 +4,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zishang520/socket.io/v3/pkg/utils"
-	"github.com/zishang520/socket.io/adapters/redis/v3/types"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 type (
-	Packet = types.RedisPacket
+	Packet = redis.RedisPacket
 
-	Request = types.RedisRequest
+	Request = redis.RedisRequest
 
 	RedisRequest struct {
 		Type      adapter.MessageType
@@ -26,20 +27,20 @@ type (
 		Responses *types.Slice[any]
 	}
 
-	Response = types.RedisResponse
+	Response = redis.RedisResponse
 
 	AckRequest = adapter.ClusterAckRequest
 
 	RedisAdapter interface {
 		socket.Adapter
 
-		SetRedis(*types.RedisClient)
+		SetRedis(*redis.RedisClient)
 		SetOpts(any)
 
 		Uid() adapter.ServerId
 		RequestsTimeout() time.Duration
 		PublishOnSpecificResponseChannel() bool
-		Parser() types.Parser
+		Parser() redis.Parser
 
 		AllRooms() func(func(*types.Set[socket.Room], error))
 	}

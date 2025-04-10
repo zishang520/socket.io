@@ -1,9 +1,8 @@
-package types
+package redis
 
 import (
-	"github.com/zishang520/socket.io/v3/pkg/types"
-	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
@@ -41,17 +40,4 @@ type (
 		Encode(any) ([]byte, error)
 		Decode([]byte, any) error
 	}
-
-	Map[Tkey comparable, TValue any] = types.Map[Tkey, TValue]
-	Set[TValue comparable]           = types.Set[TValue]
-	Slice[TValue any]                = types.Slice[TValue]
-	Callable                         = types.Callable
 )
-
-func NewSet[KType comparable](keys ...KType) *Set[KType] {
-	return types.NewSet(keys...)
-}
-
-func NewSlice[T any](elements ...T) *Slice[T] {
-	return types.NewSlice(elements...)
-}

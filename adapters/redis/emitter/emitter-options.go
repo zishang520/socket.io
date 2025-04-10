@@ -1,7 +1,7 @@
 package emitter
 
 import (
-	"github.com/zishang520/socket.io/adapters/redis/v3/types"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 )
 
 type (
@@ -10,9 +10,9 @@ type (
 		GetRawKey() *string
 		Key() string
 
-		SetParser(types.Parser)
-		GetRawParser() types.Parser
-		Parser() types.Parser
+		SetParser(redis.Parser)
+		GetRawParser() redis.Parser
+		Parser() redis.Parser
 	}
 
 	EmitterOptions struct {
@@ -21,7 +21,7 @@ type (
 
 		// The parser to use for encoding messages sent to Redis.
 		// Defaults to msgpack, a MessagePack implementation.
-		parser types.Parser
+		parser redis.Parser
 	}
 )
 
@@ -60,15 +60,15 @@ func (s *EmitterOptions) Key() string {
 	return *s.key
 }
 
-func (s *EmitterOptions) SetParser(parser types.Parser) {
+func (s *EmitterOptions) SetParser(parser redis.Parser) {
 	s.parser = parser
 }
-func (s *EmitterOptions) GetRawParser() types.Parser {
+func (s *EmitterOptions) GetRawParser() redis.Parser {
 	return s.parser
 }
 
 // The parser to use for encoding messages sent to Redis.
 // Defaults to msgpack, a MessagePack implementation.
-func (s *EmitterOptions) Parser() types.Parser {
+func (s *EmitterOptions) Parser() redis.Parser {
 	return s.parser
 }

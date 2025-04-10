@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
-	"github.com/zishang520/socket.io/adapters/redis/v3/types"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 var RESERVED_EVENTS = types.NewSet(
@@ -21,7 +22,7 @@ var RESERVED_EVENTS = types.NewSet(
 )
 
 type BroadcastOperator struct {
-	redisClient      *types.RedisClient
+	redisClient      *redis.RedisClient
 	broadcastOptions *BroadcastOptions
 	rooms            *types.Set[socket.Room]
 	exceptRooms      *types.Set[socket.Room]
@@ -38,7 +39,7 @@ func MakeBroadcastOperator() *BroadcastOperator {
 	return b
 }
 
-func NewBroadcastOperator(redisClient *types.RedisClient, broadcastOptions *BroadcastOptions, rooms *types.Set[socket.Room], exceptRooms *types.Set[socket.Room], flags *socket.BroadcastFlags) *BroadcastOperator {
+func NewBroadcastOperator(redisClient *redis.RedisClient, broadcastOptions *BroadcastOptions, rooms *types.Set[socket.Room], exceptRooms *types.Set[socket.Room], flags *socket.BroadcastFlags) *BroadcastOperator {
 	b := MakeBroadcastOperator()
 
 	b.Construct(redisClient, broadcastOptions, rooms, exceptRooms, flags)
@@ -46,7 +47,7 @@ func NewBroadcastOperator(redisClient *types.RedisClient, broadcastOptions *Broa
 	return b
 }
 
-func (b *BroadcastOperator) Construct(redisClient *types.RedisClient, broadcastOptions *BroadcastOptions, rooms *types.Set[socket.Room], exceptRooms *types.Set[socket.Room], flags *socket.BroadcastFlags) {
+func (b *BroadcastOperator) Construct(redisClient *redis.RedisClient, broadcastOptions *BroadcastOptions, rooms *types.Set[socket.Room], exceptRooms *types.Set[socket.Room], flags *socket.BroadcastFlags) {
 	b.redisClient = redisClient
 
 	if broadcastOptions == nil {
@@ -87,7 +88,7 @@ func (b *BroadcastOperator) Except(room ...socket.Room) *BroadcastOperator {
 // Sets the compress flag.
 func (b *BroadcastOperator) Compress(compress bool) *BroadcastOperator {
 	flags := *b.flags
-	flags.Compress = compress
+	flags.Compress = &compress
 	return NewBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
 }
 
@@ -150,7 +151,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 // Makes the matching socket instances join the specified rooms
 func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	request, err := json.Marshal(&Request{
-		Type: types.REMOTE_JOIN,
+		Type: redis.REMOTE_JOIN,
 		Opts: &adapter.PacketOptions{
 			Rooms:  b.rooms.Keys(),
 			Except: b.exceptRooms.Keys(),
@@ -167,7 +168,7 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 // Makes the matching socket instances leave the specified rooms
 func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	request, err := json.Marshal(&Request{
-		Type: types.REMOTE_LEAVE,
+		Type: redis.REMOTE_LEAVE,
 		Opts: &adapter.PacketOptions{
 			Rooms:  b.rooms.Keys(),
 			Except: b.exceptRooms.Keys(),
@@ -184,7 +185,7 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 // Makes the matching socket instances disconnect
 func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 	request, err := json.Marshal(&Request{
-		Type: types.REMOTE_DISCONNECT,
+		Type: redis.REMOTE_DISCONNECT,
 		Opts: &adapter.PacketOptions{
 			Rooms:  b.rooms.Keys(),
 			Except: b.exceptRooms.Keys(),

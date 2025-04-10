@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/redis/go-redis/v9"
+	rds "github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
-	"github.com/zishang520/socket.io/v3/pkg/utils"
-	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
-	"github.com/zishang520/socket.io/adapters/redis/v3/types"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // Create a new Adapter based on Redis sharded Pub/Sub introduced in Redis 7.0.
@@ -19,7 +20,7 @@ import (
 // See: https://redis.io/docs/manual/pubsub/#sharded-pubsub
 type ShardedRedisAdapterBuilder struct {
 	// the Redis client used to publish/subscribe
-	Redis *types.RedisClient
+	Redis *redis.RedisClient
 	// some additional options
 	Opts ShardedRedisAdapterOptionsInterface
 }
@@ -31,8 +32,8 @@ func (sb *ShardedRedisAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 type shardedRedisAdapter struct {
 	adapter.ClusterAdapter
 
-	pubSubClient    *redis.PubSub
-	redisClient     *types.RedisClient
+	pubSubClient    *rds.PubSub
+	redisClient     *redis.RedisClient
 	opts            *ShardedRedisAdapterOptions
 	channel         string
 	responseChannel string
@@ -50,7 +51,7 @@ func MakeShardedRedisAdapter() ShardedRedisAdapter {
 	return c
 }
 
-func NewShardedRedisAdapter(nsp socket.Namespace, redis *types.RedisClient, opts any) ShardedRedisAdapter {
+func NewShardedRedisAdapter(nsp socket.Namespace, redis *redis.RedisClient, opts any) ShardedRedisAdapter {
 	c := MakeShardedRedisAdapter()
 
 	c.SetRedis(redis)
@@ -61,7 +62,7 @@ func NewShardedRedisAdapter(nsp socket.Namespace, redis *types.RedisClient, opts
 	return c
 }
 
-func (s *shardedRedisAdapter) SetRedis(redisClient *types.RedisClient) {
+func (s *shardedRedisAdapter) SetRedis(redisClient *redis.RedisClient) {
 	s.redisClient = redisClient
 }
 
@@ -116,7 +117,7 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 				msg, err := s.pubSubClient.ReceiveMessage(s.redisClient.Context)
 				if err != nil {
 					s.redisClient.Emit("error", err)
-					if err == redis.ErrClosed {
+					if err == rds.ErrClosed {
 						return
 					}
 					continue // retry receiving messages

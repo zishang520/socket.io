@@ -5,11 +5,11 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
-	"github.com/zishang520/socket.io/adapters/redis/v3/types"
-	"github.com/zishang520/socket.io/adapters/adapter/v3"
-	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
 const UID adapter.ServerId = "emitter"
@@ -17,7 +17,7 @@ const UID adapter.ServerId = "emitter"
 var emitter_log = log.NewLog("socket.io-emitter")
 
 type Emitter struct {
-	redisClient *types.RedisClient
+	redisClient *redis.RedisClient
 
 	opts             *EmitterOptions
 	broadcastOptions *BroadcastOptions
@@ -33,7 +33,7 @@ func MakeEmitter() *Emitter {
 	return e
 }
 
-func NewEmitter(redisClient *types.RedisClient, opts *EmitterOptions, nsps ...string) *Emitter {
+func NewEmitter(redisClient *redis.RedisClient, opts *EmitterOptions, nsps ...string) *Emitter {
 	e := MakeEmitter()
 
 	e.Construct(redisClient, opts, nsps...)
@@ -41,7 +41,7 @@ func NewEmitter(redisClient *types.RedisClient, opts *EmitterOptions, nsps ...st
 	return e
 }
 
-func (e *Emitter) Construct(redisClient *types.RedisClient, opts *EmitterOptions, nsps ...string) {
+func (e *Emitter) Construct(redisClient *redis.RedisClient, opts *EmitterOptions, nsps ...string) {
 	e.redisClient = redisClient
 
 	if opts == nil {
@@ -135,7 +135,7 @@ func (e *Emitter) ServerSideEmit(args ...any) error {
 	}
 	request, err := json.Marshal(&Request{
 		Uid:  UID,
-		Type: types.SERVER_SIDE_EMIT,
+		Type: redis.SERVER_SIDE_EMIT,
 		Data: args,
 	})
 	if err != nil {

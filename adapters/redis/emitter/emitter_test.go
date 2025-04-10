@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/redis/go-redis/v9"
+	rds "github.com/redis/go-redis/v9"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
-	"github.com/zishang520/socket.io/adapters/redis/v3/types"
 )
 
 func TestEmitterOptions(t *testing.T) {
@@ -34,7 +34,7 @@ func TestEmitterOptions(t *testing.T) {
 }
 
 func TestEmitter(t *testing.T) {
-	redisClient := types.NewRedisClient(context.TODO(), redis.NewClient(&redis.Options{
+	redisClient := redis.NewRedisClient(context.TODO(), rds.NewClient(&rds.Options{
 		Addr:     "localhost:6379",
 		Username: "",
 		Password: "root",
@@ -98,7 +98,7 @@ func TestEmitter(t *testing.T) {
 }
 
 func TestBroadcastOperator(t *testing.T) {
-	redisClient := types.NewRedisClient(context.TODO(), redis.NewClient(&redis.Options{
+	redisClient := redis.NewRedisClient(context.TODO(), rds.NewClient(&rds.Options{
 		Addr:     "localhost:6379",
 		Username: "",
 		Password: "root",

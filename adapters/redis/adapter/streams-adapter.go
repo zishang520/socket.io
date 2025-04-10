@@ -11,14 +11,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	rds "github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
-	"github.com/zishang520/socket.io/v3/pkg/log"
-	"github.com/zishang520/socket.io/v3/pkg/utils"
-	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
-	"github.com/zishang520/socket.io/adapters/redis/v3/types"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var (
@@ -32,7 +33,7 @@ const RESTORE_SESSION_MAX_XRANGE_CALLS = 100
 // Returns a function that will create a new adapter instance.
 type RedisStreamsAdapterBuilder struct {
 	// the Redis client used to publish/subscribe
-	Redis *types.RedisClient
+	Redis *redis.RedisClient
 	// some additional options
 	Opts RedisStreamsAdapterOptionsInterface
 
@@ -53,7 +54,7 @@ func (sb *RedisStreamsAdapterBuilder) poll(options RedisStreamsAdapterOptionsInt
 		if offset == "" {
 			offset = "$"
 		}
-		response, err := sb.Redis.Client.XRead(sb.Redis.Context, &redis.XReadArgs{
+		response, err := sb.Redis.Client.XRead(sb.Redis.Context, &rds.XReadArgs{
 			Streams: []string{options.StreamName()},
 			ID:      offset,
 			Count:   options.ReadCount(),
@@ -124,7 +125,7 @@ func (sb *RedisStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 type redisStreamsAdapter struct {
 	adapter.ClusterAdapterWithHeartbeat
 
-	redisClient *types.RedisClient
+	redisClient *redis.RedisClient
 	opts        *RedisStreamsAdapterOptions
 
 	_cleanup types.Callable
@@ -144,7 +145,7 @@ func MakeRedisStreamsAdapter() RedisStreamsAdapter {
 	return c
 }
 
-func NewRedisStreamsAdapter(nsp socket.Namespace, redis *types.RedisClient, opts any) RedisStreamsAdapter {
+func NewRedisStreamsAdapter(nsp socket.Namespace, redis *redis.RedisClient, opts any) RedisStreamsAdapter {
 	c := MakeRedisStreamsAdapter()
 
 	c.SetRedis(redis)
@@ -155,7 +156,7 @@ func NewRedisStreamsAdapter(nsp socket.Namespace, redis *types.RedisClient, opts
 	return c
 }
 
-func (r *redisStreamsAdapter) SetRedis(redisClient *types.RedisClient) {
+func (r *redisStreamsAdapter) SetRedis(redisClient *redis.RedisClient) {
 	r.redisClient = redisClient
 }
 
@@ -176,7 +177,7 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
 	redis_streams_log.Debug("publishing %+v", message)
 
-	return "", r.redisClient.Client.XAdd(r.redisClient.Context, &redis.XAddArgs{
+	return "", r.redisClient.Client.XAdd(r.redisClient.Context, &rds.XAddArgs{
 		Stream: r.opts.StreamName(),
 		MaxLen: r.opts.MaxLen(),
 		Approx: true, // "~" in Redis is approximated trimming.
@@ -358,7 +359,7 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	sessionKey := r.opts.SessionKeyPrefix() + string(pid)
 
 	rawSession, err := r.redisClient.Client.GetDel(r.redisClient.Context, sessionKey).Result()
-	if err != nil && err != redis.Nil {
+	if err != nil && err != rds.Nil {
 		return nil, err
 	}
 

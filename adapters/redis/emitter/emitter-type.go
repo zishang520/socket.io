@@ -1,7 +1,7 @@
 package emitter
 
 import (
-	"github.com/zishang520/socket.io/adapters/redis/v3/types"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 )
 
 type (
@@ -9,12 +9,12 @@ type (
 		Nsp              string
 		BroadcastChannel string
 		RequestChannel   string
-		Parser           types.Parser
+		Parser           redis.Parser
 	}
 
-	Packet = types.RedisPacket
+	Packet = redis.RedisPacket
 
-	Request = types.RedisRequest
+	Request = redis.RedisRequest
 
-	Response = types.RedisResponse
+	Response = redis.RedisResponse
 )

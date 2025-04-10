@@ -1,4 +1,4 @@
-package types
+package redis
 
 import (
 	"github.com/zishang520/socket.io/adapters/adapter/v3"

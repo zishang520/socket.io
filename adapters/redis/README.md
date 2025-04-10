@@ -19,7 +19,7 @@ import (
     "github.com/redis/go-redis/v9"
     s "github.com/zishang520/socket.io/v3/pkg/types"
     "github.com/zishang520/socket.io/adapters/redis/v3/adapter"
-    "github.com/zishang520/socket.io/adapters/redis/v3/types"
+    "github.com/zishang520/socket.io/v3/pkg/types"
     "github.com/zishang520/socket.io/servers/socket/v3"
     // "github.com/zishang520/socket.io/adapters/redis/v3/emitter"
 )

@@ -1,8 +1,8 @@
 package adapter
 
 import (
-	"github.com/zishang520/socket.io/adapters/redis/v3/types"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 )
 
 type (
@@ -11,7 +11,7 @@ type (
 	RedisStreamsAdapter interface {
 		adapter.ClusterAdapterWithHeartbeat
 
-		SetRedis(*types.RedisClient)
+		SetRedis(*redis.RedisClient)
 		Cleanup(func())
 		OnRawMessage(RawClusterMessage, string) error
 	}
