@@ -18,7 +18,6 @@ goto default
 
 :deps
     CALL go mod tidy
-    CALL go work sync
     GOTO :EOF
 
 :fmt

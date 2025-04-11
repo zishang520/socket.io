@@ -36,11 +36,7 @@ require (
 )
 
 replace github.com/zishang520/socket.io/v3 => ../../
-
 replace github.com/zishang520/socket.io/parsers/socket/v3 => ../../parsers/socket
-
 replace github.com/zishang520/socket.io/parsers/engine/v3 => ../../parsers/engine
-
 replace github.com/zishang520/socket.io/servers/engine/v3 => ../../servers/engine
-
 replace github.com/zishang520/socket.io/servers/socket/v3 => ../../servers/socket

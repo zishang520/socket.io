@@ -9,7 +9,6 @@ default:
 
 deps:
 	go mod tidy
-	go work sync
 
 fmt:
 	go fmt -mod=mod ./...

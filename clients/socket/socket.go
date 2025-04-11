@@ -752,7 +752,7 @@ func (s *Socket) Close() *Socket {
 //
 // compress: If `true`, compresses the sending data.
 func (s *Socket) Compress(compress bool) *Socket {
-	s.flags.Load().Compress = compress
+	s.flags.Load().Compress = &compress
 	return s
 }
 
