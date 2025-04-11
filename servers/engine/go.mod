@@ -32,6 +32,7 @@ require (
 	golang.org/x/tools v0.22.0 // indirect
 )
 
-replace github.com/zishang520/socket.io/v3 => ../../
-
-replace github.com/zishang520/socket.io/parsers/engine/v3 => ../../parsers/engine
+replace (
+	github.com/zishang520/socket.io/parsers/engine/v3 => ../../parsers/engine
+	github.com/zishang520/socket.io/v3 => ../../
+)

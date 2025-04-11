@@ -37,14 +37,11 @@ require (
 	resty.dev/v3 v3.0.0-beta.2 // indirect
 )
 
-replace github.com/zishang520/socket.io/v3 => ../../
-
-replace github.com/zishang520/socket.io/clients/engine/v3 => ../../clients/engine
-
-replace github.com/zishang520/socket.io/parsers/engine/v3 => ../../parsers/engine
-
-replace github.com/zishang520/socket.io/servers/engine/v3 => ../../servers/engine
-
-replace github.com/zishang520/socket.io/parsers/socket/v3 => ../../parsers/socket
-
-replace github.com/zishang520/socket.io/servers/socket/v3 => ../../servers/socket
+replace (
+	github.com/zishang520/socket.io/clients/engine/v3 => ../../clients/engine
+	github.com/zishang520/socket.io/parsers/engine/v3 => ../../parsers/engine
+	github.com/zishang520/socket.io/parsers/socket/v3 => ../../parsers/socket
+	github.com/zishang520/socket.io/servers/engine/v3 => ../../servers/engine
+	github.com/zishang520/socket.io/servers/socket/v3 => ../../servers/socket
+	github.com/zishang520/socket.io/v3 => ../../
+)
