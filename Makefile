@@ -1,57 +1,105 @@
-.PHONY: all default deps fmt goimports clean test help
+# Makefile
+SHELL := bash
+GOPROXY := https://goproxy.io,direct
+MODULES := adapters/adapter adapters/redis clients/engine clients/socket parsers/engine parsers/socket servers/engine servers/socket
 
-export GOPROXY=https://goproxy.io,direct
+.DEFAULT_GOAL := help
 
-MODULES = \
-    adapters/adapter \
-    adapters/redis \
-    clients/engine \
-    clients/socket \
-    parsers/engine \
-    parsers/socket \
-    servers/engine \
-    servers/socket
+export GOPROXY
 
-default: help
+.PHONY: help default deps fmt clean test
+
+default:
+	@echo "[Info] No command provided. Doing nothing."
 
 help:
-	@echo "Usage: make [target]"
-	@echo ""
-	@echo "Targets:"
-	@echo "  deps        Run go mod tidy for all modules"
-	@echo "  fmt         Run go fmt and gofmt for all modules"
-	@echo "  goimports   Run goimports -w for all modules"
-	@echo "  clean       Clean all build/test cache"
-	@echo "  test        Run tests with race and coverage"
-	@echo ""
+	@echo
+	@echo "Usage: make [default|deps|fmt|clean|test] [MODULE=module_path]"
+	@echo "If no MODULE is given, the command applies to all."
+	@echo
 
 deps:
+ifdef MODULE
+	@if [ -d "$(MODULE)" ]; then \
+		echo "[Deps] Tidy module: $(MODULE)"; \
+		(cd "$(MODULE)" && go mod tidy); \
+	else \
+		echo "[Error] Module path not found: $(MODULE)"; \
+		exit 1; \
+	fi
+else
+	@echo "[Deps] Running go mod tidy for all modules..."
 	go mod tidy
-	@for dir in $(MODULES); do \
-		cd $$dir && go mod tidy && cd - >/dev/null; \
+	@for MOD in $(MODULES); do \
+		if [ -d "$$MOD" ]; then \
+			(cd "$$MOD" && go mod tidy); \
+		else \
+			echo "[Warn] Skipped missing module: $$MOD"; \
+		fi; \
 	done
+endif
 
 fmt:
-	go fmt -mod=mod ./...
-	@for dir in $(MODULES); do \
-		gofmt -w $$dir; \
+ifdef MODULE
+	@if [ -d "$(MODULE)" ]; then \
+		echo "[Fmt] Formatting module: $(MODULE)"; \
+		(cd "$(MODULE)" && go fmt ./...); \
+	else \
+		echo "[Error] Module path not found: $(MODULE)"; \
+		exit 1; \
+	fi
+else
+	@echo "[Fmt] Formatting all modules..."
+	go fmt ./...
+	@for MOD in $(MODULES); do \
+		if [ -d "$$MOD" ]; then \
+			(cd "$$MOD" && go fmt ./...); \
+		else \
+			echo "[Warn] Skipped missing module: $$MOD"; \
+		fi; \
 	done
-
-goimports:
-	goimports -w .
-	@for dir in $(MODULES); do \
-		goimports -w $$dir; \
-	done
+endif
 
 clean:
-	go clean -mod=mod -v -r ./...
-	@for dir in $(MODULES); do \
-		cd $$dir && go clean -v -r ./... && cd - >/dev/null; \
+ifdef MODULE
+	@if [ -d "$(MODULE)" ]; then \
+		echo "[Clean] Cleaning module: $(MODULE)"; \
+		(cd "$(MODULE)" && go clean -v -r ./...); \
+	else \
+		echo "[Error] Module path not found: $(MODULE)"; \
+		exit 1; \
+	fi
+else
+	@echo "[Clean] Cleaning all modules..."
+	go clean -v -r ./...
+	@for MOD in $(MODULES); do \
+		if [ -d "$$MOD" ]; then \
+			(cd "$$MOD" && go clean -v -r ./...); \
+		else \
+			echo "[Warn] Skipped missing module: $$MOD"; \
+		fi; \
 	done
+endif
 
 test:
+	@echo "[Test] Cleaning test cache..."
 	go clean -testcache
+ifdef MODULE
+	@if [ -d "$(MODULE)" ]; then \
+		echo "[Test] Running test in module: $(MODULE)"; \
+		(cd "$(MODULE}" && go test -race -cover -covermode=atomic ./...); \
+	else \
+		echo "[Error] Module path not found: $(MODULE)"; \
+		exit 1; \
+	fi
+else
+	@echo "[Test] Running tests for all modules..."
 	go test -race -cover -covermode=atomic ./...
-	@for dir in $(MODULES); do \
-		cd $$dir && go test -race -cover -covermode=atomic ./... && cd - >/dev/null; \
+	@for MOD in $(MODULES); do \
+		if [ -d "$$MOD" ]; then \
+			(cd "$$MOD" && go test -race -cover -covermode=atomic ./...); \
+		else \
+			echo "[Warn] Skipped missing module: $$MOD"; \
+		fi; \
 	done
+endif
