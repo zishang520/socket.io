@@ -1,106 +1,162 @@
-
 # engine.io-go-parser
 
-[![Go](https://github.com/zishang520/socket.io/parsers/engine/v3/actions/workflows/go.yml/badge.svg)](https://github.com/zishang520/socket.io/parsers/engine/v3/actions/workflows/go.yml)
 [![GoDoc](https://pkg.go.dev/badge/github.com/zishang520/socket.io/parsers/engine/v3?utm_source=godoc)](https://pkg.go.dev/github.com/zishang520/socket.io/parsers/engine/v3)
 
-This is the golang parser for the engine.io protocol encoding,
-shared by both
-[engine.io-client-go(not ready)](https://github.com/zishang520/socket.io/clients/engine/v3) and
-[engine.io](https://github.com/zishang520/engine.io).
+## Description
+
+A Go implementation of the Engine.IO protocol parser. This package is used by both [engine.io-client-go](https://github.com/zishang520/socket.io/clients/engine/v3) and [engine.io](https://github.com/zishang520/engine.io) for protocol encoding and decoding.
+
+## Installation
+
+```bash
+go get github.com/zishang520/socket.io/parsers/engine/v3
+```
+
+## Features
+
+- Packet encoding/decoding
+- Payload encoding/decoding
+- Binary data support
+- Protocol v3 and v4 support
+- UTF-8 encoding support
 
 ## How to use
 
-### Standalone
-
-The parser can encode/decode packets, payloads, and payloads as binary
-with the following methods: `Parser.EncodePacket`, `Parser.DecodePacket`, `Parser.EncodePayload`,
-`Parser.DecodePayload`.
-
-Example:
+### Basic Usage
 
 ```go
+package main
+
 import (
     "bytes"
-    "io"
-    "strings"
+    "fmt"
 
     "github.com/zishang520/socket.io/parsers/engine/v3/packet"
     "github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 func main() {
-    p := &packet.Parserv4()
+    // Initialize parser
+    parser := packet.Parserv4()
 
-    data, _ := p.EncodePacket(&packet.Packet{
-        Type:    packet.MESSAGE,
-        Data:    bytes.NewBuffer([]byte{1, 2, 3, 4}),
-        Options: nil,
+    // Encode a packet
+    encodedData, err := parser.EncodePacket(&packet.Packet{
+        Type: packet.MESSAGE,
+        Data: bytes.NewBuffer([]byte("Hello World")),
     }, true)
-    decodedData, _ := p.DecodePacket(data)
+    if err != nil {
+        panic(err)
+    }
+
+    // Decode a packet
+    decodedPacket, err := parser.DecodePacket(encodedData)
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Printf("Decoded message: %s\n", decodedPacket.Data)
 }
 ```
 
-## API
+### Working with Payloads
 
-### Parser interface
+```go
+func handlePayload() {
+    parser := packet.Parserv4()
 
-- `EncodePacket`
-    - Encodes a packet.
-    - **Parameters**
-      - `*packet.Packet`: the packet to encode.
-      - `bool`: binary support.
-      - `bool`: utf8 encode, v3 only.
-- `DecodePacket`
-    - **Parameters**
-      - `types.BufferInterface`: the packet to decode.
-      - `bool`: utf8 encode, v3 only.
+    packets := []*packet.Packet{
+        {
+            Type: packet.MESSAGE,
+            Data: bytes.NewBuffer([]byte("First message")),
+        },
+        {
+            Type: packet.MESSAGE,
+            Data: bytes.NewBuffer([]byte("Second message")),
+        },
+    }
 
-- `EncodePayload`
-    - Encodes multiple messages (payload).
-    - If any contents are binary, they will be encoded as base64 strings. Base64
-      encoded strings are marked with a b before the length specifier
-    - **Parameters**
-      - `[]*packet.Packet`: an array of packets
-      - `bool`: binary support, v3 only.
-- `DecodePayload`
-    - Decodes data when a payload is maybe expected. Possible binary contents are
-      decoded from their base64 representation.
-    - **Parameters**
-      - `types.BufferInterface`: the payload
+    // Encode payload
+    encoded, err := parser.EncodePayload(packets)
+    if err != nil {
+        panic(err)
+    }
 
-## Tests
-
-Standalone tests can be run with `make test` which will run the golang tests.
-
-You can run the tests locally using the following command:
-
-```
-make test
+    // Decode payload
+    decoded, err := parser.DecodePayload(encoded)
+    if err != nil {
+        panic(err)
+    }
+}
 ```
 
-## Support
+## API Reference
 
-[issues](https://github.com/zishang520/socket.io/parsers/engine/v3/issues)
+### Parser Interface
+
+#### EncodePacket
+
+```go
+EncodePacket(packet *packet.Packet, supportsBinary bool) (types.BufferInterface, error)
+```
+
+- `packet`: The packet to encode
+- `supportsBinary`: Enable binary support
+- Returns: Encoded packet and error if any
+
+#### DecodePacket
+
+```go
+DecodePacket(data types.BufferInterface) (*packet.Packet, error)
+```
+
+- `data`: The data to decode
+- Returns: Decoded packet and error if any
+
+#### EncodePayload
+
+```go
+EncodePayload(packets []*packet.Packet) (types.BufferInterface, error)
+```
+
+- `packets`: Array of packets to encode
+- Returns: Encoded payload and error if any
+
+#### DecodePayload
+
+```go
+DecodePayload(data types.BufferInterface) ([]*packet.Packet, error)
+```
+
+- `data`: The payload to decode
+- Returns: Array of decoded packets and error if any
 
 ## Development
 
-To contribute patches, run tests or benchmarks, make sure to clone the
-repository:
+### Prerequisites
+
+- Go 1.24.1 or higher
+- Make
+
+### Testing
+
+Run the test suite:
 
 ```bash
-git clone git://github.com/zishang520/socket.io/parsers/engine/v3.git
-```
-
-Then:
-
-```bash
-cd engine.io-go-parser
 make test
 ```
 
-See the `Tests` section above for how to run tests before submitting any patches.
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Support
+
+If you encounter any issues or have questions, please file them in the [issues section](https://github.com/zishang520/socket.io/issues).
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

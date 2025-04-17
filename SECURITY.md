@@ -64,4 +64,3 @@ Security vulnerabilities will be disclosed via:
 For security-related inquiries, contact:
 
 - GitHub Security Advisory
-- [Project maintainer's contact information]
