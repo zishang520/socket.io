@@ -35,7 +35,7 @@ type Manager struct {
 	// The Engine.IO client instance
 	//
 	// Public
-	engine Engine
+	engine atomic.Pointer[Engine]
 	// Private
 	_autoConnect bool
 	// ReadyStateOpening | ReadyStateOpen | ReadyStateClosed
@@ -107,7 +107,10 @@ func NewManager(uri string, opts ManagerOptionsInterface) *Manager {
 }
 
 func (m *Manager) Engine() Engine {
-	return m.engine
+	if engine := m.engine.Load(); engine != nil {
+		return *engine
+	}
+	return nil
 }
 
 func (m *Manager) Opts() ManagerOptionsInterface {
@@ -273,13 +276,14 @@ func (m *Manager) Open(fn func(error)) *Manager {
 	}
 
 	manager_log.Debug("opening %s", m.uri)
-	m.engine = engine.NewSocket(m.uri, m.opts)
+	socket := engine.NewSocket(m.uri, m.opts)
+	m.engine.Store(&socket)
 	m._readyState.Store(ReadyStateOpening)
 	m.skipReconnect.Store(false)
 
 	// emit `open`
-	openSubDestroy := on(m.engine, "open", func(...any) {
-		m.onopen()
+	openSubDestroy := on(socket, "open", func(...any) {
+		m.onopen(socket)
 		if fn != nil {
 			fn(nil)
 		}
@@ -300,7 +304,7 @@ func (m *Manager) Open(fn func(error)) *Manager {
 	}
 
 	// emit `error`
-	errorSub := on(m.engine, "error", onError)
+	errorSub := on(socket, "error", onError)
 
 	if timeout := m._timeout.Load(); timeout != nil {
 		manager_log.Debug("connect attempt will timeout after %v", timeout)
@@ -310,7 +314,7 @@ func (m *Manager) Open(fn func(error)) *Manager {
 			manager_log.Debug("connect attempt timed out after %v", timeout)
 			openSubDestroy()
 			onError(errors.New("timeout"))
-			m.engine.Close()
+			socket.Close()
 		}, *timeout)
 
 		if m.opts.AutoUnref() {
@@ -333,7 +337,7 @@ func (m *Manager) Connect(fn func(error)) *Manager {
 }
 
 // Called upon transport open.
-func (m *Manager) onopen() {
+func (m *Manager) onopen(socket Engine) {
 	manager_log.Debug("open")
 
 	// clear old subs
@@ -345,10 +349,10 @@ func (m *Manager) onopen() {
 
 	// add new subs
 	m.subs.Push(
-		on(m.engine, "ping", m.onping),
-		on(m.engine, "data", m.ondata),
-		on(m.engine, "error", m.onerror),
-		on(m.engine, "close", func(args ...any) {
+		on(socket, "ping", m.onping),
+		on(socket, "data", m.ondata),
+		on(socket, "error", m.onerror),
+		on(socket, "close", func(args ...any) {
 			m.onclose(args[0].(string), args[1].(error))
 		}),
 		on(m.decoder, "decoded", m.ondecoded),
@@ -422,8 +426,10 @@ func (m *Manager) _destroy(_ *Socket) {
 func (m *Manager) _packet(packet *Packet) {
 	manager_log.Debug("writing packet %#v", packet)
 
-	for _, encodedPacket := range m.encoder.Encode(packet.Packet) {
-		m.engine.Write(encodedPacket.Clone(), packet.Options, nil)
+	if socket := m.Engine(); socket != nil {
+		for _, encodedPacket := range m.encoder.Encode(packet.Packet) {
+			socket.Write(encodedPacket.Clone(), packet.Options, nil)
+		}
 	}
 }
 
@@ -461,8 +467,8 @@ func (m *Manager) onclose(reason string, description error) {
 	manager_log.Debug("closed due to %s", reason)
 
 	m.cleanup()
-	if m.engine != nil {
-		m.engine.Close()
+	if socket := m.Engine(); socket != nil {
+		socket.Close()
 	}
 	m.backoff.Reset()
 	m._readyState.Store(ReadyStateClosed)

@@ -2,70 +2,137 @@
 setlocal ENABLEDELAYEDEXPANSION
 pushd "%~dp0"
 
-Set "GOPROXY=https://goproxy.io,direct"
+:: Set Go proxy
+SET "GOPROXY=https://goproxy.io,direct"
 
-set modules=adapters\adapter adapters\redis clients\engine clients\socket parsers\engine parsers\socket servers\engine servers\socket
+:: List of all submodules
+SET modules=adapters\adapter adapters\redis clients\engine clients\socket parsers\engine parsers\socket servers\engine servers\socket
 
-set "args=%~1"
-if /i "%args%"=="" goto help
-if /i "%args%"=="default" goto :default
-if /i "%args%"=="deps" goto :deps
-if /i "%args%"=="fmt" goto :fmt
-if /i "%args%"=="imports" goto :imports
-if /i "%args%"=="clean" goto :clean
-if /i "%args%"=="test" goto :test
+:: Get command argument
+SET "args=%1"
+IF /I "%args%"=="" GOTO :help
+IF /I "%args%"=="default" GOTO :default
+IF /I "%args%"=="deps" GOTO :deps
+IF /I "%args%"=="fmt" GOTO :fmt
+IF /I "%args%"=="clean" GOTO :clean
+IF /I "%args%"=="test" GOTO :test
 
-goto :help
+GOTO :help
 
 :default
+    echo [Info] No command provided. Doing nothing.
     GOTO :EOF
 
 :help
     echo.
-    echo Usage: build.bat [default^|deps^|fmt^|imports^|clean^|test]
+    echo Usage: build.bat [default^|deps^|fmt^|clean^|test] [module_path]
+    echo If no module_path is given, the command applies to all.
     echo.
     GOTO :EOF
 
 :deps
-    CALL go mod tidy
-    for %%M in (%modules%) do (
-        pushd %%M
+    SET "MODULE=%2"
+    IF NOT "%MODULE%"=="" (
+        IF EXIST "%MODULE%" (
+            echo [Deps] Tidy module: %MODULE%
+            pushd "%MODULE%"
+            CALL go mod tidy
+            popd
+        ) ELSE (
+            echo [Error] Module path not found: %MODULE%
+        )
+    ) ELSE (
+        echo [Deps] Running go mod tidy for all modules...
         CALL go mod tidy
-        popd
+        FOR %%M IN (%modules%) DO (
+            IF EXIST "%%M" (
+                pushd "%%M"
+                CALL go mod tidy
+                popd
+            ) ELSE (
+                echo [Warn] Skipped missing module: %%M
+            )
+        )
     )
     GOTO :EOF
 
 :fmt
-    CALL go fmt ./...
-    for %%M in (%modules%) do (
-        pushd %%M
+    SET "MODULE=%2"
+    IF NOT "%MODULE%"=="" (
+        IF EXIST "%MODULE%" (
+            echo [Fmt] Formatting module: %MODULE%
+            pushd "%MODULE%"
+            CALL go fmt ./...
+            popd
+        ) ELSE (
+            echo [Error] Module path not found: %MODULE%
+        )
+    ) ELSE (
+        echo [Fmt] Formatting all modules...
         CALL go fmt ./...
-        popd
-    )
-    GOTO :EOF
-
-:imports
-    CALL goimports -w .
-    for %%M in (%modules%) do (
-        CALL goimports -w %%M
+        FOR %%M IN (%modules%) DO (
+            IF EXIST "%%M" (
+                pushd "%%M"
+                CALL go fmt ./...
+                popd
+            ) ELSE (
+                echo [Warn] Skipped missing module: %%M
+            )
+        )
     )
     GOTO :EOF
 
 :clean
-    CALL go clean -v -r ./...
-    for %%M in (%modules%) do (
-        pushd %%M
+    SET "MODULE=%2"
+    IF NOT "%MODULE%"=="" (
+        IF EXIST "%MODULE%" (
+            echo [Clean] Cleaning module: %MODULE%
+            pushd "%MODULE%"
+            CALL go clean -v -r ./...
+            popd
+        ) ELSE (
+            echo [Error] Module path not found: %MODULE%
+        )
+    ) ELSE (
+        echo [Clean] Cleaning all modules...
         CALL go clean -v -r ./...
-        popd
+        FOR %%M IN (%modules%) DO (
+            IF EXIST "%%M" (
+                pushd "%%M"
+                CALL go clean -v -r ./...
+                popd
+            ) ELSE (
+                echo [Warn] Skipped missing module: %%M
+            )
+        )
     )
     GOTO :EOF
 
 :test
+    echo [Test] Cleaning test cache...
     CALL go clean -testcache
-    CALL go test -race -cover -covermode=atomic ./...
-    for %%M in (%modules%) do (
-        pushd %%M
+
+    SET "MODULE=%2"
+    IF NOT "%MODULE%"=="" (
+        IF EXIST "%MODULE%" (
+            echo [Test] Running test in module: %MODULE%
+            pushd "%MODULE%"
+            CALL go test -race -cover -covermode=atomic ./...
+            popd
+        ) ELSE (
+            echo [Error] Module path not found: %MODULE%
+        )
+    ) ELSE (
+        echo [Test] Running tests for all modules...
         CALL go test -race -cover -covermode=atomic ./...
-        popd
+        FOR %%M IN (%modules%) DO (
+            IF EXIST "%%M" (
+                pushd "%%M"
+                CALL go test -race -cover -covermode=atomic ./...
+                popd
+            ) ELSE (
+                echo [Warn] Skipped missing module: %%M
+            )
+        )
     )
     GOTO :EOF
