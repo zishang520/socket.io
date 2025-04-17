@@ -1,6 +1,5 @@
 # socket.io-go-redis
 
-[![Go](https://github.com/zishang520/socket.io/adapters/redis/v3/actions/workflows/go.yml/badge.svg)](https://github.com/zishang520/socket.io/adapters/redis/v3/actions/workflows/go.yml)
 [![GoDoc](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/redis/v3?utm_source=godoc)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/redis/v3)
 
 ## Description
