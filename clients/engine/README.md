@@ -1,10 +1,9 @@
 # Engine.IO Client for Go
 
-[![Build Status](https://github.com/zishang520/socket.io/clients/engine/v3/actions/workflows/go.yml/badge.svg)](https://github.com/zishang520/socket.io/clients/engine/v3/actions/workflows/go.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/clients/engine/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/clients/engine/v3)
 [![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/clients/engine/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/clients/engine/v3)
 
-A robust Go client implementation for [Engine.IO](https://github.com/zishang520/socket.io/servers/engine), the reliable real-time bidirectional communication layer that powers [Socket.IO](https://github.com/zishang520/socket.io/servers/socket).
+A robust Go client implementation for [Engine.IO](https://github.com/zishang520/socket.io/tree/v3/servers/engine), the reliable real-time bidirectional communication layer that powers [Socket.IO](https://github.com/zishang520/socket.io/tree/v3/servers/socket).
 
 ## Features
 
@@ -179,4 +178,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Related Projects
 
 - [Engine.IO Protocol](https://github.com/socketio/engine.io-protocol)
-- [Engine.IO Server](https://github.com/zishang520/socket.io/servers/engine)
+- [Engine.IO Server](https://github.com/zishang520/socket.io/tree/v3/servers/engine)

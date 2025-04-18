@@ -4,7 +4,7 @@
 
 ## Description
 
-A Go implementation of the Engine.IO protocol parser. This package is used by both [engine.io-client-go](https://github.com/zishang520/socket.io/clients/engine/v3) and [engine.io](https://github.com/zishang520/socket.io/servers/engine/v3) for protocol encoding and decoding.
+A Go implementation of the Engine.IO protocol parser. This package is used by both [engine.io-client-go](https://github.com/zishang520/socket.io/tree/v3/clients/engine) and [engine.io](https://github.com/zishang520/socket.io/tree/v3/servers/engine) for protocol encoding and decoding.
 
 ## Installation
 

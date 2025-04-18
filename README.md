@@ -2,6 +2,7 @@
 
 [![Go](https://github.com/zishang520/socket.io/actions/workflows/go.yml/badge.svg)](https://github.com/zishang520/socket.io/actions/workflows/go.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/servers/socket/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/servers/socket/v3)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/v3)
 
 A modern, idiomatic Go implementation of [Socket.IO](https://socket.io/), designed for real-time, bidirectional communication over WebSockets and other transports.
 

@@ -4,7 +4,7 @@
 
 ## Overview
 
-This is the Go parser for the Socket.IO protocol, responsible for encoding and decoding packets. It is shared by both [socket.io-client-go](https://github.com/zishang520/socket.io/clients/socket/v3) and [socket.io](https://github.com/zishang520/socket.io/servers/socket/v3).
+This is the Go parser for the Socket.IO protocol, responsible for encoding and decoding packets. It is shared by both [socket.io-client-go](https://github.com/zishang520/socket.io/tree/v3/clients/socket) and [socket.io](https://github.com/zishang520/socket.io/tree/v3/servers/socket).
 
 ### Compatibility Table
 

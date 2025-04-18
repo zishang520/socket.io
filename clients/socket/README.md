@@ -1,13 +1,37 @@
 # Socket.IO Client for Go
 
-[![Build Status](https://github.com/zishang520/socket.io/clients/socket/v3/actions/workflows/go.yml/badge.svg)](https://github.com/zishang520/socket.io/clients/socket/v3/actions/workflows/go.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/clients/socket/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/clients/socket/v3)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/clients/socket/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/clients/socket/v3)
 
-A robust Go client implementation for [Socket.IO](http://github.com/zishang520/engine.io), the reliable real-time bidirectional communication layer that powers [Socket.IO](http://github.com/zishang520/socket.io).
+A robust Go client implementation for [Socket.IO](https://socket.io/), featuring real-time bidirectional event-based communication.
 
 ## Features
 
-- Haven't written it yet.
+- **Transport Support**
+  - WebSocket
+  - HTTP long-polling
+  - WebTransport (experimental)
+  - Automatic transport upgrade
+  - Fallback mechanism
+
+- **Connection Management**
+  - Automatic reconnection with exponential backoff
+  - Connection state handling
+  - Multiple namespaces support
+  - Room support
+
+- **Event Handling**
+  - Event emitting and listening
+  - Acknowledgements support
+  - Volatile events
+  - Binary data support
+  - Custom event listeners
+
+- **Advanced Features**
+  - Multiplexing
+  - Custom middleware
+  - Connection timeout handling
+  - Debug logging
 
 ## Installation
 
@@ -17,7 +41,37 @@ go get github.com/zishang520/socket.io/clients/socket/v3
 
 ## Quick Start
 
-### Basic Usage
+### Basic Connection
+
+```go
+package main
+
+import (
+    "log"
+
+    "github.com/zishang520/socket.io/clients/socket/v3"
+)
+
+func main() {
+    client, err := socket.Connect("http://localhost:3000", nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    client.On("connect", func(...any) {
+        log.Println("Connected!")
+        client.Emit("message", "Hello Server!")
+    })
+
+    client.On("event", func(data ...any) {
+        log.Printf("Received: %v", data)
+    })
+
+    select {}
+}
+```
+
+### Advanced Usage
 
 ```go
 package main
@@ -25,81 +79,101 @@ package main
 import (
     "time"
 
+    "github.com/zishang520/socket.io/clients/socket/v3"
     "github.com/zishang520/socket.io/clients/engine/v3/transports"
     "github.com/zishang520/socket.io/v3/pkg/types"
-    "github.com/zishang520/socket.io/v3/pkg/utils"
-    "github.com/zishang520/socket.io/clients/socket/v3"
 )
 
 func main() {
     opts := socket.DefaultOptions()
-    opts.SetTransports(types.NewSet(transports.Polling, transports.WebSocket /*transports.WebTransport*/))
+    opts.SetTransports(types.NewSet(
+        transports.Polling,
+        transports.WebSocket,
+    ))
+    opts.SetTimeout(5 * time.Second)
+    opts.SetReconnection(true)
+    opts.SetReconnectionAttempts(5)
 
-    manager := socket.NewManager("http://127.0.0.1:3000", opts)
-    // Listening to manager events
-    manager.On("error", func(errs ...any) {
-        utils.Log().Warning("Manager Error: %v", errs)
+    manager := socket.NewManager("http://localhost:3000", opts)
+
+    // Custom namespace
+    socket := manager.Socket("/custom", nil)
+
+    // Event handling
+    socket.On("connect", func(...any) {
+        socket.Emit("auth", map[string]string{
+            "token": "your-auth-token",
+        })
     })
 
-    manager.On("ping", func(...any) {
-        utils.Log().Warning("Manager Ping")
+    // Acknowledgement
+    socket.Emit("event", "data", func(args ...any) {
+        log.Printf("Server acknowledged: %v", args)
     })
 
-    manager.On("reconnect", func(...any) {
-        utils.Log().Warning("Manager Reconnected")
-    })
-
-    manager.On("reconnect_attempt", func(...any) {
-        utils.Log().Warning("Manager Reconnect Attempt")
-    })
-
-    manager.On("reconnect_error", func(errs ...any) {
-        utils.Log().Warning("Manager Reconnect Error: %v", errs)
-    })
-
-    manager.On("reconnect_failed", func(errs ...any) {
-        utils.Log().Warning("Manager Reconnect Failed: %v", errs)
-    })
-    io := manager.Socket("/custom", opts)
-    utils.Log().Error("socket %v", io)
-    io.On("connect", func(args ...any) {
-        utils.Log().Warning("io iD %v", io.Id())
-        utils.SetTimeout(func() {
-            io.Emit("message", types.NewStringBufferString("test"))
-        }, 1*time.Second)
-        utils.Log().Warning("connect %v", args)
-    })
-
-    io.On("connect_error", func(args ...any) {
-        utils.Log().Warning("connect_error %v", args)
-    })
-
-    io.On("disconnect", func(args ...any) {
-        utils.Log().Warning("disconnect: %+v", args)
-    })
-
-    io.OnAny(func(args ...any) {
-        utils.Log().Warning("OnAny: %+v", args)
-    })
-
-    io.On("message-back", func(args ...any) {
-        // io.Emit("message", types.NewStringBufferString("88888"))
-        utils.Log().Question("message-back: %+v", args)
+    // Listen to all events
+    socket.OnAny(func(args ...any) {
+        log.Printf("Caught event: %v", args)
     })
 }
 ```
 
-## Development
+## API Reference
 
-### Running Tests
+### Manager Options
 
-```bash
-git clone https://github.com/zishang520/socket.io/clients/socket/v3.git
-cd socket.io-client-go
-go test ./...
+```go
+opts := socket.DefaultManagerOptions()
+opts.SetReconnection(true)                   // Enable/disable reconnection
+opts.SetReconnectionAttempts(math.Inf(1))    // Number of reconnection attempts
+opts.SetReconnectionDelay(1000)              // Initial delay in milliseconds
+opts.SetReconnectionDelayMax(5000)           // Maximum delay between reconnections
+opts.SetRandomizationFactor(0.5)             // Randomization factor for delays
+opts.SetTimeout(20000)                       // Connection timeout
 ```
 
-### Contributing
+### Socket Methods
+
+- **Emit**: `socket.Emit(eventName string, args ...any)`
+- **On**: `socket.On(eventName string, fn func(...any))`
+- **Once**: `socket.Once(eventName string, fn func(...any))`
+- **Off**: `socket.Off(eventName string, fn func(...any))`
+- **OnAny**: `socket.OnAny(fn func(...any))`
+- **Connect**: `socket.Connect()`
+- **Disconnect**: `socket.Disconnect()`
+
+### Events
+
+- `connect`: Fired upon connection
+- `disconnect`: Fired upon disconnection
+- `connect_error`: Fired upon connection error
+- `reconnect`: Fired upon successful reconnection
+- `reconnect_attempt`: Fired upon reconnection attempt
+- `reconnect_error`: Fired upon reconnection error
+- `reconnect_failed`: Fired when reconnection fails
+
+## Debugging
+
+Enable debug logs:
+
+
+```go
+import "github.com/zishang520/socket.io/v3/pkg/log"
+
+log.DEBUG = true
+```
+
+```bash
+make test
+```
+
+## Testing
+
+```bash
+make test
+```
+
+## Contributing
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
@@ -109,17 +183,10 @@ go test ./...
 
 ## License
 
-MIT License
-
-Copyright (c) 2025 luoyy
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Related Projects
 
-- [Socket.IO Protocol](https://github.com/socketio/socket.io-protocol)
-- [Socket.IO Server](https://github.com/zishang520/socket.io)
+- [Socket.IO](https://socket.io/)
+- [Engine.IO Client for Go](https://github.com/zishang520/socket.io/tree/v3/clients/engine)
+- [Socket.IO Server for Go](https://github.com/zishang520/socket.io/tree/v3/servers/socket)
