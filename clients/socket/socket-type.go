@@ -7,6 +7,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 )
 
+// Flags represents emission flags for a socket event, such as volatile, timeout, and queue status.
 type (
 	Flags struct {
 		packet.Options
@@ -16,11 +17,9 @@ type (
 		FromQueue bool           `json:"fromQueue" msgpack:"fromQueue"`
 	}
 
+	// QueuedPacket represents a packet that is queued for guaranteed delivery with retry support.
+	// Id is for debugging; deduplication should use a unique offset.
 	QueuedPacket struct {
-		// Only used for debugging purposes. To allow deduplication on the server side, one should include a unique offset in
-		// the packet, for example with crypto.randomUUID().
-		//
-		// @see https://developer.mozilla.org/en-US/docs/Web/API/Crypto/randomUUID
 		Id       uint64
 		Args     []any
 		Flags    *Flags

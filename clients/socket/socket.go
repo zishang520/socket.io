@@ -102,6 +102,7 @@ type Socket struct {
 	_anyOutgoingListeners *types.Slice[types.EventListener]
 }
 
+// MakeSocket creates a new Socket instance with default buffers and event listeners.
 func MakeSocket() *Socket {
 	r := &Socket{
 		EventEmitter: types.NewEventEmitter(),
@@ -118,6 +119,7 @@ func MakeSocket() *Socket {
 	return r
 }
 
+// NewSocket creates a new Socket instance for the given manager, namespace, and options.
 func NewSocket(io *Manager, nsp string, opts SocketOptionsInterface) *Socket {
 	r := MakeSocket()
 
@@ -126,10 +128,12 @@ func NewSocket(io *Manager, nsp string, opts SocketOptionsInterface) *Socket {
 	return r
 }
 
+// Io returns the Manager instance that created this Socket.
 func (s *Socket) Io() *Manager {
 	return s.io
 }
 
+// Id returns the session identifier for this socket, only available when connected.
 func (s *Socket) Id() string {
 	if id := s.id.Load(); id != nil {
 		return id.(string)
@@ -137,22 +141,27 @@ func (s *Socket) Id() string {
 	return ""
 }
 
+// Connected reports whether the socket is currently connected to the server.
 func (s *Socket) Connected() bool {
 	return s.connected.Load()
 }
 
+// Recovered reports if the connection state was recovered after reconnection.
 func (s *Socket) Recovered() bool {
 	return s.recovered.Load()
 }
 
+// Auth returns the authentication credentials for namespace access.
 func (s *Socket) Auth() map[string]any {
 	return s.auth
 }
 
+// ReceiveBuffer returns the buffer of packets received before the CONNECT packet.
 func (s *Socket) ReceiveBuffer() *types.Slice[[]any] {
 	return s.receiveBuffer
 }
 
+// SendBuffer returns the buffer of packets to be sent after connection is established.
 func (s *Socket) SendBuffer() *types.Slice[*Packet] {
 	return s.sendBuffer
 }

@@ -7,10 +7,13 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 )
 
+// ManagerOptionsInterface defines the configuration interface for a Socket.IO Manager.
+// It extends EngineOptionsInterface and provides additional options for reconnection, multiplexing, timeouts, and parser selection.
 type (
 	EngineOptionsInterface = engine.SocketOptionsInterface
 	EngineOptions          = engine.SocketOptions
 
+	// ManagerOptionsInterface defines the configuration interface for a Socket.IO Manager.
 	ManagerOptionsInterface interface {
 		EngineOptionsInterface
 
@@ -59,69 +62,31 @@ type (
 		SetParser(parser.Parser)
 	}
 
+	// ManagerOptions holds configuration for a Socket.IO Manager instance.
 	ManagerOptions struct {
 		EngineOptions
 
-		// Should we force a new Manager for this connection?
-		//
-		// Default: false
-		forceNew *bool
-
-		// Should we multiplex our connection (reuse existing Manager) ?
-		//
-		// Default: true
-		multiplex *bool
-
-		// The path to get our client file from, in the case of the server
-		// serving it
-		//
-		// Default: '/socket.io'
-		path *string
-
-		// Should we allow reconnections?
-		//
-		// Default: true
-		reconnection *bool
-
-		// How many reconnection attempts should we try?
-		//
-		// Default: Infinity
+		forceNew             *bool
+		multiplex            *bool
+		path                 *string
+		reconnection         *bool
 		reconnectionAttempts *float64
-
-		// The time delay in milliseconds between reconnection attempts
-		//
-		// Default: 1000 * time.Millisecond
-		reconnectionDelay *float64
-
-		// The max time delay in milliseconds between reconnection attempts
-		//
-		// Default: 5000 * time.Millisecond
+		reconnectionDelay    *float64
 		reconnectionDelayMax *float64
-
-		// Used in the exponential backoff jitter when reconnecting
-		//
-		// Default: 0.5
-		randomizationFactor *float64
-
-		// The timeout in milliseconds for our connection attempt
-		//
-		// Default: 20_000 * time.Millisecond
-		timeout *time.Duration
-
-		// Should we automatically connect?
-		//
-		// Default: true
-		autoConnect *bool
-
-		// the parser to use. Defaults to an instance of the Parser that ships with socket.io.
-		parser parser.Parser
+		randomizationFactor  *float64
+		timeout              *time.Duration
+		autoConnect          *bool
+		parser               parser.Parser
 	}
 )
 
+// DefaultManagerOptions returns a new ManagerOptions instance with default values.
 func DefaultManagerOptions() *ManagerOptions {
 	return &ManagerOptions{}
 }
 
+// Assign copies all options from another ManagerOptionsInterface instance.
+// If data is nil, it returns the current ManagerOptions instance.
 func (s *ManagerOptions) Assign(data ManagerOptionsInterface) ManagerOptionsInterface {
 	if data == nil {
 		return s

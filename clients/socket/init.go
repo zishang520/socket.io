@@ -1,5 +1,5 @@
-// Package socket implements a Socket.IO client in Go.
-// It provides real-time bidirectional event-based communication between web clients and servers.
+// Package socket provides a Socket.IO client implementation in Go.
+// It enables real-time, bidirectional event-based communication between web clients and servers.
 //
 // Example usage:
 //
@@ -37,6 +37,8 @@ func init() {
 	cache = types.Map[string, *Manager]{}
 }
 
+// lookup returns a Socket instance for the given URI and options.
+// It manages socket caching and multiplexing according to the options provided.
 func lookup(uri string, opts OptionsInterface) (*Socket, error) {
 	if opts == nil {
 		opts = DefaultOptions()
@@ -77,10 +79,14 @@ func lookup(uri string, opts OptionsInterface) (*Socket, error) {
 	return io.Socket(parsed.Path, opts), nil
 }
 
+// Io returns a Socket instance for the given URI and options.
+// It is an alias for Connect.
 func Io(uri string, opts OptionsInterface) (*Socket, error) {
 	return lookup(uri, opts)
 }
 
+// Connect returns a Socket instance for the given URI and options.
+// It is the main entry point for establishing a new connection.
 func Connect(uri string, opts OptionsInterface) (*Socket, error) {
 	return lookup(uri, opts)
 }

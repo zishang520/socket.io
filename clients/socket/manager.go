@@ -79,6 +79,7 @@ type Manager struct {
 	skipReconnect atomic.Bool
 }
 
+// MakeManager creates a new Manager instance with default event emitter, namespace map, and subscriptions.
 func MakeManager() *Manager {
 	r := &Manager{
 		EventEmitter: types.NewEventEmitter(),
@@ -106,6 +107,7 @@ func NewManager(uri string, opts ManagerOptionsInterface) *Manager {
 	return r
 }
 
+// Engine returns the underlying Engine.IO client instance.
 func (m *Manager) Engine() Engine {
 	if engine := m.engine.Load(); engine != nil {
 		return *engine
@@ -113,10 +115,12 @@ func (m *Manager) Engine() Engine {
 	return nil
 }
 
+// Opts returns the ManagerOptionsInterface for this manager.
 func (m *Manager) Opts() ManagerOptionsInterface {
 	return m.opts
 }
 
+// Construct initializes the Manager instance with the given URI and options.
 func (m *Manager) Construct(uri string, opts ManagerOptionsInterface) {
 	if opts == nil {
 		opts = DefaultManagerOptions()
@@ -451,11 +455,6 @@ func (m *Manager) _close() {
 	m.skipReconnect.Store(true)
 	m._reconnecting.Store(false)
 	m.onclose("forced close", nil)
-}
-
-// Alias for [Manager._close]
-func (m *Manager) disconnect() {
-	m._close()
 }
 
 // _onclose handles cleanup when the connection is closed.

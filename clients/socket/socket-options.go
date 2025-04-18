@@ -3,70 +3,42 @@ package socket
 import "time"
 
 // SocketOptionsInterface defines the interface for accessing and modifying Socket options.
-//
-// Example usage:
-//
-//	opts := DefaultSocketOptions()
-//	opts.SetAuth(map[string]any{
-//	    "token": "abc123",
-//	})
-//	opts.SetAckTimeout(5 * time.Second)
-//
-//	socket := io.Socket("/admin", opts)
+// It provides methods for authentication, retry logic, and acknowledgement timeouts.
 type (
 	SocketOptionsInterface interface {
-		// GetRawAuth returns the raw authentication data
+		// GetRawAuth returns the raw authentication data.
 		GetRawAuth() map[string]any
 
 		// Auth returns the authentication data that will be sent with the connection.
-		// This is useful for passing authentication tokens or other credentials.
 		Auth() map[string]any
 
-		// SetAuth sets the authentication data for the socket connection
+		// SetAuth sets the authentication data for the socket connection.
 		SetAuth(map[string]any)
 
-		// GetRawRetries returns the raw retry count
+		// GetRawRetries returns the raw retry count.
 		GetRawRetries() *float64
 
-		// Retries returns the maximum number of retries for packet delivery
+		// Retries returns the maximum number of retries for packet delivery.
 		Retries() float64
 
-		// SetRetries sets the maximum number of retries for packet delivery
+		// SetRetries sets the maximum number of retries for packet delivery.
 		SetRetries(float64)
 
-		// GetRawAckTimeout returns the raw acknowledgement timeout value
+		// GetRawAckTimeout returns the raw acknowledgement timeout value.
 		GetRawAckTimeout() *time.Duration
 
-		// AckTimeout returns the timeout duration for acknowledgements
+		// AckTimeout returns the timeout duration for acknowledgements.
 		AckTimeout() time.Duration
 
-		// SetAckTimeout sets the timeout duration for waiting for acknowledgements
+		// SetAckTimeout sets the timeout duration for waiting for acknowledgements.
 		SetAckTimeout(time.Duration)
 	}
 
 	// SocketOptions defines configuration options for individual Socket.IO sockets.
 	// These options control the behavior of a specific namespace connection.
-	//
-	// Example usage:
-	//
-	//	opts := DefaultSocketOptions()
-	//	opts.SetAuth(map[string]any{
-	//	    "token": "abc123",
-	//	})
-	//	opts.SetAckTimeout(5 * time.Second)
-	//
-	//	socket := io.Socket("/admin", opts)
 	SocketOptions struct {
-		// the authentication payload sent when connecting to the Namespace
-		auth map[string]any
-
-		// The maximum number of retries. Above the limit, the packet will be discarded.
-		//
-		// Using `Infinity` means the delivery guarantee is "at-least-once" (instead of "at-most-once" by default), but a
-		// smaller value like 10 should be sufficient in practice.
-		retries *float64
-
-		// The default timeout in milliseconds used when waiting for an acknowledgement.
+		auth       map[string]any
+		retries    *float64
 		ackTimeout *time.Duration
 	}
 )
@@ -78,12 +50,7 @@ func DefaultSocketOptions() *SocketOptions {
 }
 
 // Assign copies all options from another SocketOptionsInterface instance.
-//
-// Parameters:
-//   - opts: The source options to copy from
-//
-// Returns:
-//   - SocketOptionsInterface: The updated options instance
+// If data is nil, it returns the current SocketOptions instance.
 func (s *SocketOptions) Assign(data SocketOptionsInterface) SocketOptionsInterface {
 	if data == nil {
 		return s
