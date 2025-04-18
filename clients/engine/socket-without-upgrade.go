@@ -71,7 +71,6 @@ type socketWithoutUpgrade struct {
 	upgrading  atomic.Bool        // Upgrade status flag
 
 	// Private fields
-	_prevBufferLen             atomic.Uint32               // Previous buffer length for write operations
 	_pingInterval              int64                       // Interval between ping messages
 	_pingTimeout               int64                       // Timeout for ping responses
 	_maxPayload                int64                       // Maximum payload size allowed
@@ -357,7 +356,7 @@ func (s *socketWithoutUpgrade) CreateTransport(name string) Transport {
 func (s *socketWithoutUpgrade) _open() {
 	if s.transports.Len() == 0 {
 		// Emit error on next tick so it can be listened to
-		go s.Emit("error", errors.New("No transports available"))
+		go s.Emit("error", errors.New("no transports available"))
 		return
 	}
 	transportName := s.transports.Keys()[0]

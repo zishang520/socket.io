@@ -44,14 +44,12 @@ import (
 type socketWithUpgrade struct {
 	SocketWithoutUpgrade
 
-	_upgrades *types.Set[string] // Available transport upgrades
+	// _upgrades holds the set of available transport upgrades.
+	_upgrades *types.Set[string]
 }
 
-// MakeSocketWithUpgrade creates a new socket instance with upgrade support.
+// MakeSocketWithUpgrade creates a new SocketWithUpgrade instance with upgrade support.
 // It initializes the base socket and prepares the upgrade mechanism.
-//
-// Returns:
-//   - SocketWithUpgrade: A new socket instance with upgrade capabilities
 func MakeSocketWithUpgrade() SocketWithUpgrade {
 	s := &socketWithUpgrade{
 		SocketWithoutUpgrade: MakeSocketWithoutUpgrade(),
@@ -62,7 +60,7 @@ func MakeSocketWithUpgrade() SocketWithUpgrade {
 	return s
 }
 
-// NewSocketWithUpgrade creates a new socket with the specified URI and options.
+// NewSocketWithUpgrade creates a new SocketWithUpgrade with the specified URI and options.
 //
 // Parameters:
 //   - uri: The server URI to connect to (e.g., "http://localhost:8080")
@@ -89,9 +87,8 @@ func (s *socketWithUpgrade) OnOpen() {
 	}
 }
 
-// _probe attempts to upgrade to a specified transport type.
-// It creates a new transport instance and tests its viability through
-// a probe packet exchange.
+// _probe attempts to upgrade to a specified transport type by creating a new transport
+// and testing its viability through a probe packet exchange.
 //
 // The probe process:
 //  1. Creates a new transport instance
@@ -228,9 +225,8 @@ func (s *socketWithUpgrade) _probe(name string) {
 	}
 }
 
-// OnHandshake processes the initial handshake data from the server.
-// It filters the available transport upgrades based on server capabilities
-// and client configuration.
+// OnHandshake processes the initial handshake data from the server and filters
+// the available transport upgrades based on server and client configuration.
 //
 // Parameters:
 //   - data: Handshake data received from the server
@@ -240,7 +236,7 @@ func (s *socketWithUpgrade) OnHandshake(data *HandshakeData) {
 }
 
 // _filterUpgrades filters the server's supported upgrades against the client's
-// configured transports.
+// configured transports and returns the mutually supported set.
 //
 // Parameters:
 //   - upgrades: List of transport names supported by the server
