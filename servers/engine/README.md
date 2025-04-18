@@ -5,7 +5,7 @@
 
 ## Overview
 
-Engine.IO is a transport-based cross-browser/cross-device bi-directional communication layer implementation for [Socket.IO in Go](https://github.com/zishang520/socket.io/servers/socket/v3). It abstracts away the differences between various transports (WebSocket, Polling, WebTransport) and provides a unified API.
+Engine.IO is a transport-based cross-browser/cross-device bi-directional communication layer implementation for [Socket.IO in Go](https://github.com/zishang520/socket.io/servers/socket). It abstracts away the differences between various transports (WebSocket, Polling, WebTransport) and provides a unified API.
 
 ## Features
 

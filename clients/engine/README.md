@@ -2,12 +2,38 @@
 
 [![Build Status](https://github.com/zishang520/socket.io/clients/engine/v3/actions/workflows/go.yml/badge.svg)](https://github.com/zishang520/socket.io/clients/engine/v3/actions/workflows/go.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/clients/engine/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/clients/engine/v3)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/clients/engine/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/clients/engine/v3)
 
-A robust Go client implementation for [Engine.IO](http://github.com/zishang520/engine.io), the reliable real-time bidirectional communication layer that powers [Socket.IO](http://github.com/zishang520/socket.io).
+A robust Go client implementation for [Engine.IO](https://github.com/zishang520/socket.io/servers/engine), the reliable real-time bidirectional communication layer that powers [Socket.IO](https://github.com/zishang520/socket.io/servers/socket).
 
 ## Features
 
-- Haven't written it yet.
+- **Multiple Transport Support**
+  - WebSocket transport
+  - HTTP long-polling transport
+  - WebTransport (experimental)
+  - Automatic transport upgrade
+  - Fallback mechanism
+
+- **Connection Management**
+  - Automatic reconnection
+  - Heartbeat mechanism
+  - Connection state handling
+  - Cookie support
+  - Custom headers
+
+- **Data Handling**
+  - Binary data support
+  - Base64 encoding fallback
+  - Packet buffering
+  - Message compression
+
+- **Advanced Features**
+  - Event-driven architecture
+  - Configurable timeouts
+  - Debug logging
+  - Cross-platform compatibility
+  - Protocol v3 and v4 support
 
 ## Installation
 
@@ -24,31 +50,28 @@ package main
 
 import (
     "log"
-    "time"
+
     eio "github.com/zishang520/socket.io/clients/engine/v3"
-    "github.com/zishang520/socket.io/v3/pkg/utils"
     "github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 func main() {
     socket := eio.NewSocket("ws://localhost", nil)
-    
+
     socket.On("open", func(args ...any) {
         log.Println("Connection established")
-        
-        // Send a message after 1 second
-        utils.SetTimeout(func() {
-            socket.Send(types.NewStringBufferString("Hello, Server!"), nil, nil)
-        }, 1*time.Second)
+        socket.Send(types.NewStringBufferString("Hello!"), nil, nil)
     })
 
     socket.On("message", func(args ...any) {
-        log.Printf("Received message: %v", args[0])
+        log.Printf("Received: %v", args[0])
     })
 
     socket.On("close", func(args ...any) {
         log.Println("Connection closed")
     })
+
+    select {}
 }
 ```
 
@@ -58,38 +81,65 @@ func main() {
 package main
 
 import (
+    "time"
+
     "github.com/zishang520/socket.io/clients/engine/v3"
     "github.com/zishang520/socket.io/clients/engine/v3/transports"
-    "github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 func main() {
-    // Create custom socket options
     opts := engine.DefaultSocketOptions()
-    
-    // Configure connection settings
-    opts.SetPath("/engine.io")
-    opts.SetQuery(map[string][]string{
-        "token": {"abc123"},
-    })
-    
-    // Specify preferred transports
+
+    // Transport configuration
     opts.SetTransports(types.NewSet(
         transports.WebSocket,
         transports.Polling,
+        transports.WebTransport,
     ))
-    
-    // Configure timeouts
-    opts.SetRequestTimeout(time.Second * 10)
-    
-    // Create socket with custom options
+
+    // Connection settings
+    opts.SetPath("/engine.io")
+    opts.SetRequestTimeout(10 * time.Second)
+    opts.SetWithCredentials(true)
+
+    // Upgrade configuration
+    opts.SetUpgrade(true)
+    opts.SetRememberUpgrade(true)
+
     socket := engine.NewSocket("ws://localhost", opts)
-    
-    // Handle events
-    socket.On("open", func(args ...any) {
-        // Connection established
-    })
+    // ... event handlers
 }
+```
+
+## API Reference
+
+### Socket States
+
+- `SocketStateOpening`: Connection is being established
+- `SocketStateOpen`: Connection is open and ready
+- `SocketStateClosing`: Connection is closing
+- `SocketStateClosed`: Connection is closed
+
+### Events
+
+- `open`: Connection established
+- `message`: Message received
+- `close`: Connection closed
+- `error`: Error occurred
+- `upgrade`: Transport upgraded
+- `upgradeError`: Transport upgrade failed
+- `packet`: Raw packet received
+- `drain`: Write buffer drained
+
+### Transport Types
+
+```go
+import "github.com/zishang520/socket.io/clients/engine/v3/transports"
+
+// Available transports
+transports.Polling      // HTTP long-polling
+transports.WebSocket    // WebSocket
+transports.WebTransport // WebTransport (experimental)
 ```
 
 ## Development
@@ -97,12 +147,24 @@ func main() {
 ### Running Tests
 
 ```bash
-git clone https://github.com/zishang520/socket.io/clients/engine/v3.git
-cd engine.io-client-go
-go test ./...
+make test
 ```
 
-### Contributing
+### Debugging
+
+Enable debug logs:
+
+```go
+import "github.com/zishang520/socket.io/v3/pkg/log"
+
+log.DEBUG = true
+```
+
+```bash
+make test
+```
+
+## Contributing
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
@@ -112,18 +174,9 @@ go test ./...
 
 ## License
 
-MIT License
-
-Copyright (c) 2025 luoyy
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Related Projects
 
 - [Engine.IO Protocol](https://github.com/socketio/engine.io-protocol)
-- [Engine.IO Server](https://github.com/zishang520/engine.io)
-- [Socket.IO](https://github.com/zishang520/socket.io)
+- [Engine.IO Server](https://github.com/zishang520/socket.io/servers/engine)
