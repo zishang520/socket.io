@@ -359,63 +359,17 @@ func (s *Socket) registerAckCallback(id uint64, ack Ack) {
 	})
 }
 
-// Targets a room when broadcasting.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		// the “foo” event will be broadcast to all connected clients in the “room-101” room, except this socket
-//		socket.To("room-101").Emit("foo", "bar")
-//
-//		// the code above is equivalent to:
-//		io.To("room-101").Except(Room(socket.Id())).Emit("foo", "bar")
-//
-//		// with an array of rooms (a client will be notified at most once)
-//		socket.To([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
-//
-//		// with multiple chained calls
-//		socket.To("room-101").To("room-102").Emit("foo", "bar")
-//	})
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
-//
-// Return: a new [BroadcastOperator] instance for chaining
+// To targets a room when broadcasting. Returns a new BroadcastOperator for chaining.
 func (s *Socket) To(room ...Room) *BroadcastOperator {
 	return s.newBroadcastOperator().To(room...)
 }
 
-// Targets a room when broadcasting. Similar to `to()`, but might feel clearer in some cases:
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		// disconnect all clients in the "room-101" room, except this socket
-//		socket.In("room-101").DisconnectSockets(false)
-//	});
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
-//
-// Return: a new [BroadcastOperator] instance for chaining
+// In targets a room when broadcasting. Returns a new BroadcastOperator for chaining.
 func (s *Socket) In(room ...Room) *BroadcastOperator {
 	return s.newBroadcastOperator().In(room...)
 }
 
-// Excludes a room when broadcasting.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		// the "foo" event will be broadcast to all connected clients, except the ones that are in the "room-101" room
-//		// and this socket
-//		socket.Except("room-101").Emit("foo", "bar")
-//
-//		// with an array of rooms
-//		socket.Except([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
-//
-//		// with multiple chained calls
-//		socket.Except("room-101").Except("room-102").Emit("foo", "bar")
-//	})
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
-//
-// Return: a new [BroadcastOperator] instance for chaining
+// Except excludes a room when broadcasting. Returns a new BroadcastOperator for chaining.
 func (s *Socket) Except(room ...Room) *BroadcastOperator {
 	return s.newBroadcastOperator().Except(room...)
 }
@@ -457,18 +411,7 @@ func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
 	s.client._packet(packet, &opts.WriteOptions)
 }
 
-// Joins a room.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		// join a single room
-//		socket.Join("room1")
-//
-//		// join multiple rooms
-//		socket.Join([]Room{"room-101", "room-102"}...)
-//	})
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
+// Join adds the socket to one or more rooms.
 func (s *Socket) Join(rooms ...Room) {
 	if !s.canJoin.Load() {
 		return
@@ -478,19 +421,7 @@ func (s *Socket) Join(rooms ...Room) {
 	s.adapter.AddAll(s.id, types.NewSet(rooms...))
 }
 
-// Leaves a room.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		// leave a single room
-//		socket.Leave("room1")
-//
-//		// leave multiple rooms
-//		socket.Leave("room-101")
-//		socket.Leave("room-102")
-//	})
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
+// Leave removes the socket from a room.
 func (s *Socket) Leave(room Room) {
 	socket_log.Debug("leave room %s", room)
 	s.adapter.Del(s.id, room)
@@ -766,27 +697,7 @@ func (s *Socket) dispatch(event []any) {
 	})
 }
 
-// Sets up socket middleware.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		socket.Use(func(events []any, next func(error)) {
-//			if isUnauthorized(events[0]) {
-//				next(error.New("unauthorized event"))
-//				return
-//			}
-//			// do not forget to call next
-//			next(nil)
-//		})
-//
-//		socket.On("error", func(errs ...any) {
-//			if err, ok := errs[0].(error); ok && err.Error() == "unauthorized event" {
-//				socket.Disconnect(false)
-//			}
-//		});
-//	});
-//
-// Param: fn - middleware function (event, next)
+// Use registers a middleware function for this socket.
 func (s *Socket) Use(fn SocketMiddleware) *Socket {
 	s.fns.Push(fn)
 	return s
@@ -864,49 +775,19 @@ func (s *Socket) Rooms() *types.Set[Room] {
 	return types.NewSet[Room]()
 }
 
-// Adds a listener that will be fired when any event is received. The event name is passed as the first argument to
-// the callback.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		socket.OnAny(func(events ...any) {
-//			fmt.Println(`got event `, events)
-//		})
-//	})
-//
-//	Param: types.EventListener
+// OnAny adds a listener that will be fired when any event is received.
 func (s *Socket) OnAny(listener types.EventListener) *Socket {
 	s._anyListeners.Push(listener)
 	return s
 }
 
-// Adds a listener that will be fired when any event is received. The event name is passed as the first argument to
-// the callback. The listener is added to the beginning of the listeners array.
-//
-//	Param: types.EventListener
+// PrependAny adds a listener to the beginning of the listeners array for any event received.
 func (s *Socket) PrependAny(listener types.EventListener) *Socket {
 	s._anyListeners.Unshift(listener)
 	return s
 }
 
-// Removes the listener that will be fired when any event is received.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		catchAllListener := func(events ...any) {
-//			fmt.Println(`got event `, events)
-//		}
-//
-//		socket.OnAny(catchAllListener)
-//
-//		// remove a specific listener
-//		socket.OffAny(catchAllListener)
-//
-//		// or remove all listeners
-//		socket.OffAny(nil)
-//	})
-//
-//	Param: types.EventListener
+// OffAny removes a specific or all listeners for any event received.
 func (s *Socket) OffAny(listener types.EventListener) *Socket {
 	if listener != nil {
 		anyListeners := reflect.ValueOf(listener).Pointer()
@@ -925,56 +806,19 @@ func (s *Socket) ListenersAny() []types.EventListener {
 	return s._anyListeners.All()
 }
 
-// Adds a listener that will be fired when any event is sent. The event name is passed as the first argument to
-// the callback.
-//
-// Note: acknowledgements sent to the client are not included.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		socket.onAnyOutgoing(func(events ...any) {
-//			fmt.Println(`got event `, events)
-//		})
-//	})
-//
-//	Param: types.EventListener
+// OnAnyOutgoing adds a listener that will be fired when any event is sent.
 func (s *Socket) OnAnyOutgoing(listener types.EventListener) *Socket {
 	s._anyOutgoingListeners.Push(listener)
 	return s
 }
 
-// Adds a listener that will be fired when any event is emitted. The event name is passed as the first argument to the
-// callback. The listener is added to the beginning of the listeners array.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		socket.PrependAnyOutgoing(func(events ...any) {
-//			fmt.Println(`sent event `, events)
-//		})
-//	})
+// PrependAnyOutgoing adds a listener to the beginning of the listeners array for any event sent.
 func (s *Socket) PrependAnyOutgoing(listener types.EventListener) *Socket {
 	s._anyOutgoingListeners.Unshift(listener)
 	return s
 }
 
-// Removes the listener that will be fired when any event is sent.
-//
-//	io.On("connection", func(clients ...any) {
-//		socket := clients[0].(*socket.Socket)
-//		catchAllListener := func(events ...any) {
-//			fmt.Println(`sent event `, events)
-//		}
-//
-//		socket.OnAnyOutgoing(catchAllListener)
-//
-//		// remove a specific listener
-//		socket.OffAnyOutgoing(catchAllListener)
-//
-//		// or remove all listeners
-//		socket.OffAnyOutgoing(nil)
-//	})
-//
-//	Param: types.EventListener - the catch-all listener
+// OffAnyOutgoing removes a specific or all listeners for any event sent.
 func (s *Socket) OffAnyOutgoing(listener types.EventListener) *Socket {
 	if listener != nil {
 		listenerPointer := reflect.ValueOf(listener).Pointer()

@@ -1,3 +1,4 @@
+// Package config provides attach options for configuring how the Engine.IO server is attached to an HTTP server.
 package config
 
 import (

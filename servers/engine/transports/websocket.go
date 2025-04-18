@@ -1,3 +1,4 @@
+// Package transports implements the WebSocket transport for Engine.IO.
 package transports
 
 import (

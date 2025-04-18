@@ -14,6 +14,7 @@ import (
 
 var client_log = log.NewLog("socket.io:client")
 
+// Client represents a Socket.IO client connection.
 type Client struct {
 	conn engine.Socket
 
@@ -28,6 +29,7 @@ type Client struct {
 	mu sync.Mutex
 }
 
+// MakeClient creates a new Client instance.
 func MakeClient() *Client {
 	c := &Client{
 		sockets: &types.Map[SocketId, *Socket]{},
@@ -37,6 +39,7 @@ func MakeClient() *Client {
 	return c
 }
 
+// NewClient creates a new Client and initializes it with the given server and connection.
 func NewClient(server *Server, conn engine.Socket) *Client {
 	c := MakeClient()
 
@@ -45,15 +48,12 @@ func NewClient(server *Server, conn engine.Socket) *Client {
 	return c
 }
 
+// Conn returns the underlying Engine.IO socket connection.
 func (c *Client) Conn() engine.Socket {
 	return c.conn
 }
 
-// Client constructor.
-//
-// Param: server instance
-//
-// Param: conn
+// Construct initializes the client with the given server and connection.
 func (c *Client) Construct(server *Server, conn engine.Socket) {
 	c.server = server
 	c.conn = conn
@@ -63,12 +63,12 @@ func (c *Client) Construct(server *Server, conn engine.Socket) {
 	c.setup()
 }
 
-// Return: the reference to the request that originated the Engine.IO connection
+// Request returns the reference to the request that originated the Engine.IO connection.
 func (c *Client) Request() *types.HttpContext {
 	return c.conn.Request()
 }
 
-// Sets up event listeners.
+// setup sets up event listeners for the client.
 func (c *Client) setup() {
 	c.decoder.On("decoded", c.ondecoded)
 	c.conn.On("data", c.ondata)
@@ -85,11 +85,7 @@ func (c *Client) setup() {
 	}, c.server._connectTimeout))
 }
 
-// Connects a client to a namespace.
-//
-// Param: name - the namespace
-//
-// Param: auth - the auth parameters
+// connect connects a client to a namespace with optional auth parameters.
 func (c *Client) connect(name string, auth any) {
 	if _, ok := c.server._nsps.Load(name); ok {
 		client_log.Debug("connecting to namespace %s", name)
@@ -112,11 +108,7 @@ func (c *Client) connect(name string, auth any) {
 	})
 }
 
-// Connects a client to a namespace.
-//
-// Param: name - the namespace
-//
-// Param: auth - the auth parameters
+// doConnect connects a client to a namespace and adds the socket to the client.
 func (c *Client) doConnect(name string, auth any) {
 	nsp := c.server.Of(name, nil)
 	nsp.Add(c, auth, func(socket *Socket) {
@@ -129,7 +121,7 @@ func (c *Client) doConnect(name string, auth any) {
 	})
 }
 
-// Disconnects from all namespaces and closes transport.
+// _disconnect disconnects from all namespaces and closes the transport.
 func (c *Client) _disconnect() {
 	c.sockets.Range(func(id SocketId, socket *Socket) bool {
 		socket.Disconnect(false)
@@ -139,7 +131,7 @@ func (c *Client) _disconnect() {
 	c.close()
 }
 
-// Removes a socket. Called by each `Socket`.
+// _remove removes a socket from the client. Called by each Socket.
 func (c *Client) _remove(socket *Socket) {
 	if nsp, ok := c.sockets.Load(socket.Id()); ok {
 		c.sockets.Delete(socket.Id())
@@ -149,7 +141,7 @@ func (c *Client) _remove(socket *Socket) {
 	}
 }
 
-// Closes the underlying connection.
+// close closes the underlying connection.
 func (c *Client) close() {
 	if c.conn.ReadyState() == "open" {
 		client_log.Debug("forcing transport close")
@@ -158,7 +150,7 @@ func (c *Client) close() {
 	}
 }
 
-// Writes a packet to the transport.
+// _packet writes a packet to the transport.
 func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 	if c.conn.ReadyState() != "open" {
 		client_log.Debug("ignoring packet write %v", packet)
@@ -172,6 +164,7 @@ func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 	c.WriteToEngine(c.encoder.Encode(packet), opts)
 }
 
+// WriteToEngine writes encoded packets to the Engine.IO transport.
 func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *WriteOptions) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -186,7 +179,7 @@ func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *Wri
 	}
 }
 
-// Called with incoming transport data.
+// ondata is called with incoming transport data.
 func (c *Client) ondata(args ...any) {
 	// error is needed for protocol violations (GH-1880)
 	if err := c.decoder.Add(args[0]); err != nil {
@@ -195,7 +188,7 @@ func (c *Client) ondata(args ...any) {
 	}
 }
 
-// Called when parser fully decodes a packet.
+// ondecoded is called when the parser fully decodes a packet.
 func (c *Client) ondecoded(args ...any) {
 	packet, _ := args[0].(*parser.Packet)
 	var namespace string
@@ -220,7 +213,7 @@ func (c *Client) ondecoded(args ...any) {
 	}
 }
 
-// Handles an error.
+// onerror handles an error from the transport or parser.
 func (c *Client) onerror(args ...any) {
 	c.sockets.Range(func(_ SocketId, socket *Socket) bool {
 		socket._onerror(args[0])
@@ -229,7 +222,7 @@ func (c *Client) onerror(args ...any) {
 	c.conn.Close(false)
 }
 
-// Called upon transport close.
+// onclose is called upon transport close.
 func (c *Client) onclose(args ...any) {
 	client_log.Debug("client close with reason %v", args[0])
 
@@ -246,7 +239,7 @@ func (c *Client) onclose(args ...any) {
 	c.decoder.Destroy() // clean up decoder
 }
 
-// Cleans up event listeners.
+// destroy cleans up event listeners and timers for the client.
 func (c *Client) destroy() {
 	c.conn.RemoveListener("data", c.ondata)
 	c.conn.RemoveListener("error", c.onerror)

@@ -64,28 +64,8 @@ func (r *RemoteSocket) Construct(adapter Adapter, details SocketDetails) {
 	})
 }
 
-// Adds a timeout in milliseconds for the next operation.
-//
-//	io.FetchSockets()(func(sockets []*RemoteSocket, _ error){
-//
-//		for _, socket := range sockets {
-//			if (someCondition) {
-//				socket.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
-//					if err != nil {
-//						// the client did not acknowledge the event in the given delay
-//					}
-//				})
-//			}
-//		}
-//
-//	})
-//	// Note: if possible, using a room instead of looping over all sockets is preferable
-//
-//	io.Timeout(1000 * time.Millisecond).To(someConditionRoom).Emit("some-event", func(args []any, err error) {
-//		// ...
-//	})
-//
-// Param: time.Duration - timeout
+// Timeout sets a timeout for the next operation on this remote socket.
+// The timeout parameter specifies the duration to wait for an acknowledgement.
 func (r *RemoteSocket) Timeout(timeout time.Duration) *BroadcastOperator {
 	return r.operator.Timeout(timeout)
 }
@@ -94,23 +74,19 @@ func (r *RemoteSocket) Emit(ev string, args ...any) error {
 	return r.operator.Emit(ev, args...)
 }
 
-// Joins a room.
-//
-// Param: Room - a [Room], or a [Room] slice to expand
+// Join adds this remote socket to one or more rooms.
+// The room parameter accepts one or more Room values.
 func (r *RemoteSocket) Join(room ...Room) {
 	r.operator.SocketsJoin(room...)
 }
 
-// Leaves a room.
-//
-// Param: Room - a [Room], or a [Room] slice to expand
+// Leave removes this remote socket from one or more rooms.
+// The room parameter accepts one or more Room values.
 func (r *RemoteSocket) Leave(room ...Room) {
 	r.operator.SocketsLeave(room...)
 }
 
-// Disconnects this client.
-//
-// Param: close - if `true`, closes the underlying connection
+// Disconnect disconnects this client. If status is true, the underlying connection will be closed.
 func (r *RemoteSocket) Disconnect(status bool) *RemoteSocket {
 	r.operator.DisconnectSockets(status)
 	return r

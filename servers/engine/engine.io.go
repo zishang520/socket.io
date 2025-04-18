@@ -1,3 +1,4 @@
+// Package engine provides entry points for creating and attaching Engine.IO servers, including HTTP/WebSocket/WebTransport support.
 package engine
 
 import (

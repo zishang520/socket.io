@@ -1,3 +1,4 @@
+// Package transports implements the JSONP polling transport for Engine.IO.
 package transports
 
 import (
@@ -7,13 +8,10 @@ import (
 	"regexp"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
-	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 var (
-	jsonp_log = log.NewLog("engine:jsonp")
-
 	rDoubleSlashes = regexp.MustCompile(`\\\\n`)
 	rSlashes       = regexp.MustCompile(`(\\)?\\n`)
 	rNumber        = regexp.MustCompile(`[^0-9]`)

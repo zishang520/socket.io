@@ -1,3 +1,4 @@
+// Package config provides configuration types and options for the Engine.IO server, including server and attach options.
 package config
 
 import (

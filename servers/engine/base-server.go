@@ -1,3 +1,4 @@
+// Package engine provides the core Engine.IO server implementation, including base server logic, protocol error handling, and middleware management.
 package engine
 
 import (

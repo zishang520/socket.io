@@ -1,3 +1,4 @@
+// Package engine implements the Engine.IO socket, which manages client connections, transport upgrades, and protocol state.
 package engine
 
 import (

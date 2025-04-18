@@ -1,3 +1,4 @@
+// Package engine provides the Engine.IO server implementation, including HTTP/WebSocket/WebTransport handling and protocol management.
 package engine
 
 import (

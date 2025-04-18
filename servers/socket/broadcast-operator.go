@@ -11,6 +11,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+// BroadcastOperator is used to broadcast events to multiple clients.
 type BroadcastOperator struct {
 	adapter     Adapter
 	rooms       *types.Set[Room]
@@ -18,6 +19,7 @@ type BroadcastOperator struct {
 	flags       *BroadcastFlags
 }
 
+// MakeBroadcastOperator creates a new instance of BroadcastOperator.
 func MakeBroadcastOperator() *BroadcastOperator {
 	b := &BroadcastOperator{
 		rooms:       types.NewSet[Room](),
@@ -28,6 +30,7 @@ func MakeBroadcastOperator() *BroadcastOperator {
 	return b
 }
 
+// NewBroadcastOperator initializes a BroadcastOperator with the given parameters.
 func NewBroadcastOperator(adapter Adapter, rooms *types.Set[Room], exceptRooms *types.Set[Room], flags *BroadcastFlags) *BroadcastOperator {
 	b := MakeBroadcastOperator()
 
@@ -36,6 +39,7 @@ func NewBroadcastOperator(adapter Adapter, rooms *types.Set[Room], exceptRooms *
 	return b
 }
 
+// Construct initializes the BroadcastOperator with the given parameters.
 func (b *BroadcastOperator) Construct(adapter Adapter, rooms *types.Set[Room], exceptRooms *types.Set[Room], flags *BroadcastFlags) {
 	b.adapter = adapter
 	if rooms != nil {
@@ -49,129 +53,54 @@ func (b *BroadcastOperator) Construct(adapter Adapter, rooms *types.Set[Room], e
 	}
 }
 
-// Targets a room when emitting.
-//
-//	// the “foo” event will be broadcast to all connected clients in the “room-101” room
-//	io.To("room-101").Emit("foo", "bar")
-//
-//	// with an array of rooms (a client will be notified at most once)
-//	io.To("room-101", "room-102").Emit("foo", "bar")
-//	io.To([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
-//
-//	// with multiple chained calls
-//	io.To("room-101").To("room-102").Emit("foo", "bar")
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
-//
-// Return: a new [BroadcastOperator] instance for chaining
+// To targets a room when emitting events. Returns a new BroadcastOperator for chaining.
 func (b *BroadcastOperator) To(room ...Room) *BroadcastOperator {
 	rooms := types.NewSet(b.rooms.Keys()...)
 	rooms.Add(room...)
 	return NewBroadcastOperator(b.adapter, rooms, b.exceptRooms, b.flags)
 }
 
-// Targets a room when emitting. Similar to `to()`, but might feel clearer in some cases:
-//
-//	// disconnect all clients in the "room-101" room
-//	io.In("room-101").DisconnectSockets(false)
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
-//
-// Return: a new [BroadcastOperator] instance for chaining
+// In targets a room when emitting events. Alias of To().
 func (b *BroadcastOperator) In(room ...Room) *BroadcastOperator {
 	return b.To(room...)
 }
 
-// Excludes a room when emitting.
-//
-//	// the "foo" event will be broadcast to all connected clients, except the ones that are in the "room-101" room
-//	io.Except("room-101").Emit("foo", "bar")
-//
-//	// with an array of rooms
-//	io.Except(["room-101", "room-102"]).Emit("foo", "bar")
-//	io.Except([]Room{"room-101", "room-102"}...).Emit("foo", "bar")
-//
-//	// with multiple chained calls
-//	io.Except("room-101").Except("room-102").Emit("foo", "bar")
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
-//
-// Return: a new [BroadcastOperator] instance for chaining
+// Except excludes a room when emitting events. Returns a new BroadcastOperator for chaining.
 func (b *BroadcastOperator) Except(room ...Room) *BroadcastOperator {
 	exceptRooms := types.NewSet(b.exceptRooms.Keys()...)
 	exceptRooms.Add(room...)
 	return NewBroadcastOperator(b.adapter, b.rooms, exceptRooms, b.flags)
 }
 
-// Sets the compress flag.
-//
-//	io.Compress(false).Emit("hello")
-//
-// Param: compress - if `true`, compresses the sending data
-//
-// Return: a new [BroadcastOperator] instance
+// Compress sets the compress flag for subsequent event emissions.
 func (b *BroadcastOperator) Compress(compress bool) *BroadcastOperator {
 	flags := *b.flags
 	flags.Compress = &compress
 	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, &flags)
 }
 
-// Sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to
-// receive messages (because of network slowness or other issues, or because they’re connected through long polling
-// and is in the middle of a request-response cycle).
-//
-//	io.Volatile().Emit("hello") // the clients may or may not receive it
+// Volatile sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to receive messages.
 func (b *BroadcastOperator) Volatile() *BroadcastOperator {
 	flags := *b.flags
 	flags.Volatile = true
 	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, &flags)
 }
 
-// Sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
-//
-//	// the “foo” event will be broadcast to all connected clients on this node
-//	io.Local().Emit("foo", "bar")
-//
-// Return: a new [BroadcastOperator] instance for chaining
+// Local sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
 func (b *BroadcastOperator) Local() *BroadcastOperator {
 	flags := *b.flags
 	flags.Local = true
 	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, &flags)
 }
 
-// Adds a timeout in milliseconds for the next operation
-//
-//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
-//		if err != nil {
-//			// some clients did not acknowledge the event in the given delay
-//		} else {
-//			fmt.Println(args) // one response per client
-//		}
-//	})
-//
-// Param: timeout
+// Timeout adds a timeout for the next operation.
 func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
 	flags := *b.flags
 	flags.Timeout = &timeout
 	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, &flags)
 }
 
-// Emits to all clients.
-//
-//	// the “foo” event will be broadcast to all connected clients
-//	io.Emit("foo", "bar")
-//
-//	// the “foo” event will be broadcast to all connected clients in the “room-101” room
-//	io.To("room-101").Emit("foo", "bar")
-//
-//	// with an acknowledgement expected from all connected clients
-//	io.Timeout(1000 * time.Millisecond).Emit("some-event", func(args []any, err error) {
-//		if err != nil {
-//			// some clients did not acknowledge the event in the given delay
-//		} else {
-//			fmt.Println(args) // one response per client
-//		}
-//	})
+// Emit broadcasts an event to all connected clients.
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	if SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
@@ -251,47 +180,14 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	return nil
 }
 
-// Emits an event and waits for an acknowledgement from all clients.
-//
-//	io.Timeout(1000 * time.Millisecond).EmitWithAck("some-event")(func(args []any, err error) {
-//		if err == nil {
-//			fmt.Println(args) // one response per client
-//		} else {
-//			// some clients did not acknowledge the event in the given delay
-//		}
-//	})
-//
-// Return:  a `func(socket.Ack)` that will be fulfilled when all clients have acknowledged the event
+// EmitWithAck broadcasts an event and waits for acknowledgements from all clients.
 func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(Ack) {
 	return func(ack Ack) {
 		b.Emit(ev, append(args, ack)...)
 	}
 }
 
-// Returns the matching socket instances. This method works across a cluster of several Socket.IO servers.
-//
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
-//
-//	io.FetchSockets()(func(sockets []*RemoteSocket, _ error){
-//		// return all Socket instances
-//	})
-//
-//	// return all Socket instances in the "room1" room
-//	io.In("room1").FetchSockets()(func(sockets []*RemoteSocket, _ error){
-//
-//		for _, socket := range sockets {
-//			fmt.Println(socket.Id())
-//			fmt.Println(socket.Handshake())
-//			fmt.Println(socket.Rooms())
-//			fmt.Println(socket.Data())
-//
-//			socket.Emit("hello")
-//			socket.Join("room1")
-//			socket.Leave("room2")
-//			socket.Disconnect()
-//		}
-//
-//	})
+// FetchSockets returns a function to fetch matching socket instances.
 func (b *BroadcastOperator) FetchSockets() func(func([]*RemoteSocket, error)) {
 	return func(callback func([]*RemoteSocket, error)) {
 		b.adapter.FetchSockets(&BroadcastOptions{
@@ -312,17 +208,7 @@ func (b *BroadcastOperator) FetchSockets() func(func([]*RemoteSocket, error)) {
 	}
 }
 
-// Makes the matching socket instances join the specified rooms.
-//
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
-//
-//	// make all socket instances join the "room1" room
-//	io.SocketsJoin("room1")
-//
-//	// make all socket instances in the "room1" room join the "room2" and "room3" rooms
-//	io.In("room1").SocketsJoin([]Room{"room2", "room3"}...)
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
+// SocketsJoin makes the matching socket instances join the specified rooms.
 func (b *BroadcastOperator) SocketsJoin(room ...Room) {
 	b.adapter.AddSockets(&BroadcastOptions{
 		Rooms:  b.rooms,
@@ -331,17 +217,7 @@ func (b *BroadcastOperator) SocketsJoin(room ...Room) {
 	}, room)
 }
 
-// Makes the matching socket instances leave the specified rooms.
-//
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
-//
-//	// make all socket instances leave the "room1" room
-//	io.SocketsLeave("room1")
-//
-//	// make all socket instances in the "room1" room leave the "room2" and "room3" rooms
-//	io.In("room1").SocketsLeave([]Room{"room2", "room3"}...)
-//
-// Param: Room - a `Room`, or a `Room` slice to expand
+// SocketsLeave makes the matching socket instances leave the specified rooms.
 func (b *BroadcastOperator) SocketsLeave(room ...Room) {
 	b.adapter.DelSockets(&BroadcastOptions{
 		Rooms:  b.rooms,
@@ -350,17 +226,7 @@ func (b *BroadcastOperator) SocketsLeave(room ...Room) {
 	}, room)
 }
 
-// Makes the matching socket instances disconnect.
-//
-// Note: this method also works within a cluster of multiple Socket.IO servers, with a compatible [Adapter].
-//
-//	// make all socket instances disconnect (the connections might be kept alive for other namespaces)
-//	io.DisconnectSockets(false)
-//
-//	// make all socket instances in the "room1" room disconnect and close the underlying connections
-//	io.In("room1").DisconnectSockets(true)
-//
-// Param: close - whether to close the underlying connection
+// DisconnectSockets makes the matching socket instances disconnect.
 func (b *BroadcastOperator) DisconnectSockets(status bool) {
 	b.adapter.DisconnectSockets(&BroadcastOptions{
 		Rooms:  b.rooms,
