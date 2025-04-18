@@ -80,8 +80,8 @@ jobs:
     - if: matrix.build-mode == 'manual'
       run: |
         # replace the following lines with the commands to build your code
-        go get ./...
-        go build ./...
+        make get
+        make build
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
