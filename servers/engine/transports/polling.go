@@ -1,3 +1,4 @@
+// Package transports implements the HTTP long-polling transport for Engine.IO.
 package transports
 
 import (

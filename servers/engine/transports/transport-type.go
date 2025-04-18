@@ -1,3 +1,4 @@
+// Package transports provides implementations for Engine.IO transport types and constants.
 package transports
 
 import (

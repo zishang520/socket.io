@@ -1,3 +1,4 @@
+// Package transports provides implementations for Engine.IO transport mechanisms such as polling, WebSocket, and WebTransport.
 package transports
 
 import (

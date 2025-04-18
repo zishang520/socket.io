@@ -1,3 +1,4 @@
+// Package transports provides initialization logic for Engine.IO transport registration.
 package transports
 
 const (

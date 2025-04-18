@@ -1,3 +1,4 @@
+// Package transports provides builder types for Engine.IO transport registration and instantiation.
 package transports
 
 import (

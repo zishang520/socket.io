@@ -1,3 +1,4 @@
+// Package errors defines error values and helpers for Engine.IO server and transport implementations.
 package errors
 
 import (

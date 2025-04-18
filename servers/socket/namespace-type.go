@@ -82,8 +82,6 @@ type Namespace interface {
 	// Construct() should be called after calling Prototype()
 	Construct(*Server, string)
 
-	// @protected
-	//
 	// Initializes the `Adapter` for n nsp.
 	// Run upon changing adapter by `Server.Adapter`
 	// in addition to the constructor.
@@ -122,8 +120,6 @@ type Namespace interface {
 	// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
 	ServerSideEmitWithAck(string, ...any) func(Ack) error
 
-	// @private
-	//
 	// Called when a packet is received from another Socket.IO server
 	OnServerSideEmit([]any)
 

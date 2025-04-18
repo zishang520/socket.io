@@ -71,14 +71,12 @@ type namespace struct {
 	_proto_ Namespace
 
 	// #readonly
-	// @public
 
 	name    string
 	sockets *types.Map[SocketId, *Socket]
 
 	adapter Adapter
 
-	// @private
 	_ids atomic.Uint64
 
 	server *Server
@@ -152,8 +150,6 @@ func (n *namespace) Construct(server *Server, name string) {
 	n.Proto().InitAdapter()
 }
 
-// @protected
-//
 // Initializes the `Adapter` for n nsp.
 // Run upon changing adapter by [Server.Adapter]
 // in addition to the constructor.
@@ -368,8 +364,6 @@ func (n *namespace) Cleanup(cleanup func()) {
 	n._cleanup = cleanup
 }
 
-// @private
-//
 // Removes a client. Called by each [Socket].
 func (n *namespace) Remove(socket *Socket) {
 	if _, ok := n.sockets.LoadAndDelete(socket.Id()); !ok {

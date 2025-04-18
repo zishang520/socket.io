@@ -70,8 +70,6 @@ func (c *clusterAdapter) Construct(nsp socket.Namespace) {
 }
 
 // OnMessage handles incoming messages
-//
-// @protected
 func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 	if message.Uid == c.uid {
 		adapter_log.Debug("[%s] ignore message from self", c.uid)
@@ -220,8 +218,6 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 }
 
 // OnResponse handles incoming responses
-//
-// @protected
 func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 	switch response.Type {
 	case BROADCAST_CLIENT_COUNT:

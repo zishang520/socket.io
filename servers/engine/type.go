@@ -1,3 +1,4 @@
+// Package engine defines core types and interfaces for Engine.IO server, including BaseServer, Server, and Socket abstractions.
 package engine
 
 import (
