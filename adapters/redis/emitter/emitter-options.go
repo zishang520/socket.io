@@ -1,3 +1,4 @@
+// Package emitter provides options and interfaces for configuring the Redis emitter in Socket.IO.
 package emitter
 
 import (
@@ -5,6 +6,7 @@ import (
 )
 
 type (
+	// EmitterOptionsInterface defines the interface for configuring emitter options.
 	EmitterOptionsInterface interface {
 		SetKey(string)
 		GetRawKey() *string
@@ -15,20 +17,25 @@ type (
 		Parser() redis.Parser
 	}
 
+	// EmitterOptions holds configuration for the Redis emitter.
+	//
+	// Key: the Redis key prefix (default: "socket.io").
+	// Parser: the parser used for encoding messages (default: msgpack).
 	EmitterOptions struct {
-		// Default: "socket.io"
+		// key is the Redis key prefix.
 		key *string
 
-		// The parser to use for encoding messages sent to Redis.
-		// Defaults to msgpack, a MessagePack implementation.
+		// parser is the parser to use for encoding messages sent to Redis.
 		parser redis.Parser
 	}
 )
 
+// DefaultEmitterOptions returns a new EmitterOptions with default values.
 func DefaultEmitterOptions() *EmitterOptions {
 	return &EmitterOptions{}
 }
 
+// Assign copies non-nil fields from another EmitterOptionsInterface.
 func (s *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInterface {
 	if data == nil {
 		return s
@@ -44,14 +51,17 @@ func (s *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 	return s
 }
 
+// SetKey sets the Redis key prefix.
 func (s *EmitterOptions) SetKey(key string) {
 	s.key = &key
 }
+
+// GetRawKey returns the raw Redis key pointer.
 func (s *EmitterOptions) GetRawKey() *string {
 	return s.key
 }
 
-// Default: "socket.io"
+// Key returns the Redis key prefix. Default is "socket.io".
 func (s *EmitterOptions) Key() string {
 	if s.key == nil {
 		return ""
@@ -60,15 +70,17 @@ func (s *EmitterOptions) Key() string {
 	return *s.key
 }
 
+// SetParser sets the parser for encoding messages.
 func (s *EmitterOptions) SetParser(parser redis.Parser) {
 	s.parser = parser
 }
+
+// GetRawParser returns the raw parser.
 func (s *EmitterOptions) GetRawParser() redis.Parser {
 	return s.parser
 }
 
-// The parser to use for encoding messages sent to Redis.
-// Defaults to msgpack, a MessagePack implementation.
+// Parser returns the parser for encoding messages. Default is msgpack.
 func (s *EmitterOptions) Parser() redis.Parser {
 	return s.parser
 }

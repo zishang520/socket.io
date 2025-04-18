@@ -1,3 +1,4 @@
+// Package adapter implements a Redis Streams-based adapter for Socket.IO clustering.
 package adapter
 
 import (
@@ -30,19 +31,20 @@ var (
 
 const RESTORE_SESSION_MAX_XRANGE_CALLS = 100
 
-// Returns a function that will create a new adapter instance.
+// RedisStreamsAdapterBuilder creates a new Redis Streams adapter for Socket.IO.
 type RedisStreamsAdapterBuilder struct {
-	// the Redis client used to publish/subscribe
+	// Redis is the Redis client used to publish/subscribe.
 	Redis *redis.RedisClient
-	// some additional options
+	// Opts are additional options for the streams adapter.
 	Opts RedisStreamsAdapterOptionsInterface
 
 	namespaceToAdapters types.Map[string, RedisStreamsAdapter]
-	offset              types.String // Default:"$"
-	polling             atomic.Bool  // Default:false
-	shouldClose         atomic.Bool  // Default:false
+	offset              types.String // Default: "$"
+	polling             atomic.Bool  // Default: false
+	shouldClose         atomic.Bool  // Default: false
 }
 
+// poll continuously reads messages from the Redis stream and dispatches them to the appropriate adapter.
 func (sb *RedisStreamsAdapterBuilder) poll(options RedisStreamsAdapterOptionsInterface) {
 	for {
 		if sb.shouldClose.Load() || sb.namespaceToAdapters.Len() == 0 {
@@ -82,6 +84,7 @@ func (sb *RedisStreamsAdapterBuilder) poll(options RedisStreamsAdapterOptionsInt
 	}
 }
 
+// New creates a new Redis Streams adapter for the given namespace.
 func (sb *RedisStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	options := DefaultRedisStreamsAdapterOptions().Assign(sb.Opts)
 
@@ -131,6 +134,7 @@ type redisStreamsAdapter struct {
 	_cleanup types.Callable
 }
 
+// MakeRedisStreamsAdapter creates a new redisStreamsAdapter with default options.
 func MakeRedisStreamsAdapter() RedisStreamsAdapter {
 	c := &redisStreamsAdapter{
 		ClusterAdapterWithHeartbeat: adapter.MakeClusterAdapterWithHeartbeat(),
@@ -145,6 +149,7 @@ func MakeRedisStreamsAdapter() RedisStreamsAdapter {
 	return c
 }
 
+// NewRedisStreamsAdapter creates and initializes a new Redis Streams adapter.
 func NewRedisStreamsAdapter(nsp socket.Namespace, redis *redis.RedisClient, opts any) RedisStreamsAdapter {
 	c := MakeRedisStreamsAdapter()
 
@@ -156,10 +161,12 @@ func NewRedisStreamsAdapter(nsp socket.Namespace, redis *redis.RedisClient, opts
 	return c
 }
 
+// SetRedis sets the Redis client for the streams adapter.
 func (r *redisStreamsAdapter) SetRedis(redisClient *redis.RedisClient) {
 	r.redisClient = redisClient
 }
 
+// SetOpts sets the options for the streams adapter.
 func (r *redisStreamsAdapter) SetOpts(opts any) {
 	r.ClusterAdapterWithHeartbeat.SetOpts(opts)
 
@@ -168,12 +175,14 @@ func (r *redisStreamsAdapter) SetOpts(opts any) {
 	}
 }
 
+// Construct initializes the streams adapter for the given namespace.
 func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	r.ClusterAdapterWithHeartbeat.Construct(nsp)
 
 	r.Init()
 }
 
+// DoPublish publishes a cluster message to the Redis stream.
 func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
 	redis_streams_log.Debug("publishing %+v", message)
 
@@ -190,14 +199,16 @@ func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 	}).Err()
 }
 
+// DoPublishResponse publishes a response to the Redis stream.
 func (r *redisStreamsAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) error {
 	_, err := r.DoPublish(response)
 	return err
 }
 
+// encode encodes a cluster response as a RawClusterMessage for Redis Streams.
 func (redisStreamsAdapter) encode(message *adapter.ClusterResponse) RawClusterMessage {
 	rawMessage := RawClusterMessage{
-		"uid":  fmt.Sprintf("%s", message.Uid),
+		"uid":  string(message.Uid),
 		"nsp":  message.Nsp,
 		"type": fmt.Sprintf("%d", message.Type),
 	}
@@ -223,10 +234,12 @@ func (redisStreamsAdapter) encode(message *adapter.ClusterResponse) RawClusterMe
 	return rawMessage
 }
 
+// Cleanup registers a cleanup callback for the adapter.
 func (r *redisStreamsAdapter) Cleanup(cleanup func()) {
 	r._cleanup = cleanup
 }
 
+// Close cleans up resources and calls the registered cleanup callback.
 func (r *redisStreamsAdapter) Close() {
 	defer r.ClusterAdapterWithHeartbeat.Close()
 
@@ -235,6 +248,7 @@ func (r *redisStreamsAdapter) Close() {
 	}
 }
 
+// OnRawMessage handles a raw message from the Redis stream and dispatches it.
 func (r *redisStreamsAdapter) OnRawMessage(rawMessage RawClusterMessage, offset string) error {
 	message, err := r.decode(rawMessage)
 	if err != nil {
@@ -244,6 +258,7 @@ func (r *redisStreamsAdapter) OnRawMessage(rawMessage RawClusterMessage, offset 
 	return nil
 }
 
+// decode decodes a RawClusterMessage into a ClusterResponse.
 func (r *redisStreamsAdapter) decode(rawMessage RawClusterMessage) (*adapter.ClusterResponse, error) {
 	// Parse the message type
 	tp, err := strconv.ParseInt(rawMessage.Type(), 10, 0)
@@ -285,6 +300,7 @@ func (r *redisStreamsAdapter) decode(rawMessage RawClusterMessage) (*adapter.Clu
 	return message, nil
 }
 
+// decodeData decodes the message data based on the message type and format.
 func (r *redisStreamsAdapter) decodeData(messageType adapter.MessageType, rawData any) (any, error) {
 	// Pre-allocate the target based on message type
 	var target any
@@ -330,6 +346,7 @@ func (r *redisStreamsAdapter) decodeData(messageType adapter.MessageType, rawDat
 	return target, nil
 }
 
+// PersistSession persists a session to Redis for recovery.
 func (r *redisStreamsAdapter) PersistSession(session *socket.SessionToPersist) {
 	redis_streams_log.Debug("persisting session %v", session)
 	sessionKey := r.opts.SessionKeyPrefix() + string(session.Pid)
@@ -348,6 +365,7 @@ func (r *redisStreamsAdapter) PersistSession(session *socket.SessionToPersist) {
 	}
 }
 
+// RestoreSession restores a session from Redis and collects missed packets.
 func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset string) (*socket.Session, error) {
 	redis_streams_log.Debug("restoring session %s from offset %s", pid, offset)
 
@@ -412,6 +430,7 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	return session, nil
 }
 
+// nextOffset computes the next stream offset for Redis Streams.
 func (redisStreamsAdapter) nextOffset(offset string) string {
 	dashPos := strings.LastIndex(offset, "-")
 	if dashPos == -1 {
@@ -428,6 +447,7 @@ func (redisStreamsAdapter) nextOffset(offset string) string {
 	return offset
 }
 
+// shouldIncludePacket determines if a packet should be included for session recovery.
 func (redisStreamsAdapter) shouldIncludePacket(sessionRooms *types.Set[socket.Room], opts *adapter.PacketOptions) bool {
 	included := len(opts.Rooms) == 0
 	if !included {

@@ -1,3 +1,4 @@
+// Package emitter provides an API for broadcasting messages to Socket.IO servers via Redis.
 package emitter
 
 import (
@@ -16,6 +17,7 @@ const UID adapter.ServerId = "emitter"
 
 var emitter_log = log.NewLog("socket.io-emitter")
 
+// Emitter is responsible for broadcasting messages to Socket.IO servers using Redis.
 type Emitter struct {
 	redisClient *redis.RedisClient
 
@@ -24,6 +26,7 @@ type Emitter struct {
 	nsp              string
 }
 
+// MakeEmitter creates a new Emitter with default options and namespace.
 func MakeEmitter() *Emitter {
 	e := &Emitter{
 		opts: DefaultEmitterOptions(),
@@ -33,6 +36,7 @@ func MakeEmitter() *Emitter {
 	return e
 }
 
+// NewEmitter creates a new Emitter with the given Redis client, options, and optional namespace.
 func NewEmitter(redisClient *redis.RedisClient, opts *EmitterOptions, nsps ...string) *Emitter {
 	e := MakeEmitter()
 
@@ -41,6 +45,7 @@ func NewEmitter(redisClient *redis.RedisClient, opts *EmitterOptions, nsps ...st
 	return e
 }
 
+// Construct initializes the Emitter with the given Redis client, options, and namespace.
 func (e *Emitter) Construct(redisClient *redis.RedisClient, opts *EmitterOptions, nsps ...string) {
 	e.redisClient = redisClient
 
@@ -69,7 +74,7 @@ func (e *Emitter) Construct(redisClient *redis.RedisClient, opts *EmitterOptions
 	}
 }
 
-// Return a new emitter for the given namespace.
+// Of returns a new Emitter for the given namespace.
 func (e *Emitter) Of(nsp string) *Emitter {
 	if !strings.HasPrefix(nsp, "/") {
 		nsp = "/" + nsp
@@ -77,60 +82,57 @@ func (e *Emitter) Of(nsp string) *Emitter {
 	return NewEmitter(e.redisClient, e.opts, nsp)
 }
 
-// Emits to all clients.
+// Emit emits an event to all clients.
 func (e *Emitter) Emit(ev string, args ...any) error {
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil).Emit(ev, args...)
 }
 
-// Targets a room when emitting.
+// To targets a room when emitting.
 func (e *Emitter) To(rooms ...socket.Room) *BroadcastOperator {
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil).To(rooms...)
 }
 
-// Targets a room when emitting.
+// In targets a room when emitting.
 func (e *Emitter) In(rooms ...socket.Room) *BroadcastOperator {
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil).In(rooms...)
 }
 
-// Excludes a room when emitting.
+// Except excludes a room when emitting.
 func (e *Emitter) Except(rooms ...socket.Room) *BroadcastOperator {
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil).Except(rooms...)
 }
 
-// Sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to
-// receive messages (because of network slowness or other issues, or because they’re connected through long polling
-// and is in the middle of a request-response cycle).
+// Volatile sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to receive messages.
 func (e *Emitter) Volatile() *BroadcastOperator {
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil).Volatile()
 }
 
-// Sets the compress flag.
-//
-// compress - if `true`, compresses the sending data
+// Compress sets the compress flag for sending data.
 func (e *Emitter) Compress(compress bool) *BroadcastOperator {
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil).Compress(compress)
 }
 
-// Makes the matching socket instances join the specified rooms
+// SocketsJoin makes the matching socket instances join the specified rooms.
 func (e *Emitter) SocketsJoin(rooms ...socket.Room) error {
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil).SocketsJoin(rooms...)
 }
 
-// Makes the matching socket instances leave the specified rooms
+// SocketsLeave makes the matching socket instances leave the specified rooms.
 func (e *Emitter) SocketsLeave(rooms ...socket.Room) error {
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil).SocketsLeave(rooms...)
 }
 
-// Makes the matching socket instances disconnect
+// DisconnectSockets makes the matching socket instances disconnect.
 func (e *Emitter) DisconnectSockets(state bool) error {
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil).DisconnectSockets(state)
 }
 
-// Send a packet to the Socket.IO servers in the cluster
+// ServerSideEmit sends a packet to the Socket.IO servers in the cluster.
+// Acknowledgements are not supported.
 func (e *Emitter) ServerSideEmit(args ...any) error {
 	if len(args) > 0 {
 		if _, withAck := args[len(args)-1].(socket.Ack); withAck {
-			return errors.New("Acknowledgements are not supported")
+			return errors.New("acknowledgements are not supported")
 		}
 	}
 	request, err := json.Marshal(&Request{

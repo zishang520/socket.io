@@ -1,3 +1,7 @@
+// Package adapter implements a Redis sharded Pub/Sub adapter for Socket.IO clustering.
+//
+// This adapter leverages Redis 7.0's sharded Pub/Sub for improved scalability.
+// See: https://redis.io/docs/manual/pubsub/#sharded-pubsub
 package adapter
 
 import (
@@ -15,16 +19,15 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-// Create a new Adapter based on Redis sharded Pub/Sub introduced in Redis 7.0.
-//
-// See: https://redis.io/docs/manual/pubsub/#sharded-pubsub
+// ShardedRedisAdapterBuilder creates a new sharded Redis adapter for Socket.IO.
 type ShardedRedisAdapterBuilder struct {
-	// the Redis client used to publish/subscribe
+	// Redis is the Redis client used to publish/subscribe.
 	Redis *redis.RedisClient
-	// some additional options
+	// Opts are additional options for the sharded adapter.
 	Opts ShardedRedisAdapterOptionsInterface
 }
 
+// New creates a new sharded Redis adapter for the given namespace.
 func (sb *ShardedRedisAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	return NewShardedRedisAdapter(nsp, sb.Redis, sb.Opts)
 }
@@ -39,39 +42,38 @@ type shardedRedisAdapter struct {
 	responseChannel string
 }
 
+// MakeShardedRedisAdapter creates a new shardedRedisAdapter with default options.
 func MakeShardedRedisAdapter() ShardedRedisAdapter {
 	c := &shardedRedisAdapter{
 		ClusterAdapter: adapter.MakeClusterAdapter(),
-
-		opts: DefaultShardedRedisAdapterOptions(),
+		opts:           DefaultShardedRedisAdapterOptions(),
 	}
-
 	c.Prototype(c)
-
 	return c
 }
 
+// NewShardedRedisAdapter creates and initializes a new sharded Redis adapter.
 func NewShardedRedisAdapter(nsp socket.Namespace, redis *redis.RedisClient, opts any) ShardedRedisAdapter {
 	c := MakeShardedRedisAdapter()
-
 	c.SetRedis(redis)
 	c.SetOpts(opts)
-
 	c.Construct(nsp)
-
 	return c
 }
 
+// SetRedis sets the Redis client for the sharded adapter.
 func (s *shardedRedisAdapter) SetRedis(redisClient *redis.RedisClient) {
 	s.redisClient = redisClient
 }
 
+// SetOpts sets the options for the sharded adapter.
 func (s *shardedRedisAdapter) SetOpts(opts any) {
 	if options, ok := opts.(ShardedRedisAdapterOptionsInterface); ok {
 		s.opts.Assign(options)
 	}
 }
 
+// Construct initializes the sharded adapter for the given namespace.
 func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	s.ClusterAdapter.Construct(nsp)
 
@@ -128,6 +130,7 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	}()
 }
 
+// Close unsubscribes from all channels and closes the Pub/Sub client.
 func (s *shardedRedisAdapter) Close() {
 	channels := []string{s.channel, s.responseChannel}
 
@@ -146,6 +149,7 @@ func (s *shardedRedisAdapter) Close() {
 	}
 }
 
+// DoPublish publishes a cluster message to the appropriate Redis sharded channel.
 func (s *shardedRedisAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
 	channel := s.computeChannel(message)
 	redis_log.Debug("publishing message of type %v to %s", message.Type, channel)
@@ -158,6 +162,7 @@ func (s *shardedRedisAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 	return "", s.redisClient.Client.SPublish(s.redisClient.Context, channel, msg).Err()
 }
 
+// computeChannel determines the correct channel for a given cluster message.
 func (s *shardedRedisAdapter) computeChannel(message *adapter.ClusterMessage) string {
 	// broadcast with ack can not use a dynamic channel, because the serverCount() method return the number of all
 	// servers, not only the ones where the given room exists
@@ -180,10 +185,12 @@ func (s *shardedRedisAdapter) computeChannel(message *adapter.ClusterMessage) st
 	return s.channel
 }
 
+// dynamicChannel returns the dynamic channel name for a specific room.
 func (s *shardedRedisAdapter) dynamicChannel(room socket.Room) string {
 	return s.channel + string(room) + "#"
 }
 
+// DoPublishResponse publishes a response to a specific requester's channel.
 func (s *shardedRedisAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) error {
 	redis_log.Debug("publishing response of type %d to %s", response.Type, requesterUid)
 
@@ -194,6 +201,7 @@ func (s *shardedRedisAdapter) DoPublishResponse(requesterUid adapter.ServerId, r
 	return s.redisClient.Client.SPublish(s.redisClient.Context, s.channel+string(requesterUid)+"#", message).Err()
 }
 
+// encode encodes a cluster message using JSON or MessagePack depending on content.
 func (s *shardedRedisAdapter) encode(message *adapter.ClusterMessage) ([]byte, error) {
 	mayContainBinary := message.Type == adapter.BROADCAST ||
 		message.Type == adapter.BROADCAST_ACK ||
@@ -207,6 +215,7 @@ func (s *shardedRedisAdapter) encode(message *adapter.ClusterMessage) ([]byte, e
 	}
 }
 
+// onRawMessage handles incoming raw messages from Redis and dispatches them appropriately.
 func (s *shardedRedisAdapter) onRawMessage(rawMessage []byte, channel string) {
 	// Prepare the structure to hold the decoded message
 	var message *adapter.ClusterResponse
@@ -233,7 +242,7 @@ func (s *shardedRedisAdapter) onRawMessage(rawMessage []byte, channel string) {
 	}
 }
 
-// Decode ClusterMessage in JSON format
+// decodeClusterMessageJSON decodes a cluster message from JSON format.
 func (s *shardedRedisAdapter) decodeClusterMessageJSON(rawMessage []byte) (*adapter.ClusterResponse, error) {
 	var rawMsg struct {
 		Uid  adapter.ServerId    `json:"uid,omitempty" msgpack:"uid,omitempty"`
@@ -251,7 +260,7 @@ func (s *shardedRedisAdapter) decodeClusterMessageJSON(rawMessage []byte) (*adap
 	return s.buildClusterResponse(rawMsg.Uid, rawMsg.Nsp, rawMsg.Type, rawMsg.Data)
 }
 
-// Decode ClusterMessage in MessagePack format
+// decodeClusterMessageMsgPack decodes a cluster message from MessagePack format.
 func (s *shardedRedisAdapter) decodeClusterMessageMsgPack(rawMessage []byte) (*adapter.ClusterResponse, error) {
 	var rawMsg struct {
 		Uid  adapter.ServerId    `json:"uid,omitempty" msgpack:"uid,omitempty"`
@@ -269,7 +278,7 @@ func (s *shardedRedisAdapter) decodeClusterMessageMsgPack(rawMessage []byte) (*a
 	return s.buildClusterResponse(rawMsg.Uid, rawMsg.Nsp, rawMsg.Type, rawMsg.Data)
 }
 
-// Helper method to build ClusterResponse from the raw data
+// buildClusterResponse constructs a ClusterResponse from raw data.
 func (s *shardedRedisAdapter) buildClusterResponse(uid adapter.ServerId, nsp string, messageType adapter.MessageType, rawData any) (*adapter.ClusterResponse, error) {
 	message := &adapter.ClusterResponse{
 		Uid:  uid,
@@ -287,6 +296,7 @@ func (s *shardedRedisAdapter) buildClusterResponse(uid adapter.ServerId, nsp str
 	return message, nil
 }
 
+// decodeData decodes the message data based on the message type and format.
 func (s *shardedRedisAdapter) decodeData(messageType adapter.MessageType, rawData any) (any, error) {
 	// Pre-allocate the target message structure based on the message type
 	var target any
@@ -332,6 +342,7 @@ func (s *shardedRedisAdapter) decodeData(messageType adapter.MessageType, rawDat
 	return target, nil
 }
 
+// ServerCount returns the number of servers (subscribers) in the sharded channel.
 func (s *shardedRedisAdapter) ServerCount() int64 {
 	result, err := s.redisClient.Client.PubSubShardNumSub(s.redisClient.Context, s.channel).Result()
 	if err != nil {
@@ -345,6 +356,7 @@ func (s *shardedRedisAdapter) ServerCount() int64 {
 	return 0
 }
 
+// shouldUseASeparateNamespace determines if a separate namespace should be used for a room.
 func (s *shardedRedisAdapter) shouldUseASeparateNamespace(room socket.Room) bool {
 	_, isPrivateRoom := s.Sids().Load(socket.SocketId(room))
 

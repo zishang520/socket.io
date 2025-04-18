@@ -1,8 +1,10 @@
+// Package adapter provides configuration options for the Redis sharded Pub/Sub adapter for Socket.IO.
 package adapter
 
 type (
 	subscriptionMode string
 
+	// ShardedRedisAdapterOptionsInterface defines the interface for configuring ShardedRedisAdapterOptions.
 	ShardedRedisAdapterOptionsInterface interface {
 		SetChannelPrefix(string)
 		GetRawChannelPrefix() *string
@@ -13,46 +15,34 @@ type (
 		SubscriptionMode() subscriptionMode
 	}
 
+	// ShardedRedisAdapterOptions holds configuration for the sharded Redis adapter.
+	//
+	// channelPrefix: the prefix for the Redis Pub/Sub channels (default: "socket.io").
+	// subscriptionMode: impacts the number of Redis Pub/Sub channels (default: DynamicSubscriptionMode).
 	ShardedRedisAdapterOptions struct {
-		// The prefix for the Redis Pub/Sub channels.
-		//
-		// Default: "socket.io"
+		// channelPrefix is the prefix for the Redis Pub/Sub channels.
 		channelPrefix *string
 
-		// The subscription mode impacts the number of Redis Pub/Sub channels:
-		//
-		// - [StaticSubscriptionMode]: 2 channels per namespace
-		//
-		// Useful when used with dynamic namespaces.
-		//
-		// - [DynamicSubscriptionMode]: (2 + 1 per public room) channels per namespace
-		//
-		// The default value, useful when some rooms have a low number of clients (so only a few Socket.IO servers are notified).
-		//
-		// Only public rooms (i.e. not related to a particular Socket ID) are taken in account, because:
-		// - a lot of connected clients would mean a lot of subscription/unsubscription
-		// - the Socket ID attribute is ephemeral
-		//
-		// - [DynamicPrivateSubscriptionMode]
-		//
-		// Like [DynamicPrivateSubscriptionMode] but creates separate channels for private rooms as well. Useful when there is lots of 1:1 communication
-		// via socket.Emit() calls.
-		//
-		// Default: [DynamicSubscriptionMode]
+		// subscriptionMode determines the subscription mode for channel management.
 		subscriptionMode *subscriptionMode
 	}
 )
 
 const (
-	StaticSubscriptionMode         subscriptionMode = "static"
-	DynamicSubscriptionMode        subscriptionMode = "dynamic"
+	// StaticSubscriptionMode uses 2 channels per namespace.
+	StaticSubscriptionMode subscriptionMode = "static"
+	// DynamicSubscriptionMode uses 2 + 1 per public room channels per namespace.
+	DynamicSubscriptionMode subscriptionMode = "dynamic"
+	// DynamicPrivateSubscriptionMode creates separate channels for private rooms as well.
 	DynamicPrivateSubscriptionMode subscriptionMode = "dynamic-private"
 )
 
+// DefaultShardedRedisAdapterOptions returns a new ShardedRedisAdapterOptions with default values.
 func DefaultShardedRedisAdapterOptions() *ShardedRedisAdapterOptions {
 	return &ShardedRedisAdapterOptions{}
 }
 
+// Assign copies non-nil fields from another ShardedRedisAdapterOptionsInterface.
 func (s *ShardedRedisAdapterOptions) Assign(data ShardedRedisAdapterOptionsInterface) ShardedRedisAdapterOptionsInterface {
 	if data == nil {
 		return s
@@ -68,12 +58,17 @@ func (s *ShardedRedisAdapterOptions) Assign(data ShardedRedisAdapterOptionsInter
 	return s
 }
 
+// SetChannelPrefix sets the channel prefix.
 func (s *ShardedRedisAdapterOptions) SetChannelPrefix(channelPrefix string) {
 	s.channelPrefix = &channelPrefix
 }
+
+// GetRawChannelPrefix returns the raw channel prefix pointer.
 func (s *ShardedRedisAdapterOptions) GetRawChannelPrefix() *string {
 	return s.channelPrefix
 }
+
+// ChannelPrefix returns the channel prefix.
 func (s *ShardedRedisAdapterOptions) ChannelPrefix() string {
 	if s.channelPrefix == nil {
 		return ""
@@ -82,12 +77,17 @@ func (s *ShardedRedisAdapterOptions) ChannelPrefix() string {
 	return *s.channelPrefix
 }
 
+// SetSubscriptionMode sets the subscription mode.
 func (s *ShardedRedisAdapterOptions) SetSubscriptionMode(subscriptionMode subscriptionMode) {
 	s.subscriptionMode = &subscriptionMode
 }
+
+// GetRawSubscriptionMode returns the raw subscription mode pointer.
 func (s *ShardedRedisAdapterOptions) GetRawSubscriptionMode() *subscriptionMode {
 	return s.subscriptionMode
 }
+
+// SubscriptionMode returns the subscription mode.
 func (s *ShardedRedisAdapterOptions) SubscriptionMode() subscriptionMode {
 	if s.subscriptionMode == nil {
 		return ""

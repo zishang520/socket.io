@@ -1,3 +1,4 @@
+// Package adapter provides a Redis-based adapter implementation for Socket.IO clustering.
 package adapter
 
 import (
@@ -19,21 +20,26 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+// redis_log is the logger for the Redis adapter.
 var redis_log = log.NewLog("socket.io-redis")
 
 const (
+	// PSUB is the key for pattern subscription.
 	PSUB string = "psub"
-	SUB  string = "sub"
+	// SUB is the key for channel subscription.
+	SUB string = "sub"
 )
 
 type (
+	// RedisAdapterBuilder builds a RedisAdapter with the given Redis client and options.
 	RedisAdapterBuilder struct {
-		// a Redis client
+		// Redis is the Redis client used by the adapter.
 		Redis *redis.RedisClient
-		// additional options
+		// Opts are additional options for the adapter.
 		Opts RedisAdapterOptionsInterface
 	}
 
+	// redisAdapter implements the Socket.IO Adapter interface using Redis for inter-node communication.
 	redisAdapter struct {
 		socket.Adapter
 
@@ -57,11 +63,12 @@ type (
 	}
 )
 
-// Adapter constructor.
+// New creates a new RedisAdapter for the given namespace.
 func (rb *RedisAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	return NewRedisAdapter(nsp, rb.Redis, rb.Opts)
 }
 
+// MakeRedisAdapter creates a new redisAdapter with default options.
 func MakeRedisAdapter() RedisAdapter {
 	c := &redisAdapter{
 		Adapter: socket.MakeAdapter(),
@@ -78,6 +85,7 @@ func MakeRedisAdapter() RedisAdapter {
 	return c
 }
 
+// NewRedisAdapter creates and initializes a new RedisAdapter.
 func NewRedisAdapter(nsp socket.Namespace, redis *redis.RedisClient, opts any) RedisAdapter {
 	c := MakeRedisAdapter()
 
@@ -89,37 +97,39 @@ func NewRedisAdapter(nsp socket.Namespace, redis *redis.RedisClient, opts any) R
 	return c
 }
 
+// SetRedis sets the Redis client for the adapter.
 func (r *redisAdapter) SetRedis(redis *redis.RedisClient) {
 	r.redisClient = redis
 }
 
+// SetOpts sets the options for the adapter.
 func (r *redisAdapter) SetOpts(opts any) {
 	if options, ok := opts.(RedisAdapterOptionsInterface); ok {
 		r.opts.Assign(options)
 	}
 }
 
-// readonly
+// Uid returns the unique server ID for this adapter instance.
 func (r *redisAdapter) Uid() adapter.ServerId {
 	return r.uid
 }
 
-// readonly
+// RequestsTimeout returns the timeout duration for requests.
 func (r *redisAdapter) RequestsTimeout() time.Duration {
 	return r.requestsTimeout
 }
 
-// readonly
+// PublishOnSpecificResponseChannel indicates if responses are published on specific channels.
 func (r *redisAdapter) PublishOnSpecificResponseChannel() bool {
 	return r.publishOnSpecificResponseChannel
 }
 
-// readonly
+// Parser returns the parser used for encoding/decoding messages.
 func (r *redisAdapter) Parser() redis.Parser {
 	return r.parser
 }
 
-// Adapter constructor.
+// Construct initializes the Redis adapter for the given namespace.
 func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	r.Adapter.Construct(nsp)
 
@@ -202,7 +212,7 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	}()
 }
 
-// Called with a subscription message
+// onMessage handles subscription messages from Redis.
 func (r *redisAdapter) onMessage(_ string, channel string, msg []byte) {
 	if len(channel) == 0 || len(channel) <= len(r.channel) {
 		redis_log.Debug("ignore channel shorter than expected")
@@ -243,12 +253,13 @@ func (r *redisAdapter) onMessage(_ string, channel string, msg []byte) {
 	r.Adapter.Broadcast(packet.Packet, adapter.DecodeOptions(packet.Opts))
 }
 
+// hasRoom checks if the adapter has the specified room.
 func (r *redisAdapter) hasRoom(room socket.Room) bool {
 	_, ok := r.Rooms().Load(room)
 	return ok
 }
 
-// Called on request from another node
+// onRequest handles requests from other nodes.
 func (r *redisAdapter) onRequest(channel string, msg []byte) {
 	if strings.HasPrefix(channel, r.responseChannel) {
 		r.onResponse(channel, msg)
@@ -469,7 +480,7 @@ func (r *redisAdapter) onRequest(channel string, msg []byte) {
 	}
 }
 
-// Send the response to the requesting node
+// publishResponse sends a response to the requesting node.
 func (r *redisAdapter) publishResponse(request *Request, response []byte) {
 	responseChannel := r.responseChannel
 	if r.publishOnSpecificResponseChannel {
@@ -481,7 +492,7 @@ func (r *redisAdapter) publishResponse(request *Request, response []byte) {
 	}
 }
 
-// Called on response from another node
+// onResponse handles responses from other nodes.
 func (r *redisAdapter) onResponse(_ string, msg []byte) {
 	var response *Response
 
@@ -565,7 +576,6 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 				request.Resolve(nil)
 			}
 			r.requests.Delete(requestId)
-			break
 
 		case redis.SERVER_SIDE_EMIT:
 			request.Responses.Push(response.Data)
@@ -585,7 +595,7 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 	}
 }
 
-// Broadcasts a packet.
+// Broadcast broadcasts a packet to all clients (and optionally to other nodes).
 func (r *redisAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOptions) {
 	packet.Nsp = r.Nsp().Name()
 
@@ -613,6 +623,7 @@ func (r *redisAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOp
 	r.Adapter.Broadcast(packet, opts)
 }
 
+// BroadcastWithAck broadcasts a packet and handles acknowledgements from clients.
 func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.BroadcastOptions, clientCountCallback func(uint64), ack socket.Ack) {
 	packet.Nsp = r.Nsp().Name()
 
@@ -653,7 +664,7 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 	r.Adapter.BroadcastWithAck(packet, opts, clientCountCallback, ack)
 }
 
-// Gets the list of all rooms (across every node)
+// AllRooms returns a function that retrieves the list of all rooms across every node.
 func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 	return func(cb func(*types.Set[socket.Room], error)) {
 		localRooms := types.NewSet(r.Rooms().Keys()...)
@@ -710,6 +721,7 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 	}
 }
 
+// FetchSockets returns a function that retrieves the list of all sockets matching the options.
 func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
 	return func(cb func([]socket.SocketDetails, error)) {
 		r.Adapter.FetchSockets(opts)(func(localSockets []socket.SocketDetails, _ error) {
@@ -781,6 +793,7 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 	}
 }
 
+// AddSockets adds sockets to the specified rooms.
 func (r *redisAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socket.Room) {
 	if opts != nil && opts.Flags != nil && opts.Flags.Local {
 		r.Adapter.AddSockets(opts, rooms)
@@ -799,6 +812,7 @@ func (r *redisAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socket.
 	}
 }
 
+// DelSockets removes sockets from the specified rooms.
 func (r *redisAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socket.Room) {
 	if opts != nil && opts.Flags != nil && opts.Flags.Local {
 		r.Adapter.DelSockets(opts, rooms)
@@ -817,6 +831,7 @@ func (r *redisAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socket.
 	}
 }
 
+// DisconnectSockets disconnects sockets matching the options.
 func (r *redisAdapter) DisconnectSockets(opts *socket.BroadcastOptions, state bool) {
 	if opts != nil && opts.Flags != nil && opts.Flags.Local {
 		r.Adapter.DisconnectSockets(opts, state)
@@ -835,6 +850,7 @@ func (r *redisAdapter) DisconnectSockets(opts *socket.BroadcastOptions, state bo
 	}
 }
 
+// ServerSideEmit emits a packet to all servers in the cluster. Supports optional acknowledgement.
 func (r *redisAdapter) ServerSideEmit(packet []any) error {
 	if len(packet) == 0 {
 		return fmt.Errorf("packet cannot be empty")
@@ -856,6 +872,7 @@ func (r *redisAdapter) ServerSideEmit(packet []any) error {
 	return r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, request).Err()
 }
 
+// serverSideEmitWithAck emits a packet and waits for acknowledgements from other servers.
 func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error {
 	numSub := r.ServerCount() - 1 // ignore self
 
@@ -883,7 +900,7 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 
 	timeout := utils.SetTimeout(func() {
 		if storedRequest, ok := r.requests.Load(requestId); ok {
-			ack(storedRequest.Responses.All(), errors.New(fmt.Sprintf(`timeout reached: only %d responses received out of %d`, storedRequest.Responses.Len(), storedRequest.NumSub)))
+			ack(storedRequest.Responses.All(), fmt.Errorf(`timeout reached: only %d responses received out of %d`, storedRequest.Responses.Len(), storedRequest.NumSub))
 			r.requests.Delete(requestId)
 		}
 	}, r.requestsTimeout)
@@ -903,6 +920,7 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 	return r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, request).Err()
 }
 
+// ServerCount returns the number of servers (subscribers) in the cluster.
 func (r *redisAdapter) ServerCount() int64 {
 	result, err := r.redisClient.Client.PubSubNumSub(r.redisClient.Context, r.requestChannel).Result()
 	if err != nil {
@@ -916,6 +934,7 @@ func (r *redisAdapter) ServerCount() int64 {
 	return 0
 }
 
+// Close cleans up Redis subscriptions and listeners.
 func (r *redisAdapter) Close() {
 	if psub, ok := r.redisListeners.Load(PSUB); ok {
 		if err := psub.PUnsubscribe(r.redisClient.Context, r.channel+"*"); err != nil {
