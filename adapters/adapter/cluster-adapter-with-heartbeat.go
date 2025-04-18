@@ -10,11 +10,13 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+// ClusterAdapterWithHeartbeatBuilder is a builder for creating ClusterAdapterWithHeartbeat instances.
 type (
 	ClusterAdapterWithHeartbeatBuilder struct {
 		Opts ClusterAdapterOptionsInterface
 	}
 
+	// clusterAdapterWithHeartbeat implements the ClusterAdapterWithHeartbeat interface.
 	clusterAdapterWithHeartbeat struct {
 		ClusterAdapter
 

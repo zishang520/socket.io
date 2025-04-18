@@ -7,6 +7,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+// CustomClusterRequest represents a custom request in the cluster with tracking for missing responses.
 type (
 	CustomClusterRequest struct {
 		Type        MessageType
@@ -16,6 +17,7 @@ type (
 		Responses   *types.Slice[any]
 	}
 
+	// ClusterAdapterWithHeartbeat extends ClusterAdapter with heartbeat and custom options support.
 	ClusterAdapterWithHeartbeat interface {
 		ClusterAdapter
 

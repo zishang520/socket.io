@@ -11,15 +11,17 @@ import (
 )
 
 type (
-	// The unique ID of a server
+	// ServerId is the unique ID of a server.
+	//
 	ServerId string
 
-	// The unique ID of a message (for the connection state recovery feature)
+	// Offset is the unique ID of a message (for the connection state recovery feature).
 	Offset string
 
+	// MessageType represents the type of cluster message.
 	MessageType int
 
-	// Common fields for all messages
+	// ClusterMessage contains common fields for all cluster messages.
 	ClusterMessage struct {
 		Uid  ServerId    `json:"uid,omitempty" msgpack:"uid,omitempty"`
 		Nsp  string      `json:"nsp,omitempty" msgpack:"nsp,omitempty"`

@@ -12,7 +12,7 @@ import (
 
 var adapter_log = log.NewLog("socket.io-adapter")
 
-// Encode BroadcastOptions into PacketOptions
+// EncodeOptions encodes BroadcastOptions into PacketOptions.
 func EncodeOptions(opts *socket.BroadcastOptions) *PacketOptions {
 	p := &PacketOptions{}
 	if opts == nil {
@@ -31,7 +31,7 @@ func EncodeOptions(opts *socket.BroadcastOptions) *PacketOptions {
 	return p
 }
 
-// Decode PacketOptions back into BroadcastOptions
+// DecodeOptions decodes PacketOptions back into BroadcastOptions.
 func DecodeOptions(opts *PacketOptions) *socket.BroadcastOptions {
 	b := &socket.BroadcastOptions{
 		Rooms:  types.NewSet[socket.Room](),
@@ -48,6 +48,7 @@ func DecodeOptions(opts *PacketOptions) *socket.BroadcastOptions {
 	return b
 }
 
+// RandomId generates a random hexadecimal string of 8 bytes.
 func RandomId() (string, error) {
 	r := make([]byte, 8)
 	if _, err := rand.Read(r); err != nil {
@@ -56,6 +57,7 @@ func RandomId() (string, error) {
 	return hex.EncodeToString(r), nil
 }
 
+// Uid2 generates a random URL-safe base64 string of the given length.
 func Uid2(length int) (string, error) {
 	r := make([]byte, length)
 	if _, err := rand.Read(r); err != nil {
@@ -64,6 +66,7 @@ func Uid2(length int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(r), nil
 }
 
+// SliceMap maps a slice of type I to a slice of type O using the provided converter function.
 func SliceMap[I any, O any](i []I, converter func(I) O) (o []O) {
 	for _, _i := range i {
 		o = append(o, converter(_i))

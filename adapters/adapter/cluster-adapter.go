@@ -13,19 +13,20 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+// ClusterAdapterBuilder is a builder for creating ClusterAdapter instances.
+//
+// A cluster-ready adapter. Any extending interface must:
+//   - implement ClusterAdapter.DoPublish and ClusterAdapter.DoPublishResponse
+//   - call ClusterAdapter.OnMessage and ClusterAdapter.OnResponse
 type (
-	// A cluster-ready adapter. Any extending interface must:
-	//
-	// - implement [ClusterAdapter.DoPublish] and [ClusterAdapter.DoPublishResponse]
-	//
-	// - call [ClusterAdapter.OnMessage] and [ClusterAdapter.OnResponse]
 	ClusterAdapterBuilder struct {
 	}
 
+	// clusterAdapter implements the ClusterAdapter interface for cluster communication.
 	clusterAdapter struct {
 		Adapter
 
-		// @protected
+		// uid is the unique server identifier.
 		uid ServerId
 
 		requests    *types.Map[string, *ClusterRequest]
@@ -33,39 +34,37 @@ type (
 	}
 )
 
+// New creates a new ClusterAdapter for the given Namespace.
 func (cb *ClusterAdapterBuilder) New(nsp socket.Namespace) Adapter {
 	return NewClusterAdapter(nsp)
 }
 
+// MakeClusterAdapter returns a new default ClusterAdapter instance.
 func MakeClusterAdapter() ClusterAdapter {
 	c := &clusterAdapter{
-		Adapter: MakeAdapter(),
-
+		Adapter:     MakeAdapter(),
 		requests:    &types.Map[string, *ClusterRequest]{},
 		ackRequests: &types.Map[string, *ClusterAckRequest]{},
 	}
-
 	c.Prototype(c)
-
 	return c
 }
 
+// NewClusterAdapter creates a new ClusterAdapter for the given Namespace.
 func NewClusterAdapter(nsp socket.Namespace) ClusterAdapter {
 	c := MakeClusterAdapter()
-
 	c.Construct(nsp)
-
 	return c
 }
 
-// @protected
+// Uid returns the unique server identifier.
 func (c *clusterAdapter) Uid() ServerId {
 	return c.uid
 }
 
+// Construct initializes the clusterAdapter with the given Namespace.
 func (c *clusterAdapter) Construct(nsp socket.Namespace) {
 	c.Adapter.Construct(nsp)
-
 	uid, _ := RandomId()
 	c.uid = ServerId(uid)
 }

@@ -4,6 +4,7 @@ import (
 	"time"
 )
 
+// ClusterAdapterOptionsInterface defines the interface for cluster adapter options.
 type (
 	ClusterAdapterOptionsInterface interface {
 		SetHeartbeatInterval(time.Duration)
@@ -15,6 +16,7 @@ type (
 		HeartbeatTimeout() int64
 	}
 
+	// ClusterAdapterOptions holds configuration for cluster adapter heartbeat and timeout.
 	ClusterAdapterOptions struct {
 		// The number of ms between two heartbeats.
 		//
