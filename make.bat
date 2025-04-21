@@ -6,7 +6,7 @@ pushd "%~dp0"
 SET "GOPROXY=https://goproxy.io,direct"
 
 :: List of all submodules
-SET modules=parsers\engine parsers\socket servers\engine servers\socket adapters\adapter adapters\redis clients\engine clients\socket cmd\socket.io
+SET modules=parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket cmd/socket.io
 
 :: Get command argument
 SET "args=%~1"
@@ -25,7 +25,7 @@ GOTO :help
 
 :help
     echo.
-    echo Usage: make.bat [deps^|get^|build^|fmt^|vet^|clean^|test^|version^|release] [module_path] [VERSION]
+    echo Usage: make.bat [deps^|get^|build^|fmt^|vet^|clean^|test^|version^|release] [MODULE_PATH^|VERSION]
     echo If no module_path is given, the command applies to all modules.
     echo VERSION is required for version/release, e.g. make.bat version v3.0.0[-alpha^|beta^|rc[.x]]
     echo.
@@ -193,10 +193,20 @@ GOTO :help
     GOTO :EOF
 
 :release
-    CALL :version %2 %3
-    echo [Release] Committing and tagging version %3...
-    git add pkg/version/version.go
-    git commit -m "release: %3"
-    git tag -a "%3" -m "Release %3"
-    echo [Release] Tagged as %3
+    SET "VERSION=%~2"
+    IF "%VERSION%"=="" (
+        echo [Error] VERSION is required. Usage: make.bat release v3.0.0[-alpha^|beta^|rc[.x]
+        GOTO :EOF
+    )
+    echo [Release] Running in: [.]
+    CALL git tag ""%VERSION%""
+    FOR %%M IN (%modules%) DO (
+        IF EXIST "%%M" (
+            echo [Release] Running in: %%M
+            CALL git tag ""%%M/%VERSION%""
+        ) ELSE (
+            echo [Warn] Skipped missing module: %%M
+        )
+    )
+    echo [Release] Tagged as %VERSION%
     GOTO :EOF

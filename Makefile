@@ -145,8 +145,18 @@ endif
 
 	@echo "[Version] Done."
 
-release: version
-	@git add pkg/version/version.go
-	@git commit -m "release: $(VERSION)"
-	@git tag -a "$(VERSION)" -m "Release $(VERSION)"
+release:
+ifndef VERSION
+	$(error VERSION is required, e.g. make release VERSION=v3.0.0[-alpha|beta|rc[.x]])
+endif
+	@echo "[Release] Running in: [.]"
+	@git tag "$(VERSION)"
+	@for mod in $(TARGET_MODULES); do \
+		if [ -d "$$mod" ]; then \
+			echo "[Release] Running in: $$mod"; \
+			git tag "$$mod/$(VERSION)" >/dev/null; \
+		else \
+			echo "[Warn] Skipped missing module: $$mod"; \
+		fi \
+	done
 	@echo "[Release] Tagged as $(VERSION)"
