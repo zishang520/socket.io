@@ -289,12 +289,12 @@ func (w *webTransport) write(packets []*packet.Packet) {
 
 // doWrite performs the actual WebTransport write operation.
 // This method handles message compression and WebTransport message framing.
-func (w *webTransport) doWrite(data types.BufferInterface, compress bool) {
-	if perMessageDeflate := w.Opts().PerMessageDeflate(); perMessageDeflate != nil {
-		if data.Len() < perMessageDeflate.Threshold {
-			compress = false
-		}
-	}
+func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
+	// if perMessageDeflate := w.Opts().PerMessageDeflate(); perMessageDeflate != nil {
+	// 	if data.Len() < perMessageDeflate.Threshold {
+	// 		compress = false
+	// 	}
+	// }
 	client_webtransport_log.Debug(`writing %#v`, data)
 
 	// w.session.EnableWriteCompression(compress)
