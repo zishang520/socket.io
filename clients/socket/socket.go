@@ -48,13 +48,13 @@ type Socket struct {
 	io *Manager
 
 	// id is the session identifier, only available when connected.
-	id atomic.Value
+	id types.Atomic[string]
 
 	// _pid is the private session ID used for connection state recovery.
-	_pid atomic.Value
+	_pid types.Atomic[string]
 
 	// _lastOffset stores the offset of the last received packet for connection recovery.
-	_lastOffset atomic.Value
+	_lastOffset types.Atomic[string]
 
 	// connected indicates whether the socket is currently connected to the server.
 	connected atomic.Bool
@@ -135,10 +135,7 @@ func (s *Socket) Io() *Manager {
 
 // Id returns the session identifier for this socket, only available when connected.
 func (s *Socket) Id() string {
-	if id := s.id.Load(); id != nil {
-		return id.(string)
-	}
-	return ""
+	return s.id.Load()
 }
 
 // Connected reports whether the socket is currently connected to the server.
@@ -495,7 +492,7 @@ func (s *Socket) onopen(...any) {
 //
 // data: The data to send.
 func (s *Socket) _sendConnectPacket(data map[string]any) {
-	if _pid := s._pid.Load(); _pid != nil && _pid != "" {
+	if _pid := s._pid.Load(); _pid != "" {
 		if data == nil {
 			data = map[string]any{}
 		}
@@ -615,7 +612,7 @@ func (s *Socket) emitEvent(args []any) {
 		listener(args...)
 	}
 	s.EventEmitter.Emit(types.EventName(args[0].(string)), args[1:]...)
-	if _pid := s._pid.Load(); _pid != nil && _pid != "" {
+	if _pid := s._pid.Load(); _pid != "" {
 		if args_len := len(args); args_len > 0 {
 			if lastOffset, ok := args[args_len-1].(string); ok {
 				s._lastOffset.Store(lastOffset)

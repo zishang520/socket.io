@@ -60,9 +60,9 @@ type socketWithoutUpgrade struct {
 	_proto_ SocketWithoutUpgrade
 
 	// Public fields
-	id          atomic.Value                 // Unique session identifier
+	id          types.Atomic[string]         // Unique session identifier
 	transport   atomic.Pointer[Transport]    // Current transport instance
-	readyState  atomic.Value                 // Current connection state
+	readyState  types.Atomic[SocketState]    // Current connection state
 	writeBuffer *types.Slice[*packet.Packet] // Buffer for outgoing packets
 
 	// Protected fields (read-only after initialization)
@@ -75,7 +75,7 @@ type socketWithoutUpgrade struct {
 	_pingTimeout               int64                       // Timeout for ping responses
 	_maxPayload                int64                       // Maximum payload size allowed
 	_pingTimeoutTimer          atomic.Pointer[utils.Timer] // Timer for ping timeout
-	_pingTimeoutTime           atomic.Value                // Timestamp for ping timeout expiration
+	_pingTimeoutTime           types.Atomic[float64]       // Timestamp for ping timeout expiration
 	_beforeunloadEventListener types.EventListener         // Event listener for page unload
 	_offlineEventListener      types.EventListener         // Event listener for offline status
 
@@ -105,10 +105,7 @@ func (s *socketWithoutUpgrade) Proto() SocketWithoutUpgrade {
 
 // Id returns the unique session identifier.
 func (s *socketWithoutUpgrade) Id() string {
-	if id := s.id.Load(); id != nil {
-		return id.(string)
-	}
-	return ""
+	return s.id.Load()
 }
 
 // Transport returns the current transport instance.
@@ -121,10 +118,7 @@ func (s *socketWithoutUpgrade) Transport() Transport {
 
 // ReadyState returns the current connection state.
 func (s *socketWithoutUpgrade) ReadyState() SocketState {
-	if readyState := s.readyState.Load(); readyState != nil {
-		return readyState.(SocketState)
-	}
-	return ""
+	return s.readyState.Load()
 }
 
 // WriteBuffer returns the buffer for outgoing packets.
@@ -544,10 +538,10 @@ func (s *socketWithoutUpgrade) _getWritablePackets() (res []*packet.Packet) {
 // HasPingExpired checks if the connection has timed out due to missed heartbeats.
 // It handles timer throttling and connection cleanup for timeout scenarios.
 func (s *socketWithoutUpgrade) HasPingExpired() bool {
-	if s._pingTimeoutTime.Load().(float64) == 0 {
+	if s._pingTimeoutTime.Load() == 0 {
 		return true
 	}
-	hasExpired := float64(time.Now().UnixMilli()) > s._pingTimeoutTime.Load().(float64)
+	hasExpired := float64(time.Now().UnixMilli()) > s._pingTimeoutTime.Load()
 	if hasExpired {
 		client_socket_log.Debug("throttled timer detected, scheduling connection close")
 		s._pingTimeoutTime.Store(0)

@@ -39,7 +39,7 @@ type socket struct {
 	remoteAddress string
 
 	// The current state of the socket.
-	readyState atomic.Value
+	readyState types.Atomic[string]
 	// The current low-level transport.
 	transport atomic.Pointer[transports.Transport]
 
@@ -95,10 +95,7 @@ func (s *socket) Server() BaseServer {
 }
 
 func (s *socket) ReadyState() string {
-	if v, ok := s.readyState.Load().(string); ok {
-		return v
-	}
-	return ""
+	return s.readyState.Load()
 }
 
 func (s *socket) SetReadyState(state string) {

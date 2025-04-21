@@ -41,7 +41,7 @@ type Manager struct {
 	// ReadyStateOpening | ReadyStateOpen | ReadyStateClosed
 	//
 	// Private
-	_readyState atomic.Value
+	_readyState types.Atomic[ReadyState]
 	// Private
 	_reconnecting atomic.Bool
 
@@ -61,13 +61,13 @@ type Manager struct {
 	// Private
 	_reconnection atomic.Bool
 	// Private
-	_reconnectionAttempts atomic.Value
+	_reconnectionAttempts types.Atomic[float64]
 	// Private
-	_reconnectionDelay atomic.Value
+	_reconnectionDelay types.Atomic[float64]
 	// Private
-	_randomizationFactor atomic.Value
+	_randomizationFactor types.Atomic[float64]
 	// Private
-	_reconnectionDelayMax atomic.Value
+	_reconnectionDelayMax types.Atomic[float64]
 	// Private
 	_timeout atomic.Pointer[time.Duration]
 
@@ -199,10 +199,7 @@ func (m *Manager) SetReconnectionAttempts(reconnectionAttempts float64) {
 	m._reconnectionAttempts.Store(reconnectionAttempts)
 }
 func (m *Manager) ReconnectionAttempts() float64 {
-	if reconnectionAttempts := m._reconnectionAttempts.Load(); reconnectionAttempts != nil {
-		return reconnectionAttempts.(float64)
-	}
-	return 0
+	return m._reconnectionAttempts.Load()
 }
 
 // Sets the delay between reconnections.
@@ -213,10 +210,7 @@ func (m *Manager) SetReconnectionDelay(reconnectionDelay float64) {
 	}
 }
 func (m *Manager) ReconnectionDelay() float64 {
-	if reconnectionDelay := m._reconnectionDelay.Load(); reconnectionDelay != nil {
-		return reconnectionDelay.(float64)
-	}
-	return 0
+	return m._reconnectionDelay.Load()
 }
 
 // Sets the maximum delay between reconnections.
@@ -227,10 +221,7 @@ func (m *Manager) SetRandomizationFactor(randomizationFactor float64) {
 	}
 }
 func (m *Manager) RandomizationFactor() float64 {
-	if randomizationFactor := m._randomizationFactor.Load(); randomizationFactor != nil {
-		return randomizationFactor.(float64)
-	}
-	return 0
+	return m._randomizationFactor.Load()
 }
 
 // Sets the randomization factor
@@ -241,10 +232,7 @@ func (m *Manager) SetReconnectionDelayMax(reconnectionDelayMax float64) {
 	}
 }
 func (m *Manager) ReconnectionDelayMax() float64 {
-	if reconnectionDelayMax := m._reconnectionDelayMax.Load(); reconnectionDelayMax != nil {
-		return reconnectionDelayMax.(float64)
-	}
-	return 0
+	return m._reconnectionDelayMax.Load()
 }
 
 // Sets the connection timeout. `false` to disable

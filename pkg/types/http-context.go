@@ -41,7 +41,7 @@ type HttpContext struct {
 	isDone atomic.Bool
 	done   chan Void
 
-	statusCode      atomic.Value
+	statusCode      Atomic[int]
 	ResponseHeaders *utils.ParameterBag
 
 	mu sync.Mutex
@@ -93,8 +93,8 @@ func (c *HttpContext) SetStatusCode(statusCode int) {
 }
 
 func (c *HttpContext) GetStatusCode() int {
-	if v, ok := c.statusCode.Load().(int); ok {
-		return v
+	if statusCode := c.statusCode.Load(); statusCode != 0 {
+		return statusCode
 	}
 	return http.StatusOK
 }

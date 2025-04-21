@@ -27,7 +27,7 @@ type transport struct {
 	sid      string
 	protocol int // 3
 
-	_readyState atomic.Value //"open";
+	_readyState types.Atomic[string] //"open";
 
 	_discarded atomic.Bool // false;
 
@@ -103,10 +103,7 @@ func (t *transport) SetSupportsBinary(supportsBinary bool) {
 }
 
 func (t *transport) ReadyState() string {
-	if v, ok := t._readyState.Load().(string); ok {
-		return v
-	}
-	return ""
+	return t._readyState.Load()
 }
 
 func (t *transport) SetReadyState(state string) {

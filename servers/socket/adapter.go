@@ -6,6 +6,7 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // AdapterBuilder is a builder for creating Adapter instances.
@@ -180,8 +181,7 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 
 	packet.Nsp = a.nsp.Name()
 	// we can use the same id for each packet, since the _ids counter is common (no duplicate)
-	id := a.nsp.Ids()
-	packet.Id = &id
+	packet.Id = utils.Ptr(a.nsp.Ids())
 	encodedPackets := a._encode(packet, packetOpts)
 	var clientCount atomic.Uint64
 	a.apply(opts, func(socket *Socket) {

@@ -137,7 +137,7 @@ func (n *namespace) Name() string {
 }
 
 func (n *namespace) Ids() uint64 {
-	return n._ids.Add(1)
+	return n._ids.Add(1) - 1
 }
 
 func (n *namespace) Fns() *types.Slice[NamespaceMiddleware] {

@@ -39,9 +39,9 @@ type RedisStreamsAdapterBuilder struct {
 	Opts RedisStreamsAdapterOptionsInterface
 
 	namespaceToAdapters types.Map[string, RedisStreamsAdapter]
-	offset              types.String // Default: "$"
-	polling             atomic.Bool  // Default: false
-	shouldClose         atomic.Bool  // Default: false
+	offset              types.Atomic[string] // Default: "$"
+	polling             atomic.Bool          // Default: false
+	shouldClose         atomic.Bool          // Default: false
 }
 
 // poll continuously reads messages from the Redis stream and dispatches them to the appropriate adapter.
