@@ -24,6 +24,10 @@ type (
 		GetRawServeClient() *bool
 		ServeClient() bool
 
+		SetClientVersion(string)
+		GetRawClientVersion() *string
+		ClientVersion() string
+
 		SetAdapter(AdapterConstructor)
 		GetRawAdapter() AdapterConstructor
 		Adapter() AdapterConstructor
@@ -51,6 +55,9 @@ type (
 
 		// whether to serve the client files
 		serveClient *bool
+
+		// Client file version
+		clientVersion *string
 
 		// the adapter to use
 		adapter AdapterConstructor
@@ -86,6 +93,9 @@ func (s *ServerOptions) Assign(data ServerOptionsInterface) ServerOptionsInterfa
 
 	if data.GetRawServeClient() != nil {
 		s.SetServeClient(data.ServeClient())
+	}
+	if data.GetRawClientVersion() != nil {
+		s.SetClientVersion(data.ClientVersion())
 	}
 	if data.GetRawAdapter() != nil {
 		s.SetAdapter(data.Adapter())
@@ -146,6 +156,20 @@ func (s *ServerOptions) ServeClient() bool {
 	}
 
 	return *s.serveClient
+}
+
+func (s *ServerOptions) SetClientVersion(clientVersion string) {
+	s.clientVersion = &clientVersion
+}
+func (s *ServerOptions) GetRawClientVersion() *string {
+	return s.clientVersion
+}
+func (s *ServerOptions) ClientVersion() string {
+	if s.clientVersion == nil {
+		return ""
+	}
+
+	return *s.clientVersion
 }
 
 func (s *ServerOptions) SetAdapter(adapter AdapterConstructor) {

@@ -3,19 +3,19 @@ export GOPROXY := https://goproxy.io,direct
 
 # List of submodules (relative paths)
 MODULES = \
-    adapters/adapter \
-    adapters/redis \
-    clients/engine \
-    clients/socket \
     parsers/engine \
     parsers/socket \
     servers/engine \
-    servers/socket
+    servers/socket \
+    adapters/adapter \
+    adapters/redis \
+    clients/engine \
+    clients/socket
 
 # Use the provided MODULE or all modules
 TARGET_MODULES = $(if $(MODULE),$(MODULE),$(MODULES))
 
-.PHONY: all help deps get build fmt vet clean test
+.PHONY: all help deps get build fmt vet clean test version release
 
 all: help
 
@@ -117,3 +117,35 @@ test:
 			echo "[Warn] Skipped missing module: $$mod"; \
 		fi \
 	done
+
+version:
+ifndef VERSION
+	$(error VERSION is required, e.g. make version VERSION=v3.0.0[-alpha|beta|rc[.x]])
+endif
+	@echo "[Version] Updating version to $(VERSION)"
+
+	@echo "[Version] Updating version.go"
+	@sed -i.bak 's/VERSION = ".*"/VERSION = "$(VERSION)"/' pkg/version/version.go && rm -f pkg/version/version.go.bak
+
+	@for mod in $(TARGET_MODULES); do \
+		if [ -d "$$mod" ]; then \
+			echo "[Version] Updating dependencies in $$mod..."; \
+			cd $$mod && \
+			go mod tidy && \
+			go list -f '{{if and (not .Indirect) (not .Main)}}{{.Path}}@$(VERSION){{end}}' -m all | \
+			grep '^github.com/zishang520/socket.io' | \
+			xargs -L1 go get -v && \
+			go mod tidy && \
+			cd - >/dev/null; \
+		else \
+			echo "[Warn] Skipped missing module: $$mod"; \
+		fi; \
+	done
+
+	@echo "[Version] Done."
+
+release: version
+	@git add pkg/version/version.go
+	@git commit -m "release: $(VERSION)"
+	@git tag -a "$(VERSION)" -m "Release $(VERSION)"
+	@echo "[Release] Tagged as $(VERSION)"

@@ -19,9 +19,8 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
+	"github.com/zishang520/socket.io/v3/pkg/version"
 )
-
-const clientVersion = "4.7.5"
 
 var (
 	dotMapRegex = regexp.MustCompile(`\.map`)
@@ -377,7 +376,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	// Per the standard, ETags must be quoted:
 	// https://tools.ietf.org/html/rfc7232#section-2.3
-	expectedEtag := `"` + clientVersion + `"`
+	expectedEtag := `"` + version.VERSION + `"`
+	if s.opts.GetRawClientVersion() != nil {
+		expectedEtag = `"` + s.opts.ClientVersion() + `"`
+	}
 	weakEtag := "W/" + expectedEtag
 
 	if etag := r.Header.Get("If-None-Match"); etag != "" {

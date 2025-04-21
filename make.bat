@@ -6,7 +6,7 @@ pushd "%~dp0"
 SET "GOPROXY=https://goproxy.io,direct"
 
 :: List of all submodules
-SET modules=adapters\adapter adapters\redis clients\engine clients\socket parsers\engine parsers\socket servers\engine servers\socket
+SET modules=parsers\engine parsers\socket servers\engine servers\socket adapters\adapter adapters\redis clients\engine clients\socket
 
 :: Get command argument
 SET "args=%~1"
@@ -18,15 +18,20 @@ IF /I "%args%"=="fmt" GOTO :fmt
 IF /I "%args%"=="vet" GOTO :vet
 IF /I "%args%"=="clean" GOTO :clean
 IF /I "%args%"=="test" GOTO :test
+IF /I "%args%"=="version" GOTO :version
+IF /I "%args%"=="release" GOTO :release
 
 GOTO :help
 
 :help
     echo.
-    echo Usage: build.bat [deps^|get^|build^|fmt^|vet^|clean^|test] [module_path]
+    echo Usage: make.bat [deps^|get^|build^|fmt^|vet^|clean^|test^|version^|release] [module_path] [VERSION]
     echo If no module_path is given, the command applies to all modules.
+    echo VERSION is required for version/release, e.g. make.bat version v3.0.0[-alpha^|beta^|rc[.x]]
     echo.
     GOTO :EOF
+
+:: (keep existing targets: :deps :get :build :fmt :vet :clean :test)
 
 :run_for_all_modules
     SET "cmd=%~1"
@@ -158,4 +163,40 @@ GOTO :help
     ) ELSE (
         CALL :run_for_all_modules "go test -race -cover -covermode=atomic ./..." "Test"
     )
+    GOTO :EOF
+
+:version
+    SET "VERSION=%~2"
+    IF "%VERSION%"=="" (
+        echo [Error] VERSION is required. Usage: make.bat version v3.0.0[-alpha^|beta^|rc[.x]
+        GOTO :EOF
+    )
+
+    echo [Version] Updating version to %VERSION%
+    powershell -Command "(Get-Content pkg/version/version.go) -replace 'VERSION = \"(.*?)\"', 'VERSION = \"%VERSION%\"' | Set-Content pkg/version/version.go"
+
+    FOR %%M IN (%modules%) DO (
+        IF EXIST "%%M" (
+            echo [Version] Updating dependencies in %%M...
+            pushd "%%M"
+            CALL go mod tidy
+            FOR /F "delims=" %%D IN ('go list -f "{{if and (not .Indirect) (not .Main)}}{{.Path}}@%VERSION%{{end}}" -m all ^| findstr "^github.com/zishang520/socket.io"') DO (
+                CALL go get -v %%D
+            )
+            CALL go mod tidy
+            popd
+        ) ELSE (
+            echo [Warn] Skipped missing module: %%M
+        )
+    )
+    echo [Version] Done.
+    GOTO :EOF
+
+:release
+    CALL :version %2 %3
+    echo [Release] Committing and tagging version %3...
+    git add pkg/version/version.go
+    git commit -m "release: %3"
+    git tag -a "%3" -m "Release %3"
+    echo [Release] Tagged as %3
     GOTO :EOF
