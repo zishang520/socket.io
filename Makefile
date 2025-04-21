@@ -10,7 +10,8 @@ MODULES = \
     adapters/adapter \
     adapters/redis \
     clients/engine \
-    clients/socket
+    clients/socket \
+    cmd/socket.io
 
 # Use the provided MODULE or all modules
 TARGET_MODULES = $(if $(MODULE),$(MODULE),$(MODULES))

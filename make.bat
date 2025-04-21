@@ -6,7 +6,7 @@ pushd "%~dp0"
 SET "GOPROXY=https://goproxy.io,direct"
 
 :: List of all submodules
-SET modules=parsers\engine parsers\socket servers\engine servers\socket adapters\adapter adapters\redis clients\engine clients\socket
+SET modules=parsers\engine parsers\socket servers\engine servers\socket adapters\adapter adapters\redis clients\engine clients\socket cmd\socket.io
 
 :: Get command argument
 SET "args=%~1"
