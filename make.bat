@@ -6,7 +6,7 @@ pushd "%~dp0"
 SET "GOPROXY=https://goproxy.io,direct"
 
 :: List of all submodules
-SET modules=parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket cmd/socket.io
+SET modules=cmd/socket.io parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket
 
 :: Get command argument
 SET "args=%~1"
@@ -174,6 +174,7 @@ GOTO :help
 
     echo [Version] Updating version to %VERSION%
     powershell -Command "(Get-Content pkg/version/version.go) -replace 'VERSION = \"(.*?)\"', 'VERSION = \"%VERSION%\"' | Set-Content pkg/version/version.go"
+    powershell -Command "(Get-Content go.mod) -replace '(github\.com/zishang520/socket\.io/cmd/socket\.io/v3 )(.*?)( // indirect)', '${1}%VERSION%${3}' | Set-Content go.mod"
 
     FOR %%M IN (%modules%) DO (
         IF EXIST "%%M" (
@@ -193,6 +194,10 @@ GOTO :help
     GOTO :EOF
 
 :release
+    SET "FORCE=0"
+    IF "%~21"=="--force" SET "FORCE=1" & SHIFT
+    IF "%~2"=="-f" SET "FORCE=1" & SHIFT
+
     IF NOT EXIST "pkg\version\version.go" (
         echo [Error] File pkg/version/version.go not found
         GOTO :EOF
@@ -216,15 +221,43 @@ GOTO :help
         GOTO :EOF
     )
 
-    echo [Release] Running in: [.]
-    CALL git tag "!VERSION!"
-    FOR %%M IN (%modules%) DO (
-        IF EXIST "%%M" (
-            echo [Release] Running in: %%M
-            CALL git tag "%%M/!VERSION!"
-        ) ELSE (
-            echo [Warn] Skipped missing module: %%M
+    echo [Debug] VERSION extracted: !VERSION!
+
+    IF !FORCE! EQU 1 (
+        echo [Release] Creating FORCED tags...
+        CALL git tag -f "!VERSION!"
+        FOR %%M IN (%modules%) DO (
+            IF EXIST "%%M" (
+                echo [Release] Forcing tag in: %%M
+                CALL git tag -f "%%M/!VERSION!"
+            )
+        )
+    ) ELSE (
+        echo [Release] Creating tags...
+        CALL git tag "!VERSION!"
+        FOR %%M IN (%modules%) DO (
+            IF EXIST "%%M" (
+                echo [Release] Tagging: %%M
+                CALL git tag "%%M/!VERSION!"
+            )
         )
     )
-    echo [Release] Tagged as !VERSION!
+
+    echo [Release] Verifying tags...
+    CALL git show "!VERSION!" >nul 2>&1
+    IF ERRORLEVEL 1 (
+        echo [Error] Failed to verify main tag !VERSION!
+        GOTO :EOF
+    )
+
+    FOR %%M IN (%modules%) DO (
+        IF EXIST "%%M" (
+            CALL git show "%%M/!VERSION!" >nul 2>&1
+            IF ERRORLEVEL 1 (
+                echo [Error] Failed to verify module tag %%M/!VERSION!
+            )
+        )
+    )
+
+    echo [Release] All tags verified successfully
     GOTO :EOF

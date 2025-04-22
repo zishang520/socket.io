@@ -5,10 +5,10 @@ go 1.24.1
 require (
 	github.com/redis/go-redis/v9 v9.7.3
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.0-alpha.0
-	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-alpha.0
-	github.com/zishang520/socket.io/servers/socket/v3 v3.0.0-alpha.0
-	github.com/zishang520/socket.io/v3 v3.0.0-alpha.0
+	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.0-alpha.1
+	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-alpha.1
+	github.com/zishang520/socket.io/servers/socket/v3 v3.0.0-alpha.1
+	github.com/zishang520/socket.io/v3 v3.0.0-alpha.1
 )
 
 require (
@@ -25,8 +25,8 @@ require (
 	github.com/quic-go/quic-go v0.51.0 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
-	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-alpha.0 // indirect
-	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-alpha.0 // indirect
+	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-alpha.1 // indirect
+	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-alpha.1 // indirect
 	github.com/zishang520/webtransport-go v0.8.7 // indirect
 	go.uber.org/mock v0.5.1 // indirect
 	golang.org/x/crypto v0.36.0 // indirect

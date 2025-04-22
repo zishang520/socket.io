@@ -31,7 +31,7 @@ require (
 	github.com/symfony-cli/terminal v1.0.7 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
-	github.com/zishang520/socket.io/cmd/socket.io/v3 v3.0.0-alpha.0 // indirect
+	github.com/zishang520/socket.io/cmd/socket.io/v3 v3.0.0-alpha.1 // indirect
 	go.uber.org/mock v0.5.1 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/mod v0.18.0 // indirect

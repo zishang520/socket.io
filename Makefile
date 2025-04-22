@@ -3,6 +3,7 @@ export GOPROXY := https://goproxy.io,direct
 
 # List of submodules (relative paths)
 MODULES = \
+    cmd/socket.io \
     parsers/engine \
     parsers/socket \
     servers/engine \
@@ -10,11 +11,11 @@ MODULES = \
     adapters/adapter \
     adapters/redis \
     clients/engine \
-    clients/socket \
-    cmd/socket.io
+    clients/socket
 
 # Use the provided MODULE or all modules
 TARGET_MODULES = $(if $(MODULE),$(MODULE),$(MODULES))
+FORCE ?= 0
 
 .PHONY: all help deps get build fmt vet clean test version release
 
@@ -22,7 +23,7 @@ all: help
 
 help:
 	@echo ""
-	@echo "Usage: make [deps|get|build|fmt|clean|test] [MODULE=path/to/module]"
+	@echo "Usage: make [deps|get|build|fmt|clean|test|version|release] [MODULE=path/to/module|VERSION=v3.0.0[-alpha|beta|rc[.x]]]"
 	@echo "If MODULE is not specified, the command applies to all modules."
 	@echo ""
 
@@ -127,6 +128,7 @@ endif
 
 	@echo "[Version] Updating version.go"
 	@sed -i.bak 's/VERSION = ".*"/VERSION = "$(VERSION)"/' pkg/version/version.go && rm -f pkg/version/version.go.bak
+	@sed -i.bak -E 's|(github\.com/zishang520/socket\.io/cmd/socket\.io/v3 )[^[:space:]]*( // indirect)|\1$(VERSION)\2|' go.mod && rm -f go.mod.bak
 
 	@for mod in $(TARGET_MODULES); do \
 		if [ -d "$$mod" ]; then \
@@ -158,13 +160,28 @@ release:
 		echo "[Debug] VERSION extracted: $$VERSION"; \
 	fi; \
 	echo "[Release] Running in: [.]"; \
-	git tag "$$VERSION" || true; \
-	for mod in $(TARGET_MODULES); do \
-		if [ -d "$$mod" ]; then \
-			echo "[Release] Running in: $$mod"; \
-			git tag "$$mod/$$VERSION" || true; \
-		else \
-			echo "[Warn] Skipped missing module: $$mod"; \
-		fi; \
-	done; \
+	if [ "$(FORCE)" = "1" ]; then \
+		echo "[Release] FORCE mode enabled (will overwrite existing tags)"; \
+		echo "[Release] Creating/overwriting tags..."; \
+		git tag -f "$$VERSION" || true; \
+		for mod in $(TARGET_MODULES); do \
+			if [ -d "$$mod" ]; then \
+				echo "[Release] Forcing tag in: $$mod"; \
+				git tag -f "$$mod/$$VERSION" || true; \
+			else \
+				echo "[Warn] Skipped missing module: $$mod"; \
+			fi; \
+		done \
+	else \
+		echo "[Release] Creating tags (use FORCE=1 to overwrite existing tags)..."; \
+		git tag "$$VERSION" || true; \
+		for mod in $(TARGET_MODULES); do \
+			if [ -d "$$mod" ]; then \
+				echo "[Release] Tagging: $$mod"; \
+				git tag "$$mod/$$VERSION" || true; \
+			else \
+				echo "[Warn] Skipped missing module: $$mod"; \
+			fi; \
+		done \
+	fi; \
 	echo "[Release] Tagged as $$VERSION"

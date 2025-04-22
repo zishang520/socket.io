@@ -3,12 +3,12 @@ module github.com/zishang520/socket.io/clients/socket/v3
 go 1.24.1
 
 require (
-	github.com/zishang520/socket.io/clients/engine/v3 v3.0.0-alpha.0
-	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-alpha.0
-	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-alpha.0
-	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-alpha.0
-	github.com/zishang520/socket.io/servers/socket/v3 v3.0.0-alpha.0
-	github.com/zishang520/socket.io/v3 v3.0.0-alpha.0
+	github.com/zishang520/socket.io/clients/engine/v3 v3.0.0-alpha.1
+	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-alpha.1
+	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-alpha.1
+	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-alpha.1
+	github.com/zishang520/socket.io/servers/socket/v3 v3.0.0-alpha.1
+	github.com/zishang520/socket.io/v3 v3.0.0-alpha.1
 )
 
 require (
