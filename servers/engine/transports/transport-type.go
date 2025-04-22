@@ -139,7 +139,6 @@ type (
 	TransportCtor interface {
 		New(*types.HttpContext) Transport
 		HandlesUpgrades() bool
-		// Todo: Return []string
-		UpgradesTo() *types.Set[string]
+		UpgradesTo() []string
 	}
 )

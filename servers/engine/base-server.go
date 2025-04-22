@@ -140,11 +140,9 @@ func (bs *baseServer) ComputePath(options config.AttachOptionsInterface) string 
 }
 
 // Returns a list of available transports for upgrade given a certain transport.
-//
-// Todo: Return []string
-func (bs *baseServer) Upgrades(transport string) *types.Set[string] {
+func (bs *baseServer) Upgrades(transport string) []string {
 	if !bs.opts.AllowUpgrades() {
-		return types.NewSet[string]()
+		return nil
 	}
 	return transports.Transports()[transport].UpgradesTo()
 }

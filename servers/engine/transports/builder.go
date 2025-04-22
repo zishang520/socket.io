@@ -17,9 +17,8 @@ func (*WebSocketBuilder) HandlesUpgrades() bool {
 	return true
 }
 
-// Todo: Return []string
-func (*WebSocketBuilder) UpgradesTo() *types.Set[string] {
-	return types.NewSet[string]()
+func (*WebSocketBuilder) UpgradesTo() []string {
+	return nil
 }
 
 type WebTransportBuilder struct{}
@@ -34,9 +33,8 @@ func (*WebTransportBuilder) HandlesUpgrades() bool {
 	return true
 }
 
-// Todo: Return []string
-func (*WebTransportBuilder) UpgradesTo() *types.Set[string] {
-	return types.NewSet[string]()
+func (*WebTransportBuilder) UpgradesTo() []string {
+	return nil
 }
 
 type PollingBuilder struct{}
@@ -54,7 +52,6 @@ func (*PollingBuilder) HandlesUpgrades() bool {
 	return false
 }
 
-// Todo: Return []string
-func (*PollingBuilder) UpgradesTo() *types.Set[string] {
-	return types.NewSet(WEBSOCKET, WEBTRANSPORT)
+func (*PollingBuilder) UpgradesTo() []string {
+	return []string{WEBSOCKET, WEBTRANSPORT}
 }

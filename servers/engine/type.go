@@ -50,9 +50,7 @@ type (
 		// Compute the pathname of the requests that are handled by the server
 		ComputePath(config.AttachOptionsInterface) string
 		// Returns a list of available transports for upgrade given a certain transport.
-		//
-		// Todo: Return []string
-		Upgrades(string) *types.Set[string]
+		Upgrades(string) []string
 		// Protected
 		//
 		// Verifies a request.
