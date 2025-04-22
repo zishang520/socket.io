@@ -17,8 +17,7 @@ type (
 	}
 
 	ServerOptionsInterface interface {
-		config.ServerOptionsInterface
-		config.AttachOptionsInterface
+		config.OptionsInterface
 
 		SetServeClient(bool)
 		GetRawServeClient() *bool
@@ -50,8 +49,7 @@ type (
 	}
 
 	ServerOptions struct {
-		config.ServerOptions
-		config.AttachOptions
+		config.Options
 
 		// whether to serve the client files
 		serveClient *bool
@@ -87,9 +85,7 @@ func (s *ServerOptions) Assign(data ServerOptionsInterface) ServerOptionsInterfa
 		return s
 	}
 
-	s.ServerOptions.Assign(data)
-
-	s.AttachOptions.Assign(data)
+	s.Options.Assign(data)
 
 	if data.GetRawServeClient() != nil {
 		s.SetServeClient(data.ServeClient())

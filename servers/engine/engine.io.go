@@ -5,10 +5,25 @@ import (
 	"net/http"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
+	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 const Protocol = parser.Protocol
+
+type (
+	TransportCtor = transports.TransportCtor
+
+	WebSocketBuilder    = transports.WebSocketBuilder
+	WebTransportBuilder = transports.WebTransportBuilder
+	PollingBuilder      = transports.PollingBuilder
+)
+
+var (
+	Polling      TransportCtor = &PollingBuilder{}
+	WebSocket    TransportCtor = &WebSocketBuilder{}
+	WebTransport TransportCtor = &WebTransportBuilder{}
+)
 
 func New(server any, args ...any) Server {
 	switch s := server.(type) {
