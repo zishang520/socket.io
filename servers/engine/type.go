@@ -37,6 +37,8 @@ type (
 		ClientsCount() uint64
 		// Protected
 		Middlewares() []Middleware
+		Transports() *types.Set[string]
+		TransportsByName() map[string]transports.TransportCtor
 
 		// Methods
 

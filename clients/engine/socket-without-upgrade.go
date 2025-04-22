@@ -66,9 +66,9 @@ type socketWithoutUpgrade struct {
 	writeBuffer *types.Slice[*packet.Packet] // Buffer for outgoing packets
 
 	// Protected fields (read-only after initialization)
-	opts       *SocketOptions     // Connection options
-	transports *types.Set[string] // Available transport types
-	upgrading  atomic.Bool        // Upgrade status flag
+	opts       *SocketOptions       // Connection options
+	transports *types.Slice[string] // Available transport types
+	upgrading  atomic.Bool          // Upgrade status flag
 
 	// Private fields
 	_pingInterval              int64                       // Interval between ping messages
@@ -132,7 +132,7 @@ func (s *socketWithoutUpgrade) Opts() SocketOptionsInterface {
 }
 
 // Transports returns the set of available transport types.
-func (s *socketWithoutUpgrade) Transports() *types.Set[string] {
+func (s *socketWithoutUpgrade) Transports() *types.Slice[string] {
 	return s.transports
 }
 
@@ -243,12 +243,12 @@ func (s *socketWithoutUpgrade) Construct(uri string, opts SocketOptionsInterface
 		}
 	}
 
-	s.transports = types.NewSet[string]()
+	s.transports = types.NewSlice[string]()
 	s._transportsByName = map[string]TransportCtor{}
 	if transports := opts.Transports(); transports != nil {
 		for _, transport := range transports.Keys() {
 			transportName := transport.Name()
-			s.transports.Add(transportName)
+			s.transports.Push(transportName)
 			s._transportsByName[transportName] = transport
 		}
 	}
@@ -353,8 +353,14 @@ func (s *socketWithoutUpgrade) _open() {
 		go s.Emit("error", errors.New("no transports available"))
 		return
 	}
-	transportName := s.transports.Keys()[0]
-	if s.opts.RememberUpgrade() && s.PriorWebsocketSuccess() && s.transports.Has(transports.WEBSOCKET) {
+	transportName, err := s.transports.Get(0)
+	if err != nil {
+		go s.Emit("error", err)
+		return
+	}
+	if s.opts.RememberUpgrade() && s.PriorWebsocketSuccess() && s.transports.FindIndex(func(s string) bool {
+		return s == transports.WEBSOCKET
+	}) != -1 {
 		transportName = transports.WEBSOCKET
 	}
 	s.readyState.Store(SocketStateOpening)
@@ -638,7 +644,7 @@ func (s *socketWithoutUpgrade) _onError(err error) {
 
 	if s.opts.TryAllTransports() && s.transports.Len() > 1 && s.ReadyState() == SocketStateOpening {
 		client_socket_log.Debug("trying next transport")
-		s.transports.Delete(s.transports.Keys()[0])
+		s.transports.Shift()
 		s._open()
 		return
 	}

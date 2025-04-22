@@ -17,19 +17,19 @@ type mockLogger struct {
 	errorCalled bool
 }
 
-func (m *mockLogger) Debugf(s string, v ...interface{}) {
+func (m *mockLogger) Debugf(s string, v ...any) {
 	m.debugCalled = true
 }
 
-func (m *mockLogger) Infof(s string, v ...interface{}) {
+func (m *mockLogger) Infof(s string, v ...any) {
 	m.infoCalled = true
 }
 
-func (m *mockLogger) Warnf(s string, v ...interface{}) {
+func (m *mockLogger) Warnf(s string, v ...any) {
 	m.warnCalled = true
 }
 
-func (m *mockLogger) Errorf(s string, v ...interface{}) {
+func (m *mockLogger) Errorf(s string, v ...any) {
 	m.errorCalled = true
 }
 
@@ -252,13 +252,13 @@ func TestOptions(t *testing.T) {
 	})
 
 	t.Run("JSON Body", func(t *testing.T) {
-		jsonData := map[string]interface{}{
+		jsonData := map[string]any{
 			"key": "value",
 		}
 		opts := &Options{
 			JSON: jsonData,
 		}
-		if opts.JSON.(map[string]interface{})["key"] != "value" {
+		if opts.JSON.(map[string]any)["key"] != "value" {
 			t.Error("JSON body not properly set")
 		}
 	})

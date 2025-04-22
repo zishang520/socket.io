@@ -64,7 +64,7 @@ type SocketWithoutUpgrade interface {
 	Opts() SocketOptionsInterface
 
 	// Transports returns the set of available transport types
-	Transports() *types.Set[string]
+	Transports() *types.Slice[string]
 
 	// Upgrading returns whether a transport upgrade is in progress
 	Upgrading() bool

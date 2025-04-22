@@ -246,7 +246,9 @@ func (s *socketWithUpgrade) OnHandshake(data *HandshakeData) {
 func (s *socketWithUpgrade) _filterUpgrades(upgrades []string) *types.Set[string] {
 	filteredUpgrades := types.NewSet[string]()
 	for _, upgrade := range upgrades {
-		if s.Transports().Has(upgrade) {
+		if s.Transports().FindIndex(func(s string) bool {
+			return s == upgrade
+		}) != -1 {
 			filteredUpgrades.Add(upgrade)
 		}
 	}

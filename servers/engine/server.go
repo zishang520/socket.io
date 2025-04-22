@@ -58,7 +58,7 @@ func (s *server) Cleanup() {
 }
 
 func (s *server) CreateTransport(transportName string, ctx *types.HttpContext) (transports.Transport, error) {
-	if transport, ok := transports.Transports()[transportName]; ok {
+	if transport, ok := s.TransportsByName()[transportName]; ok {
 		return transport.New(ctx), nil
 	}
 	return nil, errors.ErrUnsupportedTransport
@@ -157,7 +157,7 @@ func (s *server) onWebSocket(ctx *types.HttpContext, wsc *types.WebSocketConn) {
 	wsc.On("error", onUpgradeError)
 
 	transportName := ctx.Query().Peek("transport")
-	if transport, ok := transports.Transports()[transportName]; ok && !transport.HandlesUpgrades() {
+	if transport, ok := s.TransportsByName()[transportName]; ok && !transport.HandlesUpgrades() {
 		server_log.Debug("transport doesnt handle upgraded requests")
 		wsc.Close()
 		return
@@ -352,7 +352,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !websocket.IsWebSocketUpgrade(r) {
 		server_log.Debug(`intercepting request for path "%s"`, utils.CleanPath(r.URL.Path))
 		s.HandleRequest(types.NewHttpContext(w, r))
-	} else if s.Opts().Transports().Has(transports.WEBSOCKET) {
+	} else if s.Transports().Has(transports.WEBSOCKET) {
 		s.HandleUpgrade(types.NewHttpContext(w, r))
 	} else {
 		http.Error(w, "Not Implemented", http.StatusNotImplemented)

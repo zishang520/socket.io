@@ -137,8 +137,9 @@ type (
 	}
 
 	TransportCtor interface {
-		New(*types.HttpContext) Transport
 		HandlesUpgrades() bool
+		Name() string
+		New(*types.HttpContext) Transport
 		UpgradesTo() []string
 	}
 )

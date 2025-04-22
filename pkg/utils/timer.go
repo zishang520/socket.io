@@ -23,11 +23,11 @@ func (t *Timer) Refresh() *Timer {
 }
 
 func (t *Timer) Unref() {
-	runtime.AddCleanup(t, func(t *Timer) {
-		if t.timer.Stop() {
+	runtime.AddCleanup(t, func(timer *time.Timer) {
+		if timer.Stop() {
 			close(t.stopCh)
 		}
-	}, t)
+	}, t.timer)
 }
 
 func SetTimeout(fn func(), sleep time.Duration) *Timer {

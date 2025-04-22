@@ -192,9 +192,9 @@ func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 		Approx: true, // "~" in Redis is approximated trimming.
 		ID:     "*",
 		// XAddArgs accepts values in the following formats:
-		//   - XAddArgs.Values = []interface{}{"key1", "value1", "key2", "value2"}
+		//   - XAddArgs.Values = []any{"key1", "value1", "key2", "value2"}
 		//   - XAddArgs.Values = []string("key1", "value1", "key2", "value2")
-		//   - XAddArgs.Values = map[string]interface{}{"key1": "value1", "key2": "value2"}
+		//   - XAddArgs.Values = map[string]any{"key1": "value1", "key2": "value2"}
 		Values: map[string]any(r.encode(message)),
 	}).Err()
 }

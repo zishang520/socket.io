@@ -35,6 +35,9 @@ type baseServer struct {
 
 	opts config.ServerOptionsInterface
 
+	transports        *types.Set[string]       // Available transport types
+	_transportsByName map[string]TransportCtor // Transport constructors by name
+
 	clients      *types.Map[string, Socket]
 	clientsCount atomic.Uint64
 	middlewares  []Middleware
@@ -76,6 +79,14 @@ func (bs *baseServer) Middlewares() []Middleware {
 	return bs.middlewares
 }
 
+func (bs *baseServer) Transports() *types.Set[string] {
+	return bs.transports
+}
+
+func (bs *baseServer) TransportsByName() map[string]transports.TransportCtor {
+	return bs._transportsByName
+}
+
 // BaseServer build.
 func (bs *baseServer) Construct(opt any) {
 	opts, _ := opt.(config.ServerOptionsInterface)
@@ -85,11 +96,21 @@ func (bs *baseServer) Construct(opt any) {
 	options.SetPingInterval(25_000 * time.Millisecond)
 	options.SetUpgradeTimeout(10_000 * time.Millisecond)
 	options.SetMaxHttpBufferSize(1e6)
-	options.SetTransports(types.NewSet(transports.POLLING, transports.WEBSOCKET))
+	options.SetTransports(types.NewSet(Polling, WebSocket))
 	options.SetAllowUpgrades(true)
 	options.SetHttpCompression(&types.HttpCompression{Threshold: 1024})
 	options.SetCors(nil)
 	options.SetAllowEIO3(false)
+
+	bs.transports = types.NewSet[string]()
+	bs._transportsByName = map[string]TransportCtor{}
+	if transports := opts.Transports(); transports != nil {
+		for _, transport := range transports.Keys() {
+			transportName := transport.Name()
+			bs.transports.Add(transportName)
+			bs._transportsByName[transportName] = transport
+		}
+	}
 
 	bs.opts = options.Assign(opts)
 
@@ -144,14 +165,14 @@ func (bs *baseServer) Upgrades(transport string) []string {
 	if !bs.opts.AllowUpgrades() {
 		return nil
 	}
-	return transports.Transports()[transport].UpgradesTo()
+	return bs._transportsByName[transport].UpgradesTo()
 }
 
 // Verifies a request.
 func (bs *baseServer) Verify(ctx *types.HttpContext, upgrade bool) (*types.CodeMessage, map[string]any) {
 	// transport check
 	transport := ctx.Query().Peek("transport")
-	if !bs.opts.Transports().Has(transport) || transport == transports.WEBTRANSPORT {
+	if !bs.transports.Has(transport) || transport == transports.WEBTRANSPORT {
 		server_log.Debug(`unknown transport "%s"`, transport)
 		return UNKNOWN_TRANSPORT, map[string]any{"transport": transport}
 	}

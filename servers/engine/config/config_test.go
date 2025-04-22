@@ -93,12 +93,6 @@ func TestServerOptionsDefauleValue(t *testing.T) {
 		}
 	})
 
-	t.Run("transports", func(t *testing.T) {
-		if transports := opts.Transports(); opts.GetRawTransports() == nil && transports != nil && !(transports.Has("polling") && transports.Has("websocket")) {
-			t.Fatalf(`*ServerOptions.Transports() = %s, want match for ["polling", "websocket")]`, transports.Keys())
-		}
-	})
-
 	t.Run("allowUpgrades", func(t *testing.T) {
 		if allowUpgrades := opts.AllowUpgrades(); opts.GetRawAllowUpgrades() == nil && allowUpgrades != false {
 			t.Fatalf(`*ServerOptions.AllowUpgrades() = %t, want match for %t`, allowUpgrades, false)
@@ -177,13 +171,6 @@ func TestServerOptionsSetValue(t *testing.T) {
 		opts.SetAllowRequest(nil)
 		if allowRequest := opts.AllowRequest(); allowRequest != nil {
 			t.Fatalf(`*ServerOptions.AllowRequest() = %v, want match for nil`, allowRequest)
-		}
-	})
-
-	t.Run("transports", func(t *testing.T) {
-		opts.SetTransports(types.NewSet("websocket", "polling"))
-		if transports := opts.Transports(); transports != nil && !(transports.Has("polling") && transports.Has("websocket")) {
-			t.Fatalf(`*ServerOptions.Transports() = %s, want match for ["polling", "websocket")]`, transports.Keys())
 		}
 	})
 

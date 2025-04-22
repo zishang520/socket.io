@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
@@ -33,9 +34,9 @@ type (
 		GetRawAllowRequest() AllowRequest
 		AllowRequest() AllowRequest
 
-		SetTransports(*types.Set[string])
-		GetRawTransports() *types.Set[string]
-		Transports() *types.Set[string]
+		SetTransports(*types.Set[transports.TransportCtor])
+		GetRawTransports() *types.Set[transports.TransportCtor]
+		Transports() *types.Set[transports.TransportCtor]
 
 		SetAllowUpgrades(bool)
 		GetRawAllowUpgrades() *bool
@@ -84,7 +85,7 @@ type (
 		allowRequest AllowRequest
 
 		// the low-level transports that are enabled
-		transports *types.Set[string]
+		transports *types.Set[transports.TransportCtor]
 
 		// whether to allow transport upgrades
 		allowUpgrades *bool
@@ -248,17 +249,17 @@ func (s *ServerOptions) AllowRequest() AllowRequest {
 // The low-level transports that are enabled. WebTransport is disabled by default and must be manually enabled:
 //
 //	opts := &ServerOptions{}
-//	opts.SetTransports(types.NewSet("polling", "websocket", "webtransport"))
+//	opts.SetTransports(types.NewSet(engine.Polling, engine.Websocket, engine.WebTransport))
 //	NewServer(opts)
 //
-// Default: types.NewSet("polling", "websocket")
-func (s *ServerOptions) SetTransports(transports *types.Set[string]) {
+// Default: types.NewSet(engine.Polling, engine.Websocket)
+func (s *ServerOptions) SetTransports(transports *types.Set[transports.TransportCtor]) {
 	s.transports = transports
 }
-func (s *ServerOptions) GetRawTransports() *types.Set[string] {
+func (s *ServerOptions) GetRawTransports() *types.Set[transports.TransportCtor] {
 	return s.transports
 }
-func (s *ServerOptions) Transports() *types.Set[string] {
+func (s *ServerOptions) Transports() *types.Set[transports.TransportCtor] {
 	return s.transports
 }
 
