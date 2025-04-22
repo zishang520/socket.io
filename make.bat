@@ -193,20 +193,38 @@ GOTO :help
     GOTO :EOF
 
 :release
-    SET "VERSION=%~2"
-    IF "%VERSION%"=="" (
-        echo [Error] VERSION is required. Usage: make.bat release v3.0.0[-alpha^|beta^|rc[.x]
+    IF NOT EXIST "pkg\version\version.go" (
+        echo [Error] File pkg/version/version.go not found
         GOTO :EOF
     )
+
+    SET "VERSION="
+    FOR /F "tokens=2 delims==" %%i IN ('findstr /C:"const VERSION" pkg\version\version.go') DO (
+        SET "VERSION=%%i"
+    )
+
+    IF "!VERSION!"=="" (
+        echo [Error] Failed to read VERSION from pkg/version/version.go
+        GOTO :EOF
+    )
+
+    SET "VERSION=%VERSION:"=%"
+    SET "VERSION=%VERSION: =%"
+
+    IF "!VERSION!"=="" (
+        echo [Error] VERSION is empty after cleanup
+        GOTO :EOF
+    )
+
     echo [Release] Running in: [.]
-    CALL git tag ""%VERSION%""
+    CALL git tag "!VERSION!"
     FOR %%M IN (%modules%) DO (
         IF EXIST "%%M" (
             echo [Release] Running in: %%M
-            CALL git tag ""%%M/%VERSION%""
+            CALL git tag "%%M/!VERSION!"
         ) ELSE (
             echo [Warn] Skipped missing module: %%M
         )
     )
-    echo [Release] Tagged as %VERSION%
+    echo [Release] Tagged as !VERSION!
     GOTO :EOF

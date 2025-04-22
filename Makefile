@@ -146,17 +146,25 @@ endif
 	@echo "[Version] Done."
 
 release:
-ifndef VERSION
-	$(error VERSION is required, e.g. make release VERSION=v3.0.0[-alpha|beta|rc[.x]])
-endif
-	@echo "[Release] Running in: [.]"
-	@git tag "$(VERSION)"
-	@for mod in $(TARGET_MODULES); do \
+	@if ! [ -f "pkg/version/version.go" ]; then \
+		echo "[Error] File pkg/version/version.go not found"; \
+		exit 1; \
+	fi
+	@VERSION=$$(grep 'const VERSION' pkg/version/version.go | sed -E 's/.*const VERSION[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/'); \
+	if [ -z "$$VERSION" ]; then \
+		echo "[Error] Failed to read VERSION from pkg/version/version.go"; \
+		exit 1; \
+	else \
+		echo "[Debug] VERSION extracted: $$VERSION"; \
+	fi; \
+	echo "[Release] Running in: [.]"; \
+	git tag "$$VERSION" || true; \
+	for mod in $(TARGET_MODULES); do \
 		if [ -d "$$mod" ]; then \
 			echo "[Release] Running in: $$mod"; \
-			git tag "$$mod/$(VERSION)" >/dev/null; \
+			git tag "$$mod/$$VERSION" || true; \
 		else \
 			echo "[Warn] Skipped missing module: $$mod"; \
-		fi \
-	done
-	@echo "[Release] Tagged as $(VERSION)"
+		fi; \
+	done; \
+	echo "[Release] Tagged as $$VERSION"
