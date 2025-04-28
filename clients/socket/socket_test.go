@@ -5,27 +5,25 @@ import (
 	"log"
 	"time"
 
-	client "github.com/zishang520/socket.io/clients/engine/v3/transports"
-	"github.com/zishang520/socket.io/clients/socket/v3"
-	"github.com/zishang520/socket.io/servers/engine/v3"
-	socket_server "github.com/zishang520/socket.io/servers/socket/v3"
+	client "github.com/zishang520/socket.io/clients/socket/v3"
+	server "github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 // ExampleSocket_basic demonstrates the basic usage of Socket.IO client
 func ExampleSocket_basic() {
-	config := socket_server.DefaultServerOptions()
-	config.SetTransports(types.NewSet(engine.Polling, engine.WebSocket, engine.WebTransport))
+	config := server.DefaultServerOptions()
+	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
 
 	httpServer := types.NewWebServer(nil)
-	socket_server.NewServer(httpServer, config)
+	server.NewServer(httpServer, config)
 
 	done := make(chan struct{})
 
 	httpServer.Listen("127.0.0.1:8000", func() {
-		opts := socket.DefaultOptions()
+		opts := client.DefaultOptions()
 		opts.SetTransports(types.NewSet(client.Polling, client.WebSocket))
-		socket, err := socket.Connect("http://127.0.0.1:8000/", opts)
+		socket, err := client.Connect("http://127.0.0.1:8000/", opts)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -55,18 +53,18 @@ func ExampleSocket_basic() {
 
 // ExampleSocket_disconnect demonstrates how to disconnect the socket
 func ExampleSocket_disconnect() {
-	config := socket_server.DefaultServerOptions()
-	config.SetTransports(types.NewSet(engine.Polling, engine.WebSocket, engine.WebTransport))
+	config := server.DefaultServerOptions()
+	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
 
 	httpServer := types.NewWebServer(nil)
-	socket_server.NewServer(httpServer, config)
+	server.NewServer(httpServer, config)
 
 	done := make(chan struct{})
 
 	httpServer.Listen("127.0.0.1:8000", func() {
-		opts := socket.DefaultOptions()
+		opts := client.DefaultOptions()
 		opts.SetTransports(types.NewSet(client.Polling, client.WebSocket))
-		socket, err := socket.Connect("http://127.0.0.1:8000/", opts)
+		socket, err := client.Connect("http://127.0.0.1:8000/", opts)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -98,14 +96,14 @@ func ExampleSocket_disconnect() {
 
 // ExampleSocket_emitWithAck demonstrates how to emit events with acknowledgement
 func ExampleSocket_emitWithAck() {
-	config := socket_server.DefaultServerOptions()
-	config.SetTransports(types.NewSet(engine.Polling, engine.WebSocket, engine.WebTransport))
+	config := server.DefaultServerOptions()
+	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
 
 	httpServer := types.NewWebServer(nil)
-	socket_server.NewServer(httpServer, config).On("connection", func(clients ...any) {
-		client := clients[0].(*socket_server.Socket)
-		client.On("custom-event", func(args ...any) {
-			ack := args[len(args)-1].(socket_server.Ack)
+	server.NewServer(httpServer, config).On("connection", func(clients ...any) {
+		socket := clients[0].(*server.Socket)
+		socket.On("custom-event", func(args ...any) {
+			ack := args[len(args)-1].(server.Ack)
 			ack(args[:len(args)-1], nil)
 		})
 	})
@@ -113,9 +111,9 @@ func ExampleSocket_emitWithAck() {
 	done := make(chan struct{})
 
 	httpServer.Listen("127.0.0.1:8000", func() {
-		opts := socket.DefaultOptions()
+		opts := client.DefaultOptions()
 		opts.SetTransports(types.NewSet(client.Polling, client.WebSocket))
-		socket, err := socket.Connect("http://127.0.0.1:8000/", opts)
+		socket, err := client.Connect("http://127.0.0.1:8000/", opts)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -140,18 +138,18 @@ func ExampleSocket_emitWithAck() {
 
 // ExampleSocket_volatile demonstrates how to send messages that may be lost
 func ExampleSocket_volatile() {
-	config := socket_server.DefaultServerOptions()
-	config.SetTransports(types.NewSet(engine.Polling, engine.WebSocket, engine.WebTransport))
+	config := server.DefaultServerOptions()
+	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
 
 	httpServer := types.NewWebServer(nil)
-	socket_server.NewServer(httpServer, config)
+	server.NewServer(httpServer, config)
 
 	done := make(chan struct{})
 
 	httpServer.Listen("127.0.0.1:8000", func() {
-		opts := socket.DefaultOptions()
+		opts := client.DefaultOptions()
 		opts.SetTransports(types.NewSet(client.Polling))
-		socket, err := socket.Connect("http://127.0.0.1:8000/", opts)
+		socket, err := client.Connect("http://127.0.0.1:8000/", opts)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -170,23 +168,23 @@ func ExampleSocket_volatile() {
 
 // ExampleSocket_onAny demonstrates how to listen to all events
 func ExampleSocket_onAny() {
-	config := socket_server.DefaultServerOptions()
-	config.SetTransports(types.NewSet(engine.Polling, engine.WebSocket, engine.WebTransport))
+	config := server.DefaultServerOptions()
+	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
 
 	httpServer := types.NewWebServer(nil)
-	socket_server.NewServer(httpServer, config).On("connection", func(clients ...any) {
-		client := clients[0].(*socket_server.Socket)
-		client.On("test-event", func(args ...any) {
-			client.Emit("test-event")
+	server.NewServer(httpServer, config).On("connection", func(clients ...any) {
+		socket := clients[0].(*server.Socket)
+		socket.On("test-event", func(args ...any) {
+			socket.Emit("test-event")
 		})
 	})
 
 	done := make(chan struct{})
 
 	httpServer.Listen("127.0.0.1:8000", func() {
-		opts := socket.DefaultOptions()
+		opts := client.DefaultOptions()
 		opts.SetTransports(types.NewSet(client.Polling, client.WebSocket))
-		socket, err := socket.Connect("http://127.0.0.1:8000/", opts)
+		socket, err := client.Connect("http://127.0.0.1:8000/", opts)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -209,18 +207,18 @@ func ExampleSocket_onAny() {
 
 // ExampleSocket_timeout demonstrates how to set timeout for acknowledgements
 func ExampleSocket_timeout() {
-	config := socket_server.DefaultServerOptions()
-	config.SetTransports(types.NewSet(engine.Polling, engine.WebSocket, engine.WebTransport))
+	config := server.DefaultServerOptions()
+	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
 
 	httpServer := types.NewWebServer(nil)
-	socket_server.NewServer(httpServer, config)
+	server.NewServer(httpServer, config)
 
 	done := make(chan struct{})
 
 	httpServer.Listen("127.0.0.1:8000", func() {
-		opts := socket.DefaultOptions()
+		opts := client.DefaultOptions()
 		opts.SetTransports(types.NewSet(client.Polling, client.WebSocket))
-		socket, err := socket.Connect("http://127.0.0.1:8000/", opts)
+		socket, err := client.Connect("http://127.0.0.1:8000/", opts)
 		if err != nil {
 			log.Fatal(err)
 		}

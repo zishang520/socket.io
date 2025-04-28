@@ -33,7 +33,7 @@ GOTO :help
 
 :: (keep existing targets: :deps :get :build :fmt :vet :clean :test)
 
-:run_for_all_modules
+:modules
     SET "cmd=%~1"
     SET "label=%~2"
     echo [%label%] Running in: [.]
@@ -57,12 +57,13 @@ GOTO :help
             echo [Deps] Tidy module: %MODULE%
             pushd "%MODULE%"
             CALL go mod tidy
+            CALL go mod vendor
             popd
         ) ELSE (
             echo [Error] Module path not found: %MODULE%
         )
     ) ELSE (
-        CALL :run_for_all_modules "go mod tidy" "Deps"
+        CALL :modules "go mod tidy && go mod vendor" "Deps"
     )
     GOTO :EOF
 
@@ -78,7 +79,7 @@ GOTO :help
             echo [Error] Module path not found: %MODULE%
         )
     ) ELSE (
-        CALL :run_for_all_modules "go fmt ./..." "Fmt"
+        CALL :modules "go fmt ./..." "Fmt"
     )
     GOTO :EOF
 
@@ -94,7 +95,7 @@ GOTO :help
             echo [Error] Module path not found: %MODULE%
         )
     ) ELSE (
-        CALL :run_for_all_modules "go vet ./..." "Vet"
+        CALL :modules "go vet ./..." "Vet"
     )
     GOTO :EOF
 
@@ -110,7 +111,7 @@ GOTO :help
             echo [Error] Module path not found: %MODULE%
         )
     ) ELSE (
-        CALL :run_for_all_modules "go get ./..." "Get"
+        CALL :modules "go get ./..." "Get"
     )
     GOTO :EOF
 
@@ -126,7 +127,7 @@ GOTO :help
             echo [Error] Module path not found: %MODULE%
         )
     ) ELSE (
-        CALL :run_for_all_modules "go build ./..." "Build"
+        CALL :modules "go build ./..." "Build"
     )
     GOTO :EOF
 
@@ -142,7 +143,7 @@ GOTO :help
             echo [Error] Module path not found: %MODULE%
         )
     ) ELSE (
-        CALL :run_for_all_modules "go clean -v -r ./..." "Clean"
+        CALL :modules "go clean -v -r ./..." "Clean"
     )
     GOTO :EOF
 
@@ -161,7 +162,7 @@ GOTO :help
             echo [Error] Module path not found: %MODULE%
         )
     ) ELSE (
-        CALL :run_for_all_modules "go test -timeout=30s -race -cover -covermode=atomic ./..." "Test"
+        CALL :modules "go test -timeout=30s -race -cover -covermode=atomic ./..." "Test"
     )
     GOTO :EOF
 
