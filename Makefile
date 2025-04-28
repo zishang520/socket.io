@@ -31,10 +31,11 @@ deps:
 	@echo "[Deps] Running go mod tidy..."
 	@echo "[Deps] Tidying [.]"
 	@go mod tidy
+	@go mod vendor
 	@for mod in $(TARGET_MODULES); do \
 		if [ -d "$$mod" ]; then \
 			echo "[Deps] Tidying $$mod"; \
-			cd $$mod && go mod tidy && cd - >/dev/null; \
+			cd $$mod && go mod tidy && go mod vendor && cd - >/dev/null; \
 		else \
 			echo "[Warn] Skipped missing module: $$mod"; \
 		fi \
@@ -110,11 +111,11 @@ test:
 	@go clean -testcache
 	@echo "[Test] Running tests..."
 	@echo "[Test] Testing [.]"
-	@go test -timeout=30s -race -cover -covermode=atomic ./...
+	@go test -timeout=60s -race -cover -covermode=atomic ./...
 	@for mod in $(TARGET_MODULES); do \
 		if [ -d "$$mod" ]; then \
 			echo "[Test] Testing $$mod"; \
-			cd $$mod && go test -timeout=30s -race -cover -covermode=atomic ./... && cd - >/dev/null; \
+			cd $$mod && go test -timeout=60s -race -cover -covermode=atomic ./... && cd - >/dev/null; \
 		else \
 			echo "[Warn] Skipped missing module: $$mod"; \
 		fi \

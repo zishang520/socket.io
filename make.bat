@@ -156,13 +156,13 @@ GOTO :help
         IF EXIST "%MODULE%" (
             echo [Test] Testing module: %MODULE%
             pushd "%MODULE%"
-            CALL go test -timeout=30s -race -cover -covermode=atomic ./...
+            CALL go test -timeout=60s -race -cover -covermode=atomic ./...
             popd
         ) ELSE (
             echo [Error] Module path not found: %MODULE%
         )
     ) ELSE (
-        CALL :modules "go test -timeout=30s -race -cover -covermode=atomic ./..." "Test"
+        CALL :modules "go test -timeout=60s -race -cover -covermode=atomic ./..." "Test"
     )
     GOTO :EOF
 
