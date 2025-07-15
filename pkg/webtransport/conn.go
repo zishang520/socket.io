@@ -342,10 +342,20 @@ type BufferPool interface {
 // added to the pool.
 type writePoolData struct{ buf []byte }
 
+// streamWithDeadline is an interface that combines io.ReadWriteCloser with methods
+// for setting read and write deadlines on the underlying stream. Implementations
+// must provide mechanisms to control I/O timeouts via SetWriteDeadline and SetReadDeadline.
+type streamWithDeadline interface {
+	io.ReadWriteCloser
+
+	SetWriteDeadline(time.Time) error
+	SetReadDeadline(time.Time) error
+}
+
 // The Conn type represents a WebTransport connection.
 type Conn struct {
 	session *webtransport.Session
-	stream  webtransport.Stream
+	stream  streamWithDeadline
 
 	isServer bool
 
@@ -374,7 +384,7 @@ type Conn struct {
 	messageReader *messageReader // the current low-level reader
 }
 
-func NewConn(session *webtransport.Session, stream webtransport.Stream, isServer bool, readBufferSize, writeBufferSize int, writeBufferPool BufferPool, br *bufio.Reader, writeBuf []byte) *Conn {
+func NewConn(session *webtransport.Session, stream streamWithDeadline, isServer bool, readBufferSize, writeBufferSize int, writeBufferPool BufferPool, br *bufio.Reader, writeBuf []byte) *Conn {
 
 	if br == nil {
 		if readBufferSize == 0 {
@@ -456,7 +466,7 @@ func (c *Conn) read(n int) ([]byte, error) {
 	return p, err
 }
 
-func (c *Conn) write(frameType int, deadline time.Time, buf0, buf1 []byte) error {
+func (c *Conn) write(_ int, deadline time.Time, buf0, buf1 []byte) error {
 	<-c.mu
 	defer func() { c.mu <- struct{}{} }()
 
@@ -904,7 +914,7 @@ func (r *messageReader) Read(b []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	for c.readErr == nil {
+	if c.readErr == nil {
 		if c.readRemaining > 0 {
 			if int64(len(b)) > c.readRemaining {
 				b = b[:c.readRemaining]
@@ -968,7 +978,7 @@ func (c *Conn) SetReadLimit(limit int64) {
 // Stream returns the underlying connection that is wrapped by c.
 // Note that writing to or reading from this connection directly will corrupt the
 // WebTransport stream.
-func (c *Conn) Stream() webtransport.Stream {
+func (c *Conn) Stream() streamWithDeadline {
 	return c.stream
 }
 

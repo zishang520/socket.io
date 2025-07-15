@@ -173,16 +173,19 @@ GOTO :help
         GOTO :EOF
     )
 
+    powershell -Command "$v='%VERSION%'; if ($v -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z\-\.]+)?$') { Write-Error \"[Error] Invalid version format: $v\"; exit 1 } else { exit 0 }"
+
+    IF ERRORLEVEL 1 GOTO :EOF
+
     echo [Version] Updating version to %VERSION%
     powershell -Command "(Get-Content pkg/version/version.go) -replace 'VERSION = \"(.*?)\"', 'VERSION = \"%VERSION%\"' | Set-Content pkg/version/version.go"
-    powershell -Command "(Get-Content go.mod) -replace '(github\.com/zishang520/socket\.io/cmd/socket\.io/v3 )(.*?)( // indirect)', '${1}%VERSION%${3}' | Set-Content go.mod"
 
     FOR %%M IN (%modules%) DO (
         IF EXIST "%%M" (
             echo [Version] Updating dependencies in %%M...
             pushd "%%M"
             CALL go mod tidy
-            FOR /F "delims=" %%D IN ('go list -f "{{if and (not .Indirect) (not .Main)}}{{.Path}}@%VERSION%{{end}}" -m all ^| findstr "^github.com/zishang520/socket.io"') DO (
+            FOR /F "delims=" %%D IN ('go list -mod=mod -f "{{if and (not .Indirect) (not .Main)}}{{.Path}}@%VERSION%{{end}}" -m all ^| findstr "^github.com/zishang520/socket.io"') DO (
                 CALL go get -v %%D
             )
             CALL go mod tidy

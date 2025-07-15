@@ -125,18 +125,23 @@ version:
 ifndef VERSION
 	$(error VERSION is required, e.g. make version VERSION=v3.0.0[-alpha|beta|rc[.x]])
 endif
+	@echo "[Version] Validating version format: $(VERSION)"
+	@echo "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$$' || \
+		( echo "[Error] Invalid VERSION format: $(VERSION)"; \
+		  echo "Expected: vX.Y.Z[-PRERELEASE]"; \
+		  exit 1 )
+
 	@echo "[Version] Updating version to $(VERSION)"
 
 	@echo "[Version] Updating version.go"
 	@sed -i.bak 's/VERSION = ".*"/VERSION = "$(VERSION)"/' pkg/version/version.go && rm -f pkg/version/version.go.bak
-	@sed -i.bak -E 's|(github\.com/zishang520/socket\.io/cmd/socket\.io/v3 )[^[:space:]]*( // indirect)|\1$(VERSION)\2|' go.mod && rm -f go.mod.bak
 
 	@for mod in $(TARGET_MODULES); do \
 		if [ -d "$$mod" ]; then \
 			echo "[Version] Updating dependencies in $$mod..."; \
 			cd $$mod && \
 			go mod tidy && \
-			go list -f '{{if and (not .Indirect) (not .Main)}}{{.Path}}@$(VERSION){{end}}' -m all | \
+			go list -mod=mod -f '{{if and (not .Indirect) (not .Main)}}{{.Path}}@$(VERSION){{end}}' -m all | \
 			grep '^github.com/zishang520/socket.io' | \
 			xargs -L1 go get -v && \
 			go mod tidy && \

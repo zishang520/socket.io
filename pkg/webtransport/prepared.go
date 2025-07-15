@@ -8,8 +8,6 @@ import (
 	"bytes"
 	"sync"
 	"time"
-
-	"github.com/zishang520/webtransport-go"
 )
 
 // PreparedMessage caches on the wire representations of a message payload.
@@ -89,8 +87,14 @@ func (pm *PreparedMessage) frame(key prepareKey) (int, []byte, error) {
 
 type prepareConn struct {
 	buf bytes.Buffer
-	webtransport.Stream
 }
 
+var (
+	_ streamWithDeadline = &prepareConn{}
+)
+
+func (pc *prepareConn) Read(p []byte) (n int, err error)   { return pc.buf.Read(p) }
 func (pc *prepareConn) Write(p []byte) (int, error)        { return pc.buf.Write(p) }
 func (pc *prepareConn) SetWriteDeadline(t time.Time) error { return nil }
+func (pc *prepareConn) SetReadDeadline(t time.Time) error  { return nil }
+func (pc *prepareConn) Close() error                       { return nil }
