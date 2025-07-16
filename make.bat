@@ -2,266 +2,229 @@
 setlocal ENABLEDELAYEDEXPANSION
 pushd "%~dp0"
 
-:: Set Go proxy
+:: Configuration
 SET "GOPROXY=https://goproxy.io,direct"
+SET "MODULES=cmd/socket.io parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket"
+SET "TEST_TIMEOUT=60s"
+SET "VERSION_FILE=pkg\version\version.go"
 
-:: List of all submodules
-SET modules=cmd/socket.io parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket
+:: Command parsing
+SET "COMMAND=%~1"
+SET "MODULE=%~2"
+SET "FORCE=%~2"
 
-:: Get command argument
-SET "args=%~1"
-IF /I "%args%"=="" GOTO :help
-IF /I "%args%"=="deps" GOTO :deps
-IF /I "%args%"=="get" GOTO :get
-IF /I "%args%"=="build" GOTO :build
-IF /I "%args%"=="fmt" GOTO :fmt
-IF /I "%args%"=="vet" GOTO :vet
-IF /I "%args%"=="clean" GOTO :clean
-IF /I "%args%"=="test" GOTO :test
-IF /I "%args%"=="version" GOTO :version
-IF /I "%args%"=="release" GOTO :release
+:: Command dispatch
+CALL :handle_command %COMMAND%
+IF ERRORLEVEL 1 GOTO :EOF
+GOTO :EOF
 
-GOTO :help
+:handle_command
+    IF /I "%~1"=="" CALL :help & EXIT /B 1
+    IF /I "%~1"=="env" CALL :env & EXIT /B 0
+    IF /I "%~1"=="deps" CALL :deps %MODULE% & EXIT /B 0
+    IF /I "%~1"=="update" CALL :update %MODULE% & EXIT /B 0
+    IF /I "%~1"=="build" CALL :build %MODULE% & EXIT /B 0
+    IF /I "%~1"=="fmt" CALL :fmt %MODULE% & EXIT /B 0
+    IF /I "%~1"=="vet" CALL :vet %MODULE% & EXIT /B 0
+    IF /I "%~1"=="clean" CALL :clean %MODULE% & EXIT /B 0
+    IF /I "%~1"=="test" CALL :test %MODULE% & EXIT /B 0
+    IF /I "%~1"=="version" CALL :version %MODULE% & EXIT /B 0
+    IF /I "%~1"=="release" CALL :release %FORCE% & EXIT /B 0
+    echo [Error] Unknown command: %~1
+    CALL :help
+    EXIT /B 1
 
 :help
     echo.
-    echo Usage: make.bat [deps^|get^|build^|fmt^|vet^|clean^|test^|version^|release] [MODULE_PATH^|VERSION]
-    echo If no module_path is given, the command applies to all modules.
-    echo VERSION is required for version/release, e.g. make.bat version v3.0.0[-alpha^|beta^|rc[.x]]
+    echo Usage: make.bat [command] [module_path] [options]
+    echo Commands: deps, update, build, fmt, vet, clean, test, version, release
+    echo If no module_path is given, command applies to all modules
+    echo version requires VERSION (e.g., v3.0.0[-alpha^|beta^|rc[.x]])
+    echo release supports --force or -f option
     echo.
-    GOTO :EOF
+    EXIT /B 0
 
-:: (keep existing targets: :deps :get :build :fmt :vet :clean :test)
-
-:modules
+:process_modules
     SET "cmd=%~1"
     SET "label=%~2"
-    echo [%label%] Running in: [.]
-    CALL %cmd%
-    FOR %%M IN (%modules%) DO (
+    echo [%label%] Processing root directory
+    CALL %cmd% || (echo [Error] Failed in root directory & EXIT /B 1)
+
+    FOR %%M IN (%MODULES%) DO (
         IF EXIST "%%M" (
+            echo [%label%] Processing: %%M
             pushd "%%M"
-            echo [%label%] Running in: %%M
-            CALL %cmd%
+            CALL %cmd% || (echo [Error] Failed in %%M & popd & EXIT /B 1)
             popd
         ) ELSE (
-            echo [Warn] Skipped missing module: %%M
+            echo [Warn] Skipping missing module: %%M
         )
     )
-    GOTO :EOF
+    EXIT /B 0
+
+:process_single_module
+    SET "cmd=%~1"
+    SET "label=%~2"
+    SET "module=%~3"
+    IF NOT EXIST "%module%" (
+        echo [Error] Module not found: %module%
+        EXIT /B 1
+    )
+    echo [%label%] Processing: %module%
+    pushd "%module%"
+    CALL %cmd% || (echo [Error] Failed in %module% & popd & EXIT /B 1)
+    popd
+    EXIT /B 0
+
+:env
+    CALL go env || (echo [Error] Failed in root directory & EXIT /B 1)
+    EXIT /B 0
 
 :deps
-    SET "MODULE=%~2"
-    IF NOT "%MODULE%"=="" (
-        IF EXIST "%MODULE%" (
-            echo [Deps] Tidy module: %MODULE%
-            pushd "%MODULE%"
-            CALL go mod tidy
-            CALL go mod vendor
-            popd
-        ) ELSE (
-            echo [Error] Module path not found: %MODULE%
-        )
+    IF NOT "%~1"=="" (
+        CALL :process_single_module "go mod tidy && go mod vendor" "Deps" "%~1"
     ) ELSE (
-        CALL :modules "go mod tidy && go mod vendor" "Deps"
+        CALL :process_modules "go mod tidy && go mod vendor" "Deps"
     )
-    GOTO :EOF
+    EXIT /B 0
 
-:fmt
-    SET "MODULE=%~2"
-    IF NOT "%MODULE%"=="" (
-        IF EXIST "%MODULE%" (
-            echo [Fmt] Formatting module: %MODULE%
-            pushd "%MODULE%"
-            CALL go fmt ./...
-            popd
-        ) ELSE (
-            echo [Error] Module path not found: %MODULE%
-        )
+:update
+    IF NOT "%~1"=="" (
+        CALL :process_single_module "go get -u -v ./..." "Update" "%~1"
     ) ELSE (
-        CALL :modules "go fmt ./..." "Fmt"
+        CALL :process_modules "go get -u -v ./..." "Update"
     )
-    GOTO :EOF
 
-:vet
-    SET "MODULE=%~2"
-    IF NOT "%MODULE%"=="" (
-        IF EXIST "%MODULE%" (
-            echo [Vet] Checking module: %MODULE%
-            pushd "%MODULE%"
-            CALL go vet ./...
-            popd
-        ) ELSE (
-            echo [Error] Module path not found: %MODULE%
-        )
-    ) ELSE (
-        CALL :modules "go vet ./..." "Vet"
-    )
-    GOTO :EOF
-
-:get
-    SET "MODULE=%~2"
-    IF NOT "%MODULE%"=="" (
-        IF EXIST "%MODULE%" (
-            echo [Get] Downloading module deps: %MODULE%
-            pushd "%MODULE%"
-            CALL go get ./...
-            popd
-        ) ELSE (
-            echo [Error] Module path not found: %MODULE%
-        )
-    ) ELSE (
-        CALL :modules "go get ./..." "Get"
-    )
-    GOTO :EOF
+    CALL :deps
+    EXIT /B 0
 
 :build
-    SET "MODULE=%~2"
-    IF NOT "%MODULE%"=="" (
-        IF EXIST "%MODULE%" (
-            echo [Build] Building module: %MODULE%
-            pushd "%MODULE%"
-            CALL go build ./...
-            popd
-        ) ELSE (
-            echo [Error] Module path not found: %MODULE%
-        )
+    IF NOT "%~1"=="" (
+        CALL :process_single_module "go build ./..." "Build" "%~1"
     ) ELSE (
-        CALL :modules "go build ./..." "Build"
+        CALL :process_modules "go build ./..." "Build"
     )
-    GOTO :EOF
+    EXIT /B 0
+
+:fmt
+    IF NOT "%~1"=="" (
+        CALL :process_single_module "go fmt ./..." "Fmt" "%~1"
+    ) ELSE (
+        CALL :process_modules "go fmt ./..." "Fmt"
+    )
+    EXIT /B 0
+
+:vet
+    IF NOT "%~1"=="" (
+        CALL :process_single_module "go vet ./..." "Vet" "%~1"
+    ) ELSE (
+        CALL :process_modules "go vet ./..." "Vet"
+    )
+    EXIT /B 0
 
 :clean
-    SET "MODULE=%~2"
-    IF NOT "%MODULE%"=="" (
-        IF EXIST "%MODULE%" (
-            echo [Clean] Cleaning module: %MODULE%
-            pushd "%MODULE%"
-            CALL go clean -v -r ./...
-            popd
-        ) ELSE (
-            echo [Error] Module path not found: %MODULE%
-        )
+    IF NOT "%~1"=="" (
+        CALL :process_single_module "go clean -v -r ./..." "Clean" "%~1"
     ) ELSE (
-        CALL :modules "go clean -v -r ./..." "Clean"
+        CALL :process_modules "go clean -v -r ./..." "Clean"
     )
-    GOTO :EOF
+    EXIT /B 0
 
 :test
-    echo [Test] Cleaning test cache...
-    CALL go clean -testcache
+    CALL :deps
 
-    SET "MODULE=%~2"
-    IF NOT "%MODULE%"=="" (
-        IF EXIST "%MODULE%" (
-            echo [Test] Testing module: %MODULE%
-            pushd "%MODULE%"
-            CALL go test -timeout=60s -race -cover -covermode=atomic ./...
-            popd
-        ) ELSE (
-            echo [Error] Module path not found: %MODULE%
-        )
+    echo [Test] Cleaning test cache...
+    CALL go clean -testcache || (echo [Error] Failed to clean test cache & EXIT /B 1)
+
+    IF NOT "%~1"=="" (
+        CALL :process_single_module "go test -timeout=%TEST_TIMEOUT% -race -cover -covermode=atomic ./..." "Test" "%~1"
     ) ELSE (
-        CALL :modules "go test -timeout=60s -race -cover -covermode=atomic ./..." "Test"
+        CALL :process_modules "go test -timeout=%TEST_TIMEOUT% -race -cover -covermode=atomic ./..." "Test"
     )
-    GOTO :EOF
+    EXIT /B 0
 
 :version
-    SET "VERSION=%~2"
+    SET "VERSION=%~1"
     IF "%VERSION%"=="" (
-        echo [Error] VERSION is required. Usage: make.bat version v3.0.0[-alpha^|beta^|rc[.x]
-        GOTO :EOF
+        echo [Error] VERSION required. Usage: make.bat version v3.0.0[-alpha^|beta^|rc[.x]]
+        EXIT /B 1
     )
 
-    powershell -Command "$v='%VERSION%'; if ($v -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z\-\.]+)?$') { Write-Error \"[Error] Invalid version format: $v\"; exit 1 } else { exit 0 }"
+    powershell -Command "$v='%VERSION%'; if ($v -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z\-\.]+)?$') { Write-Error '[Error] Invalid version format: %VERSION%'; exit 1 }"
+    IF ERRORLEVEL 1 EXIT /B 1
 
-    IF ERRORLEVEL 1 GOTO :EOF
+    echo [Version] Updating to %VERSION%
+    IF NOT EXIST "%VERSION_FILE%" (
+        echo [Error] Version file not found: %VERSION_FILE%
+        EXIT /B 1
+    )
 
-    echo [Version] Updating version to %VERSION%
-    powershell -Command "(Get-Content pkg/version/version.go) -replace 'VERSION = \"(.*?)\"', 'VERSION = \"%VERSION%\"' | Set-Content pkg/version/version.go"
+    powershell -Command "(Get-Content '%VERSION_FILE%') -replace 'VERSION = \"(.*?)\"', 'VERSION = \"%VERSION%\"' | Set-Content '%VERSION_FILE%'" || (
+        echo [Error] Failed to update version file
+        EXIT /B 1
+    )
 
-    FOR %%M IN (%modules%) DO (
+    FOR %%M IN (%MODULES%) DO (
         IF EXIST "%%M" (
-            echo [Version] Updating dependencies in %%M...
+            echo [Version] Updating dependencies in %%M
             pushd "%%M"
-            CALL go mod tidy
-            FOR /F "delims=" %%D IN ('go list -mod=mod -f "{{if and (not .Indirect) (not .Main)}}{{.Path}}@%VERSION%{{end}}" -m all ^| findstr "^github.com/zishang520/socket.io"') DO (
-                CALL go get -v %%D
+            CALL go mod tidy || (echo [Error] Failed to tidy module %%M & popd & EXIT /B 1)
+            FOR /F "delims=" %%D IN ('go list -mod=mod -f "{{if and (not .Main)}}{{.Path}}@%VERSION%{{end}}" -m all ^| findstr "^github.com/zishang520/socket.io"') DO (
+                CALL go get -v %%D || (echo [Error] Failed to get dependency %%D & popd & EXIT /B 1)
             )
-            CALL go mod tidy
+            CALL go mod tidy || (echo [Error] Failed to tidy module %%M & popd & EXIT /B 1)
             popd
         ) ELSE (
-            echo [Warn] Skipped missing module: %%M
+            echo [Warn] Skipping missing module: %%M
         )
     )
-    echo [Version] Done.
-    GOTO :EOF
+    echo [Version] Completed successfully
+
+    CALL :deps
+    EXIT /B 0
 
 :release
-    SET "FORCE=0"
-    IF "%~21"=="--force" SET "FORCE=1" & SHIFT
-    IF "%~2"=="-f" SET "FORCE=1" & SHIFT
+    SET "FORCE_FLAG=0"
+    IF /I "%~1"=="--force" SET "FORCE_FLAG=1"
+    IF /I "%~1"=="-f" SET "FORCE_FLAG=1"
 
-    IF NOT EXIST "pkg\version\version.go" (
-        echo [Error] File pkg/version/version.go not found
-        GOTO :EOF
+    IF NOT EXIST "%VERSION_FILE%" (
+        echo [Error] Version file not found: %VERSION_FILE%
+        EXIT /B 1
     )
 
-    SET "VERSION="
-    FOR /F "tokens=2 delims==" %%i IN ('findstr /C:"const VERSION" pkg\version\version.go') DO (
-        SET "VERSION=%%i"
-    )
-
-    IF "!VERSION!"=="" (
-        echo [Error] Failed to read VERSION from pkg/version/version.go
-        GOTO :EOF
-    )
-
+    FOR /F "tokens=2 delims==" %%i IN ('findstr /C:"const VERSION" %VERSION_FILE%') DO SET "VERSION=%%i"
     SET "VERSION=%VERSION:"=%"
     SET "VERSION=%VERSION: =%"
 
-    IF "!VERSION!"=="" (
-        echo [Error] VERSION is empty after cleanup
-        GOTO :EOF
+    IF "%VERSION%"=="" (
+        echo [Error] Failed to extract version from %VERSION_FILE%
+        EXIT /B 1
     )
 
-    echo [Debug] VERSION extracted: !VERSION!
+    echo [Release] Processing version: %VERSION%
 
-    IF !FORCE! EQU 1 (
-        echo [Release] Creating FORCED tags...
-        CALL git tag -f "!VERSION!"
-        FOR %%M IN (%modules%) DO (
-            IF EXIST "%%M" (
-                echo [Release] Forcing tag in: %%M
-                CALL git tag -f "%%M/!VERSION!"
-            )
-        )
-    ) ELSE (
-        echo [Release] Creating tags...
-        CALL git tag "!VERSION!"
-        FOR %%M IN (%modules%) DO (
-            IF EXIST "%%M" (
-                echo [Release] Tagging: %%M
-                CALL git tag "%%M/!VERSION!"
-            )
+    SET "TAG_CMD=git tag"
+    IF %FORCE_FLAG%==1 SET "TAG_CMD=git tag -f"
+
+    echo [Release] Creating tags...
+    CALL %TAG_CMD% "%VERSION%" || (echo [Error] Failed to create main tag %VERSION% & EXIT /B 1)
+
+    FOR %%M IN (%MODULES%) DO (
+        IF EXIST "%%M" (
+            echo [Release] Tagging: %%M
+            CALL %TAG_CMD% "%%M/%VERSION%" || (echo [Error] Failed to create tag %%M/%VERSION% & EXIT /B 1)
         )
     )
 
     echo [Release] Verifying tags...
-    CALL git show "!VERSION!" >nul 2>&1
-    IF ERRORLEVEL 1 (
-        echo [Error] Failed to verify main tag !VERSION!
-        GOTO :EOF
-    )
+    CALL git show "%VERSION%" >nul 2>&1 || (echo [Error] Failed to verify main tag %VERSION% & EXIT /B 1)
 
-    FOR %%M IN (%modules%) DO (
+    FOR %%M IN (%MODULES%) DO (
         IF EXIST "%%M" (
-            CALL git show "%%M/!VERSION!" >nul 2>&1
-            IF ERRORLEVEL 1 (
-                echo [Error] Failed to verify module tag %%M/!VERSION!
-            )
+            CALL git show "%%M/%VERSION%" >nul 2>&1 || (echo [Error] Failed to verify tag %%M/%VERSION% & EXIT /B 1)
         )
     )
 
-    echo [Release] All tags verified successfully
-    GOTO :EOF
+    echo [Release] All tags created and verified successfully
+    EXIT /B 0

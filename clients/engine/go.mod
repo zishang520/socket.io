@@ -5,9 +5,9 @@ go 1.24.1
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/quic-go/quic-go v0.53.0
-	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-alpha.2
-	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-alpha.2
-	github.com/zishang520/socket.io/v3 v3.0.0-alpha.2
+	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-alpha.3
+	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-alpha.3
+	github.com/zishang520/socket.io/v3 v3.0.0-alpha.3
 	github.com/zishang520/webtransport-go v0.9.1
 )
 
@@ -18,15 +18,15 @@ require (
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
-	github.com/xo/terminfo v0.0.0-20210125001918-ca9a967f8778 // indirect
-	go.uber.org/mock v0.5.1 // indirect
-	golang.org/x/crypto v0.36.0 // indirect
-	golang.org/x/mod v0.18.0 // indirect
-	golang.org/x/net v0.38.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
-	golang.org/x/tools v0.22.0 // indirect
+	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	go.uber.org/mock v0.5.2 // indirect
+	golang.org/x/crypto v0.40.0 // indirect
+	golang.org/x/mod v0.26.0 // indirect
+	golang.org/x/net v0.42.0 // indirect
+	golang.org/x/sync v0.16.0 // indirect
+	golang.org/x/sys v0.34.0 // indirect
+	golang.org/x/text v0.27.0 // indirect
+	golang.org/x/tools v0.35.0 // indirect
 	resty.dev/v3 v3.0.0-beta.3 // indirect
 )
 
