@@ -22,6 +22,7 @@ GOTO :EOF
     IF /I "%~1"=="" CALL :help & EXIT /B 1
     IF /I "%~1"=="env" CALL :env & EXIT /B 0
     IF /I "%~1"=="deps" CALL :deps %MODULE% & EXIT /B 0
+    IF /I "%~1"=="get" CALL :get %MODULE% & EXIT /B 0
     IF /I "%~1"=="update" CALL :update %MODULE% & EXIT /B 0
     IF /I "%~1"=="build" CALL :build %MODULE% & EXIT /B 0
     IF /I "%~1"=="fmt" CALL :fmt %MODULE% & EXIT /B 0
@@ -37,7 +38,7 @@ GOTO :EOF
 :help
     echo.
     echo Usage: make.bat [command] [module_path] [options]
-    echo Commands: deps, update, build, fmt, vet, clean, test, version, release
+    echo Commands: deps, get, update, build, fmt, vet, clean, test, version, release
     echo If no module_path is given, command applies to all modules
     echo version requires VERSION (e.g., v3.0.0[-alpha^|beta^|rc[.x]])
     echo release supports --force or -f option
@@ -85,6 +86,14 @@ GOTO :EOF
         CALL :process_single_module "go mod tidy && go mod vendor" "Deps" "%~1"
     ) ELSE (
         CALL :process_modules "go mod tidy && go mod vendor" "Deps"
+    )
+    EXIT /B 0
+
+:get
+    IF NOT "%~1"=="" (
+        CALL :process_single_module "go get ./..." "Get" "%~1"
+    ) ELSE (
+        CALL :process_modules "go get ./..." "Get"
     )
     EXIT /B 0
 

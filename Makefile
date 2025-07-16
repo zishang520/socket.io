@@ -17,7 +17,7 @@ all: help
 help:
 	@echo ""
 	@echo "Usage: make [command] [MODULE=path/to/module] [VERSION=vX.Y.Z[-alpha|beta|rc[.N]]]"
-	@echo "Commands: env deps update build fmt vet clean test version release"
+	@echo "Commands: env deps get update build fmt vet clean test version release"
 	@echo "If MODULE is not specified, command applies to all modules."
 	@echo "Use FORCE=1 for release to overwrite existing tags."
 	@echo ""
@@ -59,6 +59,10 @@ deps:
 update:
 	$(if $(MODULE),$(call run_single_module_cmd,Update,$(MODULE),go get -u -v ./...),$(call run_module_cmd,Update,go get -u -v ./...))
 	@$(MAKE) deps
+
+# Get
+get:
+	$(if $(MODULE),$(call run_single_module_cmd,Get,$(MODULE),go get ./...),$(call run_module_cmd,Get,go get ./...))
 
 # Build modules
 build:
