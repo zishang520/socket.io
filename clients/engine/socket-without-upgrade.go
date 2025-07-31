@@ -472,7 +472,7 @@ func (s *socketWithoutUpgrade) _resetPingTimeout() {
 	delay := s._pingInterval + s._pingTimeout
 	s._pingTimeoutTime.Store(float64(time.Now().UnixMilli() + delay))
 	s._pingTimeoutTimer.Store(utils.SetTimeout(func() {
-		s._onClose("ping timeout", errors.New("ping timeout"))
+		s._onClose("ping timeout", nil)
 	}, time.Duration(delay)*time.Millisecond))
 	if s.opts.AutoUnref() {
 		s._pingTimeoutTimer.Load().Unref()
@@ -552,7 +552,7 @@ func (s *socketWithoutUpgrade) HasPingExpired() bool {
 		client_socket_log.Debug("throttled timer detected, scheduling connection close")
 		s._pingTimeoutTime.Store(0)
 
-		go s._onClose("ping timeout", errors.New("ping timeout"))
+		go s._onClose("ping timeout", nil)
 	}
 
 	return hasExpired
