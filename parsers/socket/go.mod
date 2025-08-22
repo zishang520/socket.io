@@ -2,7 +2,7 @@ module github.com/zishang520/socket.io/parsers/socket/v3
 
 go 1.24.1
 
-require github.com/zishang520/socket.io/v3 v3.0.0-alpha.4
+require github.com/zishang520/socket.io/v3 v3.0.0-beta.1
 
 require (
 	github.com/gookit/color v1.5.4 // indirect
