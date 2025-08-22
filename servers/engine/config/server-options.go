@@ -15,108 +15,107 @@ type (
 
 	ServerOptionsInterface interface {
 		SetPingTimeout(time.Duration)
-		GetRawPingTimeout() *time.Duration
+		GetRawPingTimeout() types.Optional[time.Duration]
 		PingTimeout() time.Duration
 
 		SetPingInterval(time.Duration)
-		GetRawPingInterval() *time.Duration
+		GetRawPingInterval() types.Optional[time.Duration]
 		PingInterval() time.Duration
 
 		SetUpgradeTimeout(time.Duration)
-		GetRawUpgradeTimeout() *time.Duration
+		GetRawUpgradeTimeout() types.Optional[time.Duration]
 		UpgradeTimeout() time.Duration
 
 		SetMaxHttpBufferSize(int64)
-		GetRawMaxHttpBufferSize() *int64
+		GetRawMaxHttpBufferSize() types.Optional[int64]
 		MaxHttpBufferSize() int64
 
 		SetAllowRequest(AllowRequest)
-		GetRawAllowRequest() AllowRequest
+		GetRawAllowRequest() types.Optional[AllowRequest]
 		AllowRequest() AllowRequest
 
 		SetTransports(*types.Set[transports.TransportCtor])
-		GetRawTransports() *types.Set[transports.TransportCtor]
+		GetRawTransports() types.Optional[*types.Set[transports.TransportCtor]]
 		Transports() *types.Set[transports.TransportCtor]
 
 		SetAllowUpgrades(bool)
-		GetRawAllowUpgrades() *bool
+		GetRawAllowUpgrades() types.Optional[bool]
 		AllowUpgrades() bool
 
 		SetPerMessageDeflate(*types.PerMessageDeflate)
-		GetRawPerMessageDeflate() *types.PerMessageDeflate
+		GetRawPerMessageDeflate() types.Optional[*types.PerMessageDeflate]
 		PerMessageDeflate() *types.PerMessageDeflate
 
 		SetHttpCompression(*types.HttpCompression)
-		GetRawHttpCompression() *types.HttpCompression
+		GetRawHttpCompression() types.Optional[*types.HttpCompression]
 		HttpCompression() *types.HttpCompression
 
 		SetInitialPacket(io.Reader)
-		GetRawInitialPacket() io.Reader
+		GetRawInitialPacket() types.Optional[io.Reader]
 		InitialPacket() io.Reader
 
 		SetCookie(*http.Cookie)
-		GetRawCookie() *http.Cookie
+		GetRawCookie() types.Optional[*http.Cookie]
 		Cookie() *http.Cookie
 
 		SetCors(*types.Cors)
-		GetRawCors() *types.Cors
+		GetRawCors() types.Optional[*types.Cors]
 		Cors() *types.Cors
 
 		SetAllowEIO3(bool)
-		GetRawAllowEIO3() *bool
+		GetRawAllowEIO3() types.Optional[bool]
 		AllowEIO3() bool
 	}
 
 	ServerOptions struct {
 		// how many ms without a pong packet to consider the connection closed
-		pingTimeout *time.Duration
+		pingTimeout types.Optional[time.Duration]
 
 		// how many ms before sending a new ping packet
-		pingInterval *time.Duration
+		pingInterval types.Optional[time.Duration]
 
 		// how many ms before an uncompleted transport upgrade is cancelled
-		upgradeTimeout *time.Duration
+		upgradeTimeout types.Optional[time.Duration]
 
 		// how many bytes or characters a message can be, before closing the session (to avoid DoS).
-		maxHttpBufferSize *int64
+		maxHttpBufferSize types.Optional[int64]
 
 		// A function that receives a given handshake or upgrade request as its first parameter,
 		// and can decide whether to continue. Returning an error indicates that the request was rejected.
-		allowRequest AllowRequest
+		allowRequest types.Optional[AllowRequest]
 
 		// the low-level transports that are enabled
-		transports *types.Set[transports.TransportCtor]
+		transports types.Optional[*types.Set[transports.TransportCtor]]
 
 		// whether to allow transport upgrades
-		allowUpgrades *bool
+		allowUpgrades types.Optional[bool]
 
 		// parameters of the WebSocket permessage-deflate extension (see ws module api docs). Set to false to disable.
-		perMessageDeflate *types.PerMessageDeflate
+		perMessageDeflate types.Optional[*types.PerMessageDeflate]
 
 		// parameters of the http compression for the polling transports (see zlib api docs). Set to false to disable.
-		httpCompression *types.HttpCompression
+		httpCompression types.Optional[*types.HttpCompression]
 
 		// wsEngine is not supported
 		// wsEngine
 
 		// an optional packet which will be concatenated to the handshake packet emitted by Engine.IO.
-		initialPacket io.Reader
+		initialPacket types.Optional[io.Reader]
 
 		// configuration of the cookie that contains the client sid to send as part of handshake response headers. This cookie
 		// might be used for sticky-session. Defaults to not sending any cookie.
-		cookie *http.Cookie
+		cookie types.Optional[*http.Cookie]
 
 		// the options that will be forwarded to the cors module
-		cors *types.Cors
+		cors types.Optional[*types.Cors]
 
 		// whether to enable compatibility with Socket.IO v2 clients
-		allowEIO3 *bool
+		allowEIO3 types.Optional[bool]
 	}
 )
 
 func DefaultServerOptions() *ServerOptions {
-	s := &ServerOptions{}
-	return s
+	return &ServerOptions{}
 }
 
 func (s *ServerOptions) Assign(data ServerOptionsInterface) ServerOptionsInterface {
@@ -168,28 +167,25 @@ func (s *ServerOptions) Assign(data ServerOptionsInterface) ServerOptionsInterfa
 }
 
 // how many ms without a pong packet to consider the connection closed
-//
-// Default: 20_000
 func (s *ServerOptions) SetPingTimeout(pingTimeout time.Duration) {
-	s.pingTimeout = &pingTimeout
+	s.pingTimeout = types.NewSome(pingTimeout)
 }
-func (s *ServerOptions) GetRawPingTimeout() *time.Duration {
+func (s *ServerOptions) GetRawPingTimeout() types.Optional[time.Duration] {
 	return s.pingTimeout
 }
 func (s *ServerOptions) PingTimeout() time.Duration {
 	if s.pingTimeout == nil {
 		return 0
 	}
-	return *s.pingTimeout
+
+	return s.pingTimeout.Get()
 }
 
 // how many ms before sending a new ping packet
-//
-// Default: 25_000
 func (s *ServerOptions) SetPingInterval(pingInterval time.Duration) {
-	s.pingInterval = &pingInterval
+	s.pingInterval = types.NewSome(pingInterval)
 }
-func (s *ServerOptions) GetRawPingInterval() *time.Duration {
+func (s *ServerOptions) GetRawPingInterval() types.Optional[time.Duration] {
 	return s.pingInterval
 }
 func (s *ServerOptions) PingInterval() time.Duration {
@@ -197,39 +193,37 @@ func (s *ServerOptions) PingInterval() time.Duration {
 		return 0
 	}
 
-	return *s.pingInterval
+	return s.pingInterval.Get()
 }
 
 // how many ms before an uncompleted transport upgrade is cancelled
-//
-// Default: 10_000
 func (s *ServerOptions) SetUpgradeTimeout(upgradeTimeout time.Duration) {
-	s.upgradeTimeout = &upgradeTimeout
+	s.upgradeTimeout = types.NewSome(upgradeTimeout)
 }
-func (s *ServerOptions) GetRawUpgradeTimeout() *time.Duration {
+func (s *ServerOptions) GetRawUpgradeTimeout() types.Optional[time.Duration] {
 	return s.upgradeTimeout
 }
 func (s *ServerOptions) UpgradeTimeout() time.Duration {
 	if s.upgradeTimeout == nil {
 		return 0
 	}
-	return *s.upgradeTimeout
+
+	return s.upgradeTimeout.Get()
 }
 
 // how many bytes or characters a message can be, before closing the session (to avoid DoS).
-//
-// Default: 1e5 (100 KB)
 func (s *ServerOptions) SetMaxHttpBufferSize(maxHttpBufferSize int64) {
-	s.maxHttpBufferSize = &maxHttpBufferSize
+	s.maxHttpBufferSize = types.NewSome(maxHttpBufferSize)
 }
-func (s *ServerOptions) GetRawMaxHttpBufferSize() *int64 {
+func (s *ServerOptions) GetRawMaxHttpBufferSize() types.Optional[int64] {
 	return s.maxHttpBufferSize
 }
 func (s *ServerOptions) MaxHttpBufferSize() int64 {
 	if s.maxHttpBufferSize == nil {
 		return 0
 	}
-	return *s.maxHttpBufferSize
+
+	return s.maxHttpBufferSize.Get()
 }
 
 // A function that receives a given handshake or upgrade request as its first parameter,
@@ -237,13 +231,17 @@ func (s *ServerOptions) MaxHttpBufferSize() int64 {
 // to be called with the decided information: fn(err, success), where success is a boolean
 // value where false means that the request is rejected, and err is an error code.
 func (s *ServerOptions) SetAllowRequest(allowRequest AllowRequest) {
-	s.allowRequest = allowRequest
+	s.allowRequest = types.NewSome(allowRequest)
 }
-func (s *ServerOptions) GetRawAllowRequest() AllowRequest {
+func (s *ServerOptions) GetRawAllowRequest() types.Optional[AllowRequest] {
 	return s.allowRequest
 }
 func (s *ServerOptions) AllowRequest() AllowRequest {
-	return s.allowRequest
+	if s.allowRequest == nil {
+		return nil
+	}
+
+	return s.allowRequest.Get()
 }
 
 // The low-level transports that are enabled. WebTransport is disabled by default and must be manually enabled:
@@ -251,103 +249,118 @@ func (s *ServerOptions) AllowRequest() AllowRequest {
 //	opts := &ServerOptions{}
 //	opts.SetTransports(types.NewSet(engine.Polling, engine.Websocket, engine.WebTransport))
 //	NewServer(opts)
-//
-// Default: types.NewSet(engine.Polling, engine.Websocket)
 func (s *ServerOptions) SetTransports(transports *types.Set[transports.TransportCtor]) {
-	s.transports = transports
+	s.transports = types.NewSome(transports)
 }
-func (s *ServerOptions) GetRawTransports() *types.Set[transports.TransportCtor] {
+func (s *ServerOptions) GetRawTransports() types.Optional[*types.Set[transports.TransportCtor]] {
 	return s.transports
 }
 func (s *ServerOptions) Transports() *types.Set[transports.TransportCtor] {
-	return s.transports
+	if s.transports == nil {
+		return nil
+	}
+
+	return s.transports.Get()
 }
 
 // whether to allow transport upgrades
 //
 // Default: true
 func (s *ServerOptions) SetAllowUpgrades(allowUpgrades bool) {
-	s.allowUpgrades = &allowUpgrades
+	s.allowUpgrades = types.NewSome(allowUpgrades)
 }
-func (s *ServerOptions) GetRawAllowUpgrades() *bool {
+func (s *ServerOptions) GetRawAllowUpgrades() types.Optional[bool] {
 	return s.allowUpgrades
 }
 func (s *ServerOptions) AllowUpgrades() bool {
 	if s.allowUpgrades == nil {
 		return false
 	}
-	return *s.allowUpgrades
+
+	return s.allowUpgrades.Get()
 }
 
 // parameters of the WebSocket permessage-deflate extension (see ws module api docs). Set to false to disable.
-//
-// Default: nil
 func (s *ServerOptions) SetPerMessageDeflate(perMessageDeflate *types.PerMessageDeflate) {
-	s.perMessageDeflate = perMessageDeflate
+	s.perMessageDeflate = types.NewSome(perMessageDeflate)
 }
-func (s *ServerOptions) GetRawPerMessageDeflate() *types.PerMessageDeflate {
+func (s *ServerOptions) GetRawPerMessageDeflate() types.Optional[*types.PerMessageDeflate] {
 	return s.perMessageDeflate
 }
 func (s *ServerOptions) PerMessageDeflate() *types.PerMessageDeflate {
-	return s.perMessageDeflate
+	if s.perMessageDeflate == nil {
+		return nil
+	}
+
+	return s.perMessageDeflate.Get()
 }
 
 // parameters of the http compression for the polling transports (see zlib api docs). Set to false to disable.
-//
-// Default: true
 func (s *ServerOptions) SetHttpCompression(httpCompression *types.HttpCompression) {
-	s.httpCompression = httpCompression
+	s.httpCompression = types.NewSome(httpCompression)
 }
-func (s *ServerOptions) GetRawHttpCompression() *types.HttpCompression {
+func (s *ServerOptions) GetRawHttpCompression() types.Optional[*types.HttpCompression] {
 	return s.httpCompression
 }
 func (s *ServerOptions) HttpCompression() *types.HttpCompression {
-	return s.httpCompression
+	if s.httpCompression == nil {
+		return nil
+	}
+
+	return s.httpCompression.Get()
 }
 
 // an optional packet which will be concatenated to the handshake packet emitted by Engine.IO.
 func (s *ServerOptions) SetInitialPacket(initialPacket io.Reader) {
-	s.initialPacket = initialPacket
+	s.initialPacket = types.NewSome(initialPacket)
 }
-func (s *ServerOptions) GetRawInitialPacket() io.Reader {
+func (s *ServerOptions) GetRawInitialPacket() types.Optional[io.Reader] {
 	return s.initialPacket
 }
 func (s *ServerOptions) InitialPacket() io.Reader {
-	return s.initialPacket
+	if s.initialPacket == nil {
+		return nil
+	}
+
+	return s.initialPacket.Get()
 }
 
 // configuration of the cookie that contains the client sid to send as part of handshake response headers. This cookie
 // might be used for sticky-session. Defaults to not sending any cookie.
-//
-// Default: false
 func (s *ServerOptions) SetCookie(cookie *http.Cookie) {
-	s.cookie = cookie
+	s.cookie = types.NewSome(cookie)
 }
-func (s *ServerOptions) GetRawCookie() *http.Cookie {
+func (s *ServerOptions) GetRawCookie() types.Optional[*http.Cookie] {
 	return s.cookie
 }
 func (s *ServerOptions) Cookie() *http.Cookie {
-	return s.cookie
+	if s.cookie == nil {
+		return nil
+	}
+
+	return s.cookie.Get()
 }
 
 // the options that will be forwarded to the cors module
 func (s *ServerOptions) SetCors(cors *types.Cors) {
-	s.cors = cors
+	s.cors = types.NewSome(cors)
 }
-func (s *ServerOptions) GetRawCors() *types.Cors {
+func (s *ServerOptions) GetRawCors() types.Optional[*types.Cors] {
 	return s.cors
 }
 func (s *ServerOptions) Cors() *types.Cors {
-	return s.cors
+	if s.cors == nil {
+		return nil
+	}
+
+	return s.cors.Get()
 }
 
 // whether to enable compatibility with Socket.IO v2 clients
-//
-// Default: false
 func (s *ServerOptions) SetAllowEIO3(allowEIO3 bool) {
-	s.allowEIO3 = &allowEIO3
+	s.allowEIO3 = types.NewSome(allowEIO3)
 }
-func (s *ServerOptions) GetRawAllowEIO3() *bool {
+func (s *ServerOptions) GetRawAllowEIO3() types.Optional[bool] {
 	return s.allowEIO3
 }
 func (s *ServerOptions) AllowEIO3() bool {
@@ -355,5 +368,5 @@ func (s *ServerOptions) AllowEIO3() bool {
 		return false
 	}
 
-	return *s.allowEIO3
+	return s.allowEIO3.Get()
 }

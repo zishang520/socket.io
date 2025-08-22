@@ -360,8 +360,11 @@ func (s *Socket) Emit(ev string, args ...any) error {
 func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack) {
 	timeout := s.flags.Load().Timeout
 	if timeout == nil {
-		timeout = s._opts.GetRawAckTimeout()
+		if s._opts.GetRawAckTimeout() != nil {
+			timeout = utils.Ptr(s._opts.AckTimeout())
+		}
 	}
+
 	if timeout == nil {
 		s.acks.Store(id, ack)
 		return
@@ -376,7 +379,7 @@ func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack) {
 			}
 			return false
 		})
-		socket_log.Debug("event with ack id %d has timed out after %d ms", id, timeout)
+		socket_log.Debug("event with ack id %d has timed out after %d ms", id, *timeout)
 		ack(nil, errors.New("operation has timed out"))
 	}, *timeout)
 

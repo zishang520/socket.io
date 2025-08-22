@@ -14,109 +14,109 @@ import (
 // It provides methods to get and set various connection parameters including host,
 // port, security settings, and transport options.
 type SocketOptionsInterface interface {
-	Host() string
-	GetRawHost() *string
 	SetHost(string)
+	GetRawHost() types.Optional[string]
+	Host() string
 
-	Hostname() string
-	GetRawHostname() *string
 	SetHostname(string)
+	GetRawHostname() types.Optional[string]
+	Hostname() string
 
-	Secure() bool
-	GetRawSecure() *bool
 	SetSecure(bool)
+	GetRawSecure() types.Optional[bool]
+	Secure() bool
 
-	Port() string
-	GetRawPort() *string
 	SetPort(string)
+	GetRawPort() types.Optional[string]
+	Port() string
 
-	Query() url.Values
-	GetRawQuery() url.Values
 	SetQuery(url.Values)
+	GetRawQuery() types.Optional[url.Values]
+	Query() url.Values
 
-	Agent() string
-	GetRawAgent() *string
 	SetAgent(string)
+	GetRawAgent() types.Optional[string]
+	Agent() string
 
-	Upgrade() bool
-	GetRawUpgrade() *bool
 	SetUpgrade(bool)
+	GetRawUpgrade() types.Optional[bool]
+	Upgrade() bool
 
-	ForceBase64() bool
-	GetRawForceBase64() *bool
 	SetForceBase64(bool)
+	GetRawForceBase64() types.Optional[bool]
+	ForceBase64() bool
 
-	TimestampParam() string
-	GetRawTimestampParam() *string
 	SetTimestampParam(string)
+	GetRawTimestampParam() types.Optional[string]
+	TimestampParam() string
 
-	TimestampRequests() bool
-	GetRawTimestampRequests() *bool
 	SetTimestampRequests(bool)
+	GetRawTimestampRequests() types.Optional[bool]
+	TimestampRequests() bool
 
-	Transports() *types.Set[TransportCtor]
-	GetRawTransports() *types.Set[TransportCtor]
 	SetTransports(*types.Set[TransportCtor])
+	GetRawTransports() types.Optional[*types.Set[TransportCtor]]
+	Transports() *types.Set[TransportCtor]
 
-	TryAllTransports() bool
-	GetRawTryAllTransports() *bool
 	SetTryAllTransports(bool)
+	GetRawTryAllTransports() types.Optional[bool]
+	TryAllTransports() bool
 
-	RememberUpgrade() bool
-	GetRawRememberUpgrade() *bool
 	SetRememberUpgrade(bool)
+	GetRawRememberUpgrade() types.Optional[bool]
+	RememberUpgrade() bool
 
-	RequestTimeout() time.Duration
-	GetRawRequestTimeout() *time.Duration
 	SetRequestTimeout(time.Duration)
+	GetRawRequestTimeout() types.Optional[time.Duration]
+	RequestTimeout() time.Duration
 
-	TransportOptions() map[string]SocketOptionsInterface
-	GetRawTransportOptions() map[string]SocketOptionsInterface
 	SetTransportOptions(map[string]SocketOptionsInterface)
+	GetRawTransportOptions() types.Optional[map[string]SocketOptionsInterface]
+	TransportOptions() map[string]SocketOptionsInterface
 
-	TLSClientConfig() *tls.Config
-	GetRawTLSClientConfig() *tls.Config
 	SetTLSClientConfig(*tls.Config)
+	GetRawTLSClientConfig() types.Optional[*tls.Config]
+	TLSClientConfig() *tls.Config
 
-	QUICConfig() *quic.Config
-	GetRawQUICConfig() *quic.Config
 	SetQUICConfig(*quic.Config)
+	GetRawQUICConfig() types.Optional[*quic.Config]
+	QUICConfig() *quic.Config
 
-	ExtraHeaders() http.Header
-	GetRawExtraHeaders() http.Header
 	SetExtraHeaders(http.Header)
+	GetRawExtraHeaders() types.Optional[http.Header]
+	ExtraHeaders() http.Header
 
-	WithCredentials() bool
-	GetRawWithCredentials() *bool
 	SetWithCredentials(bool)
+	GetRawWithCredentials() types.Optional[bool]
+	WithCredentials() bool
 
-	UseNativeTimers() bool
-	GetRawUseNativeTimers() *bool
 	SetUseNativeTimers(bool)
+	GetRawUseNativeTimers() types.Optional[bool]
+	UseNativeTimers() bool
 
-	AutoUnref() bool
-	GetRawAutoUnref() *bool
 	SetAutoUnref(bool)
+	GetRawAutoUnref() types.Optional[bool]
+	AutoUnref() bool
 
-	CloseOnBeforeunload() bool
-	GetRawCloseOnBeforeunload() *bool
 	SetCloseOnBeforeunload(bool)
+	GetRawCloseOnBeforeunload() types.Optional[bool]
+	CloseOnBeforeunload() bool
 
-	PerMessageDeflate() *types.PerMessageDeflate
-	GetRawPerMessageDeflate() *types.PerMessageDeflate
 	SetPerMessageDeflate(*types.PerMessageDeflate)
+	GetRawPerMessageDeflate() types.Optional[*types.PerMessageDeflate]
+	PerMessageDeflate() *types.PerMessageDeflate
 
-	Path() string
-	GetRawPath() *string
 	SetPath(string)
+	GetRawPath() types.Optional[string]
+	Path() string
 
-	AddTrailingSlash() bool
-	GetRawAddTrailingSlash() *bool
 	SetAddTrailingSlash(addTrailingSlash bool)
+	GetRawAddTrailingSlash() types.Optional[bool]
+	AddTrailingSlash() bool
 
-	Protocols() []string
-	GetRawProtocols() []string
 	SetProtocols([]string)
+	GetRawProtocols() types.Optional[[]string]
+	Protocols() []string
 }
 
 // SocketOptions implements the SocketOptionsInterface and provides the default
@@ -125,130 +125,113 @@ type SocketOptionsInterface interface {
 type SocketOptions struct {
 	// host specifies the server host to connect to. This is extracted from the URI
 	// when establishing the connection.
-	host *string
+	host types.Optional[string]
 
 	// hostname specifies the server hostname for the connection. This is extracted
 	// from the URI when establishing the connection.
-	hostname *string
+	hostname types.Optional[string]
 
 	// secure indicates whether the connection should use HTTPS/WSS. This is determined
 	// from the URI scheme (https/wss vs http/ws).
-	secure *bool
+	secure types.Optional[bool]
 
 	// port specifies the server port to connect to. This is extracted from the URI
 	// when establishing the connection.
-	port *string
+	port types.Optional[string]
 
 	// query contains any query parameters to be included in the connection URI.
 	// These parameters are extracted from the URI when establishing the connection.
-	query url.Values
+	query types.Optional[url.Values]
 
 	// agent specifies the HTTP agent to use for requests. This is primarily used
 	// in Node.js environments and is ignored in browser environments.
-	// Note: The type should be "undefined | http.Agent | https.Agent | false",
-	// but this would break browser-only clients.
-	agent *string
+	agent types.Optional[string]
 
 	// upgrade determines whether the client should attempt to upgrade the transport
 	// from long-polling to a more efficient transport like WebSocket or WebTransport.
-	// Default: true
-	upgrade *bool
+	upgrade types.Optional[bool]
 
 	// forceBase64 forces base64 encoding for polling transport even when XHR2
 	// responseType is available, and for WebSocket even when binary support is available.
 	// This can be useful when dealing with legacy systems or specific network requirements.
-	forceBase64 *bool
+	forceBase64 types.Optional[bool]
 
 	// timestampParam specifies the parameter name to use for timestamp in requests.
 	// This helps prevent caching issues with certain proxies and browsers.
-	// Default: 't'
-	timestampParam *string
+	timestampParam types.Optional[string]
 
 	// timestampRequests determines whether to add a timestamp to each transport request.
 	// This is ignored for IE or Android browsers where requests are always stamped.
-	// Default: false
-	timestampRequests *bool
+	timestampRequests types.Optional[bool]
 
 	// transports specifies the list of transport types to try, in order of preference.
 	// The client will attempt to connect using the first transport that passes
 	// feature detection.
-	// Default: types.NewSet(transports.Polling, transports.WebSocket, transports.WebTransport)
-	transports *types.Set[TransportCtor]
+	transports types.Optional[*types.Set[TransportCtor]]
 
 	// tryAllTransports determines whether to attempt all available transports
 	// if the first one fails. If true, the client will try HTTP long-polling,
 	// then WebSocket, and finally WebTransport if previous attempts fail.
 	// If false, the client will abort after the first transport fails.
-	// Default: false
-	tryAllTransports *bool
+	tryAllTransports types.Optional[bool]
 
 	// rememberUpgrade enables optimization for SSL/TLS connections by remembering
 	// successful WebSocket connections and attempting to use WebSocket directly
 	// on subsequent connections.
-	// Default: false
-	rememberUpgrade *bool
+	rememberUpgrade types.Optional[bool]
 
 	// requestTimeout specifies the timeout duration for XHR-polling requests.
 	// This only affects the polling transport.
-	// Default: 0 (no timeout)
-	requestTimeout *time.Duration
+	requestTimeout types.Optional[time.Duration]
 
 	// transportOptions contains specific options for each transport type.
 	// This allows for fine-grained control over individual transport configurations.
-	transportOptions map[string]SocketOptionsInterface
+	transportOptions types.Optional[map[string]SocketOptionsInterface]
 
 	// tlsClientConfig specifies the TLS configuration for secure connections.
 	// If nil, the default configuration is used.
-	tlsClientConfig *tls.Config
+	tlsClientConfig types.Optional[*tls.Config]
 
 	// quicConfig specifies the QUIC configuration for WebTransport connections.
 	// If nil, the default configuration is used.
-	quicConfig *quic.Config
+	quicConfig types.Optional[*quic.Config]
 
 	// extraHeaders specifies additional HTTP headers to be included in all requests.
 	// These headers can be used for authentication, custom protocols, or other
 	// special requirements.
-	extraHeaders http.Header
+	extraHeaders types.Optional[http.Header]
 
 	// withCredentials determines whether to include credentials (cookies, auth headers,
 	// TLS certificates) with cross-origin requests.
 	// Note: This is not used in Go implementations as it's browser-specific.
-	// Default: false
-	withCredentials *bool
+	withCredentials types.Optional[bool]
 
 	// closeOnBeforeunload determines whether to automatically close the connection
 	// when the beforeunload event is received.
-	// Default: true
-	closeOnBeforeunload *bool
+	closeOnBeforeunload types.Optional[bool]
 
 	// useNativeTimers determines whether to use native timeout functions instead of
 	// custom implementations. This is useful when working with mock clocks or
 	// custom time implementations.
-	// Default: false
-	useNativeTimers *bool
+	useNativeTimers types.Optional[bool]
 
 	// autoUnref determines whether the heartbeat timer should be unref'ed to prevent
 	// keeping the Node.js event loop active.
-	// Default: false
-	autoUnref *bool
+	autoUnref types.Optional[bool]
 
 	// perMessageDeflate specifies the WebSocket permessage-deflate extension parameters.
 	// Set to nil to disable compression.
-	// Default: nil
-	perMessageDeflate *types.PerMessageDeflate
+	perMessageDeflate types.Optional[*types.PerMessageDeflate]
 
 	// path specifies the path to the Engine.IO endpoint on the server.
-	// Default: '/engine.io'
-	path *string
+	path types.Optional[string]
 
 	// addTrailingSlash determines whether to append a trailing slash to the request path.
-	// Default: true
-	addTrailingSlash *bool
+	addTrailingSlash types.Optional[bool]
 
 	// protocols specifies the WebSocket sub-protocols to use.
 	// This allows for protocol negotiation between client and server.
-	// Default: []string{}
-	protocols []string
+	protocols types.Optional[[]string]
 }
 
 func DefaultSocketOptions() *SocketOptions {
@@ -342,332 +325,366 @@ func (s *SocketOptions) Assign(data SocketOptionsInterface) SocketOptionsInterfa
 	return s
 }
 
+func (s *SocketOptions) SetHost(host string) {
+	s.host = types.NewSome(host)
+}
+func (s *SocketOptions) GetRawHost() types.Optional[string] {
+	return s.host
+}
 func (s *SocketOptions) Host() string {
 	if s.host == nil {
 		return ""
 	}
 
-	return *s.host
-}
-func (s *SocketOptions) GetRawHost() *string {
-	return s.host
-}
-func (s *SocketOptions) SetHost(host string) {
-	s.host = &host
+	return s.host.Get()
 }
 
+func (s *SocketOptions) SetHostname(hostname string) {
+	s.hostname = types.NewSome(hostname)
+}
+func (s *SocketOptions) GetRawHostname() types.Optional[string] {
+	return s.hostname
+}
 func (s *SocketOptions) Hostname() string {
 	if s.hostname == nil {
 		return ""
 	}
 
-	return *s.hostname
-}
-func (s *SocketOptions) GetRawHostname() *string {
-	return s.hostname
-}
-func (s *SocketOptions) SetHostname(hostname string) {
-	s.hostname = &hostname
+	return s.hostname.Get()
 }
 
+func (s *SocketOptions) SetSecure(secure bool) {
+	s.secure = types.NewSome(secure)
+}
+func (s *SocketOptions) GetRawSecure() types.Optional[bool] {
+	return s.secure
+}
 func (s *SocketOptions) Secure() bool {
 	if s.secure == nil {
 		return false
 	}
 
-	return *s.secure
-}
-func (s *SocketOptions) GetRawSecure() *bool {
-	return s.secure
-}
-func (s *SocketOptions) SetSecure(secure bool) {
-	s.secure = &secure
+	return s.secure.Get()
 }
 
+func (s *SocketOptions) SetPort(port string) {
+	s.port = types.NewSome(port)
+}
+func (s *SocketOptions) GetRawPort() types.Optional[string] {
+	return s.port
+}
 func (s *SocketOptions) Port() string {
 	if s.port == nil {
 		return ""
 	}
 
-	return *s.port
-}
-func (s *SocketOptions) GetRawPort() *string {
-	return s.port
-}
-func (s *SocketOptions) SetPort(port string) {
-	s.port = &port
+	return s.port.Get()
 }
 
-func (s *SocketOptions) Query() url.Values {
-	return s.query
-}
-func (s *SocketOptions) GetRawQuery() url.Values {
-	return s.query
-}
 func (s *SocketOptions) SetQuery(query url.Values) {
-	s.query = query
+	s.query = types.NewSome(query)
+}
+func (s *SocketOptions) GetRawQuery() types.Optional[url.Values] {
+	return s.query
+}
+func (s *SocketOptions) Query() url.Values {
+	if s.query == nil {
+		return nil
+	}
+
+	return s.query.Get()
 }
 
+func (s *SocketOptions) SetAgent(agent string) {
+	s.agent = types.NewSome(agent)
+}
+func (s *SocketOptions) GetRawAgent() types.Optional[string] {
+	return s.agent
+}
 func (s *SocketOptions) Agent() string {
 	if s.agent == nil {
 		return ""
 	}
-	return *s.agent
-}
-func (s *SocketOptions) GetRawAgent() *string {
-	return s.agent
-}
-func (s *SocketOptions) SetAgent(agent string) {
-	s.agent = &agent
+
+	return s.agent.Get()
 }
 
+func (s *SocketOptions) SetUpgrade(upgrade bool) {
+	s.upgrade = types.NewSome(upgrade)
+}
+func (s *SocketOptions) GetRawUpgrade() types.Optional[bool] {
+	return s.upgrade
+}
 func (s *SocketOptions) Upgrade() bool {
 	if s.upgrade == nil {
 		return false
 	}
 
-	return *s.upgrade
-}
-func (s *SocketOptions) GetRawUpgrade() *bool {
-	return s.upgrade
-}
-func (s *SocketOptions) SetUpgrade(upgrade bool) {
-	s.upgrade = &upgrade
+	return s.upgrade.Get()
 }
 
+func (s *SocketOptions) SetForceBase64(forceBase64 bool) {
+	s.forceBase64 = types.NewSome(forceBase64)
+}
+func (s *SocketOptions) GetRawForceBase64() types.Optional[bool] {
+	return s.forceBase64
+}
 func (s *SocketOptions) ForceBase64() bool {
 	if s.forceBase64 == nil {
 		return false
 	}
 
-	return *s.forceBase64
-}
-func (s *SocketOptions) GetRawForceBase64() *bool {
-	return s.forceBase64
-}
-func (s *SocketOptions) SetForceBase64(forceBase64 bool) {
-	s.forceBase64 = &forceBase64
+	return s.forceBase64.Get()
 }
 
+func (s *SocketOptions) SetTimestampParam(timestampParam string) {
+	s.timestampParam = types.NewSome(timestampParam)
+}
+func (s *SocketOptions) GetRawTimestampParam() types.Optional[string] {
+	return s.timestampParam
+}
 func (s *SocketOptions) TimestampParam() string {
 	if s.timestampParam == nil {
 		return ""
 	}
 
-	return *s.timestampParam
-}
-func (s *SocketOptions) GetRawTimestampParam() *string {
-	return s.timestampParam
-}
-func (s *SocketOptions) SetTimestampParam(timestampParam string) {
-	s.timestampParam = &timestampParam
+	return s.timestampParam.Get()
 }
 
+func (s *SocketOptions) SetTimestampRequests(timestampRequests bool) {
+	s.timestampRequests = types.NewSome(timestampRequests)
+}
+func (s *SocketOptions) GetRawTimestampRequests() types.Optional[bool] {
+	return s.timestampRequests
+}
 func (s *SocketOptions) TimestampRequests() bool {
 	if s.timestampRequests == nil {
 		return false
 	}
 
-	return *s.timestampRequests
-}
-func (s *SocketOptions) GetRawTimestampRequests() *bool {
-	return s.timestampRequests
-}
-func (s *SocketOptions) SetTimestampRequests(timestampRequests bool) {
-	s.timestampRequests = &timestampRequests
+	return s.timestampRequests.Get()
 }
 
-func (s *SocketOptions) Transports() *types.Set[TransportCtor] {
-	return s.transports
-}
-func (s *SocketOptions) GetRawTransports() *types.Set[TransportCtor] {
-	return s.transports
-}
 func (s *SocketOptions) SetTransports(transports *types.Set[TransportCtor]) {
-	s.transports = transports
+	s.transports = types.NewSome(transports)
+}
+func (s *SocketOptions) GetRawTransports() types.Optional[*types.Set[TransportCtor]] {
+	return s.transports
+}
+func (s *SocketOptions) Transports() *types.Set[TransportCtor] {
+	if s.transports == nil {
+		return nil
+	}
+
+	return s.transports.Get()
 }
 
+func (s *SocketOptions) SetTryAllTransports(tryAllTransports bool) {
+	s.tryAllTransports = types.NewSome(tryAllTransports)
+}
+func (s *SocketOptions) GetRawTryAllTransports() types.Optional[bool] {
+	return s.tryAllTransports
+}
 func (s *SocketOptions) TryAllTransports() bool {
 	if s.tryAllTransports == nil {
 		return false
 	}
 
-	return *s.tryAllTransports
-}
-func (s *SocketOptions) GetRawTryAllTransports() *bool {
-	return s.tryAllTransports
-}
-func (s *SocketOptions) SetTryAllTransports(tryAllTransports bool) {
-	s.tryAllTransports = &tryAllTransports
+	return s.tryAllTransports.Get()
 }
 
+func (s *SocketOptions) SetRememberUpgrade(rememberUpgrade bool) {
+	s.rememberUpgrade = types.NewSome(rememberUpgrade)
+}
+func (s *SocketOptions) GetRawRememberUpgrade() types.Optional[bool] {
+	return s.rememberUpgrade
+}
 func (s *SocketOptions) RememberUpgrade() bool {
 	if s.rememberUpgrade == nil {
 		return false
 	}
 
-	return *s.rememberUpgrade
-}
-func (s *SocketOptions) GetRawRememberUpgrade() *bool {
-	return s.rememberUpgrade
-}
-func (s *SocketOptions) SetRememberUpgrade(rememberUpgrade bool) {
-	s.rememberUpgrade = &rememberUpgrade
+	return s.rememberUpgrade.Get()
 }
 
+func (s *SocketOptions) SetRequestTimeout(requestTimeout time.Duration) {
+	s.requestTimeout = types.NewSome(requestTimeout)
+}
+func (s *SocketOptions) GetRawRequestTimeout() types.Optional[time.Duration] {
+	return s.requestTimeout
+}
 func (s *SocketOptions) RequestTimeout() time.Duration {
 	if s.requestTimeout == nil {
 		return 0
 	}
 
-	return *s.requestTimeout
-}
-func (s *SocketOptions) GetRawRequestTimeout() *time.Duration {
-	return s.requestTimeout
-}
-func (s *SocketOptions) SetRequestTimeout(requestTimeout time.Duration) {
-	s.requestTimeout = &requestTimeout
+	return s.requestTimeout.Get()
 }
 
-func (s *SocketOptions) TransportOptions() map[string]SocketOptionsInterface {
-	return s.transportOptions
-}
-func (s *SocketOptions) GetRawTransportOptions() map[string]SocketOptionsInterface {
-	return s.transportOptions
-}
 func (s *SocketOptions) SetTransportOptions(transportOptions map[string]SocketOptionsInterface) {
-	s.transportOptions = transportOptions
+	s.transportOptions = types.NewSome(transportOptions)
+}
+func (s *SocketOptions) GetRawTransportOptions() types.Optional[map[string]SocketOptionsInterface] {
+	return s.transportOptions
+}
+func (s *SocketOptions) TransportOptions() map[string]SocketOptionsInterface {
+	if s.transportOptions == nil {
+		return nil
+	}
+
+	return s.transportOptions.Get()
 }
 
-func (s *SocketOptions) TLSClientConfig() *tls.Config {
-	return s.tlsClientConfig
-}
-func (s *SocketOptions) GetRawTLSClientConfig() *tls.Config {
-	return s.tlsClientConfig
-}
 func (s *SocketOptions) SetTLSClientConfig(tlsClientConfig *tls.Config) {
-	s.tlsClientConfig = tlsClientConfig
+	s.tlsClientConfig = types.NewSome(tlsClientConfig)
+}
+func (s *SocketOptions) GetRawTLSClientConfig() types.Optional[*tls.Config] {
+	return s.tlsClientConfig
+}
+func (s *SocketOptions) TLSClientConfig() *tls.Config {
+	if s.tlsClientConfig == nil {
+		return nil
+	}
+
+	return s.tlsClientConfig.Get()
 }
 
-func (s *SocketOptions) QUICConfig() *quic.Config {
-	return s.quicConfig
-}
-func (s *SocketOptions) GetRawQUICConfig() *quic.Config {
-	return s.quicConfig
-}
 func (s *SocketOptions) SetQUICConfig(quicConfig *quic.Config) {
-	s.quicConfig = quicConfig
+	s.quicConfig = types.NewSome(quicConfig)
+}
+func (s *SocketOptions) GetRawQUICConfig() types.Optional[*quic.Config] {
+	return s.quicConfig
+}
+func (s *SocketOptions) QUICConfig() *quic.Config {
+	if s.quicConfig == nil {
+		return nil
+	}
+
+	return s.quicConfig.Get()
 }
 
-func (s *SocketOptions) ExtraHeaders() http.Header {
-	return s.extraHeaders
-}
-func (s *SocketOptions) GetRawExtraHeaders() http.Header {
-	return s.extraHeaders
-}
 func (s *SocketOptions) SetExtraHeaders(extraHeaders http.Header) {
-	s.extraHeaders = extraHeaders
+	s.extraHeaders = types.NewSome(extraHeaders)
+}
+func (s *SocketOptions) GetRawExtraHeaders() types.Optional[http.Header] {
+	return s.extraHeaders
+}
+func (s *SocketOptions) ExtraHeaders() http.Header {
+	if s.extraHeaders == nil {
+		return nil
+	}
+
+	return s.extraHeaders.Get()
 }
 
+func (s *SocketOptions) SetWithCredentials(withCredentials bool) {
+	s.withCredentials = types.NewSome(withCredentials)
+}
+func (s *SocketOptions) GetRawWithCredentials() types.Optional[bool] {
+	return s.withCredentials
+}
 func (s *SocketOptions) WithCredentials() bool {
 	if s.withCredentials == nil {
 		return false
 	}
 
-	return *s.withCredentials
-}
-func (s *SocketOptions) GetRawWithCredentials() *bool {
-	return s.withCredentials
-}
-func (s *SocketOptions) SetWithCredentials(withCredentials bool) {
-	s.withCredentials = &withCredentials
+	return s.withCredentials.Get()
 }
 
+func (s *SocketOptions) SetUseNativeTimers(useNativeTimers bool) {
+	s.useNativeTimers = types.NewSome(useNativeTimers)
+}
+func (s *SocketOptions) GetRawUseNativeTimers() types.Optional[bool] {
+	return s.useNativeTimers
+}
 func (s *SocketOptions) UseNativeTimers() bool {
 	if s.useNativeTimers == nil {
 		return false
 	}
 
-	return *s.useNativeTimers
-}
-func (s *SocketOptions) GetRawUseNativeTimers() *bool {
-	return s.useNativeTimers
-}
-func (s *SocketOptions) SetUseNativeTimers(useNativeTimers bool) {
-	s.useNativeTimers = &useNativeTimers
+	return s.useNativeTimers.Get()
 }
 
+func (s *SocketOptions) SetAutoUnref(autoUnref bool) {
+	s.autoUnref = types.NewSome(autoUnref)
+}
+func (s *SocketOptions) GetRawAutoUnref() types.Optional[bool] {
+	return s.autoUnref
+}
 func (s *SocketOptions) AutoUnref() bool {
 	if s.autoUnref == nil {
 		return false
 	}
 
-	return *s.autoUnref
-}
-func (s *SocketOptions) GetRawAutoUnref() *bool {
-	return s.autoUnref
-}
-func (s *SocketOptions) SetAutoUnref(autoUnref bool) {
-	s.autoUnref = &autoUnref
+	return s.autoUnref.Get()
 }
 
+func (s *SocketOptions) SetCloseOnBeforeunload(closeOnBeforeunload bool) {
+	s.closeOnBeforeunload = types.NewSome(closeOnBeforeunload)
+}
+func (s *SocketOptions) GetRawCloseOnBeforeunload() types.Optional[bool] {
+	return s.closeOnBeforeunload
+}
 func (s *SocketOptions) CloseOnBeforeunload() bool {
 	if s.closeOnBeforeunload == nil {
 		return false
 	}
 
-	return *s.closeOnBeforeunload
-}
-func (s *SocketOptions) GetRawCloseOnBeforeunload() *bool {
-	return s.closeOnBeforeunload
-}
-func (s *SocketOptions) SetCloseOnBeforeunload(closeOnBeforeunload bool) {
-	s.closeOnBeforeunload = &closeOnBeforeunload
+	return s.closeOnBeforeunload.Get()
 }
 
-func (s *SocketOptions) PerMessageDeflate() *types.PerMessageDeflate {
-	return s.perMessageDeflate
-}
-func (s *SocketOptions) GetRawPerMessageDeflate() *types.PerMessageDeflate {
-	return s.perMessageDeflate
-}
 func (s *SocketOptions) SetPerMessageDeflate(perMessageDeflate *types.PerMessageDeflate) {
-	s.perMessageDeflate = perMessageDeflate
+	s.perMessageDeflate = types.NewSome(perMessageDeflate)
+}
+func (s *SocketOptions) GetRawPerMessageDeflate() types.Optional[*types.PerMessageDeflate] {
+	return s.perMessageDeflate
+}
+func (s *SocketOptions) PerMessageDeflate() *types.PerMessageDeflate {
+	if s.perMessageDeflate == nil {
+		return nil
+	}
+
+	return s.perMessageDeflate.Get()
 }
 
+func (s *SocketOptions) SetPath(path string) {
+	s.path = types.NewSome(path)
+}
+func (s *SocketOptions) GetRawPath() types.Optional[string] {
+	return s.path
+}
 func (s *SocketOptions) Path() string {
 	if s.path == nil {
 		return ""
 	}
 
-	return *s.path
-}
-func (s *SocketOptions) GetRawPath() *string {
-	return s.path
-}
-func (s *SocketOptions) SetPath(path string) {
-	s.path = &path
+	return s.path.Get()
 }
 
+func (s *SocketOptions) SetAddTrailingSlash(addTrailingSlash bool) {
+	s.addTrailingSlash = types.NewSome(addTrailingSlash)
+}
+func (s *SocketOptions) GetRawAddTrailingSlash() types.Optional[bool] {
+	return s.addTrailingSlash
+}
 func (s *SocketOptions) AddTrailingSlash() bool {
 	if s.addTrailingSlash == nil {
 		return false
 	}
-	return *s.addTrailingSlash
-}
-func (s *SocketOptions) GetRawAddTrailingSlash() *bool {
-	return s.addTrailingSlash
-}
-func (s *SocketOptions) SetAddTrailingSlash(addTrailingSlash bool) {
-	s.addTrailingSlash = &addTrailingSlash
+
+	return s.addTrailingSlash.Get()
 }
 
-func (s *SocketOptions) Protocols() []string {
-	return s.protocols
-}
-func (s *SocketOptions) GetRawProtocols() []string {
-	return s.protocols
-}
 func (s *SocketOptions) SetProtocols(protocols []string) {
-	s.protocols = protocols
+	s.protocols = types.NewSome(protocols)
+}
+func (s *SocketOptions) GetRawProtocols() types.Optional[[]string] {
+	return s.protocols
+}
+func (s *SocketOptions) Protocols() []string {
+	if s.protocols == nil {
+		return nil
+	}
+
+	return s.protocols.Get()
 }

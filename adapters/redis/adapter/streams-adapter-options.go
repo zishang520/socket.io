@@ -1,7 +1,10 @@
 // Package adapter provides configuration options for the Redis Streams-based Socket.IO adapter.
 package adapter
 
-import "github.com/zishang520/socket.io/adapters/adapter/v3"
+import (
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
+)
 
 type (
 	// RedisStreamsAdapterOptionsInterface defines the interface for configuring RedisStreamsAdapterOptions.
@@ -9,19 +12,19 @@ type (
 		adapter.ClusterAdapterOptionsInterface
 
 		SetStreamName(string)
-		GetRawStreamName() *string
+		GetRawStreamName() types.Optional[string]
 		StreamName() string
 
 		SetMaxLen(int64)
-		GetRawMaxLen() *int64
+		GetRawMaxLen() types.Optional[int64]
 		MaxLen() int64
 
 		SetReadCount(int64)
-		GetRawReadCount() *int64
+		GetRawReadCount() types.Optional[int64]
 		ReadCount() int64
 
 		SetSessionKeyPrefix(string)
-		GetRawSessionKeyPrefix() *string
+		GetRawSessionKeyPrefix() types.Optional[string]
 		SessionKeyPrefix() string
 	}
 
@@ -34,10 +37,10 @@ type (
 	RedisStreamsAdapterOptions struct {
 		adapter.ClusterAdapterOptions
 
-		streamName       *string
-		maxLen           *int64
-		readCount        *int64
-		sessionKeyPrefix *string
+		streamName       types.Optional[string]
+		maxLen           types.Optional[int64]
+		readCount        types.Optional[int64]
+		sessionKeyPrefix types.Optional[string]
 	}
 )
 
@@ -72,72 +75,60 @@ func (s *RedisStreamsAdapterOptions) Assign(data RedisStreamsAdapterOptionsInter
 
 // SetStreamName sets the Redis stream name.
 func (s *RedisStreamsAdapterOptions) SetStreamName(streamName string) {
-	s.streamName = &streamName
+	s.streamName = types.NewSome(streamName)
 }
-
-// GetRawStreamName returns the raw stream name pointer.
-func (s *RedisStreamsAdapterOptions) GetRawStreamName() *string {
+func (s *RedisStreamsAdapterOptions) GetRawStreamName() types.Optional[string] {
 	return s.streamName
 }
-
-// StreamName returns the Redis stream name.
 func (s *RedisStreamsAdapterOptions) StreamName() string {
 	if s.streamName == nil {
 		return ""
 	}
-	return *s.streamName
+
+	return s.streamName.Get()
 }
 
 // SetMaxLen sets the maximum stream length.
 func (s *RedisStreamsAdapterOptions) SetMaxLen(maxLen int64) {
-	s.maxLen = &maxLen
+	s.maxLen = types.NewSome(maxLen)
 }
-
-// GetRawMaxLen returns the raw maxLen pointer.
-func (s *RedisStreamsAdapterOptions) GetRawMaxLen() *int64 {
+func (s *RedisStreamsAdapterOptions) GetRawMaxLen() types.Optional[int64] {
 	return s.maxLen
 }
-
-// MaxLen returns the maximum stream length.
 func (s *RedisStreamsAdapterOptions) MaxLen() int64 {
 	if s.maxLen == nil {
 		return 0
 	}
-	return *s.maxLen
+
+	return s.maxLen.Get()
 }
 
 // SetReadCount sets the number of elements to fetch per XREAD call.
 func (s *RedisStreamsAdapterOptions) SetReadCount(readCount int64) {
-	s.readCount = &readCount
+	s.readCount = types.NewSome(readCount)
 }
-
-// GetRawReadCount returns the raw readCount pointer.
-func (s *RedisStreamsAdapterOptions) GetRawReadCount() *int64 {
+func (s *RedisStreamsAdapterOptions) GetRawReadCount() types.Optional[int64] {
 	return s.readCount
 }
-
-// ReadCount returns the number of elements to fetch per XREAD call.
 func (s *RedisStreamsAdapterOptions) ReadCount() int64 {
 	if s.readCount == nil {
 		return 0
 	}
-	return *s.readCount
+
+	return s.readCount.Get()
 }
 
 // SetSessionKeyPrefix sets the session key prefix.
 func (s *RedisStreamsAdapterOptions) SetSessionKeyPrefix(sessionKeyPrefix string) {
-	s.sessionKeyPrefix = &sessionKeyPrefix
+	s.sessionKeyPrefix = types.NewSome(sessionKeyPrefix)
 }
-
-// GetRawSessionKeyPrefix returns the raw sessionKeyPrefix pointer.
-func (s *RedisStreamsAdapterOptions) GetRawSessionKeyPrefix() *string {
+func (s *RedisStreamsAdapterOptions) GetRawSessionKeyPrefix() types.Optional[string] {
 	return s.sessionKeyPrefix
 }
-
-// SessionKeyPrefix returns the session key prefix.
 func (s *RedisStreamsAdapterOptions) SessionKeyPrefix() string {
 	if s.sessionKeyPrefix == nil {
 		return ""
 	}
-	return *s.sessionKeyPrefix
+
+	return s.sessionKeyPrefix.Get()
 }

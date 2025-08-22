@@ -3,45 +3,46 @@ package config
 
 import (
 	"time"
+
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 type (
 	AttachOptionsInterface interface {
 		SetPath(string)
-		GetRawPath() *string
+		GetRawPath() types.Optional[string]
 		Path() string
 
 		SetDestroyUpgrade(bool)
-		GetRawDestroyUpgrade() *bool
+		GetRawDestroyUpgrade() types.Optional[bool]
 		DestroyUpgrade() bool
 
 		SetDestroyUpgradeTimeout(time.Duration)
-		GetRawDestroyUpgradeTimeout() *time.Duration
+		GetRawDestroyUpgradeTimeout() types.Optional[time.Duration]
 		DestroyUpgradeTimeout() time.Duration
 
 		SetAddTrailingSlash(bool)
-		GetRawAddTrailingSlash() *bool
+		GetRawAddTrailingSlash() types.Optional[bool]
 		AddTrailingSlash() bool
 	}
 
 	AttachOptions struct {
 		// name of the path to capture
-		path *string
+		path types.Optional[string]
 
 		// destroy unhandled upgrade requests
-		destroyUpgrade *bool
+		destroyUpgrade types.Optional[bool]
 
 		// milliseconds after which unhandled requests are ended
-		destroyUpgradeTimeout *time.Duration
+		destroyUpgradeTimeout types.Optional[time.Duration]
 
 		// Whether we should add a trailing slash to the request path.
-		addTrailingSlash *bool
+		addTrailingSlash types.Optional[bool]
 	}
 )
 
 func DefaultAttachOptions() *AttachOptions {
-	a := &AttachOptions{}
-	return a
+	return &AttachOptions{}
 }
 
 func (a *AttachOptions) Assign(data AttachOptionsInterface) AttachOptionsInterface {
@@ -69,12 +70,10 @@ func (a *AttachOptions) Assign(data AttachOptionsInterface) AttachOptionsInterfa
 }
 
 // name of the path to capture
-//
-// Default: "/engine.io"
 func (a *AttachOptions) SetPath(path string) {
-	a.path = &path
+	a.path = types.NewSome(path)
 }
-func (a *AttachOptions) GetRawPath() *string {
+func (a *AttachOptions) GetRawPath() types.Optional[string] {
 	return a.path
 }
 func (a *AttachOptions) Path() string {
@@ -82,16 +81,14 @@ func (a *AttachOptions) Path() string {
 		return ""
 	}
 
-	return *a.path
+	return a.path.Get()
 }
 
 // destroy unhandled upgrade requests
-//
-// Default: true
 func (a *AttachOptions) SetDestroyUpgrade(destroyUpgrade bool) {
-	a.destroyUpgrade = &destroyUpgrade
+	a.destroyUpgrade = types.NewSome(destroyUpgrade)
 }
-func (a *AttachOptions) GetRawDestroyUpgrade() *bool {
+func (a *AttachOptions) GetRawDestroyUpgrade() types.Optional[bool] {
 	return a.destroyUpgrade
 }
 func (a *AttachOptions) DestroyUpgrade() bool {
@@ -99,16 +96,14 @@ func (a *AttachOptions) DestroyUpgrade() bool {
 		return false
 	}
 
-	return *a.destroyUpgrade
+	return a.destroyUpgrade.Get()
 }
 
 // milliseconds after which unhandled requests are ended
-//
-// Default: 1000
 func (a *AttachOptions) SetDestroyUpgradeTimeout(destroyUpgradeTimeout time.Duration) {
-	a.destroyUpgradeTimeout = &destroyUpgradeTimeout
+	a.destroyUpgradeTimeout = types.NewSome(destroyUpgradeTimeout)
 }
-func (a *AttachOptions) GetRawDestroyUpgradeTimeout() *time.Duration {
+func (a *AttachOptions) GetRawDestroyUpgradeTimeout() types.Optional[time.Duration] {
 	return a.destroyUpgradeTimeout
 }
 func (a *AttachOptions) DestroyUpgradeTimeout() time.Duration {
@@ -116,16 +111,14 @@ func (a *AttachOptions) DestroyUpgradeTimeout() time.Duration {
 		return 0
 	}
 
-	return *a.destroyUpgradeTimeout
+	return a.destroyUpgradeTimeout.Get()
 }
 
 // Whether we should add a trailing slash to the request path.
-//
-// Default: true
 func (a *AttachOptions) SetAddTrailingSlash(addTrailingSlash bool) {
-	a.addTrailingSlash = &addTrailingSlash
+	a.addTrailingSlash = types.NewSome(addTrailingSlash)
 }
-func (a *AttachOptions) GetRawAddTrailingSlash() *bool {
+func (a *AttachOptions) GetRawAddTrailingSlash() types.Optional[bool] {
 	return a.addTrailingSlash
 }
 func (a *AttachOptions) AddTrailingSlash() bool {
@@ -133,5 +126,5 @@ func (a *AttachOptions) AddTrailingSlash() bool {
 		return false
 	}
 
-	return *a.addTrailingSlash
+	return a.addTrailingSlash.Get()
 }

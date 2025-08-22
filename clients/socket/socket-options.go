@@ -1,45 +1,34 @@
 package socket
 
-import "time"
+import (
+	"time"
+
+	"github.com/zishang520/socket.io/v3/pkg/types"
+)
 
 // SocketOptionsInterface defines the interface for accessing and modifying Socket options.
 // It provides methods for authentication, retry logic, and acknowledgement timeouts.
 type (
 	SocketOptionsInterface interface {
-		// GetRawAuth returns the raw authentication data.
-		GetRawAuth() map[string]any
-
-		// Auth returns the authentication data that will be sent with the connection.
+		SetAuth(map[string]any)
+		GetRawAuth() types.Optional[map[string]any]
 		Auth() map[string]any
 
-		// SetAuth sets the authentication data for the socket connection.
-		SetAuth(map[string]any)
-
-		// GetRawRetries returns the raw retry count.
-		GetRawRetries() *float64
-
-		// Retries returns the maximum number of retries for packet delivery.
+		SetRetries(float64)
+		GetRawRetries() types.Optional[float64]
 		Retries() float64
 
-		// SetRetries sets the maximum number of retries for packet delivery.
-		SetRetries(float64)
-
-		// GetRawAckTimeout returns the raw acknowledgement timeout value.
-		GetRawAckTimeout() *time.Duration
-
-		// AckTimeout returns the timeout duration for acknowledgements.
-		AckTimeout() time.Duration
-
-		// SetAckTimeout sets the timeout duration for waiting for acknowledgements.
 		SetAckTimeout(time.Duration)
+		GetRawAckTimeout() types.Optional[time.Duration]
+		AckTimeout() time.Duration
 	}
 
 	// SocketOptions defines configuration options for individual Socket.IO sockets.
 	// These options control the behavior of a specific namespace connection.
 	SocketOptions struct {
-		auth       map[string]any
-		retries    *float64
-		ackTimeout *time.Duration
+		auth       types.Optional[map[string]any]
+		retries    types.Optional[float64]
+		ackTimeout types.Optional[time.Duration]
 	}
 )
 
@@ -74,17 +63,17 @@ func (s *SocketOptions) Assign(data SocketOptionsInterface) SocketOptionsInterfa
 // Parameters:
 //   - auth: A map containing authentication credentials or tokens
 func (s *SocketOptions) SetAuth(auth map[string]any) {
-	s.auth = auth
+	s.auth = types.NewSome(auth)
 }
-
-// GetRawAuth returns the raw authentication data configuration.
-func (s *SocketOptions) GetRawAuth() map[string]any {
+func (s *SocketOptions) GetRawAuth() types.Optional[map[string]any] {
 	return s.auth
 }
-
-// Auth returns the authentication data for the socket connection.
 func (s *SocketOptions) Auth() map[string]any {
-	return s.auth
+	if s.auth == nil {
+		return nil
+	}
+
+	return s.auth.Get()
 }
 
 // SetRetries sets the maximum number of retries for packet delivery
@@ -92,21 +81,17 @@ func (s *SocketOptions) Auth() map[string]any {
 // Parameters:
 //   - retries: The maximum number of retries
 func (s *SocketOptions) SetRetries(retries float64) {
-	s.retries = &retries
+	s.retries = types.NewSome(retries)
 }
-
-// GetRawRetries returns the raw retry count
-func (s *SocketOptions) GetRawRetries() *float64 {
+func (s *SocketOptions) GetRawRetries() types.Optional[float64] {
 	return s.retries
 }
-
-// Retries returns the maximum number of retries for packet delivery
 func (s *SocketOptions) Retries() float64 {
-	if retries := s.retries; retries != nil {
-		return *retries
+	if s.retries == nil {
+		return 0
 	}
 
-	return 0
+	return s.retries.Get()
 }
 
 // SetAckTimeout sets how long to wait for an acknowledgement before timing out.
@@ -114,19 +99,15 @@ func (s *SocketOptions) Retries() float64 {
 // Parameters:
 //   - d: The timeout duration
 func (s *SocketOptions) SetAckTimeout(ackTimeout time.Duration) {
-	s.ackTimeout = &ackTimeout
+	s.ackTimeout = types.NewSome(ackTimeout)
 }
-
-// GetRawAckTimeout returns the raw acknowledgement timeout setting.
-func (s *SocketOptions) GetRawAckTimeout() *time.Duration {
+func (s *SocketOptions) GetRawAckTimeout() types.Optional[time.Duration] {
 	return s.ackTimeout
 }
-
-// AckTimeout returns the current acknowledgement timeout duration.
 func (s *SocketOptions) AckTimeout() time.Duration {
-	if ackTimeout := s.ackTimeout; ackTimeout != nil {
-		return *ackTimeout
+	if s.ackTimeout == nil {
+		return 0
 	}
 
-	return 0
+	return s.ackTimeout.Get()
 }

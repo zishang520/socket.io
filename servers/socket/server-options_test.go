@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 // TestConnectionStateRecoverySkipMiddlewares tests all cases for SkipMiddlewares method
@@ -23,9 +24,8 @@ func TestConnectionStateRecoverySkipMiddlewares(t *testing.T) {
 	})
 
 	t.Run("when skipMiddlewares is false", func(t *testing.T) {
-		skipMiddlewares := false
 		recovery := &ConnectionStateRecovery{
-			skipMiddlewares: &skipMiddlewares,
+			skipMiddlewares: types.NewSome(false),
 		}
 
 		result := recovery.SkipMiddlewares()
@@ -36,9 +36,8 @@ func TestConnectionStateRecoverySkipMiddlewares(t *testing.T) {
 	})
 
 	t.Run("when skipMiddlewares is true", func(t *testing.T) {
-		skipMiddlewares := true
 		recovery := &ConnectionStateRecovery{
-			skipMiddlewares: &skipMiddlewares,
+			skipMiddlewares: types.NewSome(true),
 		}
 
 		result := recovery.SkipMiddlewares()
@@ -89,7 +88,7 @@ func TestSetAndGetServeClientTrue(t *testing.T) {
 		t.Error("Expected GetRawServeClient to return non-nil value")
 	}
 	if opts.ServeClient() != true {
-		t.Errorf("Expected ServeClient to return true, got %v", *rawValue)
+		t.Errorf("Expected ServeClient to return true, got %v", rawValue)
 	}
 
 	if !opts.ServeClient() {
@@ -110,7 +109,7 @@ func TestSetAndGetAdapter(t *testing.T) {
 		t.Error("Expected adapter constructor to not be nil")
 	}
 
-	if *(*uintptr)(unsafe.Pointer(mockAdapterConstructor)) != *(*uintptr)(unsafe.Pointer(gotRawAdapter.(*SessionAwareAdapterBuilder))) {
+	if *(*uintptr)(unsafe.Pointer(mockAdapterConstructor)) != *(*uintptr)(unsafe.Pointer(gotRawAdapter.Get().(*SessionAwareAdapterBuilder))) {
 		t.Error("Expected to get the same adapter constructor that was set")
 	}
 
@@ -119,7 +118,7 @@ func TestSetAndGetAdapter(t *testing.T) {
 		t.Error("Expected Adapter() to return a non-nil function")
 	}
 
-	if *(*uintptr)(unsafe.Pointer(adapterFunc.(*SessionAwareAdapterBuilder))) != *(*uintptr)(unsafe.Pointer(gotRawAdapter.(*SessionAwareAdapterBuilder))) {
+	if *(*uintptr)(unsafe.Pointer(adapterFunc.(*SessionAwareAdapterBuilder))) != *(*uintptr)(unsafe.Pointer(gotRawAdapter.Get().(*SessionAwareAdapterBuilder))) {
 		t.Error("Expected Adapter() to return the same constructor that was set")
 	}
 }
@@ -132,7 +131,7 @@ func TestSetAndGetParser(t *testing.T) {
 	opts.SetParser(customParser)
 
 	gotRawParser := opts.GetRawParser()
-	if gotRawParser != customParser {
+	if gotRawParser.Get() != customParser {
 		t.Errorf("GetRawParser() = %v, want %v", gotRawParser, customParser)
 	}
 
@@ -155,8 +154,8 @@ func TestSetAndGetConnectTimeout(t *testing.T) {
 		return
 	}
 
-	if *rawTimeout != testTimeout {
-		t.Errorf("GetRawConnectTimeout() = %v, want %v", *rawTimeout, testTimeout)
+	if rawTimeout.Get() != testTimeout {
+		t.Errorf("GetRawConnectTimeout() = %v, want %v", rawTimeout, testTimeout)
 	}
 
 	gotTimeout := opts.ConnectTimeout()
@@ -188,7 +187,7 @@ func TestSetAndGetCleanupEmptyChildNamespaces(t *testing.T) {
 		t.Error("Expected GetRawCleanupEmptyChildNamespaces to return non-nil value")
 		return
 	}
-	if *rawValue != true {
+	if rawValue.Get() != true {
 		t.Error("Expected GetRawCleanupEmptyChildNamespaces to return true")
 	}
 
@@ -212,7 +211,7 @@ func TestConnectionStateRecoveryOperations(t *testing.T) {
 	opts.SetConnectionStateRecovery(recovery)
 
 	rawRecovery := opts.GetRawConnectionStateRecovery()
-	if rawRecovery != recovery {
+	if rawRecovery.Get() != recovery {
 		t.Error("Expected GetRawConnectionStateRecovery to return the same instance")
 	}
 
@@ -257,8 +256,8 @@ func TestMaxDisconnectionDurationOperations(t *testing.T) {
 		t.Error("Expected GetRawMaxDisconnectionDuration to return non-nil value")
 		return
 	}
-	if *rawDuration != testDuration {
-		t.Errorf("GetRawMaxDisconnectionDuration() = %v, want %v", *rawDuration, testDuration)
+	if rawDuration.Get() != testDuration {
+		t.Errorf("GetRawMaxDisconnectionDuration() = %v, want %v", rawDuration, testDuration)
 	}
 
 	if recovery.MaxDisconnectionDuration() != testDuration {
@@ -295,7 +294,7 @@ func TestConnectionStateRecoverySkipMiddlewaresOperations(t *testing.T) {
 		t.Error("Expected GetRawSkipMiddlewares to return non-nil value")
 		return
 	}
-	if *rawValue != true {
+	if rawValue.Get() != true {
 		t.Error("Expected GetRawSkipMiddlewares to return true")
 	}
 

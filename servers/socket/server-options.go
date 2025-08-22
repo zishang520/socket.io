@@ -5,46 +5,57 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/config"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 type (
+	ConnectionStateRecoveryInterface interface {
+		SetMaxDisconnectionDuration(int64)
+		GetRawMaxDisconnectionDuration() types.Optional[int64]
+		MaxDisconnectionDuration() int64
+
+		SetSkipMiddlewares(bool)
+		GetRawSkipMiddlewares() types.Optional[bool]
+		SkipMiddlewares() bool
+	}
+
 	ConnectionStateRecovery struct {
 		// The backup duration of the sessions and the packets.
-		maxDisconnectionDuration *int64
+		maxDisconnectionDuration types.Optional[int64]
 
 		// Whether to skip middlewares upon successful connection state recovery.
-		skipMiddlewares *bool
+		skipMiddlewares types.Optional[bool]
 	}
 
 	ServerOptionsInterface interface {
 		config.OptionsInterface
 
 		SetServeClient(bool)
-		GetRawServeClient() *bool
+		GetRawServeClient() types.Optional[bool]
 		ServeClient() bool
 
 		SetClientVersion(string)
-		GetRawClientVersion() *string
+		GetRawClientVersion() types.Optional[string]
 		ClientVersion() string
 
 		SetAdapter(AdapterConstructor)
-		GetRawAdapter() AdapterConstructor
+		GetRawAdapter() types.Optional[AdapterConstructor]
 		Adapter() AdapterConstructor
 
 		SetParser(parser.Parser)
-		GetRawParser() parser.Parser
+		GetRawParser() types.Optional[parser.Parser]
 		Parser() parser.Parser
 
 		SetConnectTimeout(time.Duration)
-		GetRawConnectTimeout() *time.Duration
+		GetRawConnectTimeout() types.Optional[time.Duration]
 		ConnectTimeout() time.Duration
 
-		SetConnectionStateRecovery(*ConnectionStateRecovery)
-		GetRawConnectionStateRecovery() *ConnectionStateRecovery
-		ConnectionStateRecovery() *ConnectionStateRecovery
+		SetConnectionStateRecovery(ConnectionStateRecoveryInterface)
+		GetRawConnectionStateRecovery() types.Optional[ConnectionStateRecoveryInterface]
+		ConnectionStateRecovery() ConnectionStateRecoveryInterface
 
 		SetCleanupEmptyChildNamespaces(bool)
-		GetRawCleanupEmptyChildNamespaces() *bool
+		GetRawCleanupEmptyChildNamespaces() types.Optional[bool]
 		CleanupEmptyChildNamespaces() bool
 	}
 
@@ -52,29 +63,48 @@ type (
 		config.Options
 
 		// whether to serve the client files
-		serveClient *bool
+		serveClient types.Optional[bool]
 
 		// Client file version
-		clientVersion *string
+		clientVersion types.Optional[string]
 
 		// the adapter to use
-		adapter AdapterConstructor
+		adapter types.Optional[AdapterConstructor]
 
 		// the parser to use
-		parser parser.Parser
+		parser types.Optional[parser.Parser]
 
 		// how many ms before a client without namespace is closed
-		connectTimeout *time.Duration
+		connectTimeout types.Optional[time.Duration]
 
 		// Whether to enable the recovery of connection state when a client temporarily disconnects.
 		//
 		// The connection state includes the missed packets, the rooms the socket was in and the `data` attribute.
-		connectionStateRecovery *ConnectionStateRecovery
+		connectionStateRecovery types.Optional[ConnectionStateRecoveryInterface]
 
 		// Whether to remove child namespaces that have no sockets connected to them
-		cleanupEmptyChildNamespaces *bool
+		cleanupEmptyChildNamespaces types.Optional[bool]
 	}
 )
+
+func DefaultConnectionStateRecovery() *ConnectionStateRecovery {
+	return &ConnectionStateRecovery{}
+}
+
+func (c *ConnectionStateRecovery) Assign(data ConnectionStateRecoveryInterface) ConnectionStateRecoveryInterface {
+	if data == nil {
+		return c
+	}
+
+	if data.GetRawMaxDisconnectionDuration() != nil {
+		c.SetMaxDisconnectionDuration(data.MaxDisconnectionDuration())
+	}
+	if data.GetRawSkipMiddlewares() != nil {
+		c.SetSkipMiddlewares(data.SkipMiddlewares())
+	}
+
+	return c
+}
 
 func DefaultServerOptions() *ServerOptions {
 	return &ServerOptions{}
@@ -113,9 +143,9 @@ func (s *ServerOptions) Assign(data ServerOptionsInterface) ServerOptionsInterfa
 }
 
 func (c *ConnectionStateRecovery) SetMaxDisconnectionDuration(maxDisconnectionDuration int64) {
-	c.maxDisconnectionDuration = &maxDisconnectionDuration
+	c.maxDisconnectionDuration = types.NewSome(maxDisconnectionDuration)
 }
-func (c *ConnectionStateRecovery) GetRawMaxDisconnectionDuration() *int64 {
+func (c *ConnectionStateRecovery) GetRawMaxDisconnectionDuration() types.Optional[int64] {
 	return c.maxDisconnectionDuration
 }
 func (c *ConnectionStateRecovery) MaxDisconnectionDuration() int64 {
@@ -123,13 +153,13 @@ func (c *ConnectionStateRecovery) MaxDisconnectionDuration() int64 {
 		return 0
 	}
 
-	return *c.maxDisconnectionDuration
+	return c.maxDisconnectionDuration.Get()
 }
 
 func (c *ConnectionStateRecovery) SetSkipMiddlewares(skipMiddlewares bool) {
-	c.skipMiddlewares = &skipMiddlewares
+	c.skipMiddlewares = types.NewSome(skipMiddlewares)
 }
-func (c *ConnectionStateRecovery) GetRawSkipMiddlewares() *bool {
+func (c *ConnectionStateRecovery) GetRawSkipMiddlewares() types.Optional[bool] {
 	return c.skipMiddlewares
 }
 func (c *ConnectionStateRecovery) SkipMiddlewares() bool {
@@ -137,13 +167,13 @@ func (c *ConnectionStateRecovery) SkipMiddlewares() bool {
 		return false
 	}
 
-	return *c.skipMiddlewares
+	return c.skipMiddlewares.Get()
 }
 
 func (s *ServerOptions) SetServeClient(serveClient bool) {
-	s.serveClient = &serveClient
+	s.serveClient = types.NewSome(serveClient)
 }
-func (s *ServerOptions) GetRawServeClient() *bool {
+func (s *ServerOptions) GetRawServeClient() types.Optional[bool] {
 	return s.serveClient
 }
 func (s *ServerOptions) ServeClient() bool {
@@ -151,13 +181,13 @@ func (s *ServerOptions) ServeClient() bool {
 		return false
 	}
 
-	return *s.serveClient
+	return s.serveClient.Get()
 }
 
 func (s *ServerOptions) SetClientVersion(clientVersion string) {
-	s.clientVersion = &clientVersion
+	s.clientVersion = types.NewSome(clientVersion)
 }
-func (s *ServerOptions) GetRawClientVersion() *string {
+func (s *ServerOptions) GetRawClientVersion() types.Optional[string] {
 	return s.clientVersion
 }
 func (s *ServerOptions) ClientVersion() string {
@@ -165,33 +195,41 @@ func (s *ServerOptions) ClientVersion() string {
 		return ""
 	}
 
-	return *s.clientVersion
+	return s.clientVersion.Get()
 }
 
 func (s *ServerOptions) SetAdapter(adapter AdapterConstructor) {
-	s.adapter = adapter
+	s.adapter = types.NewSome(adapter)
 }
-func (s *ServerOptions) GetRawAdapter() AdapterConstructor {
+func (s *ServerOptions) GetRawAdapter() types.Optional[AdapterConstructor] {
 	return s.adapter
 }
 func (s *ServerOptions) Adapter() AdapterConstructor {
-	return s.adapter
+	if s.adapter == nil {
+		return nil
+	}
+
+	return s.adapter.Get()
 }
 
 func (s *ServerOptions) SetParser(parser parser.Parser) {
-	s.parser = parser
+	s.parser = types.NewSome(parser)
 }
-func (s *ServerOptions) GetRawParser() parser.Parser {
+func (s *ServerOptions) GetRawParser() types.Optional[parser.Parser] {
 	return s.parser
 }
 func (s *ServerOptions) Parser() parser.Parser {
-	return s.parser
+	if s.parser == nil {
+		return nil
+	}
+
+	return s.parser.Get()
 }
 
 func (s *ServerOptions) SetConnectTimeout(connectTimeout time.Duration) {
-	s.connectTimeout = &connectTimeout
+	s.connectTimeout = types.NewSome(connectTimeout)
 }
-func (s *ServerOptions) GetRawConnectTimeout() *time.Duration {
+func (s *ServerOptions) GetRawConnectTimeout() types.Optional[time.Duration] {
 	return s.connectTimeout
 }
 func (s *ServerOptions) ConnectTimeout() time.Duration {
@@ -199,23 +237,27 @@ func (s *ServerOptions) ConnectTimeout() time.Duration {
 		return 0
 	}
 
-	return *s.connectTimeout
+	return s.connectTimeout.Get()
 }
 
-func (s *ServerOptions) SetConnectionStateRecovery(connectionStateRecovery *ConnectionStateRecovery) {
-	s.connectionStateRecovery = connectionStateRecovery
+func (s *ServerOptions) SetConnectionStateRecovery(connectionStateRecovery ConnectionStateRecoveryInterface) {
+	s.connectionStateRecovery = types.NewSome(connectionStateRecovery)
 }
-func (s *ServerOptions) GetRawConnectionStateRecovery() *ConnectionStateRecovery {
+func (s *ServerOptions) GetRawConnectionStateRecovery() types.Optional[ConnectionStateRecoveryInterface] {
 	return s.connectionStateRecovery
 }
-func (s *ServerOptions) ConnectionStateRecovery() *ConnectionStateRecovery {
-	return s.connectionStateRecovery
+func (s *ServerOptions) ConnectionStateRecovery() ConnectionStateRecoveryInterface {
+	if s.connectionStateRecovery == nil {
+		return nil
+	}
+
+	return s.connectionStateRecovery.Get()
 }
 
 func (s *ServerOptions) SetCleanupEmptyChildNamespaces(cleanupEmptyChildNamespaces bool) {
-	s.cleanupEmptyChildNamespaces = &cleanupEmptyChildNamespaces
+	s.cleanupEmptyChildNamespaces = types.NewSome(cleanupEmptyChildNamespaces)
 }
-func (s *ServerOptions) GetRawCleanupEmptyChildNamespaces() *bool {
+func (s *ServerOptions) GetRawCleanupEmptyChildNamespaces() types.Optional[bool] {
 	return s.cleanupEmptyChildNamespaces
 }
 func (s *ServerOptions) CleanupEmptyChildNamespaces() bool {
@@ -223,5 +265,5 @@ func (s *ServerOptions) CleanupEmptyChildNamespaces() bool {
 		return false
 	}
 
-	return *s.cleanupEmptyChildNamespaces
+	return s.cleanupEmptyChildNamespaces.Get()
 }

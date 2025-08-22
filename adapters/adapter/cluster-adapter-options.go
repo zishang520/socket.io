@@ -2,31 +2,29 @@ package adapter
 
 import (
 	"time"
+
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 // ClusterAdapterOptionsInterface defines the interface for cluster adapter options.
 type (
 	ClusterAdapterOptionsInterface interface {
 		SetHeartbeatInterval(time.Duration)
-		GetRawHeartbeatInterval() *time.Duration
+		GetRawHeartbeatInterval() types.Optional[time.Duration]
 		HeartbeatInterval() time.Duration
 
 		SetHeartbeatTimeout(int64)
-		GetRawHeartbeatTimeout() *int64
+		GetRawHeartbeatTimeout() types.Optional[int64]
 		HeartbeatTimeout() int64
 	}
 
 	// ClusterAdapterOptions holds configuration for cluster adapter heartbeat and timeout.
 	ClusterAdapterOptions struct {
 		// The number of ms between two heartbeats.
-		//
-		// Default: 5_000 * time.Millisecond
-		heartbeatInterval *time.Duration
+		heartbeatInterval types.Optional[time.Duration]
 
 		// The number of ms without heartbeat before we consider a node down.
-		//
-		// Default: 10_000
-		heartbeatTimeout *int64
+		heartbeatTimeout types.Optional[int64]
 	}
 )
 
@@ -50,9 +48,9 @@ func (s *ClusterAdapterOptions) Assign(data ClusterAdapterOptionsInterface) Clus
 }
 
 func (s *ClusterAdapterOptions) SetHeartbeatInterval(heartbeatInterval time.Duration) {
-	s.heartbeatInterval = &heartbeatInterval
+	s.heartbeatInterval = types.NewSome(heartbeatInterval)
 }
-func (s *ClusterAdapterOptions) GetRawHeartbeatInterval() *time.Duration {
+func (s *ClusterAdapterOptions) GetRawHeartbeatInterval() types.Optional[time.Duration] {
 	return s.heartbeatInterval
 }
 func (s *ClusterAdapterOptions) HeartbeatInterval() time.Duration {
@@ -60,13 +58,13 @@ func (s *ClusterAdapterOptions) HeartbeatInterval() time.Duration {
 		return 0
 	}
 
-	return *s.heartbeatInterval
+	return s.heartbeatInterval.Get()
 }
 
 func (s *ClusterAdapterOptions) SetHeartbeatTimeout(heartbeatTimeout int64) {
-	s.heartbeatTimeout = &heartbeatTimeout
+	s.heartbeatTimeout = types.NewSome(heartbeatTimeout)
 }
-func (s *ClusterAdapterOptions) GetRawHeartbeatTimeout() *int64 {
+func (s *ClusterAdapterOptions) GetRawHeartbeatTimeout() types.Optional[int64] {
 	return s.heartbeatTimeout
 }
 func (s *ClusterAdapterOptions) HeartbeatTimeout() int64 {
@@ -74,5 +72,5 @@ func (s *ClusterAdapterOptions) HeartbeatTimeout() int64 {
 		return 0
 	}
 
-	return *s.heartbeatTimeout
+	return s.heartbeatTimeout.Get()
 }

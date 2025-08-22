@@ -3,17 +3,18 @@ package emitter
 
 import (
 	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 type (
 	// EmitterOptionsInterface defines the interface for configuring emitter options.
 	EmitterOptionsInterface interface {
 		SetKey(string)
-		GetRawKey() *string
+		GetRawKey() types.Optional[string]
 		Key() string
 
 		SetParser(redis.Parser)
-		GetRawParser() redis.Parser
+		GetRawParser() types.Optional[redis.Parser]
 		Parser() redis.Parser
 	}
 
@@ -23,10 +24,10 @@ type (
 	// Parser: the parser used for encoding messages (default: msgpack).
 	EmitterOptions struct {
 		// key is the Redis key prefix.
-		key *string
+		key types.Optional[string]
 
 		// parser is the parser to use for encoding messages sent to Redis.
-		parser redis.Parser
+		parser types.Optional[redis.Parser]
 	}
 )
 
@@ -53,34 +54,30 @@ func (s *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 
 // SetKey sets the Redis key prefix.
 func (s *EmitterOptions) SetKey(key string) {
-	s.key = &key
+	s.key = types.NewSome(key)
 }
-
-// GetRawKey returns the raw Redis key pointer.
-func (s *EmitterOptions) GetRawKey() *string {
+func (s *EmitterOptions) GetRawKey() types.Optional[string] {
 	return s.key
 }
-
-// Key returns the Redis key prefix. Default is "socket.io".
 func (s *EmitterOptions) Key() string {
 	if s.key == nil {
 		return ""
 	}
 
-	return *s.key
+	return s.key.Get()
 }
 
 // SetParser sets the parser for encoding messages.
 func (s *EmitterOptions) SetParser(parser redis.Parser) {
-	s.parser = parser
+	s.parser = types.NewSome(parser)
 }
-
-// GetRawParser returns the raw parser.
-func (s *EmitterOptions) GetRawParser() redis.Parser {
+func (s *EmitterOptions) GetRawParser() types.Optional[redis.Parser] {
 	return s.parser
 }
-
-// Parser returns the parser for encoding messages. Default is msgpack.
 func (s *EmitterOptions) Parser() redis.Parser {
-	return s.parser
+	if s.parser == nil {
+		return nil
+	}
+
+	return s.parser.Get()
 }

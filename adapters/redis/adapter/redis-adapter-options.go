@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/adapters/redis/v3/emitter"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 type (
@@ -13,11 +14,11 @@ type (
 		emitter.EmitterOptionsInterface
 
 		SetRequestsTimeout(time.Duration)
-		GetRawRequestsTimeout() *time.Duration
+		GetRawRequestsTimeout() types.Optional[time.Duration]
 		RequestsTimeout() time.Duration
 
 		SetPublishOnSpecificResponseChannel(bool)
-		GetRawPublishOnSpecificResponseChannel() *bool
+		GetRawPublishOnSpecificResponseChannel() types.Optional[bool]
 		PublishOnSpecificResponseChannel() bool
 	}
 
@@ -29,10 +30,10 @@ type (
 		emitter.EmitterOptions
 
 		// requestsTimeout is the duration to wait for responses to a request.
-		requestsTimeout *time.Duration
+		requestsTimeout types.Optional[time.Duration]
 
 		// publishOnSpecificResponseChannel determines if responses are published to a node-specific channel.
-		publishOnSpecificResponseChannel *bool
+		publishOnSpecificResponseChannel types.Optional[bool]
 	}
 )
 
@@ -61,38 +62,30 @@ func (s *RedisAdapterOptions) Assign(data RedisAdapterOptionsInterface) RedisAda
 
 // SetRequestsTimeout sets the requests timeout duration.
 func (s *RedisAdapterOptions) SetRequestsTimeout(requestsTimeout time.Duration) {
-	s.requestsTimeout = &requestsTimeout
+	s.requestsTimeout = types.NewSome(requestsTimeout)
 }
-
-// GetRawRequestsTimeout returns the raw requests timeout pointer.
-func (s *RedisAdapterOptions) GetRawRequestsTimeout() *time.Duration {
+func (s *RedisAdapterOptions) GetRawRequestsTimeout() types.Optional[time.Duration] {
 	return s.requestsTimeout
 }
-
-// RequestsTimeout returns the requests timeout duration.
 func (s *RedisAdapterOptions) RequestsTimeout() time.Duration {
 	if s.requestsTimeout == nil {
 		return 0
 	}
 
-	return *s.requestsTimeout
+	return s.requestsTimeout.Get()
 }
 
 // SetPublishOnSpecificResponseChannel sets whether to publish responses to a node-specific channel.
 func (s *RedisAdapterOptions) SetPublishOnSpecificResponseChannel(publishOnSpecificResponseChannel bool) {
-	s.publishOnSpecificResponseChannel = &publishOnSpecificResponseChannel
+	s.publishOnSpecificResponseChannel = types.NewSome(publishOnSpecificResponseChannel)
 }
-
-// GetRawPublishOnSpecificResponseChannel returns the raw publishOnSpecificResponseChannel pointer.
-func (s *RedisAdapterOptions) GetRawPublishOnSpecificResponseChannel() *bool {
+func (s *RedisAdapterOptions) GetRawPublishOnSpecificResponseChannel() types.Optional[bool] {
 	return s.publishOnSpecificResponseChannel
 }
-
-// PublishOnSpecificResponseChannel returns whether responses are published to a node-specific channel.
 func (s *RedisAdapterOptions) PublishOnSpecificResponseChannel() bool {
 	if s.publishOnSpecificResponseChannel == nil {
 		return false
 	}
 
-	return *s.publishOnSpecificResponseChannel
+	return s.publishOnSpecificResponseChannel.Get()
 }

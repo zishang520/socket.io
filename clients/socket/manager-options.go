@@ -5,6 +5,7 @@ import (
 
 	"github.com/zishang520/socket.io/clients/engine/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 // ManagerOptionsInterface defines the configuration interface for a Socket.IO Manager.
@@ -17,66 +18,66 @@ type (
 	ManagerOptionsInterface interface {
 		EngineOptionsInterface
 
-		GetRawForceNew() *bool
-		ForceNew() bool
 		SetForceNew(bool)
+		GetRawForceNew() types.Optional[bool]
+		ForceNew() bool
 
-		GetRawMultiplex() *bool
-		Multiplex() bool
 		SetMultiplex(bool)
+		GetRawMultiplex() types.Optional[bool]
+		Multiplex() bool
 
-		GetRawPath() *string
-		Path() string
 		SetPath(string)
+		GetRawPath() types.Optional[string]
+		Path() string
 
-		GetRawReconnection() *bool
-		Reconnection() bool
 		SetReconnection(bool)
+		GetRawReconnection() types.Optional[bool]
+		Reconnection() bool
 
-		GetRawReconnectionAttempts() *float64
-		ReconnectionAttempts() float64
 		SetReconnectionAttempts(float64)
+		GetRawReconnectionAttempts() types.Optional[float64]
+		ReconnectionAttempts() float64
 
-		GetRawReconnectionDelay() *float64
-		ReconnectionDelay() float64
 		SetReconnectionDelay(float64)
+		GetRawReconnectionDelay() types.Optional[float64]
+		ReconnectionDelay() float64
 
-		GetRawReconnectionDelayMax() *float64
-		ReconnectionDelayMax() float64
 		SetReconnectionDelayMax(float64)
+		GetRawReconnectionDelayMax() types.Optional[float64]
+		ReconnectionDelayMax() float64
 
-		GetRawRandomizationFactor() *float64
-		RandomizationFactor() float64
 		SetRandomizationFactor(float64)
+		GetRawRandomizationFactor() types.Optional[float64]
+		RandomizationFactor() float64
 
-		GetRawTimeout() *time.Duration
-		Timeout() time.Duration
 		SetTimeout(time.Duration)
+		GetRawTimeout() types.Optional[time.Duration]
+		Timeout() time.Duration
 
-		GetRawAutoConnect() *bool
-		AutoConnect() bool
 		SetAutoConnect(bool)
+		GetRawAutoConnect() types.Optional[bool]
+		AutoConnect() bool
 
-		GetRawParser() parser.Parser
-		Parser() parser.Parser
 		SetParser(parser.Parser)
+		GetRawParser() types.Optional[parser.Parser]
+		Parser() parser.Parser
 	}
 
 	// ManagerOptions holds configuration for a Socket.IO Manager instance.
 	ManagerOptions struct {
 		EngineOptions
 
-		forceNew             *bool
-		multiplex            *bool
-		path                 *string
-		reconnection         *bool
-		reconnectionAttempts *float64
-		reconnectionDelay    *float64
-		reconnectionDelayMax *float64
-		randomizationFactor  *float64
-		timeout              *time.Duration
-		autoConnect          *bool
-		parser               parser.Parser
+		forceNew             types.Optional[bool]
+		multiplex            types.Optional[bool]
+		path                 types.Optional[string]
+		reconnection         types.Optional[bool]
+		reconnectionAttempts types.Optional[float64]
+		reconnectionDelay    types.Optional[float64]
+		reconnectionDelayMax types.Optional[float64]
+		randomizationFactor  types.Optional[float64]
+		timeout              types.Optional[time.Duration]
+		autoConnect          types.Optional[bool]
+		parser               types.Optional[parser.Parser]
 	}
 )
 
@@ -131,7 +132,10 @@ func (s *ManagerOptions) Assign(data ManagerOptionsInterface) ManagerOptionsInte
 	return s
 }
 
-func (s *ManagerOptions) GetRawForceNew() *bool {
+func (s *ManagerOptions) SetForceNew(forceNew bool) {
+	s.forceNew = types.NewSome(forceNew)
+}
+func (s *ManagerOptions) GetRawForceNew() types.Optional[bool] {
 	return s.forceNew
 }
 func (s *ManagerOptions) ForceNew() bool {
@@ -139,13 +143,13 @@ func (s *ManagerOptions) ForceNew() bool {
 		return false
 	}
 
-	return *s.forceNew
-}
-func (s *ManagerOptions) SetForceNew(forceNew bool) {
-	s.forceNew = &forceNew
+	return s.forceNew.Get()
 }
 
-func (s *ManagerOptions) GetRawMultiplex() *bool {
+func (s *ManagerOptions) SetMultiplex(multiplex bool) {
+	s.multiplex = types.NewSome(multiplex)
+}
+func (s *ManagerOptions) GetRawMultiplex() types.Optional[bool] {
 	return s.multiplex
 }
 func (s *ManagerOptions) Multiplex() bool {
@@ -153,13 +157,13 @@ func (s *ManagerOptions) Multiplex() bool {
 		return false
 	}
 
-	return *s.multiplex
-}
-func (s *ManagerOptions) SetMultiplex(multiplex bool) {
-	s.multiplex = &multiplex
+	return s.multiplex.Get()
 }
 
-func (s *ManagerOptions) GetRawPath() *string {
+func (s *ManagerOptions) SetPath(path string) {
+	s.path = types.NewSome(path)
+}
+func (s *ManagerOptions) GetRawPath() types.Optional[string] {
 	return s.path
 }
 func (s *ManagerOptions) Path() string {
@@ -167,13 +171,13 @@ func (s *ManagerOptions) Path() string {
 		return ""
 	}
 
-	return *s.path
-}
-func (s *ManagerOptions) SetPath(path string) {
-	s.path = &path
+	return s.path.Get()
 }
 
-func (s *ManagerOptions) GetRawReconnection() *bool {
+func (s *ManagerOptions) SetReconnection(reconnection bool) {
+	s.reconnection = types.NewSome(reconnection)
+}
+func (s *ManagerOptions) GetRawReconnection() types.Optional[bool] {
 	return s.reconnection
 }
 func (s *ManagerOptions) Reconnection() bool {
@@ -181,13 +185,13 @@ func (s *ManagerOptions) Reconnection() bool {
 		return false
 	}
 
-	return *s.reconnection
-}
-func (s *ManagerOptions) SetReconnection(reconnection bool) {
-	s.reconnection = &reconnection
+	return s.reconnection.Get()
 }
 
-func (s *ManagerOptions) GetRawReconnectionAttempts() *float64 {
+func (s *ManagerOptions) SetReconnectionAttempts(reconnectionAttempts float64) {
+	s.reconnectionAttempts = types.NewSome(reconnectionAttempts)
+}
+func (s *ManagerOptions) GetRawReconnectionAttempts() types.Optional[float64] {
 	return s.reconnectionAttempts
 }
 func (s *ManagerOptions) ReconnectionAttempts() float64 {
@@ -195,13 +199,13 @@ func (s *ManagerOptions) ReconnectionAttempts() float64 {
 		return 0
 	}
 
-	return *s.reconnectionAttempts
-}
-func (s *ManagerOptions) SetReconnectionAttempts(reconnectionAttempts float64) {
-	s.reconnectionAttempts = &reconnectionAttempts
+	return s.reconnectionAttempts.Get()
 }
 
-func (s *ManagerOptions) GetRawReconnectionDelay() *float64 {
+func (s *ManagerOptions) SetReconnectionDelay(reconnectionDelay float64) {
+	s.reconnectionDelay = types.NewSome(reconnectionDelay)
+}
+func (s *ManagerOptions) GetRawReconnectionDelay() types.Optional[float64] {
 	return s.reconnectionDelay
 }
 func (s *ManagerOptions) ReconnectionDelay() float64 {
@@ -209,13 +213,13 @@ func (s *ManagerOptions) ReconnectionDelay() float64 {
 		return 0
 	}
 
-	return *s.reconnectionDelay
-}
-func (s *ManagerOptions) SetReconnectionDelay(reconnectionDelay float64) {
-	s.reconnectionDelay = &reconnectionDelay
+	return s.reconnectionDelay.Get()
 }
 
-func (s *ManagerOptions) GetRawReconnectionDelayMax() *float64 {
+func (s *ManagerOptions) SetReconnectionDelayMax(reconnectionDelayMax float64) {
+	s.reconnectionDelayMax = types.NewSome(reconnectionDelayMax)
+}
+func (s *ManagerOptions) GetRawReconnectionDelayMax() types.Optional[float64] {
 	return s.reconnectionDelayMax
 }
 func (s *ManagerOptions) ReconnectionDelayMax() float64 {
@@ -223,13 +227,13 @@ func (s *ManagerOptions) ReconnectionDelayMax() float64 {
 		return 0
 	}
 
-	return *s.reconnectionDelayMax
-}
-func (s *ManagerOptions) SetReconnectionDelayMax(reconnectionDelayMax float64) {
-	s.reconnectionDelayMax = &reconnectionDelayMax
+	return s.reconnectionDelayMax.Get()
 }
 
-func (s *ManagerOptions) GetRawRandomizationFactor() *float64 {
+func (s *ManagerOptions) SetRandomizationFactor(randomizationFactor float64) {
+	s.randomizationFactor = types.NewSome(randomizationFactor)
+}
+func (s *ManagerOptions) GetRawRandomizationFactor() types.Optional[float64] {
 	return s.randomizationFactor
 }
 func (s *ManagerOptions) RandomizationFactor() float64 {
@@ -237,13 +241,13 @@ func (s *ManagerOptions) RandomizationFactor() float64 {
 		return 0
 	}
 
-	return *s.randomizationFactor
-}
-func (s *ManagerOptions) SetRandomizationFactor(randomizationFactor float64) {
-	s.randomizationFactor = &randomizationFactor
+	return s.randomizationFactor.Get()
 }
 
-func (s *ManagerOptions) GetRawTimeout() *time.Duration {
+func (s *ManagerOptions) SetTimeout(timeout time.Duration) {
+	s.timeout = types.NewSome(timeout)
+}
+func (s *ManagerOptions) GetRawTimeout() types.Optional[time.Duration] {
 	return s.timeout
 }
 func (s *ManagerOptions) Timeout() time.Duration {
@@ -251,13 +255,13 @@ func (s *ManagerOptions) Timeout() time.Duration {
 		return 0
 	}
 
-	return *s.timeout
-}
-func (s *ManagerOptions) SetTimeout(timeout time.Duration) {
-	s.timeout = &timeout
+	return s.timeout.Get()
 }
 
-func (s *ManagerOptions) GetRawAutoConnect() *bool {
+func (s *ManagerOptions) SetAutoConnect(autoConnect bool) {
+	s.autoConnect = types.NewSome(autoConnect)
+}
+func (s *ManagerOptions) GetRawAutoConnect() types.Optional[bool] {
 	return s.autoConnect
 }
 func (s *ManagerOptions) AutoConnect() bool {
@@ -265,18 +269,19 @@ func (s *ManagerOptions) AutoConnect() bool {
 		return false
 	}
 
-	return *s.autoConnect
-}
-func (s *ManagerOptions) SetAutoConnect(autoConnect bool) {
-	s.autoConnect = &autoConnect
+	return s.autoConnect.Get()
 }
 
-func (s *ManagerOptions) GetRawParser() parser.Parser {
+func (s *ManagerOptions) SetParser(parser parser.Parser) {
+	s.parser = types.NewSome(parser)
+}
+func (s *ManagerOptions) GetRawParser() types.Optional[parser.Parser] {
 	return s.parser
 }
 func (s *ManagerOptions) Parser() parser.Parser {
-	return s.parser
-}
-func (s *ManagerOptions) SetParser(parser parser.Parser) {
-	s.parser = parser
+	if s.parser == nil {
+		return nil
+	}
+
+	return s.parser.Get()
 }

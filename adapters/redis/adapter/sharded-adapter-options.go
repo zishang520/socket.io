@@ -1,17 +1,19 @@
 // Package adapter provides configuration options for the Redis sharded Pub/Sub adapter for Socket.IO.
 package adapter
 
+import "github.com/zishang520/socket.io/v3/pkg/types"
+
 type (
 	subscriptionMode string
 
 	// ShardedRedisAdapterOptionsInterface defines the interface for configuring ShardedRedisAdapterOptions.
 	ShardedRedisAdapterOptionsInterface interface {
 		SetChannelPrefix(string)
-		GetRawChannelPrefix() *string
+		GetRawChannelPrefix() types.Optional[string]
 		ChannelPrefix() string
 
 		SetSubscriptionMode(subscriptionMode)
-		GetRawSubscriptionMode() *subscriptionMode
+		GetRawSubscriptionMode() types.Optional[subscriptionMode]
 		SubscriptionMode() subscriptionMode
 	}
 
@@ -21,10 +23,10 @@ type (
 	// subscriptionMode: impacts the number of Redis Pub/Sub channels (default: DynamicSubscriptionMode).
 	ShardedRedisAdapterOptions struct {
 		// channelPrefix is the prefix for the Redis Pub/Sub channels.
-		channelPrefix *string
+		channelPrefix types.Optional[string]
 
 		// subscriptionMode determines the subscription mode for channel management.
-		subscriptionMode *subscriptionMode
+		subscriptionMode types.Optional[subscriptionMode]
 	}
 )
 
@@ -60,38 +62,30 @@ func (s *ShardedRedisAdapterOptions) Assign(data ShardedRedisAdapterOptionsInter
 
 // SetChannelPrefix sets the channel prefix.
 func (s *ShardedRedisAdapterOptions) SetChannelPrefix(channelPrefix string) {
-	s.channelPrefix = &channelPrefix
+	s.channelPrefix = types.NewSome(channelPrefix)
 }
-
-// GetRawChannelPrefix returns the raw channel prefix pointer.
-func (s *ShardedRedisAdapterOptions) GetRawChannelPrefix() *string {
+func (s *ShardedRedisAdapterOptions) GetRawChannelPrefix() types.Optional[string] {
 	return s.channelPrefix
 }
-
-// ChannelPrefix returns the channel prefix.
 func (s *ShardedRedisAdapterOptions) ChannelPrefix() string {
 	if s.channelPrefix == nil {
 		return ""
 	}
 
-	return *s.channelPrefix
+	return s.channelPrefix.Get()
 }
 
 // SetSubscriptionMode sets the subscription mode.
 func (s *ShardedRedisAdapterOptions) SetSubscriptionMode(subscriptionMode subscriptionMode) {
-	s.subscriptionMode = &subscriptionMode
+	s.subscriptionMode = types.NewSome(subscriptionMode)
 }
-
-// GetRawSubscriptionMode returns the raw subscription mode pointer.
-func (s *ShardedRedisAdapterOptions) GetRawSubscriptionMode() *subscriptionMode {
+func (s *ShardedRedisAdapterOptions) GetRawSubscriptionMode() types.Optional[subscriptionMode] {
 	return s.subscriptionMode
 }
-
-// SubscriptionMode returns the subscription mode.
 func (s *ShardedRedisAdapterOptions) SubscriptionMode() subscriptionMode {
 	if s.subscriptionMode == nil {
 		return ""
 	}
 
-	return *s.subscriptionMode
+	return s.subscriptionMode.Get()
 }

@@ -13,17 +13,16 @@ type (
 )
 
 func DefaultOptions() *Options {
-	a := &Options{}
-	return a
+	return &Options{}
 }
 
-func (a *Options) Assign(data OptionsInterface) OptionsInterface {
+func (o *Options) Assign(data OptionsInterface) OptionsInterface {
 	if data == nil {
-		return a
+		return o
 	}
 
-	a.AttachOptions.Assign(data)
-	a.ServerOptions.Assign(data)
+	o.AttachOptions.Assign(data)
+	o.ServerOptions.Assign(data)
 
-	return a
+	return o
 }
