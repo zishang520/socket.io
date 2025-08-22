@@ -8,6 +8,10 @@ A modern, idiomatic Go implementation of [Socket.IO](https://socket.io/), design
 
 ---
 
+## ⬆️ Upgrade Guide
+
+If you are upgrading from **v1** or **v2** of this library, please refer to the [Upgrade Guide](docs/UPGRADE.md) for detailed instructions, including package replacements and migration steps.
+
 ## 🚀 Getting Started
 
 Check out the [official documentation](https://github.com/zishang520/socket.io/tree/v3/docs) to get started, including examples, API references, and guides.
