@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -64,6 +65,10 @@ func init() {
 	setupNetworkHandling()
 }
 
+func isTest() bool {
+	return len(os.Args) > 0 && strings.HasSuffix(strings.TrimSuffix(os.Args[0], ".exe"), ".test")
+}
+
 // setupSignalHandling configures handlers for system signals to ensure
 // graceful shutdown of the Engine.IO client. It listens for:
 // - os.Interrupt (Ctrl+C)
@@ -71,12 +76,17 @@ func init() {
 // - syscall.SIGTERM (termination signal)
 // - syscall.SIGQUIT (quit signal)
 func setupSignalHandling() {
+	if isTest() {
+		return
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	go func() {
 		defer stop()
 
 		<-ctx.Done()
+
 		events.Emit(EventBeforeUnload)
 	}()
 }

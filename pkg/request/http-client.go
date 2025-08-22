@@ -139,6 +139,13 @@ func (c *HTTPClient) Options(url string, options *Options) (*Response, error) {
 
 func (c *HTTPClient) Close() error {
 	if c.isDone.CompareAndSwap(false, true) {
+		// Close idle HTTP connections to prevent goroutine leaks
+		if httpClient := c.client.Client(); httpClient != nil {
+			if transport, ok := httpClient.Transport.(*http.Transport); ok {
+				transport.CloseIdleConnections()
+			}
+		}
+
 		if transport, ok := c.client.Transport().(io.Closer); ok {
 			defer transport.Close()
 		}
