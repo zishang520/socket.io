@@ -481,7 +481,18 @@ func (s *Socket) _onpacket(packet *parser.Packet) {
 //
 // Param:  packet - packet struct
 func (s *Socket) onevent(packet *parser.Packet) {
-	args := packet.Data.([]any)
+	var args []any
+	switch v := packet.Data.(type) {
+	case []any:
+		// Already a slice
+		args = v
+	case any:
+		// Wrap single value into a slice
+		args = []any{v}
+	default:
+		// Handle unexpected types
+		args = nil
+	}
 	socket_log.Debug("emitting event %v", args)
 	if nil != packet.Id {
 		socket_log.Debug("attaching ack callback to event")
@@ -689,7 +700,9 @@ func (s *Socket) dispatch(event []any) {
 				return
 			}
 			if s.Connected() {
-				s.EmitUntyped(event[0].(string), event[1:]...)
+				if len(event) > 0 {
+					s.EmitUntyped(event[0].(string), event[1:]...)
+				}
 			} else {
 				socket_log.Debug("ignore packet received after disconnection")
 			}
