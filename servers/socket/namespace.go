@@ -328,7 +328,7 @@ func (n *namespace) _createSocket(client *Client, auth any) *Socket {
 	if _auth, ok := parseSessionData(auth); ok {
 		sessionId, has_sessionId := _auth.GetPid()
 		offset, has_offset := _auth.GetOffset()
-		if has_sessionId && has_offset && n.server.Opts().GetRawConnectionStateRecovery() != nil {
+		if has_sessionId && has_offset && n.server.Opts().ConnectionStateRecovery() != nil {
 			session, err := n.Proto().Adapter().RestoreSession(PrivateSessionId(sessionId), offset)
 			if err != nil {
 				namespace_log.Debug("error while restoring session: %v", err)

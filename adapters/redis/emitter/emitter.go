@@ -58,7 +58,7 @@ func (e *Emitter) Construct(redisClient *redis.RedisClient, opts *EmitterOptions
 		e.opts.SetKey("socket.io")
 	}
 
-	if e.opts.GetRawParser() == nil {
+	if e.opts.Parser() == nil {
 		e.opts.SetParser(utils.MsgPack())
 	}
 

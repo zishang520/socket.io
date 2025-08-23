@@ -171,10 +171,11 @@ func (s *Socket) SendBuffer() *types.Slice[*Packet] {
 func (s *Socket) Construct(io *Manager, nsp string, opts SocketOptionsInterface) {
 	s.io = io
 	s.nsp = nsp
-	if opts != nil && opts.GetRawAuth() != nil {
-		s.auth = opts.Auth()
-	}
 	s._opts = DefaultSocketOptions().Assign(opts)
+	if auth := s._opts.Auth(); auth != nil {
+		s.auth = auth
+	}
+
 	if s.io._autoConnect {
 		s.Open()
 	}

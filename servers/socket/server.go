@@ -132,15 +132,15 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 		s.SetConnectTimeout(45_000 * time.Millisecond)
 	}
 	s.SetServeClient(opts.ServeClient())
-	if opts.GetRawParser() != nil {
-		s._parser = opts.Parser()
+	if _parser := opts.Parser(); _parser != nil {
+		s._parser = _parser
 	} else {
 		s._parser = parser.NewParser()
 	}
 	s.encoder = s._parser.NewEncoder()
 	s.opts = opts
-	if opts.GetRawAdapter() != nil {
-		s.SetAdapter(opts.Adapter())
+	if adapter := opts.Adapter(); adapter != nil {
+		s.SetAdapter(adapter)
 	} else {
 		if connectionStateRecovery := opts.ConnectionStateRecovery(); connectionStateRecovery != nil {
 			if connectionStateRecovery.GetRawMaxDisconnectionDuration() == nil {
@@ -162,8 +162,8 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 		s.Attach(srv, nil)
 	}
 
-	if s.opts.GetRawCors() != nil {
-		s._corsMiddleware = types.MiddlewareWrapper(s.opts.Cors())
+	if cors := s.opts.Cors(); cors != nil {
+		s._corsMiddleware = types.MiddlewareWrapper(cors)
 	}
 }
 

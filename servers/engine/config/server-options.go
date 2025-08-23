@@ -96,8 +96,11 @@ type (
 		// parameters of the http compression for the polling transports (see zlib api docs). Set to false to disable.
 		httpCompression types.Optional[*types.HttpCompression]
 
-		// wsEngine is not supported
-		// wsEngine
+		// TODO: Implement pluggable WebSocket engine support.
+		// The default engine will be gorilla/websocket. Future engines to support include
+		// coder/websocket, gobwas/ws, coder/websocket, etc.
+		// Field type: types.Optional[WsEngine]
+		// wsEngine types.Optional[WsEngine]
 
 		// an optional packet which will be concatenated to the handshake packet emitted by Engine.IO.
 		initialPacket types.Optional[io.Reader]

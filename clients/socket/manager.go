@@ -164,15 +164,12 @@ func (m *Manager) Construct(uri string, opts ManagerOptionsInterface) {
 
 	m._readyState.Store(ReadyStateClosed)
 	m.uri = uri
-	if opts.GetRawParser() != nil {
-		_parser := opts.Parser()
-		m.encoder = _parser.NewEncoder()
-		m.decoder = _parser.NewDecoder()
-	} else {
-		_parser := parser.NewParser()
-		m.encoder = _parser.NewEncoder()
-		m.decoder = _parser.NewDecoder()
+	_parser := opts.Parser()
+	if _parser == nil {
+		_parser = parser.NewParser()
 	}
+	m.encoder = _parser.NewEncoder()
+	m.decoder = _parser.NewDecoder()
 	if opts.GetRawAutoConnect() != nil {
 		m._autoConnect = opts.AutoConnect()
 	} else {

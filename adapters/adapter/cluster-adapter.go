@@ -308,7 +308,7 @@ func (c *clusterAdapter) Broadcast(packet *parser.Packet, opts *socket.Broadcast
 // Adds an offset at the end of the data array in order to allow the client to receive any missed packets when it
 // reconnects after a temporary disconnection.
 func (c *clusterAdapter) addOffsetIfNecessary(packet *parser.Packet, opts *socket.BroadcastOptions, offset Offset) {
-	if c.Nsp().Server().Opts().GetRawConnectionStateRecovery() == nil {
+	if c.Nsp().Server().Opts().ConnectionStateRecovery() == nil {
 		return
 	}
 

@@ -141,7 +141,7 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 		r.requestsTimeout = 5_000 * time.Millisecond
 	}
 	r.publishOnSpecificResponseChannel = r.opts.PublishOnSpecificResponseChannel()
-	if r.opts.GetRawParser() != nil {
+	if r.opts.Parser() != nil {
 		r.parser = r.opts.Parser()
 	} else {
 		r.parser = utils.MsgPack()

@@ -86,7 +86,7 @@ func (s *socket) Construct(uri string, opts SocketOptionsInterface) {
 		opts = DefaultSocketOptions()
 	}
 
-	if opts.GetRawTransports() == nil {
+	if opts.Transports() == nil {
 		opts.SetTransports(types.NewSet[TransportCtor](&PollingBuilder{}, &WebSocketBuilder{}, &WebTransportBuilder{}))
 	}
 

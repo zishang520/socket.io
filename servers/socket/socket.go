@@ -234,7 +234,7 @@ func (s *Socket) Construct(nsp Namespace, client *Client, auth any, previousSess
 			id, _ := utils.Base64Id().GenerateId()
 			s.id = SocketId(id) // don't reuse the Engine.IO id because it's sensitive information
 		}
-		if s.server.Opts().GetRawConnectionStateRecovery() != nil {
+		if s.server.Opts().ConnectionStateRecovery() != nil {
 			id, _ := utils.Base64Id().GenerateId()
 			s.pid = PrivateSessionId(id)
 		}
@@ -297,7 +297,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	flags := *s.flags.Load()
 	s.flags.Store(&BroadcastFlags{})
 
-	if s.nsp.Server().Opts().GetRawConnectionStateRecovery() != nil {
+	if s.nsp.Server().Opts().ConnectionStateRecovery() != nil {
 		// this ensures the packet is stored and can be transmitted upon reconnection
 		s.adapter.Broadcast(packet, &BroadcastOptions{
 			Rooms:  types.NewSet(Room(s.id)),
@@ -552,7 +552,7 @@ func (s *Socket) _onclose(args ...any) *Socket {
 	socket_log.Debug("closing socket - reason %v", args[0])
 	s.EmitReserved("disconnecting", args...)
 
-	if s.server.Opts().GetRawConnectionStateRecovery() != nil && RECOVERABLE_DISCONNECT_REASONS.Has(args[0].(string)) {
+	if s.server.Opts().ConnectionStateRecovery() != nil && RECOVERABLE_DISCONNECT_REASONS.Has(args[0].(string)) {
 		socket_log.Debug("connection state recovery is enabled for sid %s", s.id)
 		s.adapter.PersistSession(&SessionToPersist{
 			Sid:   s.id,

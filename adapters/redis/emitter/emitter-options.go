@@ -45,7 +45,7 @@ func (s *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 	if data.GetRawKey() != nil {
 		s.SetKey(data.Key())
 	}
-	if data.GetRawParser() != nil {
+	if data.Parser() != nil {
 		s.SetParser(data.Parser())
 	}
 

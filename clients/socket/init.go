@@ -72,7 +72,7 @@ func lookup(uri string, opts OptionsInterface) (*Socket, error) {
 		}
 		io = manager
 	}
-	if opts.GetRawQuery() == nil && parsed.RawQuery != "" {
+	if opts.Query() == nil && parsed.RawQuery != "" {
 		opts.SetQuery(parsed.Query())
 	}
 
