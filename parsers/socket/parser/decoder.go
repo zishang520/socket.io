@@ -211,18 +211,20 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 		}
 	}
 
+	var payload any
+
 	// look up json data
 	if str.Len() > 0 {
-		var payload any
 		if json.NewDecoder(str).Decode(&payload) != nil {
 			return nil, errors.New("invalid payload")
 		}
-		if isPayloadValid(packet.Type, payload) {
-			packet.Data = payload
-		} else {
-			return nil, errors.New("invalid payload")
-		}
 	}
+
+	if !isPayloadValid(packet.Type, payload) {
+		return nil, errors.New("invalid payload")
+	}
+
+	packet.Data = payload
 
 	return packet, nil
 }
