@@ -750,7 +750,7 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				RequestId: requestId,
 				Opts:      adapter.EncodeOptions(opts),
 			})
-			if err == nil {
+			if err != nil {
 				cb(nil, err)
 				return
 			}
