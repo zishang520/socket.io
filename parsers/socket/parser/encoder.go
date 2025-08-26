@@ -61,7 +61,7 @@ func _encodeData(data any) any {
 // Encode packet as string.
 func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 	// first is type
-	str := types.NewStringBuffer([]byte{byte(packet.Type)})
+	str := types.NewStringBuffer([]byte{byte(packet.Type) + '0'})
 	// attachments if we have them
 	if (packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK) && packet.Attachments != nil {
 		str.WriteString(strconv.FormatUint(*packet.Attachments, 10))

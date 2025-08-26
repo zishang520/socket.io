@@ -131,7 +131,7 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 	if err != nil {
 		return nil, errors.New("invalid payload")
 	}
-	packet.Type = PacketType(msgType)
+	packet.Type = PacketType(int(msgType) - '0')
 	if !packet.Type.Valid() {
 		return nil, errors.New(fmt.Sprintf("unknown packet type %d", packet.Type))
 	}

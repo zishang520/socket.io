@@ -1,7 +1,7 @@
 package parser
 
 type (
-	PacketType byte
+	PacketType int
 
 	Packet struct {
 		Type        PacketType `json:"type" msgpack:"type"`
@@ -13,17 +13,17 @@ type (
 )
 
 const (
-	CONNECT       PacketType = '0'
-	DISCONNECT    PacketType = '1'
-	EVENT         PacketType = '2'
-	ACK           PacketType = '3'
-	CONNECT_ERROR PacketType = '4'
-	BINARY_EVENT  PacketType = '5'
-	BINARY_ACK    PacketType = '6'
+	CONNECT PacketType = iota
+	DISCONNECT
+	EVENT
+	ACK
+	CONNECT_ERROR
+	BINARY_EVENT
+	BINARY_ACK
 )
 
 func (t PacketType) Valid() bool {
-	return t >= '0' && t <= '6'
+	return t >= 0 && t <= 6
 }
 
 func (t PacketType) String() string {

@@ -2,6 +2,9 @@
 package redis
 
 import (
+	"encoding/json"
+	"fmt"
+
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
@@ -10,9 +13,11 @@ import (
 type (
 	// RedisPacket represents a packet to be sent via Redis for broadcasting.
 	RedisPacket struct {
-		Uid    adapter.ServerId       `json:"uid,omitempty" msgpack:"uid,omitempty"`
-		Packet *parser.Packet         `json:"packet,omitempty" msgpack:"packet,omitempty"`
-		Opts   *adapter.PacketOptions `json:"opts,omitempty" msgpack:"opts,omitempty"`
+		_msgpack struct{} `json:"-" msgpack:",as_array"`
+
+		Uid    adapter.ServerId       `json:"-"`
+		Packet *parser.Packet         `json:"-"`
+		Opts   *adapter.PacketOptions `json:"-"`
 	}
 
 	// RedisRequest represents a request message sent between servers via Redis.
@@ -46,3 +51,55 @@ type (
 		Decode([]byte, any) error
 	}
 )
+
+// MarshalJSON implements the json.Marshaler interface for RedisPacket.
+// It serializes the RedisPacket as a JSON array containing [Uid, Packet, Opts].
+func (r *RedisPacket) MarshalJSON() ([]byte, error) {
+	if r == nil {
+		return json.Marshal(nil)
+	}
+	return json.Marshal([]any{r.Uid, r.Packet, r.Opts})
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for RedisPacket.
+// It deserializes a JSON array back into the RedisPacket struct fields.
+func (r *RedisPacket) UnmarshalJSON(data []byte) error {
+	if r == nil {
+		return fmt.Errorf("cannot unmarshal into nil RedisPacket")
+	}
+
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return fmt.Errorf("failed to unmarshal RedisPacket array: %w", err)
+	}
+
+	// Validate minimum required fields
+	if len(arr) < 1 {
+		return fmt.Errorf("RedisPacket array must contain at least 1 element (Uid), got %d", len(arr))
+	}
+
+	// Unmarshal Uid (required)
+	if err := json.Unmarshal(arr[0], &r.Uid); err != nil {
+		return fmt.Errorf("failed to unmarshal RedisPacket Uid: %w", err)
+	}
+
+	// Unmarshal Packet (optional)
+	if len(arr) > 1 {
+		var p *parser.Packet
+		if err := json.Unmarshal(arr[1], &p); err != nil {
+			return fmt.Errorf("failed to unmarshal RedisPacket Packet: %w", err)
+		}
+		r.Packet = p
+	}
+
+	// Unmarshal Opts (optional)
+	if len(arr) > 2 {
+		var o *adapter.PacketOptions
+		if err := json.Unmarshal(arr[2], &o); err != nil {
+			return fmt.Errorf("failed to unmarshal RedisPacket Opts: %w", err)
+		}
+		r.Opts = o
+	}
+
+	return nil
+}
