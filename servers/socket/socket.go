@@ -26,24 +26,34 @@ type (
 
 	SocketMiddleware = func([]any, func(error))
 
+	// Handshake represents the initial connection information exchanged
+	// between the client and server during the handshake process.
 	Handshake struct {
-		// The headers sent as part of the handshake
-		Headers map[string][]string `json:"headers" msgpack:"headers"`
-		// The date of creation (as string)
+		// HTTP headers sent by the client (map[string][]string or map[string]string)
+		Headers any `json:"headers" msgpack:"headers"`
+
+		// Creation time as a human-readable string
 		Time string `json:"time" msgpack:"time"`
-		// The ip of the client
+
+		// Client's IP address
 		Address string `json:"address" msgpack:"address"`
-		// Whether the connection is cross-domain
+
+		// Indicates if the connection is cross-domain
 		Xdomain bool `json:"xdomain" msgpack:"xdomain"`
-		// Whether the connection is secure
+
+		// Indicates if the connection is established over TLS/HTTPS
 		Secure bool `json:"secure" msgpack:"secure"`
-		// The date of creation (as unix timestamp)
+
+		// Creation time as a Unix timestamp (seconds since epoch)
 		Issued int64 `json:"issued" msgpack:"issued"`
-		// The request URL string
+
+		// Full request URL
 		Url string `json:"url" msgpack:"url"`
-		// The query object
-		Query map[string][]string `json:"query" msgpack:"query"`
-		// The auth object
+
+		// Query parameters (map[string][]string or map[string]string)
+		Query any `json:"query" msgpack:"query"`
+
+		// Authentication data (map[string][]string or map[string]string)
 		Auth any `json:"auth" msgpack:"auth"`
 	}
 
@@ -251,7 +261,7 @@ func (s *Socket) Construct(nsp Namespace, client *Client, auth any, previousSess
 func (s *Socket) buildHandshake(auth any) *Handshake {
 	return &Handshake{
 		Headers: s.Request().Headers().All(),
-		Time:    time.Now().Format("2006-01-02 15:04:05"),
+		Time:    time.Now().Format(time.RFC3339),
 		Address: s.Conn().RemoteAddress(),
 		Xdomain: s.Request().Headers().Peek("Origin") != "",
 		Secure:  s.Request().Secure(),
