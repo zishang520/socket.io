@@ -233,7 +233,7 @@ func isPayloadValid(t PacketType, payload any) bool {
 	switch t {
 	case CONNECT:
 		_, ok := payload.(map[string]any)
-		return ok
+		return payload == nil || ok
 	case DISCONNECT:
 		return payload == nil
 	case CONNECT_ERROR:

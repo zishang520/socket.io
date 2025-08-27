@@ -596,7 +596,7 @@ func (s *Socket) onpacket(packet *parser.Packet) {
 //
 // packet: The packet.
 func (s *Socket) onevent(packet *parser.Packet) {
-	args := packet.Data.([]any)
+	args, _ := packet.Data.([]any)
 	socket_log.Debug("emitting event %v", args)
 
 	if nil != packet.Id {

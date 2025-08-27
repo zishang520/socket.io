@@ -491,7 +491,7 @@ func (s *Socket) _onpacket(packet *parser.Packet) {
 //
 // Param:  packet - packet struct
 func (s *Socket) onevent(packet *parser.Packet) {
-	args := packet.Data.([]any)
+	args, _ := packet.Data.([]any)
 	socket_log.Debug("emitting event %v", args)
 	if nil != packet.Id {
 		socket_log.Debug("attaching ack callback to event")
