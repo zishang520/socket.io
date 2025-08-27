@@ -53,7 +53,7 @@ type (
 		// Query parameters (map[string][]string or map[string]string)
 		Query any `json:"query" msgpack:"query"`
 
-		// Authentication data (map[string][]string or map[string]string)
+		// Authentication data map[string]any
 		Auth any `json:"auth" msgpack:"auth"`
 	}
 
