@@ -229,35 +229,51 @@ func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err e
 	return packet, nil
 }
 
-func isPayloadValid(t PacketType, payload any) bool {
-	switch t {
-	case CONNECT:
-		_, ok := payload.(map[string]any)
-		return payload == nil || ok
-	case DISCONNECT:
-		return payload == nil
-	case CONNECT_ERROR:
-		_, ok := payload.(map[string]any)
-		if !ok {
-			_, ok = payload.(string)
-		}
-		return ok
-	case EVENT, BINARY_EVENT:
-		data, ok := payload.([]any)
-		if ok && len(data) > 0 {
-			event, isString := data[0].(string)
-			return isString && !RESERVED_EVENTS.Has(event)
-		}
-	case ACK, BINARY_ACK:
-		_, ok := payload.([]any)
-		return ok
-	}
-	return false
-}
-
 // Deallocates a parser's resources
 func (d *decoder) Destroy() {
 	if reconstructor := d.reconstructor.Load(); reconstructor != nil {
 		reconstructor.finishedReconstruction()
 	}
+}
+
+func isPayloadValid(t PacketType, payload any) bool {
+	switch t {
+	case CONNECT:
+		return payload == nil || isStringMap(payload)
+	case DISCONNECT:
+		return payload == nil
+	case CONNECT_ERROR:
+		return isStringMap(payload) || isString(payload)
+	case EVENT, BINARY_EVENT:
+		return isValidEventPayload(payload)
+	case ACK, BINARY_ACK:
+		return isSlice(payload)
+	default:
+		return false
+	}
+}
+
+func isStringMap(payload any) bool {
+	_, ok := payload.(map[string]any)
+	return ok
+}
+
+func isString(payload any) bool {
+	_, ok := payload.(string)
+	return ok
+}
+
+func isSlice(payload any) bool {
+	_, ok := payload.([]any)
+	return ok
+}
+
+func isValidEventPayload(payload any) bool {
+	data, ok := payload.([]any)
+	if !ok || len(data) == 0 {
+		return false
+	}
+
+	event, isString := data[0].(string)
+	return isString && !RESERVED_EVENTS.Has(event)
 }
