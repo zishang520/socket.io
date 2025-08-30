@@ -29,8 +29,8 @@ type (
 	// Handshake represents the initial connection information exchanged
 	// between the client and server during the handshake process.
 	Handshake struct {
-		// HTTP headers sent by the client (map[string][]string or map[string]string)
-		Headers any `json:"headers" msgpack:"headers"`
+		// HTTP headers sent by the client
+		Headers types.IncomingHttpHeaders `json:"headers" msgpack:"headers"`
 
 		// Creation time as a human-readable string
 		Time string `json:"time" msgpack:"time"`
@@ -50,8 +50,8 @@ type (
 		// Full request URL
 		Url string `json:"url" msgpack:"url"`
 
-		// Query parameters (map[string][]string or map[string]string)
-		Query any `json:"query" msgpack:"query"`
+		// Query parameters
+		Query types.ParsedUrlQuery `json:"query" msgpack:"query"`
 
 		// Authentication data map[string]any or nil
 		Auth map[string]any `json:"auth" msgpack:"auth"`
@@ -260,15 +260,19 @@ func (s *Socket) Construct(nsp Namespace, client *Client, auth map[string]any, p
 // Builds the `handshake` BC object
 func (s *Socket) buildHandshake(auth map[string]any) *Handshake {
 	return &Handshake{
-		Headers: s.Request().Headers().All(),
+		Headers: utils.MapValues(s.Request().Headers().All(), func(value []string) any {
+			return value
+		}),
 		Time:    time.Now().Format(time.RFC3339),
 		Address: s.Conn().RemoteAddress(),
 		Xdomain: s.Request().Headers().Peek("Origin") != "",
 		Secure:  s.Request().Secure(),
 		Issued:  time.Now().UnixMilli(),
 		Url:     s.Request().Request().RequestURI,
-		Query:   s.Request().Query().All(),
-		Auth:    auth,
+		Query: utils.MapValues(s.Request().Query().All(), func(value []string) any {
+			return value
+		}),
+		Auth: auth,
 	}
 }
 
