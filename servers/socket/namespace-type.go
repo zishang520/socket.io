@@ -103,7 +103,7 @@ type Namespace interface {
 	Except(...Room) *BroadcastOperator
 
 	// Adds a new client.
-	Add(*Client, any, func(*Socket))
+	Add(*Client, map[string]any, func(*Socket))
 
 	// Emits to all clients.
 	Emit(string, ...any) error

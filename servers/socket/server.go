@@ -28,7 +28,7 @@ var (
 )
 
 type (
-	ParentNspNameMatchFn *func(string, any, func(error, bool))
+	ParentNspNameMatchFn *func(string, map[string]any, func(error, bool))
 
 	// Represents a Socket.IO server.
 	//
@@ -184,7 +184,7 @@ func (s *Server) ServeClient() bool {
 
 // _checkNamespace executes the middleware for an incoming namespace not already created on the server.
 // name is the name of the incoming namespace, auth is the auth parameters, fn is the callback.
-func (s *Server) _checkNamespace(name string, auth any, fn func(nsp Namespace)) {
+func (s *Server) _checkNamespace(name string, auth map[string]any, fn func(nsp Namespace)) {
 	end := true
 	s.parentNsps.Range(func(nextFn ParentNspNameMatchFn, pnsp ParentNamespace) bool {
 		status := false
@@ -511,10 +511,9 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 		parentNsp := NewParentNamespace(s)
 		server_log.Debug("initializing parent namespace %s", parentNsp.Name())
 
-		nfn := func(nsp string, _ any, next func(error, bool)) {
+		s.parentNsps.Store(ParentNspNameMatchFn(utils.Ptr(func(nsp string, _ map[string]any, next func(error, bool)) {
 			next(nil, n.MatchString(nsp))
-		}
-		s.parentNsps.Store(ParentNspNameMatchFn(&nfn), parentNsp)
+		})), parentNsp)
 		s.parentNamespacesFromRegExp.Store(n, parentNsp)
 
 		if fn != nil {

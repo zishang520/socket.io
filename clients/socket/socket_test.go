@@ -240,3 +240,272 @@ func ExampleSocket_timeout() {
 	// Output:
 	// Event timed out
 }
+
+// ExampleSocket_auth demonstrates how to use authentication with Socket.IO
+func ExampleSocket_auth() {
+	config := server.DefaultServerOptions()
+	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
+
+	httpServer := types.NewWebServer(nil)
+
+	// Create server with authentication middleware
+	io := server.NewServer(httpServer, config)
+
+	// Add authentication middleware
+	io.Use(func(socket *server.Socket, next func(*server.ExtendedError)) {
+		// Get auth data from handshake
+		auth := socket.Handshake().Auth
+
+		// Check if token exists and is valid
+		if token, ok := auth["Token"]; ok {
+			if tokenStr, ok := token.(string); ok && tokenStr == "test" {
+				fmt.Printf("Authentication successful for token: %s\n", tokenStr)
+				next(nil) // Authentication passed
+				return
+			}
+		}
+
+		// Authentication failed
+		fmt.Println("Authentication failed - invalid or missing token")
+		next(server.NewExtendedError("Authentication failed", map[string]any{
+			"type": "authentication_error",
+		}))
+	})
+
+	// Handle successful connections
+	io.On("connection", func(clients ...any) {
+		socket := clients[0].(*server.Socket)
+		fmt.Printf("Client connected\n")
+
+		socket.On("secure-message", func(args ...any) {
+			if len(args) > 0 {
+				if msg, ok := args[0].(string); ok {
+					fmt.Printf("Received secure message: %s\n", msg)
+					socket.Emit("secure-reply", "Message received securely")
+				}
+			}
+		})
+
+		socket.On("disconnect", func(args ...any) {
+			fmt.Printf("Client disconnected\n")
+		})
+	})
+
+	done := make(chan struct{})
+
+	httpServer.Listen("127.0.0.1:8000", func() {
+		// Client connection with authentication
+		opts := client.DefaultOptions()
+		opts.SetTransports(types.NewSet(client.Polling, client.WebSocket))
+		opts.SetAuth(map[string]any{"Token": "test"})
+
+		socket, err := client.Connect("http://127.0.0.1:8000/", opts)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		socket.On("connect", func(...any) {
+			fmt.Println("Client connected successfully!")
+			socket.Emit("secure-message", "Hello from authenticated client!")
+		})
+
+		socket.On("secure-reply", func(args ...any) {
+			if len(args) > 0 {
+				if msg, ok := args[0].(string); ok {
+					fmt.Printf("Server reply: %s\n", msg)
+				}
+			}
+			defer socket.Close()
+			close(done)
+		})
+
+		socket.On("connect_error", func(args ...any) {
+			if len(args) > 0 {
+				fmt.Printf("Connection error: %v\n", args[0])
+			}
+			defer socket.Close()
+			close(done)
+		})
+	})
+
+	<-done
+	httpServer.Close(nil)
+
+	// Output:
+	// Authentication successful for token: test
+	// Client connected
+	// Client connected successfully!
+	// Received secure message: Hello from authenticated client!
+	// Server reply: Message received securely
+	// Client disconnected
+}
+
+// ExampleSocket_authFailed demonstrates authentication failure
+func ExampleSocket_authFailed() {
+	config := server.DefaultServerOptions()
+	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
+
+	httpServer := types.NewWebServer(nil)
+
+	// Create server with authentication middleware
+	io := server.NewServer(httpServer, config)
+
+	// Add authentication middleware
+	io.Use(func(socket *server.Socket, next func(*server.ExtendedError)) {
+		// Get auth data from handshake
+		auth := socket.Handshake().Auth
+
+		// Check if token exists and is valid
+		if token, ok := auth["Token"]; ok {
+			if tokenStr, ok := token.(string); ok && tokenStr == "valid-token" {
+				fmt.Printf("Authentication successful for token: %s\n", tokenStr)
+				next(nil) // Authentication passed
+				return
+			}
+		}
+
+		// Authentication failed
+		fmt.Println("Authentication failed - invalid or missing token")
+		next(server.NewExtendedError("Authentication failed", map[string]any{
+			"type": "authentication_error",
+		}))
+	})
+
+	// Handle successful connections (won't be reached in this example)
+	io.On("connection", func(clients ...any) {
+		socket := clients[0].(*server.Socket)
+		fmt.Printf("Client connected with ID: %s\n", socket.Id())
+	})
+
+	done := make(chan struct{})
+
+	httpServer.Listen("127.0.0.1:8000", func() {
+		// Client connection with invalid authentication
+		opts := client.DefaultOptions()
+		opts.SetTransports(types.NewSet(client.Polling, client.WebSocket))
+		opts.SetAuth(map[string]any{"Token": "invalid-token"}) // Wrong token
+
+		socket, err := client.Connect("http://127.0.0.1:8000/", opts)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		socket.On("connect", func(...any) {
+			fmt.Println("This shouldn't be called due to auth failure")
+		})
+
+		socket.On("connect_error", func(args ...any) {
+			fmt.Printf("Authentication failed as expected: %v\n", args[0])
+			defer socket.Close()
+			close(done)
+		})
+	})
+
+	<-done
+	httpServer.Close(nil)
+
+	// Output:
+	// Authentication failed - invalid or missing token
+	// Authentication failed as expected: Authentication failed
+}
+
+// ExampleSocket_authWithUserInfo demonstrates authentication with user information
+func ExampleSocket_authWithUserInfo() {
+	config := server.DefaultServerOptions()
+	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
+
+	httpServer := types.NewWebServer(nil)
+
+	// Create server with authentication middleware
+	io := server.NewServer(httpServer, config)
+
+	// Add authentication middleware with user info extraction
+	io.Use(func(socket *server.Socket, next func(*server.ExtendedError)) {
+		auth := socket.Handshake().Auth
+
+		// Validate token and extract user info
+		if token, ok := auth["Token"]; ok {
+			if tokenStr, ok := token.(string); ok && tokenStr == "user123" {
+				// Store user info in socket data
+				socket.SetData(map[string]string{
+					"userId":   "123",
+					"username": "testuser",
+				})
+
+				fmt.Printf("User authenticated: %s (ID: %s)\n", "testuser", "123")
+				next(nil)
+				return
+			}
+		}
+
+		fmt.Println("Authentication failed")
+		next(server.NewExtendedError("Invalid credentials", nil))
+	})
+
+	// Handle successful connections
+	io.On("connection", func(clients ...any) {
+		socket := clients[0].(*server.Socket)
+
+		// Access user data
+		userId, _ := socket.Data().(map[string]string)["userId"]
+		username, _ := socket.Data().(map[string]string)["username"]
+
+		fmt.Printf("Welcome %s! (User ID: %s)\n",
+			username, userId)
+
+		socket.On("user-action", func(args ...any) {
+			if len(args) > 0 {
+				if action, ok := args[0].(string); ok {
+					fmt.Printf("User %s performed action: %s\n", username, action)
+				}
+			}
+			socket.Emit("logout")
+		})
+
+		socket.Emit("ready")
+	})
+
+	done := make(chan struct{})
+
+	httpServer.Listen("127.0.0.1:8000", func() {
+		// Client connection with user token
+		opts := client.DefaultOptions()
+		opts.SetTransports(types.NewSet(client.Polling, client.WebSocket))
+		opts.SetAuth(map[string]any{
+			"Token": "user123",
+		})
+
+		socket, err := client.Connect("http://127.0.0.1:8000/", opts)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		socket.On("ready", func(...any) {
+			socket.Emit("user-action", "login")
+		})
+
+		socket.On("logout", func(...any) {
+			defer socket.Close()
+			close(done)
+		})
+
+		socket.On("connect", func(...any) {
+			fmt.Println("Connected with user authentication!")
+		})
+
+		socket.On("connect_error", func(args ...any) {
+			fmt.Printf("Connection error: %v\n", args[0])
+			defer socket.Close()
+			close(done)
+		})
+	})
+
+	<-done
+	httpServer.Close(nil)
+
+	// Output:
+	// User authenticated: testuser (ID: 123)
+	// Welcome testuser! (User ID: 123)
+	// Connected with user authentication!
+	// User testuser performed action: login
+}

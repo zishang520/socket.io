@@ -27,6 +27,18 @@ func Contains(haystack string, needles []string) string {
 	return ""
 }
 
+func MapValues[K comparable, I any, O any](input map[K]I, transform func(I) O) map[K]O {
+	if input == nil {
+		return nil
+	}
+
+	result := make(map[K]O, len(input))
+	for key, value := range input {
+		result[key] = transform(value)
+	}
+	return result
+}
+
 func StripHostPort(h string) string {
 	// If no port on host, return unchanged
 	if !strings.Contains(h, ":") {

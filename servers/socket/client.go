@@ -86,7 +86,7 @@ func (c *Client) setup() {
 }
 
 // connect connects a client to a namespace with optional auth parameters.
-func (c *Client) connect(name string, auth any) {
+func (c *Client) connect(name string, auth map[string]any) {
 	if _, ok := c.server._nsps.Load(name); ok {
 		client_log.Debug("connecting to namespace %s", name)
 		c.doConnect(name, auth)
@@ -109,7 +109,7 @@ func (c *Client) connect(name string, auth any) {
 }
 
 // doConnect connects a client to a namespace and adds the socket to the client.
-func (c *Client) doConnect(name string, auth any) {
+func (c *Client) doConnect(name string, auth map[string]any) {
 	nsp := c.server.Of(name, nil)
 	nsp.Add(c, auth, func(socket *Socket) {
 		c.sockets.Store(socket.Id(), socket)
@@ -192,15 +192,17 @@ func (c *Client) ondata(args ...any) {
 func (c *Client) ondecoded(args ...any) {
 	packet, _ := args[0].(*parser.Packet)
 	var namespace string
-	var authPayload any
+	var authPayload map[string]any
 	if c.conn.Protocol() == 3 {
 		if parsed, err := url.Parse(packet.Nsp); err == nil {
 			namespace = parsed.Path
-			authPayload = parsed.Query()
+			authPayload = utils.MapValues(parsed.Query(), func(value []string) any {
+				return value
+			})
 		}
 	} else {
 		namespace = packet.Nsp
-		authPayload = packet.Data
+		authPayload, _ = packet.Data.(map[string]any)
 	}
 	socket, ok := c.nsps.Load(namespace)
 	if !ok && packet.Type == parser.CONNECT {

@@ -260,7 +260,7 @@ func (n *namespace) Except(room ...Room) *BroadcastOperator {
 }
 
 // Adds a new client.
-func (n *namespace) Add(client *Client, auth any, fn func(*Socket)) {
+func (n *namespace) Add(client *Client, auth map[string]any, fn func(*Socket)) {
 	namespace_log.Debug("adding socket to nsp %s", n.name)
 	socket := n._createSocket(client, auth)
 	if connectionStateRecovery := n.server.Opts().ConnectionStateRecovery(); connectionStateRecovery != nil && connectionStateRecovery.SkipMiddlewares() && socket.Recovered() && client.Conn().ReadyState() == "open" {
@@ -298,37 +298,26 @@ func (n *namespace) Add(client *Client, auth any, fn func(*Socket)) {
 	})
 }
 
-func parseSessionData(auth any) (*SessionData, bool) {
-	switch v := auth.(type) {
-	case map[string]any:
-		sd := SessionData{}
-		if pid, ok := v["pid"]; ok {
-			sd.Pid = pid
-		}
-		if offset, ok := v["offset"]; ok {
-			sd.Offset = offset
-		}
-		return &sd, true
-
-	case map[string]string:
-		sd := SessionData{}
-		if pid, ok := v["pid"]; ok {
-			sd.Pid = pid
-		}
-		if offset, ok := v["offset"]; ok {
-			sd.Offset = offset
-		}
-		return &sd, true
-	default:
+func parseSessionData(auth map[string]any) (*SessionData, bool) {
+	if auth == nil {
 		return nil, false
 	}
+
+	sd := SessionData{}
+	if pid, ok := auth["pid"]; ok {
+		sd.Pid = pid
+	}
+	if offset, ok := auth["offset"]; ok {
+		sd.Offset = offset
+	}
+	return &sd, true
 }
 
-func (n *namespace) _createSocket(client *Client, auth any) *Socket {
-	if _auth, ok := parseSessionData(auth); ok {
-		sessionId, has_sessionId := _auth.GetPid()
-		offset, has_offset := _auth.GetOffset()
-		if has_sessionId && has_offset && n.server.Opts().ConnectionStateRecovery() != nil {
+func (n *namespace) _createSocket(client *Client, auth map[string]any) *Socket {
+	if session, ok := parseSessionData(auth); ok {
+		sessionId, hasSessionId := session.GetPid()
+		offset, hasOffset := session.GetOffset()
+		if hasSessionId && hasOffset && n.server.Opts().ConnectionStateRecovery() != nil {
 			session, err := n.Proto().Adapter().RestoreSession(PrivateSessionId(sessionId), offset)
 			if err != nil {
 				namespace_log.Debug("error while restoring session: %v", err)

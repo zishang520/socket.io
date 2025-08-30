@@ -53,8 +53,8 @@ type (
 		// Query parameters (map[string][]string or map[string]string)
 		Query any `json:"query" msgpack:"query"`
 
-		// Authentication data map[string]any
-		Auth any `json:"auth" msgpack:"auth"`
+		// Authentication data map[string]any or nil
+		Auth map[string]any `json:"auth" msgpack:"auth"`
 	}
 
 	// This is the main object for interacting with a client.
@@ -150,7 +150,7 @@ func MakeSocket() *Socket {
 	return s
 }
 
-func NewSocket(nsp Namespace, client *Client, auth any, previousSession *Session) *Socket {
+func NewSocket(nsp Namespace, client *Client, auth map[string]any, previousSession *Session) *Socket {
 	s := MakeSocket()
 
 	s.Construct(nsp, client, auth, previousSession)
@@ -213,7 +213,7 @@ func (s *Socket) Client() *Client {
 	return s.client
 }
 
-func (s *Socket) Construct(nsp Namespace, client *Client, auth any, previousSession *Session) {
+func (s *Socket) Construct(nsp Namespace, client *Client, auth map[string]any, previousSession *Session) {
 	s.nsp = nsp
 	s.client = client
 
@@ -258,7 +258,7 @@ func (s *Socket) Construct(nsp Namespace, client *Client, auth any, previousSess
 }
 
 // Builds the `handshake` BC object
-func (s *Socket) buildHandshake(auth any) *Handshake {
+func (s *Socket) buildHandshake(auth map[string]any) *Handshake {
 	return &Handshake{
 		Headers: s.Request().Headers().All(),
 		Time:    time.Now().Format(time.RFC3339),

@@ -15,8 +15,7 @@ type RemoteSocket struct {
 
 // MakeRemoteSocket creates a new empty RemoteSocket instance.
 func MakeRemoteSocket() *RemoteSocket {
-	r := &RemoteSocket{}
-	return r
+	return &RemoteSocket{}
 }
 
 // NewRemoteSocket creates a new RemoteSocket from the given SocketResponse details.
