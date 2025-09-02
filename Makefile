@@ -73,7 +73,7 @@ fmt:
 	$(if $(MODULE),$(call run_single_module_cmd,Fmt,$(MODULE),go fmt ./...),$(call run_module_cmd,Fmt,go fmt ./...))
 
 # Run static analysis
-vet:
+vet: deps
 	$(if $(MODULE),$(call run_single_module_cmd,Vet,$(MODULE),go vet ./...),$(call run_module_cmd,Vet,go vet ./...))
 
 # Clean build artifacts
