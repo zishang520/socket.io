@@ -5,7 +5,7 @@ go 1.24.1
 require github.com/zishang520/socket.io/v3 v3.0.0-rc.4
 
 require (
-	github.com/gookit/color v1.5.4 // indirect
+	github.com/gookit/color v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.54.0 // indirect

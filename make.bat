@@ -124,6 +124,8 @@ GOTO :EOF
     EXIT /B 0
 
 :vet
+    CALL :deps
+
     IF NOT "%~1"=="" (
         CALL :process_single_module "go vet ./..." "Vet" "%~1"
     ) ELSE (
