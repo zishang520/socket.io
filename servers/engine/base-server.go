@@ -102,17 +102,17 @@ func (bs *baseServer) Construct(opt any) {
 	options.SetCors(nil)
 	options.SetAllowEIO3(false)
 
+	bs.opts = options.Assign(opts)
+
 	bs.transports = types.NewSet[string]()
 	bs._transportsByName = map[string]TransportCtor{}
-	if transports := opts.Transports(); transports != nil {
+	if transports := bs.opts.Transports(); transports != nil {
 		for _, transport := range transports.Keys() {
 			transportName := transport.Name()
 			bs.transports.Add(transportName)
 			bs._transportsByName[transportName] = transport
 		}
 	}
-
-	bs.opts = options.Assign(opts)
 
 	if opts != nil {
 		if cookie := opts.Cookie(); cookie != nil {
