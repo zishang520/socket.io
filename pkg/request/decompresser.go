@@ -28,7 +28,7 @@ func (b *brotliReader) Close() error {
 
 // Create Zstandard decompress logic
 func decompressZstd(r io.ReadCloser) (io.ReadCloser, error) {
-	zr, err := zstd.NewReader(r, nil)
+	zr, err := zstd.NewReader(r)
 	if err != nil {
 		return nil, err
 	}
