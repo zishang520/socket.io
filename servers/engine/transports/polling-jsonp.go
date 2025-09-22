@@ -6,15 +6,20 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 var (
-	rDoubleSlashes = regexp.MustCompile(`\\\\n`)
-	rSlashes       = regexp.MustCompile(`(\\)?\\n`)
-	rNumber        = regexp.MustCompile(`[^0-9]`)
+	rNumber = regexp.MustCompile(`[^0-9]`)
+
+	// OPTIMIZACIÓN: Usar strings.Replacer en lugar de regex.
+	// Es mucho más rápido para reemplazos de cadenas de texto fijas.
+	// Reemplaza "\\n" por "\n" y luego "\n" (que originalmente era \\n) por un salto de línea real.
+	// El orden de los pares es importante: el reemplazo más largo primero.
+	jsonpReplacer = strings.NewReplacer(`\\\\n`, `\n`, `\\n`, "\n")
 )
 
 type jsonp struct {
@@ -49,40 +54,38 @@ func (j *jsonp) Construct(ctx *types.HttpContext) {
 }
 
 func (j *jsonp) OnData(data types.BufferInterface) {
-	if data, err := url.ParseQuery(data.String()); err != nil {
+	payload, err := url.ParseQuery(data.String())
+	if err != nil {
 		j.OnError("jsonp read error", err)
-	} else {
-		if data.Has("d") {
-			_data := rSlashes.ReplaceAllStringFunc(data.Get("d"), func(m string) string {
-				if parts := rSlashes.FindStringSubmatch(m); parts[1] != "" {
-					return parts[0]
-				}
-				return "\n"
-			})
-			// client will send already escaped newlines as \\\\n and newlines as \\n
-			// \\n must be replaced with \n and \\\\n with \\n
-			j.Polling.OnData(types.NewStringBufferString(rDoubleSlashes.ReplaceAllString(_data, "\\n")))
-		}
+		return
+	}
+
+	if payload.Has("d") {
+		// client will send already escaped newlines as \\\\n and newlines as \\n
+		// \\n must be replaced with \n and \\\\n with \\n
+		j.Polling.OnData(types.NewStringBufferString(jsonpReplacer.Replace(payload.Get("d"))))
 	}
 }
 
 func (j *jsonp) DoWrite(ctx *types.HttpContext, data types.BufferInterface, options *packet.Options, callback func(error)) {
-	// prepare response
-	res := types.NewStringBufferString(j.head)
-	encoder := json.NewEncoder(res)
-	// we must output valid javascript, not valid json
-	// see: http://timelessrepo.com/json-isnt-a-javascript-subset
-	//
-	if err := encoder.Encode(data.String()); err != nil {
+	// Note: We must output valid JavaScript, not just JSON.
+	// JSON is not a strict subset of JavaScript, so directly writing JSON
+	// may result in runtime errors in JS.
+	// See: https://timelessrepo.com/json-isnt-a-javascript-subset
+	payload, err := json.Marshal(data.String())
+	if err != nil {
 		ctx.Cleanup()
 		defer callback(err)
 
+		// Respond with 500 Internal Server Error if encoding fails
 		ctx.SetStatusCode(http.StatusInternalServerError)
 		ctx.Write(nil)
 		return
 	}
-	// Since 1.18 the following source code is very annoying '\n' bytes
-	res.Truncate(res.Len() - 1) // '\n' 😑
+
+	// prepare response
+	res := types.NewStringBufferString(j.head)
+	res.Write(payload)
 	res.WriteString(j.foot)
 	j.Polling.DoWrite(ctx, res, options, callback)
 }

@@ -314,15 +314,6 @@ Upgrade your client-side Socket.IO library to v4.x:
 npm install socket.io-client@^4.0.0
 ```
 
-### Redis Adapter Issues
-
-Verify your Redis server compatibility and test broadcasting:
-
-```go
-// Test Redis connectivity
-redisAdapter.Emit("test-room", "test-event", "test-data")
-```
-
 ## Need Help?
 
 If you encounter issues during the upgrade:
@@ -334,6 +325,6 @@ If you encounter issues during the upgrade:
 ## Additional Notes
 
 - **Backup First:** Always backup your codebase before starting the upgrade process
-- **Go Version:** Ensure you're using Go 1.18 or higher
+- **Go Version:** Ensure you're using Go 1.24 or higher
 - **Staged Rollout:** Consider upgrading in stages, starting with non-critical components
 - **Client Coordination:** Coordinate the upgrade with your frontend team to ensure client compatibility
