@@ -31,6 +31,19 @@ var (
 	Flags  int       = 0         // Default flags for all loggers
 )
 
+var defaultLogger atomic.Pointer[Log]
+
+func init() {
+	defaultLogger.Store(NewLog(""))
+}
+
+// Default returns the default [Log].
+func Default() *Log { return defaultLogger.Load() }
+
+func SetDefault(l *Log) {
+	defaultLogger.Store(l)
+}
+
 // Log represents a logger instance with enhanced functionality
 type Log struct {
 	*log.Logger

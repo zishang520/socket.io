@@ -319,7 +319,7 @@ func (c *clusterAdapter) addOffsetIfNecessary(packet *parser.Packet, opts *socke
 	notVolatile := opts == nil || opts.Flags == nil || opts.Flags.Volatile == false
 
 	if isEventPacket && withoutAcknowledgement && notVolatile {
-		packet.Data = append(packet.Data.([]any), offset)
+		packet.Data = append(utils.TryCast[[]any](packet.Data), offset)
 	}
 }
 
@@ -442,7 +442,7 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
 					callback(SliceMap(data.All(), func(i any) socket.SocketDetails {
-						return i.(socket.SocketDetails)
+						return utils.TryCast[socket.SocketDetails](i)
 					}), nil)
 				},
 				Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {

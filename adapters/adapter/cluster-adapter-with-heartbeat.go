@@ -259,7 +259,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
 					cb(SliceMap(data.All(), func(i any) socket.SocketDetails {
-						return i.(socket.SocketDetails)
+						return utils.TryCast[socket.SocketDetails](i)
 					}), nil)
 				},
 				Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {

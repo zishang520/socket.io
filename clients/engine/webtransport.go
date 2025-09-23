@@ -16,6 +16,7 @@ import (
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/request"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"github.com/zishang520/socket.io/v3/pkg/webtransport"
 	wt "github.com/zishang520/webtransport-go"
 )
@@ -205,7 +206,7 @@ func (w *webTransport) handshake() {
 // This method configures error and close event handlers and starts the message reading loop.
 func (w *webTransport) addEventListeners() {
 	w.session.On("error", func(errs ...any) {
-		w.OnError("webtransport error", errs[0].(error), w.session.Session().Context())
+		w.OnError("webtransport error", utils.TryCast[error](errs[0]), w.session.Session().Context())
 	})
 	w.session.Once("close", func(...any) {
 		client_webtransport_log.Debug(`transport closed gracefully`)

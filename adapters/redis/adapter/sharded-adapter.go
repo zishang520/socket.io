@@ -92,16 +92,16 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 
 	if s.opts.SubscriptionMode() == DynamicSubscriptionMode ||
 		s.opts.SubscriptionMode() == DynamicPrivateSubscriptionMode {
-		s.On("create-room", func(room ...any) {
-			if s.shouldUseASeparateNamespace(room[0].(socket.Room)) {
-				if err := s.pubSubClient.SSubscribe(s.redisClient.Context, s.dynamicChannel(room[0].(socket.Room))); err != nil {
+		s.On("create-room", func(rooms ...any) {
+			if room := utils.TryCast[socket.Room](rooms[0]); s.shouldUseASeparateNamespace(room) {
+				if err := s.pubSubClient.SSubscribe(s.redisClient.Context, s.dynamicChannel(room)); err != nil {
 					s.redisClient.Emit("error", err)
 				}
 			}
 		})
-		s.On("delete-room", func(room ...any) {
-			if s.shouldUseASeparateNamespace(room[0].(socket.Room)) {
-				if err := s.pubSubClient.SUnsubscribe(s.redisClient.Context, s.dynamicChannel(room[0].(socket.Room))); err != nil {
+		s.On("delete-room", func(rooms ...any) {
+			if room := utils.TryCast[socket.Room](rooms[0]); s.shouldUseASeparateNamespace(room) {
+				if err := s.pubSubClient.SUnsubscribe(s.redisClient.Context, s.dynamicChannel(room)); err != nil {
 					s.redisClient.Emit("error", err)
 				}
 			}

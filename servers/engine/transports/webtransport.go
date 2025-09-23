@@ -10,6 +10,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"github.com/zishang520/socket.io/v3/pkg/webtransport"
 )
 
@@ -47,7 +48,7 @@ func (w *webTransport) Construct(ctx *types.HttpContext) {
 	w.session = ctx.WebTransport
 
 	w.session.On("error", func(errs ...any) {
-		w.OnError("webtransport error", errs[0].(error))
+		w.OnError("webtransport error", utils.TryCast[error](errs[0]))
 	})
 	w.session.Once("close", func(...any) {
 		w.OnClose()

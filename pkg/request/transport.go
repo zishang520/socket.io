@@ -92,7 +92,7 @@ func (t *Transport) tryAltServices(req *http.Request) (*http.Response, error) {
 
 // isServiceValid checks if the service is still valid and hasn't exceeded retry attempts
 func isServiceValid(svc *altSvc) bool {
-	return !svc.expires.Before(time.Now()) && svc.failures.Load() <= maxRetryAttempts
+	return !svc.expires.Before(time.Now()) && svc.failures.Load() < maxRetryAttempts
 }
 
 // tryService attempts to send the request using a specific alternative service
@@ -101,8 +101,8 @@ func (t *Transport) tryService(req *http.Request, svc *altSvc) (*http.Response, 
 
 	// If endpoint only contains port (e.g., ":443"), use original host
 	if endpoint := svc.endpoint; endpoint != "" {
-		if strings.HasPrefix(endpoint, ":") {
-			endpoint = net.JoinHostPort(req.URL.Hostname(), strings.TrimPrefix(endpoint, ":"))
+		if after, ok := strings.CutPrefix(endpoint, ":"); ok {
+			endpoint = net.JoinHostPort(req.URL.Hostname(), after)
 		}
 		altReq.URL.Host = endpoint
 	}
@@ -153,8 +153,8 @@ func parseAltSvc(value string) []*altSvc {
 	now := time.Now()
 
 	// Split multiple entries
-	entries := strings.Split(value, ",")
-	for _, entry := range entries {
+	entries := strings.SplitSeq(value, ",")
+	for entry := range entries {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue

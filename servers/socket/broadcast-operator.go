@@ -154,7 +154,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 			utils.ClearTimeout(timer)
 			if b.flags.ExpectSingleResponse {
 				data, _ := responses.Get(0)
-				ack(data.([]any), nil)
+				ack(utils.TryCast[[]any](data), nil)
 			} else {
 				ack(responses.All(), nil)
 			}

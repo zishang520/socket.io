@@ -14,6 +14,7 @@ import (
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/request"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // WebSocket implements the WebSocket transport for Engine.IO.
@@ -181,7 +182,7 @@ func (w *websocket) message() {
 // message reading loop.
 func (w *websocket) addEventListeners() {
 	w.socket.On("error", func(errs ...any) {
-		w.OnError("websocket error", errs[0].(error), nil)
+		w.OnError("websocket error", utils.TryCast[error](errs[0]), nil)
 	})
 	w.socket.Once("close", func(...any) {
 		w.OnClose(NewTransportError("websocket connection closed", nil, nil).Err())

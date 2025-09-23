@@ -103,8 +103,12 @@ func ExampleSocket_emitWithAck() {
 	server.NewServer(httpServer, config).On("connection", func(clients ...any) {
 		socket := clients[0].(*server.Socket)
 		socket.On("custom-event", func(args ...any) {
-			ack := args[len(args)-1].(server.Ack)
-			ack(args[:len(args)-1], nil)
+			if len(args) > 0 {
+				ack, ok := args[len(args)-1].(server.Ack)
+				if ok {
+					ack(args[:len(args)-1], nil)
+				}
+			}
 		})
 	})
 

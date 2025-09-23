@@ -485,7 +485,7 @@ func (s *Server) Bind(egs engine.BaseServer) *Server {
 
 // onconnection is called with each incoming transport connection.
 func (s *Server) onconnection(conns ...any) {
-	conn := conns[0].(engine.Socket)
+	conn := utils.TryCast[engine.Socket](conns[0])
 	server_log.Debug("incoming connection with id %s", conn.Id())
 	client := NewClient(s, conn)
 	if conn.Protocol() == 3 {

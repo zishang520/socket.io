@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -16,6 +17,12 @@ type parserv4 struct{}
 
 var (
 	defaultParserv4 Parser = &parserv4{}
+
+	bytesBufferPool = sync.Pool{
+		New: func() interface{} {
+			return &bytes.Buffer{}
+		},
+	}
 )
 
 func Parserv4() Parser {
@@ -50,8 +57,8 @@ func (p *parserv4) EncodePacket(data *packet.Packet, supportsBinary bool, _ ...b
 		if _, err := io.Copy(encode, v); err != nil {
 			return nil, err
 		}
-
 		return encode, nil
+
 	case io.Reader:
 		if !supportsBinary {
 			// only 'message' packets can contain binary, so the type prefix is not needed
@@ -66,13 +73,15 @@ func (p *parserv4) EncodePacket(data *packet.Packet, supportsBinary bool, _ ...b
 			}
 			return encode, nil
 		}
-		// plain string
+		// plain binary
 		encode := types.NewBytesBuffer(nil)
 		if _, err := io.Copy(encode, v); err != nil {
 			return nil, err
 		}
 		return encode, nil
 	}
+
+	// default case
 	encode := types.NewStringBuffer(nil)
 	if err := encode.WriteByte(_type); err != nil {
 		return nil, err
@@ -121,44 +130,71 @@ func (p *parserv4) DecodePacket(data types.BufferInterface, _ ...bool) (*packet.
 func (p *parserv4) EncodePayload(packets []*packet.Packet, _ ...bool) (types.BufferInterface, error) {
 	enPayload := types.NewStringBuffer(nil)
 
-	for _, packet := range packets {
-		if buf, err := p.EncodePacket(packet, false); err != nil {
+	if len(packets) == 0 {
+		return enPayload, nil
+	}
+
+	buffer := bytesBufferPool.Get().(*bytes.Buffer)
+	defer func() {
+		buffer.Reset()
+		bytesBufferPool.Put(buffer)
+	}()
+
+	for i, packet := range packets {
+		buf, err := p.EncodePacket(packet, false)
+		if err != nil {
 			return nil, err
-		} else {
-			if enPayload.Len() > 0 {
-				if err := enPayload.WriteByte(SEPARATOR); err != nil {
-					return nil, err
-				}
-			}
-			if _, err := buf.WriteTo(enPayload); err != nil {
+		}
+
+		if i > 0 {
+			if err := buffer.WriteByte(SEPARATOR); err != nil {
 				return nil, err
 			}
 		}
+
+		if _, err := buf.WriteTo(buffer); err != nil {
+			return nil, err
+		}
+	}
+
+	if _, err := enPayload.Write(buffer.Bytes()); err != nil {
+		return nil, err
 	}
 
 	return enPayload, nil
 }
 
+func separatorSplitFunc(data []byte, atEOF bool) (int, []byte, error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	if i := bytes.IndexByte(data, SEPARATOR); i >= 0 {
+		return i + 1, data[0:i], nil
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
 func (p *parserv4) DecodePayload(data types.BufferInterface) (packets []*packet.Packet, _ error) {
 	scanner := bufio.NewScanner(data)
-	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
-		if atEOF && len(data) == 0 {
-			return 0, nil, nil
-		}
-		if i := bytes.IndexByte(data, SEPARATOR); i >= 0 {
-			return i + 1, data[0:i], nil
-		}
-		if atEOF {
-			return len(data), data, nil
-		}
-		return 0, nil, nil
-	})
+	scanner.Split(separatorSplitFunc)
+
+	packets = make([]*packet.Packet, 0, 4)
+
 	for scanner.Scan() {
-		if packet, err := p.DecodePacket(types.NewStringBuffer(scanner.Bytes())); err == nil {
-			packets = append(packets, packet)
-		} else {
+		scanBytes := scanner.Bytes()
+		if len(scanBytes) == 0 {
+			continue
+		}
+
+		packet, err := p.DecodePacket(types.NewStringBuffer(scanBytes))
+		if err != nil {
 			return packets, err
 		}
+		packets = append(packets, packet)
 	}
+
 	return packets, scanner.Err()
 }

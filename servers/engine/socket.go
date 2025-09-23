@@ -260,12 +260,12 @@ func (s *socket) resetPingTimeoutDuration() time.Duration {
 // Attaches handlers for the given transport.
 func (s *socket) setTransport(transport transports.Transport) {
 	onError := func(err ...any) {
-		s.onError(err[0].(error))
+		s.onError(utils.TryCast[error](err[0]))
 	}
 	onReady := func(...any) { s.flush() }
 	onPacket := func(packets ...any) {
 		if len(packets) > 0 {
-			s.onPacket(packets[0].(*packet.Packet))
+			s.onPacket(utils.TryCast[*packet.Packet](packets[0]))
 		}
 	}
 	onDrain := func(...any) { s.onDrain() }
@@ -309,7 +309,10 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 	var upgradeTimeoutTimer, checkIntervalTimer atomic.Pointer[utils.Timer]
 
 	onPacket = func(datas ...any) {
-		data := datas[0].(*packet.Packet)
+		data, ok := datas[0].(*packet.Packet)
+		if !ok {
+			return
+		}
 		sb := new(strings.Builder)
 		io.Copy(sb, data.Data)
 		if data.Type == packet.PING && sb.String() == "probe" {

@@ -124,7 +124,10 @@ func (s *socketWithUpgrade) _probe(name string) {
 			if failed.Load() {
 				return
 			}
-			msg := msgs[0].(*packet.Packet)
+			msg, ok := msgs[0].(*packet.Packet)
+			if !ok {
+				return
+			}
 			sb := new(strings.Builder)
 			io.Copy(sb, msg.Data)
 
@@ -177,7 +180,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 	}
 
 	onerror := func(errs ...any) {
-		e := fmt.Errorf("[%s] probe error: %w", transport.Name(), errs[0].(error))
+		e := fmt.Errorf("[%s] probe error: %w", transport.Name(), utils.TryCast[error](errs[0]))
 		freezeTransport()
 		client_socket_log.Debug(`probe transport "%s" failed because of error: %v`, name, e)
 		s.Emit("upgradeError", e)

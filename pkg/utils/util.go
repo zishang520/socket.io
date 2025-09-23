@@ -6,6 +6,16 @@ import (
 	"strings"
 )
 
+func Is[T any](val any) bool {
+	_, ok := val.(T)
+	return ok
+}
+
+func TryCast[T any](val any) T {
+	r, _ := val.(T)
+	return r
+}
+
 func Ptr[T any](v T) *T {
 	return &v
 }

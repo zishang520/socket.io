@@ -369,7 +369,7 @@ func abortRequest(ctx *types.HttpContext, codeMessage *types.CodeMessage, errorC
 	message := codeMessage.Message
 	if errorContext != nil {
 		if m, ok := errorContext["message"]; ok {
-			message = m.(string)
+			message = utils.TryCast[string](m)
 		}
 	}
 	ctx.ResponseHeaders.Set("Content-Type", "application/json")
@@ -399,7 +399,7 @@ func abortUpgrade(ctx *types.HttpContext, codeMessage *types.CodeMessage, errorC
 	message := codeMessage.Message
 	if errorContext != nil {
 		if m, ok := errorContext["message"]; ok {
-			message = m.(string)
+			message = utils.TryCast[string](m)
 		}
 	}
 

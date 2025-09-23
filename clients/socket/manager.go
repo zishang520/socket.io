@@ -279,7 +279,7 @@ func (m *Manager) Open(fn func(error)) *Manager {
 	})
 
 	onError := func(errs ...any) {
-		err := errs[0].(error)
+		err := utils.TryCast[error](errs[0])
 		manager_log.Debug("error")
 		m.cleanup()
 		m._readyState.Store(ReadyStateClosed)
@@ -342,7 +342,7 @@ func (m *Manager) onopen(socket Engine) {
 		on(socket, "data", m.ondata),
 		on(socket, "error", m.onerror),
 		on(socket, "close", func(args ...any) {
-			m.onclose(args[0].(string), args[1].(error))
+			m.onclose(utils.TryCast[string](args[0]), utils.TryCast[error](args[1]))
 		}),
 		on(m.decoder, "decoded", m.ondecoded),
 	)

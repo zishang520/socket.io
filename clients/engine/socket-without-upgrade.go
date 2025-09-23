@@ -388,11 +388,11 @@ func (s *socketWithoutUpgrade) SetTransport(transport Transport) {
 	transport.On("drain", func(...any) { s._onDrain() })
 	transport.On("packet", func(packets ...any) {
 		if len(packets) > 0 {
-			s._onPacket(packets[0].(*packet.Packet))
+			s._onPacket(utils.TryCast[*packet.Packet](packets[0]))
 		}
 	})
-	transport.On("error", func(err ...any) { s._onError(err[0].(error)) })
-	transport.On("close", func(reason ...any) { s._onClose("transport close", reason[0].(error)) })
+	transport.On("error", func(err ...any) { s._onError(utils.TryCast[error](err[0])) })
+	transport.On("close", func(reason ...any) { s._onClose("transport close", utils.TryCast[error](reason[0])) })
 }
 
 // OnOpen is called when the connection is successfully established.

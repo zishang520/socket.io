@@ -5,12 +5,19 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/webtransport-go"
+)
+
+var (
+	server_log = log.NewLog("engine:server")
+	http3_log  = slog.New(log.NewPrefixSimpleHandler(log.Output, "engine:server"))
 )
 
 type HttpServer struct {
@@ -31,7 +38,7 @@ func NewWebServer(defaultHandler http.Handler) *HttpServer {
 }
 
 func (s *HttpServer) httpServer(addr string, handler http.Handler) *http.Server {
-	server := &http.Server{Addr: addr, Handler: handler}
+	server := &http.Server{Addr: addr, Handler: handler, ErrorLog: server_log.Logger}
 
 	s.servers.Push(server)
 
@@ -40,7 +47,7 @@ func (s *HttpServer) httpServer(addr string, handler http.Handler) *http.Server 
 
 func (s *HttpServer) h3Server(handler http.Handler) *http3.Server {
 	// Start the servers
-	server := &http3.Server{Handler: handler}
+	server := &http3.Server{Handler: handler, Logger: http3_log}
 
 	s.servers.Push(server)
 
@@ -50,7 +57,7 @@ func (s *HttpServer) h3Server(handler http.Handler) *http3.Server {
 func (s *HttpServer) webtransportServer(addr string, handler http.Handler) *webtransport.Server {
 	// Start the servers
 	server := &webtransport.Server{
-		H3: http3.Server{Addr: addr, Handler: handler},
+		H3: http3.Server{Addr: addr, Handler: handler, Logger: http3_log},
 		CheckOrigin: func(_ *http.Request) bool {
 			return true
 		},

@@ -10,13 +10,16 @@ const (
 	surr1    = 0xd800
 	surr3    = 0xe000
 	surrSelf = 0x10000
+
+	// bufferSize is the number of hexadecimal characters to buffer in encoder and decoder.
+	bufferSize = 1024
 )
 
 func Utf16Len(v rune) int {
-	switch {
-	case 0 <= v && v < surr1, surr3 <= v && v < surrSelf:
+	if (0 <= v && v < surr1) || (surr3 <= v && v < surrSelf) {
 		return 1
-	case surrSelf <= v && v <= maxRune:
+	}
+	if surrSelf <= v && v <= maxRune {
 		return 2
 	}
 	return 1
@@ -29,23 +32,38 @@ func Utf16Count(src []byte) (n int) {
 		if !utf8.ValidRune(rb) {
 			rb = utf8.RuneError
 		}
-		n += Utf16Len(rb)
+		if (0 <= rb && rb < surr1) || (surr3 <= rb && rb < surrSelf) {
+			n++
+		} else if surrSelf <= rb && rb <= maxRune {
+			n += 2
+		} else {
+			n++
+		}
 	}
 	return
 }
 
 func Utf16CountString(src string) (n int) {
-	// range rune
 	for _, rb := range src {
 		if !utf8.ValidRune(rb) {
 			rb = utf8.RuneError
 		}
-		n += Utf16Len(rb)
+		if (0 <= rb && rb < surr1) || (surr3 <= rb && rb < surrSelf) {
+			n++
+		} else if surrSelf <= rb && rb <= maxRune {
+			n += 2
+		} else {
+			n++
+		}
 	}
 	return
 }
 
 func Utf8encodeString(src string) string {
+	if len(src) == 0 {
+		return ""
+	}
+
 	buf := make([]byte, 0, len(src))
 	for i := 0; i < len(src); i++ {
 		rb := rune(src[i])
@@ -58,6 +76,10 @@ func Utf8encodeString(src string) string {
 }
 
 func Utf8encodeBytes(src []byte) []byte {
+	if len(src) == 0 {
+		return nil
+	}
+
 	buf := make([]byte, 0, len(src))
 	for _, b := range src {
 		rb := rune(b)
@@ -70,6 +92,10 @@ func Utf8encodeBytes(src []byte) []byte {
 }
 
 func Utf8decodeString(byteString string) string {
+	if len(byteString) == 0 {
+		return ""
+	}
+
 	buf := make([]byte, 0, len(byteString))
 	for _, rb := range byteString {
 		if !utf8.ValidRune(rb) {
@@ -81,6 +107,10 @@ func Utf8decodeString(byteString string) string {
 }
 
 func Utf8decodeBytes(src []byte) []byte {
+	if len(src) == 0 {
+		return nil
+	}
+
 	buf := make([]byte, 0, len(src))
 	for len(src) > 0 {
 		r, l := utf8.DecodeRune(src)
@@ -93,7 +123,6 @@ func Utf8decodeBytes(src []byte) []byte {
 	return buf
 }
 
-// private
 func utf8encodeBytes(dst, src []byte) int {
 	ndst := 0
 	for _, b := range src {
@@ -114,15 +143,15 @@ func utf8decodeBytes(dst, src []byte) (ndst, nsrc int, err error) {
 		if !utf8.ValidRune(r) {
 			r = utf8.RuneError
 		}
+		if ndst >= len(dst) {
+			break
+		}
 		dst[ndst] = byte(r)
 		nsrc += l
 		ndst++
 	}
 	return
 }
-
-// bufferSize is the number of hexadecimal characters to buffer in encoder and decoder.
-const bufferSize = 1024
 
 type utf8encoder struct {
 	w   io.Writer
@@ -178,7 +207,7 @@ func (d *utf8decoder) Read(p []byte) (n int, err error) {
 		if len(d.out) > 0 {
 			n = copy(p, d.out)
 			d.out = d.out[n:]
-			return
+			return n, nil
 		}
 
 		// Decode leftover input from last read.

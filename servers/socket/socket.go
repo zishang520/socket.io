@@ -530,7 +530,7 @@ func (s *Socket) onack(packet *parser.Packet) {
 	if packet.Id != nil {
 		if ack, ok := s.acks.Load(*packet.Id); ok {
 			socket_log.Debug("calling ack %d with %v", *packet.Id, packet.Data)
-			ack(packet.Data.([]any), nil)
+			ack(utils.TryCast[[]any](packet.Data), nil)
 			s.acks.Delete(*packet.Id)
 		} else {
 			socket_log.Debug("bad ack %d", *packet.Id)
@@ -566,7 +566,7 @@ func (s *Socket) _onclose(args ...any) *Socket {
 	socket_log.Debug("closing socket - reason %v", args[0])
 	s.EmitReserved("disconnecting", args...)
 
-	if s.server.Opts().ConnectionStateRecovery() != nil && RECOVERABLE_DISCONNECT_REASONS.Has(args[0].(string)) {
+	if s.server.Opts().ConnectionStateRecovery() != nil && RECOVERABLE_DISCONNECT_REASONS.Has(utils.TryCast[string](args[0])) {
 		socket_log.Debug("connection state recovery is enabled for sid %s", s.id)
 		s.adapter.PersistSession(&SessionToPersist{
 			Sid:   s.id,
@@ -703,7 +703,7 @@ func (s *Socket) dispatch(event []any) {
 				return
 			}
 			if s.Connected() {
-				s.EmitUntyped(event[0].(string), event[1:]...)
+				s.EmitUntyped(utils.TryCast[string](event[0]), event[1:]...)
 			} else {
 				socket_log.Debug("ignore packet received after disconnection")
 			}

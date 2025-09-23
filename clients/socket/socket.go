@@ -207,12 +207,12 @@ func (s *Socket) subEvents() {
 		on(s.io, "open", s.onopen),
 		on(s.io, "packet", func(args ...any) {
 			if len(args) > 0 {
-				s.onpacket(args[0].(*parser.Packet))
+				s.onpacket(utils.TryCast[*parser.Packet](args[0]))
 			}
 		}),
 		on(s.io, "error", s.onerror),
 		on(s.io, "close", func(args ...any) {
-			s.onclose(args[0].(string), args[1].(error))
+			s.onclose(utils.TryCast[string](args[0]), utils.TryCast[error](args[1]))
 		}),
 	))
 }
@@ -225,7 +225,7 @@ func (s *Socket) subEvents() {
 //	fmt.Println(socket.Active()) // true
 //
 //	socket.On("disconnect", func(reason ...any) {
-//	  if reason[0].(string) == "io server disconnect" {
+//	  if utils.TryCast[string](reason[0]) == "io server disconnect" {
 //	    // the disconnection was initiated by the server, you need to manually reconnect
 //	    fmt.Println(socket.Active()) // false
 //	  }
@@ -475,7 +475,7 @@ func (s *Socket) _drainQueue(force bool) {
 	packet.TryCount.Add(1)
 	socket_log.Debug("sending packet [%d] (try n°%d)", packet.Id, packet.TryCount.Load())
 	s.flags.Store(packet.Flags)
-	s.Emit(packet.Args[0].(string), packet.Args[1:]...)
+	s.Emit(utils.TryCast[string](packet.Args[0]), packet.Args[1:]...)
 }
 
 // packet sends a packet.
@@ -615,7 +615,7 @@ func (s *Socket) emitEvent(args []any) {
 	for _, listener := range s._anyListeners.All() {
 		listener(args...)
 	}
-	s.EventEmitter.Emit(types.EventName(args[0].(string)), args[1:]...)
+	s.EventEmitter.Emit(types.EventName(utils.TryCast[string](args[0])), args[1:]...)
 	if _pid := s._pid.Load(); _pid != "" {
 		if args_len := len(args); args_len > 0 {
 			if lastOffset, ok := args[args_len-1].(string); ok {
@@ -660,7 +660,7 @@ func (s *Socket) onack(packet *parser.Packet) {
 	}
 	s.acks.Delete(*packet.Id)
 	socket_log.Debug("calling ack %d with %v", *packet.Id, packet.Data)
-	ack(packet.Data.([]any), nil)
+	ack(utils.TryCast[[]any](packet.Data), nil)
 }
 
 // onconnect is called upon server connect.

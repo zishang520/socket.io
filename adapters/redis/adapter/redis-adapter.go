@@ -703,7 +703,7 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 			NumSub: numSub,
 			Resolve: func(data *types.Slice[any]) {
 				cb(types.NewSet(adapter.SliceMap(data.All(), func(room any) socket.Room {
-					return room.(socket.Room)
+					return utils.TryCast[socket.Room](room)
 				})...), nil)
 			},
 			Timeout: adapter.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
@@ -767,7 +767,7 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				NumSub: numSub,
 				Resolve: func(data *types.Slice[any]) {
 					cb(adapter.SliceMap(data.All(), func(i any) socket.SocketDetails {
-						return i.(socket.SocketDetails)
+						return utils.TryCast[socket.SocketDetails](i)
 					}), nil)
 				},
 				Timeout: adapter.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {

@@ -131,7 +131,7 @@ func (s *sessionAwareAdapter) Broadcast(packet *parser.Packet, opts *BroadcastOp
 		id := utils.YeastDate()
 		// the offset is stored at the end of the data array, so the client knows the ID of the last packet it has
 		// processed (and the format is backward-compatible)
-		packet.Data = append(packet.Data.([]any), id)
+		packet.Data = append(utils.TryCast[[]any](packet.Data), id)
 
 		s.packets.Push(&PersistedPacket{
 			Id:        id,

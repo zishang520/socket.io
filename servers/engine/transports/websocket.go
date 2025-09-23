@@ -11,6 +11,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var ws_log = log.NewLog("engine:ws")
@@ -45,7 +46,7 @@ func (w *websocket) Construct(ctx *types.HttpContext) {
 	w.socket = ctx.Websocket
 
 	w.socket.On("error", func(errs ...any) {
-		w.OnError("websocket error", errs[0].(error))
+		w.OnError("websocket error", utils.TryCast[error](errs[0]))
 	})
 	w.socket.Once("close", func(...any) {
 		w.OnClose()
