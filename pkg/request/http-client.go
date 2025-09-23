@@ -2,6 +2,7 @@ package request
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -137,7 +138,7 @@ func (c *HTTPClient) Options(url string, options *Options) (*Response, error) {
 	return c.Request(context.Background(), http.MethodOptions, url, options)
 }
 
-func (c *HTTPClient) Close() error {
+func (c *HTTPClient) Close() (err error) {
 	if c.isDone.CompareAndSwap(false, true) {
 		// Close idle HTTP connections to prevent goroutine leaks
 		if httpClient := c.client.Client(); httpClient != nil {
@@ -147,11 +148,19 @@ func (c *HTTPClient) Close() error {
 		}
 
 		if transport, ok := c.client.Transport().(io.Closer); ok {
-			defer transport.Close()
+			defer func() {
+				if afterErr := transport.Close(); afterErr != nil {
+					if err != nil {
+						err = errors.Join(err, afterErr)
+					} else {
+						err = afterErr
+					}
+				}
+			}()
 		}
-		return c.client.Close()
+		err = c.client.Close()
 	}
-	return nil
+	return err
 }
 
 func (c *HTTPClient) setRequestBody(req *resty.Request, options *Options) error {

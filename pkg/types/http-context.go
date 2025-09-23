@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var (
@@ -29,8 +27,8 @@ type HttpContext struct {
 	request  *http.Request
 	response http.ResponseWriter
 
-	headers *utils.ParameterBag
-	query   *utils.ParameterBag
+	headers *ParameterBag
+	query   *ParameterBag
 
 	method      string
 	pathInfo    string
@@ -42,7 +40,7 @@ type HttpContext struct {
 	done   chan Void
 
 	statusCode      Atomic[int]
-	ResponseHeaders *utils.ParameterBag
+	ResponseHeaders *ParameterBag
 
 	mu sync.Mutex
 }
@@ -54,10 +52,10 @@ func NewHttpContext(w http.ResponseWriter, r *http.Request) *HttpContext {
 		done:            make(chan Void),
 		request:         r,
 		response:        w,
-		headers:         utils.NewParameterBag(r.Header),
-		query:           utils.NewParameterBag(r.URL.Query()),
+		headers:         NewParameterBag(r.Header),
+		query:           NewParameterBag(r.URL.Query()),
 		isHostValid:     true,
-		ResponseHeaders: utils.NewParameterBag(nil),
+		ResponseHeaders: NewParameterBag(nil),
 	}
 	c.ResponseHeaders.With(w.Header())
 
@@ -125,11 +123,11 @@ func (c *HttpContext) Response() http.ResponseWriter {
 	return c.response
 }
 
-func (c *HttpContext) Headers() *utils.ParameterBag {
+func (c *HttpContext) Headers() *ParameterBag {
 	return c.headers
 }
 
-func (c *HttpContext) Query() *utils.ParameterBag {
+func (c *HttpContext) Query() *ParameterBag {
 	return c.query
 }
 

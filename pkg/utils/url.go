@@ -24,9 +24,10 @@ func Url(uri string, path string) (parsedUrl *ParsedUrl, err error) {
 	parsedUrl.Port = parsedUrl.URL.Port()
 
 	if parsedUrl.Port == "" {
-		if parsedUrl.Scheme == "http" || parsedUrl.Scheme == "ws" {
+		switch parsedUrl.Scheme {
+		case "http", "ws":
 			parsedUrl.Port = "80"
-		} else if parsedUrl.Scheme == "https" || parsedUrl.Scheme == "wss" {
+		case "https", "wss":
 			parsedUrl.Port = "443"
 		}
 	}

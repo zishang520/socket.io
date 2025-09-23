@@ -171,7 +171,7 @@ func (p *polling) onDataRequest(ctx *types.HttpContext) {
 
 	cleanup()
 
-	headers := utils.NewParameterBag(map[string][]string{
+	headers := types.NewParameterBag(map[string][]string{
 		// text/html is required instead of text/plain to avoid an
 		// unwanted download dialog on certain user-agents (GH-43)
 		"Content-Type":   {"text/html"},
@@ -275,7 +275,7 @@ func (p *polling) DoWrite(ctx *types.HttpContext, data types.BufferInterface, op
 		contentType = "text/plain; charset=UTF-8"
 	}
 
-	headers := utils.NewParameterBag(map[string][]string{
+	headers := types.NewParameterBag(map[string][]string{
 		"Content-Type": {contentType},
 	})
 
@@ -402,7 +402,7 @@ func (p *polling) DoClose(fn types.Callable) {
 }
 
 // Returns headers for a response.
-func (p *polling) headers(ctx *types.HttpContext, headers *utils.ParameterBag) *utils.ParameterBag {
+func (p *polling) headers(ctx *types.HttpContext, headers *types.ParameterBag) *types.ParameterBag {
 	// prevent XSS warnings on IE
 	// https://github.com/socketio/socket.io/pull/1333
 	if ua := ctx.UserAgent(); (len(ua) > 0) && (strings.Contains(ua, ";MSIE") || strings.Contains(ua, "Trident/")) {

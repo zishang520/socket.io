@@ -331,7 +331,7 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 	}
 
 	transport.On("headers", func(args ...any) {
-		headers, req := utils.TryCast[*utils.ParameterBag](args[0]), utils.TryCast[*types.HttpContext](args[1])
+		headers, req := utils.TryCast[*types.ParameterBag](args[0]), utils.TryCast[*types.HttpContext](args[1])
 		if !ctx.Query().Has("sid") {
 			if cookie := bs.opts.Cookie(); cookie != nil {
 				headers.Set("Set-Cookie", cookie.String())

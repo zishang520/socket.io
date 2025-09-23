@@ -271,6 +271,28 @@ func configExample(config ConnectionStateRecoveryInterface) {
 }
 ```
 
+### Partial pkg package path update
+
+If you were using `*utils.ParameterBag`, you now need to change it to `*types.ParameterBag`:
+
+```go
+// Before
+import "github.com/zishang520/socket.io/v3/pkg/utils"
+
+func example() {
+    var bag *utils.ParameterBag
+    bag = utils.NewParameterBag(nil)
+}
+
+// After
+import "github.com/zishang520/socket.io/v3/pkg/types"
+
+func example() {
+    var bag *types.ParameterBag
+    bag = types.NewParameterBag(nil)
+}
+```
+
 ## Testing Your Upgrade
 
 After completing the upgrade, thoroughly test your application:
