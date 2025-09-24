@@ -1,6 +1,7 @@
 # socket.io-go-adapter
 
-[![GoDoc](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/adapter/v3?utm_source=godoc)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/adapter/v3)
+[![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/adapter/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/adapter/v3)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/adapters/adapter/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/adapters/adapter/v3)
 
 ## Description
 

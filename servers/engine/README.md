@@ -1,6 +1,6 @@
 # Engine.IO: The Realtime Engine for Golang
 
-[![GoDoc](https://pkg.go.dev/badge/github.com/zishang520/socket.io/servers/engine/v3?utm_source=godoc)](https://pkg.go.dev/github.com/zishang520/socket.io/servers/engine/v3)
+[![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/servers/engine/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/servers/engine/v3)
 [![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/servers/engine/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/servers/engine/v3)
 
 ## Overview

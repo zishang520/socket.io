@@ -1,7 +1,7 @@
 # Configuration
 # Define Go proxy and project modules
 export GOPROXY := https://goproxy.io,direct
-MODULES := cmd/socket.io parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket
+MODULES := parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket
 TARGET_MODULES = $(if $(MODULE),$(MODULE),$(MODULES))
 FORCE ?= 0
 VERSION_FILE := pkg/version/version.go

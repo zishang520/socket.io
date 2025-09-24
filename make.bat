@@ -4,7 +4,7 @@ pushd "%~dp0"
 
 :: Configuration
 SET "GOPROXY=https://goproxy.io,direct"
-SET "MODULES=cmd/socket.io parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket"
+SET "MODULES=parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket"
 SET "TEST_TIMEOUT=60s"
 SET "VERSION_FILE=pkg\version\version.go"
 

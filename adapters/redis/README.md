@@ -1,6 +1,7 @@
 # socket.io-go-redis
 
-[![GoDoc](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/redis/v3?utm_source=godoc)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/redis/v3)
+[![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/redis/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/redis/v3)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/adapters/redis/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/adapters/redis/v3)
 
 ## Description
 
