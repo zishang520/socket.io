@@ -179,7 +179,7 @@ func (p *polling) onDataRequest(ctx *types.HttpContext) {
 	})
 
 	// The following process in nodejs is asynchronous.
-	ctx.ResponseHeaders.With(p.headers(ctx, headers).All())
+	ctx.ResponseHeaders().With(p.headers(ctx, headers).All())
 	ctx.SetStatusCode(http.StatusOK)
 	io.WriteString(ctx, "ok")
 }
@@ -284,7 +284,7 @@ func (p *polling) DoWrite(ctx *types.HttpContext, data types.BufferInterface, op
 		defer callback(nil)
 
 		headers.Set("Content-Length", length)
-		ctx.ResponseHeaders.With(p.headers(ctx, headers).All())
+		ctx.ResponseHeaders().With(p.headers(ctx, headers).All())
 		ctx.SetStatusCode(http.StatusOK)
 		io.Copy(ctx, data)
 	}
@@ -367,7 +367,7 @@ func (p *polling) DoClose(fn types.Callable) {
 
 	if dataCtx := p.dataCtx.Load(); dataCtx != nil && !dataCtx.IsDone() {
 		polling_log.Debug("aborting ongoing data request")
-		dataCtx.ResponseHeaders.Set("Connection", "close")
+		dataCtx.ResponseHeaders().Set("Connection", "close")
 		dataCtx.SetStatusCode(http.StatusTooManyRequests)
 		dataCtx.Write(nil)
 	}

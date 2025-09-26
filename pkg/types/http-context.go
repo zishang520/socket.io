@@ -3,17 +3,16 @@ package types
 import (
 	"context"
 	"errors"
-	"fmt"
+	"net"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
 )
 
 var (
-	portRegexp = regexp.MustCompile(`:\d+$`)
-	hostRegexp = regexp.MustCompile(`(?:^\[)?[a-zA-Z0-9-:\]_]+\.?`)
+	ErrResponseAlreadyWritten = errors.New("response has already been written")
+	ErrInvalidStatusCode      = errors.New("invalid status code")
 )
 
 type HttpContext struct {
@@ -24,95 +23,126 @@ type HttpContext struct {
 
 	Cleanup Callable
 
+	ctx context.Context
+
 	request  *http.Request
 	response http.ResponseWriter
 
-	headers *ParameterBag
-	query   *ParameterBag
+	statusCode atomic.Int32
 
-	method      string
-	pathInfo    string
-	isHostValid bool
+	state atomic.Bool
+	done  chan struct{}
 
-	ctx context.Context
+	closeOnce sync.Once
+	writeOnce sync.Once
 
-	isDone atomic.Bool
-	done   chan Void
-
-	statusCode      Atomic[int]
-	ResponseHeaders *ParameterBag
-
-	mu sync.Mutex
+	headers         func() *ParameterBag
+	query           func() *ParameterBag
+	responseHeaders func() *ParameterBag
+	method          func() string
+	host            func() string
+	path            func() string
+	userAgent       func() string
 }
 
 func NewHttpContext(w http.ResponseWriter, r *http.Request) *HttpContext {
 	c := &HttpContext{
-		EventEmitter:    NewEventEmitter(),
-		ctx:             r.Context(),
-		done:            make(chan Void),
-		request:         r,
-		response:        w,
-		headers:         NewParameterBag(r.Header),
-		query:           NewParameterBag(r.URL.Query()),
-		isHostValid:     true,
-		ResponseHeaders: NewParameterBag(nil),
-	}
-	c.ResponseHeaders.With(w.Header())
+		EventEmitter: NewEventEmitter(),
 
-	go func() {
-		select {
-		case <-c.ctx.Done():
-			c.Flush()
-			c.Emit("close")
-		case <-c.done:
-			c.Emit("close")
-		}
-	}()
+		request:  r,
+		response: w,
+		ctx:      r.Context(),
+		done:     make(chan struct{}),
+
+		headers: sync.OnceValue(func() *ParameterBag {
+			return NewParameterBag(r.Header)
+		}),
+		query: sync.OnceValue(func() *ParameterBag {
+			return NewParameterBag(r.URL.Query())
+		}),
+		responseHeaders: sync.OnceValue(func() *ParameterBag {
+			return NewParameterBag(w.Header())
+		}),
+		method: sync.OnceValue(func() string {
+			return strings.ToUpper(r.Method)
+		}),
+		host: sync.OnceValue(func() string {
+			host := strings.TrimSpace(r.Host)
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				return h
+			}
+			return host
+		}),
+		path: sync.OnceValue(func() string {
+			path := strings.Trim(r.URL.Path, "/")
+			if path == "" {
+				return "/"
+			}
+			return path
+		}),
+		userAgent: sync.OnceValue(func() string {
+			return r.Header.Get("User-Agent")
+		}),
+	}
+
+	c.statusCode.Store(http.StatusOK)
+
+	c.state.Store(false)
+
+	go c.contextWatcher()
 
 	return c
 }
 
-func (c *HttpContext) Flush() {
-	if c.isDone.CompareAndSwap(false, true) {
-		close(c.done)
-	}
+func (c *HttpContext) IsDone() bool {
+	return c.state.Load()
 }
 
-func (c *HttpContext) Done() <-chan Void {
+func (c *HttpContext) Done() <-chan struct{} {
 	return c.done
 }
 
-func (c *HttpContext) IsDone() bool {
-	return c.isDone.Load()
-}
-
-func (c *HttpContext) SetStatusCode(statusCode int) {
-	c.statusCode.Store(statusCode)
+func (c *HttpContext) SetStatusCode(code int) error {
+	if code < 100 || code > 599 {
+		return ErrInvalidStatusCode
+	}
+	if c.IsDone() {
+		return ErrResponseAlreadyWritten
+	}
+	c.statusCode.Store(int32(code))
+	return nil
 }
 
 func (c *HttpContext) GetStatusCode() int {
-	if statusCode := c.statusCode.Load(); statusCode != 0 {
-		return statusCode
-	}
-	return http.StatusOK
+	return int(c.statusCode.Load())
 }
 
-// Data synchronous writing
-func (c *HttpContext) Write(wb []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+func (c *HttpContext) Write(data []byte) (int, error) {
 	if c.IsDone() {
-		return 0, errors.New("you cannot write data repeatedly")
+		return 0, ErrResponseAlreadyWritten
 	}
-	defer c.Flush()
 
-	for k, v := range c.ResponseHeaders.All() {
-		c.response.Header().Set(k, v[0])
+	var writeResult struct {
+		n   int
+		err error
 	}
-	c.response.WriteHeader(c.GetStatusCode())
 
-	return c.response.Write(wb)
+	c.writeOnce.Do(func() {
+		if !c.state.CompareAndSwap(false, true) {
+			writeResult.err = ErrResponseAlreadyWritten
+			return
+		}
+
+		writeResult.n, writeResult.err = c.performWrite(data)
+
+		c.closeWithError(nil)
+	})
+
+	return writeResult.n, writeResult.err
+}
+
+func (c *HttpContext) Flush() {
+	c.closeWithError(nil)
 }
 
 func (c *HttpContext) Request() *http.Request {
@@ -124,72 +154,82 @@ func (c *HttpContext) Response() http.ResponseWriter {
 }
 
 func (c *HttpContext) Headers() *ParameterBag {
-	return c.headers
+	return c.headers()
 }
 
 func (c *HttpContext) Query() *ParameterBag {
-	return c.query
+	return c.query()
+}
+
+func (c *HttpContext) ResponseHeaders() *ParameterBag {
+	return c.responseHeaders()
 }
 
 func (c *HttpContext) Context() context.Context {
 	return c.ctx
 }
 
-func (c *HttpContext) GetPathInfo() string {
-	if c.pathInfo == "" {
-		c.pathInfo = c.request.URL.Path
-	}
-	return c.pathInfo
-}
-
-func (c *HttpContext) Get(key string, _default ...string) string {
-	v, _ := c.query.Get(key, _default...)
-	return v
-}
-
-func (c *HttpContext) Gets(key string, _default ...[]string) []string {
-	v, _ := c.query.Gets(key, _default...)
-	return v
-}
-
-func (c *HttpContext) Method() string {
-	return c.GetMethod()
-}
-
-func (c *HttpContext) GetMethod() string {
-	if c.method == "" {
-		c.method = strings.ToUpper(c.request.Method)
-	}
-	return c.method
+func (c *HttpContext) PathInfo() string {
+	return c.request.URL.Path
 }
 
 func (c *HttpContext) Path() string {
-	if pattern := strings.Trim(c.GetPathInfo(), "/"); pattern != "" {
-		return pattern
-	}
-	return "/"
+	return c.path()
 }
 
-func (c *HttpContext) GetHost() (string, error) {
-	host := strings.TrimSpace(c.request.Host)
-	host = portRegexp.ReplaceAllString(host, "")
+func (c *HttpContext) Method() string {
+	return c.method()
+}
 
-	if host != "" {
-		if host = hostRegexp.ReplaceAllString(host, ""); host != "" {
-			if !c.isHostValid {
-				return "", nil
-			}
-			c.isHostValid = false
-			return "", fmt.Errorf(`Invalid host "%s".`, host)
-		}
-	}
-	return host, nil
+func (c *HttpContext) Host() string {
+	return c.host()
 }
 
 func (c *HttpContext) UserAgent() string {
-	return c.headers.Peek("User-Agent")
+	return c.userAgent()
 }
 
 func (c *HttpContext) Secure() bool {
 	return c.request.TLS != nil
+}
+
+func (c *HttpContext) contextWatcher() {
+	select {
+	case <-c.ctx.Done():
+		c.closeWithError(c.ctx.Err())
+	case <-c.done:
+	}
+}
+
+func (c *HttpContext) performWrite(data []byte) (int, error) {
+	c.writeResponseHeaders()
+	c.response.WriteHeader(c.GetStatusCode())
+	return c.response.Write(data)
+}
+
+func (c *HttpContext) writeResponseHeaders() {
+	headers := c.response.Header()
+	for key, values := range c.ResponseHeaders().All() {
+		switch len(values) {
+		case 0:
+			continue
+		case 1:
+			headers.Set(key, values[0])
+		default:
+			headers.Del(key)
+			for _, v := range values {
+				headers.Add(key, v)
+			}
+		}
+	}
+}
+
+func (c *HttpContext) closeWithError(err error) {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		if c.Cleanup != nil {
+			c.Cleanup()
+		}
+		go c.Emit("close", err)
+	})
 }

@@ -191,7 +191,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			c.Nsp().OnServerSideEmit(packet)
 			return
 		}
-		called := sync.Once{}
+		called := &sync.Once{}
 		callback := socket.Ack(func(arg []any, _ error) {
 			// only one argument is expected
 			called.Do(func() {

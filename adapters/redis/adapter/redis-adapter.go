@@ -417,7 +417,7 @@ func (r *redisAdapter) onRequest(channel string, msg []byte) {
 			r.Nsp().OnServerSideEmit(request.Data)
 			return
 		}
-		called := sync.Once{}
+		called := &sync.Once{}
 		callback := socket.Ack(func(args []any, err error) {
 			// only one argument is expected
 			called.Do(func() {

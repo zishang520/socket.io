@@ -212,15 +212,15 @@ func parseVary(vary string) *Set[string] {
 
 func (c *cors) applyHeaders() *cors {
 	for _, header := range c.headers {
-		c.ctx.ResponseHeaders.Set(header.Key, header.Value)
+		c.ctx.ResponseHeaders().Set(header.Key, header.Value)
 	}
-	if vary := c.ctx.ResponseHeaders.Peek("Vary"); vary == "*" {
-		c.ctx.ResponseHeaders.Set("Vary", "*")
+	if vary := c.ctx.ResponseHeaders().Peek("Vary"); vary == "*" {
+		c.ctx.ResponseHeaders().Set("Vary", "*")
 	} else {
 		if len(c.varys) > 0 {
 			varys := parseVary(vary)
 			varys.Add(c.varys...)
-			c.ctx.ResponseHeaders.Set("Vary", strings.Join(varys.Keys(), ", "))
+			c.ctx.ResponseHeaders().Set("Vary", strings.Join(varys.Keys(), ", "))
 		}
 	}
 	return c
@@ -242,7 +242,7 @@ func CorsMiddleware(options *Cors, ctx *HttpContext, next func(error)) {
 		} else {
 			// Safari (and potentially other browsers) need content-length 0,
 			//   for 204 or they just hang waiting for a body
-			ctx.ResponseHeaders.Set("Content-Length", "0")
+			ctx.ResponseHeaders().Set("Content-Length", "0")
 			ctx.SetStatusCode(options.OptionsSuccessStatus)
 			ctx.Write(nil)
 		}

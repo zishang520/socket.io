@@ -19,7 +19,7 @@ var (
 	defaultParserv4 Parser = &parserv4{}
 
 	bytesBufferPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return &bytes.Buffer{}
 		},
 	}

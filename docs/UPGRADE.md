@@ -293,6 +293,43 @@ func example() {
 }
 ```
 
+### Partial API updates for `*types.HttpContext`
+
+Several methods and properties of `*types.HttpContext` have been renamed or refactored. Please update your code accordingly:
+
+```go
+import "github.com/zishang520/socket.io/v3/pkg/types"
+
+// Before
+func example(ctx *types.HttpContext) {
+    headers := ctx.ResponseHeaders
+    host := ctx.GetHost()
+    method := ctx.GetMethod()
+    values := ctx.Gets("foo")
+    value := ctx.Get("bar")
+    path := ctx.GetPathInfo()
+}
+
+// After
+func example(ctx *types.HttpContext) {
+    headers := ctx.ResponseHeaders()
+    host := ctx.Host()
+    method := ctx.Method()
+    values, _ := ctx.Query().Gets("foo")
+    value, _ := ctx.Query().Get("bar")
+    path := ctx.PathInfo()
+}
+```
+
+**Changes summary:**
+
+* `ResponseHeaders` → `ResponseHeaders()` (property to method)
+* `GetHost()` → `Host()`
+* `GetMethod()` → `Method()`
+* `Gets(key)` → `Query().Gets(key)`
+* `Get(key)` → `Query().Get(key)`
+* `GetPathInfo()` → `PathInfo()`
+
 ## Testing Your Upgrade
 
 After completing the upgrade, thoroughly test your application:

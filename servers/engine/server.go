@@ -128,7 +128,7 @@ func (s *server) HandleUpgrade(ctx *types.HttpContext) {
 		}
 
 		// delegate to ws
-		if conn, err := ws.Upgrade(ctx.Response(), ctx.Request(), ctx.ResponseHeaders.All()); err != nil {
+		if conn, err := ws.Upgrade(ctx.Response(), ctx.Request(), ctx.ResponseHeaders().All()); err != nil {
 			s.emitAbortRequest(ctx, BAD_REQUEST, map[string]any{"name": "UPGRADE_FAILURE"})
 			server_log.Debug("websocket error before upgrade: %s", err.Error())
 		} else {
@@ -372,7 +372,7 @@ func abortRequest(ctx *types.HttpContext, codeMessage *types.CodeMessage, errorC
 			message = utils.TryCast[string](m)
 		}
 	}
-	ctx.ResponseHeaders.Set("Content-Type", "application/json")
+	ctx.ResponseHeaders().Set("Content-Type", "application/json")
 	ctx.SetStatusCode(statusCode)
 	if b, err := json.Marshal(types.CodeMessage{Code: codeMessage.Code, Message: message}); err == nil {
 		ctx.Write(b)
