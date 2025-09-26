@@ -552,11 +552,9 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 		case redis.ALL_ROOMS:
 			request.MsgCount.Add(1)
 
-			// ignore if response does not contain 'rooms' key
-			if response.Rooms == nil {
-				return
+			if len(response.Sockets) > 0 {
+				request.Sockets.Push(response.Sockets...)
 			}
-			request.Rooms.Add(response.Rooms...)
 
 			if request.MsgCount.Load() == request.NumSub {
 				utils.ClearTimeout(request.Timeout.Load())
