@@ -11,6 +11,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -206,13 +207,11 @@ func (s *Socket) subEvents() {
 	s.subs.Store(types.NewSlice(
 		on(s.io, "open", s.onopen),
 		on(s.io, "packet", func(args ...any) {
-			if len(args) > 0 {
-				s.onpacket(utils.TryCast[*parser.Packet](args[0]))
-			}
+			s.onpacket(slices.TryGetAny[*parser.Packet](args, 0))
 		}),
 		on(s.io, "error", s.onerror),
 		on(s.io, "close", func(args ...any) {
-			s.onclose(utils.TryCast[string](args[0]), utils.TryCast[error](args[1]))
+			s.onclose(slices.TryGetAny[string](args, 0), slices.TryGetAny[error](args, 1))
 		}),
 	))
 }
@@ -225,7 +224,7 @@ func (s *Socket) subEvents() {
 //	fmt.Println(socket.Active()) // true
 //
 //	socket.On("disconnect", func(reason ...any) {
-//	  if utils.TryCast[string](reason[0]) == "io server disconnect" {
+//	  if slices.TryGetAny[string](reason, 0) == "io server disconnect" {
 //	    // the disconnection was initiated by the server, you need to manually reconnect
 //	    fmt.Println(socket.Active()) // false
 //	  }
@@ -475,7 +474,7 @@ func (s *Socket) _drainQueue(force bool) {
 	packet.TryCount.Add(1)
 	socket_log.Debug("sending packet [%d] (try n°%d)", packet.Id, packet.TryCount.Load())
 	s.flags.Store(packet.Flags)
-	s.Emit(utils.TryCast[string](packet.Args[0]), packet.Args[1:]...)
+	s.Emit(slices.TryGetAny[string](packet.Args, 0), slices.Slice(packet.Args, 1)...)
 }
 
 // packet sends a packet.
@@ -615,7 +614,7 @@ func (s *Socket) emitEvent(args []any) {
 	for _, listener := range s._anyListeners.All() {
 		listener(args...)
 	}
-	s.EventEmitter.Emit(types.EventName(utils.TryCast[string](args[0])), args[1:]...)
+	s.EventEmitter.Emit(types.EventName(slices.TryGetAny[string](args, 0)), slices.Slice(args, 1)...)
 	if _pid := s._pid.Load(); _pid != "" {
 		if args_len := len(args); args_len > 0 {
 			if lastOffset, ok := args[args_len-1].(string); ok {

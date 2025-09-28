@@ -10,6 +10,7 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -180,7 +181,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 	}
 
 	onerror := func(errs ...any) {
-		e := fmt.Errorf("[%s] probe error: %w", transport.Name(), utils.TryCast[error](errs[0]))
+		e := fmt.Errorf("[%s] probe error: %w", transport.Name(), slices.TryGetAny[error](errs, 0))
 		freezeTransport()
 		client_socket_log.Debug(`probe transport "%s" failed because of error: %v`, name, e)
 		s.Emit("upgradeError", e)

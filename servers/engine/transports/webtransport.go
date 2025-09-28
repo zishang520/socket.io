@@ -9,8 +9,8 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
-	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"github.com/zishang520/socket.io/v3/pkg/webtransport"
 )
 
@@ -48,7 +48,7 @@ func (w *webTransport) Construct(ctx *types.HttpContext) {
 	w.session = ctx.WebTransport
 
 	w.session.On("error", func(errs ...any) {
-		w.OnError("webtransport error", utils.TryCast[error](errs[0]))
+		w.OnError("webtransport error", slices.TryGetAny[error](errs, 0))
 	})
 	w.session.Once("close", func(...any) {
 		w.OnClose()
@@ -70,16 +70,20 @@ func (w *webTransport) HandlesUpgrades() bool {
 	return true
 }
 
+func (w *webTransport) _error(err error) {
+	if webtransport.IsUnexpectedCloseError(err) || errors.Is(err, net.ErrClosed) {
+		w.session.Emit("close")
+	} else {
+		w.session.Emit("error", err)
+	}
+}
+
 // Receiving Messages
 func (w *webTransport) message() {
 	for {
 		mt, message, err := w.session.NextReader()
 		if err != nil {
-			if webtransport.IsUnexpectedCloseError(err) || errors.Is(err, net.ErrClosed) {
-				w.session.Emit("close")
-			} else {
-				w.session.Emit("error", err)
-			}
+			w._error(err)
 			return
 		}
 
@@ -87,22 +91,14 @@ func (w *webTransport) message() {
 		case webtransport.BinaryMessage:
 			read := types.NewBytesBuffer(nil)
 			if _, err := read.ReadFrom(message); err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					w.session.Emit("close")
-				} else {
-					w.session.Emit("error", err)
-				}
+				w._error(err)
 			} else {
 				w.onMessage(read)
 			}
 		case webtransport.TextMessage:
 			read := types.NewStringBuffer(nil)
 			if _, err := read.ReadFrom(message); err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					w.session.Emit("close")
-				} else {
-					w.session.Emit("error", err)
-				}
+				w._error(err)
 			} else {
 				w.onMessage(read)
 			}
@@ -149,20 +145,12 @@ func (w *webTransport) send(packets []*packet.Packet) {
 				pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
 					wt_log.Debug(`Send Error "%s"`, err.Error())
-					if errors.Is(err, net.ErrClosed) {
-						w.session.Emit("close")
-					} else {
-						w.session.Emit("error", err)
-					}
+					w._error(err)
 					return
 				}
 				if err := w.session.WritePreparedMessage(pm); err != nil {
 					wt_log.Debug(`Send Error "%s"`, err.Error())
-					if errors.Is(err, net.ErrClosed) {
-						w.session.Emit("close")
-					} else {
-						w.session.Emit("error", err)
-					}
+					w._error(err)
 					return
 				}
 				return
@@ -173,11 +161,7 @@ func (w *webTransport) send(packets []*packet.Packet) {
 		data, err := w.Parser().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
 			wt_log.Debug(`Send Error "%s"`, err.Error())
-			if errors.Is(err, net.ErrClosed) {
-				w.session.Emit("close")
-			} else {
-				w.session.Emit("error", err)
-			}
+			w._error(err)
 			return
 		}
 		w.write(data, compress)
@@ -199,29 +183,17 @@ func (w *webTransport) write(data types.BufferInterface, _ bool) {
 	}
 	write, err := w.session.NextWriter(mt)
 	if err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			w.session.Emit("close")
-		} else {
-			w.session.Emit("error", err)
-		}
+		w._error(err)
 		return
 	}
 	defer func() {
 		if err := write.Close(); err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				w.session.Emit("close")
-			} else {
-				w.session.Emit("error", err)
-			}
+			w._error(err)
 			return
 		}
 	}()
 	if _, err := io.Copy(write, data); err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			w.session.Emit("close")
-		} else {
-			w.session.Emit("error", err)
-		}
+		w._error(err)
 		return
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/zishang520/socket.io/servers/engine/v3/errors"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -331,7 +332,7 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 	}
 
 	transport.On("headers", func(args ...any) {
-		headers, req := utils.TryCast[*types.ParameterBag](args[0]), utils.TryCast[*types.HttpContext](args[1])
+		headers, req := slices.TryGetAny[*types.ParameterBag](args, 0), slices.TryGetAny[*types.HttpContext](args, 1)
 		if !ctx.Query().Has("sid") {
 			if cookie := bs.opts.Cookie(); cookie != nil {
 				headers.Set("Set-Cookie", cookie.String())

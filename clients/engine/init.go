@@ -13,6 +13,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/v3/pkg/events"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -66,7 +67,7 @@ func init() {
 }
 
 func isTest() bool {
-	return len(os.Args) > 0 && strings.HasSuffix(strings.TrimSuffix(os.Args[0], ".exe"), ".test")
+	return len(os.Args) > 0 && strings.HasSuffix(strings.TrimSuffix(slices.TryGet(os.Args, 0), ".exe"), ".test")
 }
 
 // setupSignalHandling configures handlers for system signals to ensure

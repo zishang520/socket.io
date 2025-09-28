@@ -20,6 +20,14 @@ func Ptr[T any](v T) *T {
 	return &v
 }
 
+// Tap calls the given function with the given value, then returns the value.
+func Tap[T any](value T, callback func(T)) T {
+	if callback != nil {
+		callback(value)
+	}
+	return value
+}
+
 func Value(value string, _default string) string {
 	if value == "" {
 		return _default

@@ -13,8 +13,8 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/request"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
-	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // WebSocket implements the WebSocket transport for Engine.IO.
@@ -124,6 +124,14 @@ func (w *websocket) DoOpen() {
 	w.addEventListeners()
 }
 
+func (w *websocket) _error(err error) {
+	if ws.IsUnexpectedCloseError(err) || errors.Is(err, net.ErrClosed) {
+		w.socket.Emit("close")
+	} else {
+		w.socket.Emit("error", err)
+	}
+}
+
 // message handles the WebSocket message reading loop.
 // This method processes incoming WebSocket messages and handles different message types.
 // It runs in a separate goroutine to continuously read messages from the connection.
@@ -131,11 +139,7 @@ func (w *websocket) message() {
 	for {
 		mt, message, err := w.socket.NextReader()
 		if err != nil {
-			if ws.IsUnexpectedCloseError(err) || errors.Is(err, net.ErrClosed) {
-				w.socket.Emit("close")
-			} else {
-				w.socket.Emit("error", err)
-			}
+			w._error(err)
 			return
 		}
 
@@ -143,22 +147,14 @@ func (w *websocket) message() {
 		case ws.BinaryMessage:
 			read := types.NewBytesBuffer(nil)
 			if _, err := read.ReadFrom(message); err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					w.socket.Emit("close")
-				} else {
-					w.socket.Emit("error", err)
-				}
+				w._error(err)
 			} else {
 				w.OnData(read)
 			}
 		case ws.TextMessage:
 			read := types.NewStringBuffer(nil)
 			if _, err := read.ReadFrom(message); err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					w.socket.Emit("close")
-				} else {
-					w.socket.Emit("error", err)
-				}
+				w._error(err)
 			} else {
 				w.OnData(read)
 			}
@@ -182,7 +178,7 @@ func (w *websocket) message() {
 // message reading loop.
 func (w *websocket) addEventListeners() {
 	w.socket.On("error", func(errs ...any) {
-		w.OnError("websocket error", utils.TryCast[error](errs[0]), nil)
+		w.OnError("websocket error", slices.TryGetAny[error](errs, 0), nil)
 	})
 	w.socket.Once("close", func(...any) {
 		w.OnClose(NewTransportError("websocket connection closed", nil, nil).Err())
@@ -238,20 +234,12 @@ func (w *websocket) write(packets []*packet.Packet) {
 				pm, err := ws.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
 					client_websocket_log.Debug(`Send Error "%s"`, err.Error())
-					if errors.Is(err, net.ErrClosed) {
-						w.socket.Emit("close")
-					} else {
-						w.socket.Emit("error", err)
-					}
+					w._error(err)
 					return
 				}
 				if err := w.socket.WritePreparedMessage(pm); err != nil {
 					client_websocket_log.Debug(`Send Error "%s"`, err.Error())
-					if errors.Is(err, net.ErrClosed) {
-						w.socket.Emit("close")
-					} else {
-						w.socket.Emit("error", err)
-					}
+					w._error(err)
 					return
 				}
 				return
@@ -261,11 +249,7 @@ func (w *websocket) write(packets []*packet.Packet) {
 		data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
 			client_websocket_log.Debug(`Send Error "%s"`, err.Error())
-			if errors.Is(err, net.ErrClosed) {
-				w.socket.Emit("close")
-			} else {
-				w.socket.Emit("error", err)
-			}
+			w._error(err)
 			return
 		}
 		w.doWrite(data, compress)
@@ -293,29 +277,17 @@ func (w *websocket) doWrite(data types.BufferInterface, compress bool) {
 	}
 	write, err := w.socket.NextWriter(mt)
 	if err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			w.socket.Emit("close")
-		} else {
-			w.socket.Emit("error", err)
-		}
+		w._error(err)
 		return
 	}
 	defer func() {
 		if err := write.Close(); err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				w.socket.Emit("close")
-			} else {
-				w.socket.Emit("error", err)
-			}
+			w._error(err)
 			return
 		}
 	}()
 	if _, err := io.Copy(write, data); err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			w.socket.Emit("close")
-		} else {
-			w.socket.Emit("error", err)
-		}
+		w._error(err)
 		return
 	}
 }

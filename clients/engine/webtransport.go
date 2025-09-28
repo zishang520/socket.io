@@ -15,8 +15,8 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/request"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
-	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"github.com/zishang520/socket.io/v3/pkg/webtransport"
 	wt "github.com/zishang520/webtransport-go"
 )
@@ -127,17 +127,21 @@ func (w *webTransport) DoOpen() {
 	w.addEventListeners()
 }
 
+func (w *webTransport) _error(err error) {
+	if webtransport.IsUnexpectedCloseError(err) || errors.Is(err, net.ErrClosed) {
+		w.session.Emit("close")
+	} else {
+		w.session.Emit("error", err)
+	}
+}
+
 // message handles the WebTransport message reading loop.
 // This method processes incoming WebTransport messages and handles different message types.
 func (w *webTransport) message() {
 	for {
 		mt, message, err := w.session.NextReader()
 		if err != nil {
-			if webtransport.IsUnexpectedCloseError(err) || errors.Is(err, net.ErrClosed) {
-				w.session.Emit("close")
-			} else {
-				w.session.Emit("error", err)
-			}
+			w._error(err)
 			return
 		}
 
@@ -145,22 +149,14 @@ func (w *webTransport) message() {
 		case webtransport.BinaryMessage:
 			read := types.NewBytesBuffer(nil)
 			if _, err := read.ReadFrom(message); err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					w.session.Emit("close")
-				} else {
-					w.session.Emit("error", err)
-				}
+				w._error(err)
 			} else {
 				w.OnData(read)
 			}
 		case webtransport.TextMessage:
 			read := types.NewStringBuffer(nil)
 			if _, err := read.ReadFrom(message); err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					w.session.Emit("close")
-				} else {
-					w.session.Emit("error", err)
-				}
+				w._error(err)
 			} else {
 				w.OnData(read)
 			}
@@ -190,11 +186,7 @@ func (w *webTransport) handshake() {
 	data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 	if err != nil {
 		client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
-		if errors.Is(err, net.ErrClosed) {
-			w.session.Emit("close")
-		} else {
-			w.session.Emit("error", err)
-		}
+		w._error(err)
 		return
 	}
 	w.doWrite(data, true)
@@ -206,7 +198,7 @@ func (w *webTransport) handshake() {
 // This method configures error and close event handlers and starts the message reading loop.
 func (w *webTransport) addEventListeners() {
 	w.session.On("error", func(errs ...any) {
-		w.OnError("webtransport error", utils.TryCast[error](errs[0]), w.session.Session().Context())
+		w.OnError("webtransport error", slices.TryGetAny[error](errs, 0), w.session.Session().Context())
 	})
 	w.session.Once("close", func(...any) {
 		client_webtransport_log.Debug(`transport closed gracefully`)
@@ -254,20 +246,12 @@ func (w *webTransport) write(packets []*packet.Packet) {
 				pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
 					client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
-					if errors.Is(err, net.ErrClosed) {
-						w.session.Emit("close")
-					} else {
-						w.session.Emit("error", err)
-					}
+					w._error(err)
 					return
 				}
 				if err := w.session.WritePreparedMessage(pm); err != nil {
 					client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
-					if errors.Is(err, net.ErrClosed) {
-						w.session.Emit("close")
-					} else {
-						w.session.Emit("error", err)
-					}
+					w._error(err)
 					return
 				}
 				return
@@ -277,11 +261,7 @@ func (w *webTransport) write(packets []*packet.Packet) {
 		data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
 			client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
-			if errors.Is(err, net.ErrClosed) {
-				w.session.Emit("close")
-			} else {
-				w.session.Emit("error", err)
-			}
+			w._error(err)
 			return
 		}
 		w.doWrite(data, compress)
@@ -305,29 +285,17 @@ func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
 	}
 	write, err := w.session.NextWriter(mt)
 	if err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			w.session.Emit("close")
-		} else {
-			w.session.Emit("error", err)
-		}
+		w._error(err)
 		return
 	}
 	defer func() {
 		if err := write.Close(); err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				w.session.Emit("close")
-			} else {
-				w.session.Emit("error", err)
-			}
+			w._error(err)
 			return
 		}
 	}()
 	if _, err := io.Copy(write, data); err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			w.session.Emit("close")
-		} else {
-			w.session.Emit("error", err)
-		}
+		w._error(err)
 		return
 	}
 }

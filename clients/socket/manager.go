@@ -8,6 +8,7 @@ import (
 
 	"github.com/zishang520/socket.io/clients/engine/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -279,7 +280,7 @@ func (m *Manager) Open(fn func(error)) *Manager {
 	})
 
 	onError := func(errs ...any) {
-		err := utils.TryCast[error](errs[0])
+		err := slices.TryGetAny[error](errs, 0)
 		manager_log.Debug("error")
 		m.cleanup()
 		m._readyState.Store(ReadyStateClosed)
@@ -342,7 +343,7 @@ func (m *Manager) onopen(socket Engine) {
 		on(socket, "data", m.ondata),
 		on(socket, "error", m.onerror),
 		on(socket, "close", func(args ...any) {
-			m.onclose(utils.TryCast[string](args[0]), utils.TryCast[error](args[1]))
+			m.onclose(slices.TryGetAny[string](args, 0), slices.TryGetAny[error](args, 1))
 		}),
 		on(m.decoder, "decoded", m.ondecoded),
 	)

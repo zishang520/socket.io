@@ -17,6 +17,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"github.com/zishang520/socket.io/v3/pkg/version"
@@ -485,7 +486,7 @@ func (s *Server) Bind(egs engine.BaseServer) *Server {
 
 // onconnection is called with each incoming transport connection.
 func (s *Server) onconnection(conns ...any) {
-	conn := utils.TryCast[engine.Socket](conns[0])
+	conn := slices.TryGetAny[engine.Socket](conns, 0)
 	server_log.Debug("incoming connection with id %s", conn.Id())
 	client := NewClient(s, conn)
 	if conn.Protocol() == 3 {

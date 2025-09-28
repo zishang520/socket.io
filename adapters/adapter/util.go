@@ -65,19 +65,3 @@ func Uid2(length int) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(r), nil
 }
-
-// SliceMap maps a slice of type I to a slice of type O using the provided converter function.
-func SliceMap[I any, O any](i []I, converter func(I) O) (o []O) {
-	for _, _i := range i {
-		o = append(o, converter(_i))
-	}
-	return o
-}
-
-// Tap calls the given function with the given value, then returns the value.
-func Tap[T any](value T, callback func(T)) T {
-	if callback != nil {
-		callback(value)
-	}
-	return value
-}

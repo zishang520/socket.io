@@ -13,6 +13,7 @@ import (
 	"github.com/zishang520/socket.io/servers/engine/v3/errors"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -188,6 +189,11 @@ func (s *socket) onOpen() {
 
 // Called upon transport packet.
 func (s *socket) onPacket(data *packet.Packet) {
+	if data == nil {
+		socket_log.Debug("packet received nil")
+		return
+	}
+
 	if s.ReadyState() != "open" {
 		socket_log.Debug("packet received with closed socket")
 		return
@@ -260,13 +266,11 @@ func (s *socket) resetPingTimeoutDuration() time.Duration {
 // Attaches handlers for the given transport.
 func (s *socket) setTransport(transport transports.Transport) {
 	onError := func(err ...any) {
-		s.onError(utils.TryCast[error](err[0]))
+		s.onError(slices.TryGetAny[error](err, 0))
 	}
 	onReady := func(...any) { s.flush() }
 	onPacket := func(packets ...any) {
-		if len(packets) > 0 {
-			s.onPacket(utils.TryCast[*packet.Packet](packets[0]))
-		}
+		s.onPacket(slices.TryGetAny[*packet.Packet](packets, 0))
 	}
 	onDrain := func(...any) { s.onDrain() }
 	onClose := func(...any) { s.OnClose("transport close") }
@@ -367,8 +371,8 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 		s.RemoveListener("close", onClose)
 	}
 
-	onError = func(err ...any) {
-		socket_log.Debug("client did not complete upgrade - %v", err[0])
+	onError = func(errs ...any) {
+		socket_log.Debug("client did not complete upgrade - %v", slices.TryGetAny[error](errs, 0))
 		cleanup()
 		if transport != nil {
 			transport.Close()

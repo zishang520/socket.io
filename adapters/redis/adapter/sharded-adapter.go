@@ -15,6 +15,7 @@ import (
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -93,14 +94,14 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	if s.opts.SubscriptionMode() == DynamicSubscriptionMode ||
 		s.opts.SubscriptionMode() == DynamicPrivateSubscriptionMode {
 		s.On("create-room", func(rooms ...any) {
-			if room := utils.TryCast[socket.Room](rooms[0]); s.shouldUseASeparateNamespace(room) {
+			if room := slices.TryGetAny[socket.Room](rooms, 0); s.shouldUseASeparateNamespace(room) {
 				if err := s.pubSubClient.SSubscribe(s.redisClient.Context, s.dynamicChannel(room)); err != nil {
 					s.redisClient.Emit("error", err)
 				}
 			}
 		})
 		s.On("delete-room", func(rooms ...any) {
-			if room := utils.TryCast[socket.Room](rooms[0]); s.shouldUseASeparateNamespace(room) {
+			if room := slices.TryGetAny[socket.Room](rooms, 0); s.shouldUseASeparateNamespace(room) {
 				if err := s.pubSubClient.SUnsubscribe(s.redisClient.Context, s.dynamicChannel(room)); err != nil {
 					s.redisClient.Emit("error", err)
 				}

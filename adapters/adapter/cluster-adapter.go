@@ -9,6 +9,7 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -166,7 +167,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					Type: FETCH_SOCKETS_RESPONSE,
 					Data: &FetchSocketsResponse{
 						RequestId: data.RequestId,
-						Sockets: SliceMap(localSockets, func(client socket.SocketDetails) *SocketResponse {
+						Sockets: slices.Map(localSockets, func(client socket.SocketDetails) *SocketResponse {
 							return &SocketResponse{
 								Id:        client.Id(),
 								Handshake: client.Handshake(),
@@ -251,7 +252,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		adapter_log.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
 		if request, ok := c.requests.Load(data.RequestId); ok {
 			request.Current.Add(1)
-			request.Responses.Push(SliceMap(data.Sockets, func(client *SocketResponse) any {
+			request.Responses.Push(slices.Map(data.Sockets, func(client *SocketResponse) any {
 				return socket.SocketDetails(NewRemoteSocket(client))
 			})...)
 
@@ -441,16 +442,16 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 			c.requests.Store(requestId, &ClusterRequest{
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
-					callback(SliceMap(data.All(), func(i any) socket.SocketDetails {
+					callback(slices.Map(data.All(), func(i any) socket.SocketDetails {
 						return utils.TryCast[socket.SocketDetails](i)
 					}), nil)
 				},
-				Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+				Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 					t.Store(timeout)
 				}),
 				Current:  &atomic.Int64{},
 				Expected: expectedResponseCount,
-				Responses: types.NewSlice(SliceMap(localSockets, func(client socket.SocketDetails) any {
+				Responses: types.NewSlice(slices.Map(localSockets, func(client socket.SocketDetails) any {
 					return client
 				})...),
 			})
@@ -513,7 +514,7 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 		Resolve: func(data *types.Slice[any]) {
 			ack(data.All(), nil)
 		},
-		Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+		Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 			t.Store(timeout)
 		}),
 		Current:   &atomic.Int64{},

@@ -19,6 +19,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/events"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -387,12 +388,10 @@ func (s *socketWithoutUpgrade) SetTransport(transport Transport) {
 	// set up transport listeners
 	transport.On("drain", func(...any) { s._onDrain() })
 	transport.On("packet", func(packets ...any) {
-		if len(packets) > 0 {
-			s._onPacket(utils.TryCast[*packet.Packet](packets[0]))
-		}
+		s._onPacket(slices.TryGetAny[*packet.Packet](packets, 0))
 	})
-	transport.On("error", func(err ...any) { s._onError(utils.TryCast[error](err[0])) })
-	transport.On("close", func(reason ...any) { s._onClose("transport close", utils.TryCast[error](reason[0])) })
+	transport.On("error", func(err ...any) { s._onError(slices.TryGetAny[error](err, 0)) })
+	transport.On("close", func(reason ...any) { s._onClose("transport close", slices.TryGetAny[error](reason, 0)) })
 }
 
 // OnOpen is called when the connection is successfully established.
@@ -408,7 +407,7 @@ func (s *socketWithoutUpgrade) OnOpen() {
 // _onPacket handles incoming packets from the transport.
 // It processes different packet types and triggers appropriate events.
 func (s *socketWithoutUpgrade) _onPacket(data *packet.Packet) {
-	if readyState := s.ReadyState(); SocketStateOpening == readyState || SocketStateOpen == readyState || SocketStateClosing == readyState {
+	if readyState := s.ReadyState(); data != nil && (SocketStateOpening == readyState || SocketStateOpen == readyState || SocketStateClosing == readyState) {
 		client_socket_log.Debug(`socket receive: type "%s", data "%v"`, data.Type, data.Data)
 
 		s.Emit("packet", data)

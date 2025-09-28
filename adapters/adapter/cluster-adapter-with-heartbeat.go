@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -202,7 +203,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		Resolve: func(data *types.Slice[any]) {
 			ack(data.All(), nil)
 		},
-		Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+		Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 			t.Store(timeout)
 		}),
 		MissingUids: types.NewSet(a.nodesMap.Keys()...),
@@ -258,15 +259,15 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 			a.customRequests.Store(requestId, &CustomClusterRequest{
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
-					cb(SliceMap(data.All(), func(i any) socket.SocketDetails {
+					cb(slices.Map(data.All(), func(i any) socket.SocketDetails {
 						return utils.TryCast[socket.SocketDetails](i)
 					}), nil)
 				},
-				Timeout: Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+				Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 					t.Store(timeout)
 				}),
 				MissingUids: types.NewSet(a.nodesMap.Keys()...),
-				Responses: types.NewSlice(SliceMap(localSockets, func(client socket.SocketDetails) any {
+				Responses: types.NewSlice(slices.Map(localSockets, func(client socket.SocketDetails) any {
 					return client
 				})...),
 			})
@@ -292,7 +293,7 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 		}
 		adapter_log.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
 		if request, ok := a.customRequests.Load(data.RequestId); ok {
-			request.Responses.Push(SliceMap(data.Sockets, func(client *SocketResponse) any {
+			request.Responses.Push(slices.Map(data.Sockets, func(client *SocketResponse) any {
 				return socket.SocketDetails(NewRemoteSocket(client))
 			})...)
 

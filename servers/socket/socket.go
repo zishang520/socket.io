@@ -11,6 +11,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -563,10 +564,10 @@ func (s *Socket) _onclose(args ...any) *Socket {
 	if !s.Connected() {
 		return s
 	}
-	socket_log.Debug("closing socket - reason %v", args[0])
+	socket_log.Debug("closing socket - reason %v", slices.TryGet(args, 0))
 	s.EmitReserved("disconnecting", args...)
 
-	if s.server.Opts().ConnectionStateRecovery() != nil && RECOVERABLE_DISCONNECT_REASONS.Has(utils.TryCast[string](args[0])) {
+	if s.server.Opts().ConnectionStateRecovery() != nil && RECOVERABLE_DISCONNECT_REASONS.Has(slices.TryGetAny[string](args, 0)) {
 		socket_log.Debug("connection state recovery is enabled for sid %s", s.id)
 		s.adapter.PersistSession(&SessionToPersist{
 			Sid:   s.id,
@@ -703,7 +704,7 @@ func (s *Socket) dispatch(event []any) {
 				return
 			}
 			if s.Connected() {
-				s.EmitUntyped(utils.TryCast[string](event[0]), event[1:]...)
+				s.EmitUntyped(slices.TryGetAny[string](event, 0), slices.Slice(event, 1)...)
 			} else {
 				socket_log.Debug("ignore packet received after disconnection")
 			}

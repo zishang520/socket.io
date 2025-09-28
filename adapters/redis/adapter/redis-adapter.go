@@ -16,6 +16,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -295,7 +296,7 @@ func (r *redisAdapter) onRequest(channel string, msg []byte) {
 
 		response, err := json.Marshal(&Response{
 			RequestId: request.RequestId,
-			Sockets: adapter.SliceMap(sockets.Keys(), func(socketId socket.SocketId) *adapter.SocketResponse {
+			Sockets: slices.Map(sockets.Keys(), func(socketId socket.SocketId) *adapter.SocketResponse {
 				return &adapter.SocketResponse{
 					Id: socketId,
 				}
@@ -392,7 +393,7 @@ func (r *redisAdapter) onRequest(channel string, msg []byte) {
 			}
 			response, err := json.Marshal(&Response{
 				RequestId: request.RequestId,
-				Sockets: adapter.SliceMap(localSockets, func(client socket.SocketDetails) *adapter.SocketResponse {
+				Sockets: slices.Map(localSockets, func(client socket.SocketDetails) *adapter.SocketResponse {
 					return &adapter.SocketResponse{
 						Id:        client.Id(),
 						Handshake: client.Handshake(),
@@ -544,7 +545,7 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 			if request.MsgCount.Load() == request.NumSub {
 				utils.ClearTimeout(request.Timeout.Load())
 				if request.Resolve != nil {
-					request.Resolve(types.NewSlice(adapter.SliceMap(request.Sockets.All(), func(client *adapter.SocketResponse) any {
+					request.Resolve(types.NewSlice(slices.Map(request.Sockets.All(), func(client *adapter.SocketResponse) any {
 						return socket.SocketDetails(adapter.NewRemoteSocket(client))
 					})...))
 				}
@@ -563,7 +564,7 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 			if request.MsgCount.Load() == request.NumSub {
 				utils.ClearTimeout(request.Timeout.Load())
 				if request.Resolve != nil {
-					request.Resolve(types.NewSlice(adapter.SliceMap(request.Rooms.Keys(), func(room socket.Room) any {
+					request.Resolve(types.NewSlice(slices.Map(request.Rooms.Keys(), func(room socket.Room) any {
 						return room
 					})...))
 				}
@@ -702,14 +703,14 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 			Type:   redis.ALL_ROOMS,
 			NumSub: numSub,
 			Resolve: func(data *types.Slice[any]) {
-				cb(types.NewSet(adapter.SliceMap(data.All(), func(room any) socket.Room {
+				cb(types.NewSet(slices.Map(data.All(), func(room any) socket.Room {
 					return utils.TryCast[socket.Room](room)
 				})...), nil)
 			},
-			Timeout: adapter.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+			Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 				t.Store(timeout)
 			}),
-			MsgCount: adapter.Tap(&atomic.Int64{}, func(c *atomic.Int64) {
+			MsgCount: utils.Tap(&atomic.Int64{}, func(c *atomic.Int64) {
 				c.Store(1)
 			}),
 			Rooms: localRooms,
@@ -766,17 +767,17 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				Type:   redis.REMOTE_FETCH,
 				NumSub: numSub,
 				Resolve: func(data *types.Slice[any]) {
-					cb(adapter.SliceMap(data.All(), func(i any) socket.SocketDetails {
+					cb(slices.Map(data.All(), func(i any) socket.SocketDetails {
 						return utils.TryCast[socket.SocketDetails](i)
 					}), nil)
 				},
-				Timeout: adapter.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+				Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 					t.Store(timeout)
 				}),
-				MsgCount: adapter.Tap(&atomic.Int64{}, func(c *atomic.Int64) {
+				MsgCount: utils.Tap(&atomic.Int64{}, func(c *atomic.Int64) {
 					c.Store(1)
 				}),
-				Sockets: types.NewSlice(adapter.SliceMap(localSockets, func(client socket.SocketDetails) *adapter.SocketResponse {
+				Sockets: types.NewSlice(slices.Map(localSockets, func(client socket.SocketDetails) *adapter.SocketResponse {
 					return &adapter.SocketResponse{
 						Id:        client.Id(),
 						Handshake: client.Handshake(),
@@ -908,7 +909,7 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 	r.requests.Store(requestId, &RedisRequest{
 		Type:   redis.SERVER_SIDE_EMIT,
 		NumSub: numSub,
-		Timeout: adapter.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
+		Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 			t.Store(timeout)
 		}),
 		Resolve: func(data *types.Slice[any]) {

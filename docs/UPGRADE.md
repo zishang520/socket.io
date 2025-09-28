@@ -330,6 +330,39 @@ func example(ctx *types.HttpContext) {
 * `Get(key)` → `Query().Get(key)`
 * `GetPathInfo()` → `PathInfo()`
 
+### Partial API updates for `adapter` → `pkg`
+
+Some utility types and functions previously exposed under the `adapter` package have been moved into dedicated `pkg` subpackages. Update your imports and references as shown below:
+
+```go
+// Before
+import (
+    "github.com/zishang520/socket.io/adapters/adapter/v3"
+)
+
+func example() {
+    adapter.SliceMap(/**/)
+    adapter.Tap(/**/)
+}
+
+// After
+import (
+    "github.com/zishang520/socket.io/v3/pkg/slices"
+    "github.com/zishang520/socket.io/v3/pkg/utils"
+)
+
+func example() {
+    slices.Map(/**/)
+    utils.Tap(/**/)
+}
+```
+
+**Changes summary:**
+
+* `adapter.SliceMap` → `slices.Map` (moved to `pkg/slices`)
+* `adapter.Tap` → `utils.Tap` (moved to `pkg/utils`)
+
+
 ## Testing Your Upgrade
 
 After completing the upgrade, thoroughly test your application:
