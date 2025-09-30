@@ -553,10 +553,9 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 			request.MsgCount.Add(1)
 
 			// ignore if response does not contain 'rooms' key
-			if response.Rooms == nil {
-				return
+			if len(response.Rooms) > 0 {
+				request.Rooms.Add(response.Rooms...)
 			}
-			request.Rooms.Add(response.Rooms...)
 
 			if request.MsgCount.Load() == request.NumSub {
 				utils.ClearTimeout(request.Timeout.Load())
