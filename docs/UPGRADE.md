@@ -27,6 +27,46 @@ All imports must be updated to use the new v3 paths.
 </details>
 
 <details>
+<summary>Protocol Compatibility Update</summary>
+
+Socket.IO v3 aligns with the Socket.IO v4+ protocol, which means compatibility changes for all client connections.
+
+**Likelihood Of Impact: Very High**
+
+Your client-side Socket.IO library must be upgraded to version 4.x or higher. Clients using older versions (v2.x or v3.x) will not be able to connect to the v3 server.
+
+```bash
+# Update your frontend dependency
+npm install socket.io-client@^4.0.0
+```
+
+**Action Required:**
+- Coordinate with your frontend team to upgrade client libraries
+- Test all client connections after upgrade
+- Ensure backward compatibility strategy if gradual rollout is needed
+</details>
+
+<details>
+<summary>Import Path Restructuring</summary>
+
+Every Socket.IO import path requires updating to the new v3 structure. This affects 8 major package categories.
+
+**Likelihood Of Impact: Very High**
+
+All package imports across your entire codebase must be systematically updated. This includes:
+- Engine.IO Parser (`parsers/engine/v3`)
+- Socket.IO Parser (`parsers/socket/v3`)
+- Engine.IO Server (`servers/engine/v3`)
+- Socket.IO Server (`servers/socket/v3`)
+- Redis Adapter (`adapters/redis/v3`)
+- Engine.IO Client (`clients/engine/v3`)
+- Socket.IO Client (`clients/socket/v3`)
+- Common Types and Utils (`v3/pkg`)
+
+See the [Import Path Updates](#import-path-updates) section for complete mapping tables.
+</details>
+
+<details>
 <summary>Redis Adapter Type Changes</summary>
 
 The Redis adapter has replaced `types.String` with `types.Atomic[string]` for better type safety.
@@ -68,6 +108,56 @@ type Handshake struct {
     Auth    map[string]any
 }
 ```
+
+Access patterns must be updated:
+
+```go
+// Before
+headers := socket.Handshake().Headers
+userAgent := headers["user-agent"][0]
+
+// After
+headers := socket.Handshake().Headers.Header()
+userAgent := headers.Get("User-Agent")
+```
+</details>
+
+<details>
+<summary>HttpContext API Refactoring</summary>
+
+Several methods and properties of `*types.HttpContext` have been renamed or refactored from properties to methods.
+
+**Likelihood Of Impact: Medium**
+
+```go
+// Before
+func example(ctx *types.HttpContext) {
+    headers := ctx.ResponseHeaders
+    host := ctx.GetHost()
+    method := ctx.GetMethod()
+    values := ctx.Gets("foo")
+    value := ctx.Get("bar")
+    path := ctx.GetPathInfo()
+}
+
+// After
+func example(ctx *types.HttpContext) {
+    headers := ctx.ResponseHeaders()
+    host := ctx.Host()
+    method := ctx.Method()
+    values, _ := ctx.Query().Gets("foo")
+    value, _ := ctx.Query().Get("bar")
+    path := ctx.PathInfo()
+}
+```
+
+**Changes summary:**
+- `ResponseHeaders` → `ResponseHeaders()` (property to method)
+- `GetHost()` → `Host()`
+- `GetMethod()` → `Method()`
+- `Gets(key)` → `Query().Gets(key)`
+- `Get(key)` → `Query().Get(key)`
+- `GetPathInfo()` → `PathInfo()`
 </details>
 
 <details>
@@ -79,11 +169,78 @@ All `GetRaw*` methods now return `types.Optional[T]` instead of pointer types fo
 
 ```go
 // Before
-GetRawMaxDisconnectionDuration() *int64
+func configExample(config ConnectionStateRecoveryInterface) {
+    if duration := config.GetRawMaxDisconnectionDuration(); duration != nil {
+        fmt.Printf("Duration: %d", *duration)
+    }
+}
 
 // After
-GetRawMaxDisconnectionDuration() types.Optional[int64]
+func configExample(config ConnectionStateRecoveryInterface) {
+    if duration := config.GetRawMaxDisconnectionDuration(); duration != nil {
+        fmt.Printf("Duration: %d", duration.Get())
+    }
+}
 ```
+</details>
+
+<details>
+<summary>ParameterBag Package Migration</summary>
+
+`ParameterBag` has been moved from the `utils` package to the `types` package.
+
+**Likelihood Of Impact: Medium**
+
+```go
+// Before
+import "github.com/zishang520/socket.io/v3/pkg/utils"
+
+func example() {
+    var bag *utils.ParameterBag
+    bag = utils.NewParameterBag(nil)
+}
+
+// After
+import "github.com/zishang520/socket.io/v3/pkg/types"
+
+func example() {
+    var bag *types.ParameterBag
+    bag = types.NewParameterBag(nil)
+}
+```
+</details>
+
+<details>
+<summary>Adapter Utility Functions Reorganization</summary>
+
+Utility functions like `SliceMap` and `Tap` have been moved from the `adapter` package to dedicated `pkg` subpackages.
+
+**Likelihood Of Impact: Medium**
+
+```go
+// Before
+import "github.com/zishang520/socket.io/adapters/adapter/v3"
+
+func example() {
+    adapter.SliceMap(/**/)
+    adapter.Tap(/**/)
+}
+
+// After
+import (
+    "github.com/zishang520/socket.io/v3/pkg/slices"
+    "github.com/zishang520/socket.io/v3/pkg/utils"
+)
+
+func example() {
+    slices.Map(/**/)
+    utils.Tap(/**/)
+}
+```
+
+**Changes summary:**
+- `adapter.SliceMap` → `slices.Map` (moved to `pkg/slices`)
+- `adapter.Tap` → `utils.Tap` (moved to `pkg/utils`)
 </details>
 
 ## Updating Dependencies
@@ -400,7 +557,7 @@ go mod download
 
 ### Connection Protocol Mismatches
 
-Upgrade your client-side Socket.IO library to v4.x:
+Upgrade your client-side Socket.IO library to v4.x+:
 
 ```bash
 npm install socket.io-client@^4.0.0
