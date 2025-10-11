@@ -205,8 +205,10 @@ func (w *webTransport) addEventListeners() {
 		w.OnClose(NewTransportError("webtransport connection closed", nil, w.session.Session().Context()).Err())
 	})
 
+	// This goroutine is invoked only once.
 	go w.message()
 
+	// This goroutine is invoked only once.
 	go w.handshake()
 }
 
@@ -215,6 +217,7 @@ func (w *webTransport) addEventListeners() {
 func (w *webTransport) Write(packets []*packet.Packet) {
 	w.SetWritable(false)
 
+	// Needs further investigation
 	go w.write(packets)
 }
 func (w *webTransport) write(packets []*packet.Packet) {

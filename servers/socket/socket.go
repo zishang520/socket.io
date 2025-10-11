@@ -698,6 +698,7 @@ func (s *Socket) Timeout(timeout time.Duration) *Socket {
 func (s *Socket) dispatch(event []any) {
 	socket_log.Debug("dispatching an event %v", event)
 	s.run(event, func(err error) {
+		// Needs further investigation
 		go func(err error) {
 			if err != nil {
 				s._onerror(err)

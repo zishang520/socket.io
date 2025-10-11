@@ -109,6 +109,7 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 		})
 	}
 
+	// This goroutine is invoked only once.
 	go func() {
 		defer s.pubSubClient.Close()
 

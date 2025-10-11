@@ -16,6 +16,7 @@ func (t *Timer) Refresh() *Timer {
 	defer t.timer.Reset(t.sleep)
 
 	if !t.timer.Stop() {
+		// Idempotent repeated calls
 		go t.fn()
 	}
 
@@ -52,6 +53,7 @@ func SetTimeout(fn func(), sleep time.Duration) *Timer {
 			return
 		}
 	}
+	// Idempotent repeated calls
 	go timer.fn()
 	return timer
 }
@@ -92,12 +94,14 @@ func SetInterval(fn func(), sleep time.Duration) *Timer {
 			select {
 			case <-timer.timer.C:
 				timer.timer.Reset(timer.sleep)
+				// Idempotent repeated calls
 				go fn()
 			case <-timer.stopCh:
 				return
 			}
 		}
 	}
+	// Idempotent repeated calls
 	go timer.fn()
 	return timer
 }

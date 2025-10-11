@@ -363,6 +363,7 @@ func (m *Manager) ondata(datas ...any) {
 
 // Called when parser fully decodes a packet.
 func (m *Manager) ondecoded(packets ...any) {
+	// Needs further investigation
 	go m.EventEmitter.Emit("packet", packets...)
 }
 

@@ -216,6 +216,7 @@ func (p *polling) OnClose() {
 // Writes a packet payload.
 func (p *polling) Send(packets []*packet.Packet) {
 	p.SetWritable(false)
+	// Needs further investigation
 	go p.send(packets)
 }
 func (p *polling) send(packets []*packet.Packet) {

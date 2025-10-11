@@ -443,6 +443,7 @@ func (s *socket) OnClose(reason string, description ...error) {
 		// clean writeBuffer in defer, so developers can still
 		// grab the writeBuffer on 'close' event
 		defer func() {
+			// Idempotent repeated calls
 			go s.writeBuffer.Clear()
 		}()
 

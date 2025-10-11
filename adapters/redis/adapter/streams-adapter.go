@@ -112,6 +112,7 @@ func (sb *RedisStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 
 	if !sb.polling.CompareAndSwap(false, true) {
 		sb.shouldClose.Store(false)
+		// This goroutine is invoked only once.
 		go sb.poll(options)
 	}
 

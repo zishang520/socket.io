@@ -184,6 +184,7 @@ func (w *websocket) addEventListeners() {
 		w.OnClose(NewTransportError("websocket connection closed", nil, nil).Err())
 	})
 
+	// This goroutine is invoked only once.
 	go w.message()
 
 	w.OnOpen()
@@ -197,6 +198,7 @@ func (w *websocket) addEventListeners() {
 func (w *websocket) Write(packets []*packet.Packet) {
 	w.SetWritable(false)
 
+	// Needs further investigation
 	go w.write(packets)
 }
 

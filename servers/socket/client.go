@@ -208,6 +208,7 @@ func (c *Client) ondecoded(args ...any) {
 	if !ok && packet.Type == parser.CONNECT {
 		c.connect(namespace, authPayload)
 	} else if ok && packet.Type != parser.CONNECT && packet.Type != parser.CONNECT_ERROR {
+		// Needs further investigation
 		go socket._onpacket(packet)
 	} else {
 		client_log.Debug("invalid state (packet type: %s)", packet.Type.String())

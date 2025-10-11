@@ -268,6 +268,7 @@ func (n *namespace) Add(client *Client, auth map[string]any, fn func(*Socket)) {
 		return
 	}
 	n.run(socket, func(err *ExtendedError) {
+		// Needs further investigation
 		go func() {
 			if client.conn.ReadyState() != "open" {
 				namespace_log.Debug("next called after client was closed - ignoring socket")

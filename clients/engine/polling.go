@@ -112,6 +112,7 @@ func (p *polling) _poll() {
 	client_polling_log.Debug("polling")
 	p._polling.Store(true)
 	p.Emit("poll")
+	// This goroutine is repeatedly invoked after OnData receives data; otherwise, it may cause blocking.
 	go p.doPoll()
 }
 
@@ -164,6 +165,7 @@ func (p *polling) DoClose() {
 // Write encodes and sends packets to the server asynchronously.
 func (p *polling) Write(packets []*packet.Packet) {
 	p.SetWritable(false)
+	// Needs further investigation
 	go p.write(packets)
 }
 

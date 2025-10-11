@@ -102,6 +102,7 @@ func (s *HttpServer) Close(fn func(error)) (err error) {
 
 func (s *HttpServer) Listen(addr string, fn Callable) *http.Server {
 	server := s.httpServer(addr, s)
+	// Idempotent repeated calls
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			panic(err)
@@ -118,6 +119,7 @@ func (s *HttpServer) Listen(addr string, fn Callable) *http.Server {
 
 func (s *HttpServer) ListenTLS(addr string, certFile string, keyFile string, fn Callable) *http.Server {
 	server := s.httpServer(addr, s)
+	// Idempotent repeated calls
 	go func() {
 		if err := server.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
 			panic(err)
@@ -164,17 +166,20 @@ func (s *HttpServer) ListenHTTP3TLS(addr string, certFile string, keyFile string
 	server.TLSConfig = config
 	server.QUICConfig = quicConfig
 
+	// Idempotent repeated calls
 	go func() {
 		defer udpConn.Close()
 
 		hErr := make(chan error)
 		qErr := make(chan error)
+		// Idempotent repeated calls
 		go func() {
 			hErr <- s.httpServer(addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				server.SetQUICHeaders(w.Header())
 				s.ServeHTTP(w, r)
 			})).ListenAndServeTLS(certFile, keyFile)
 		}()
+		// Idempotent repeated calls
 		go func() {
 			qErr <- server.Serve(udpConn)
 		}()
@@ -205,6 +210,7 @@ func (s *HttpServer) ListenWebTransportTLS(addr string, certFile string, keyFile
 	server := s.webtransportServer(addr, s)
 	server.H3.QUICConfig = quicConfig
 
+	// Idempotent repeated calls
 	go func() {
 		if err := server.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
 			panic(err)

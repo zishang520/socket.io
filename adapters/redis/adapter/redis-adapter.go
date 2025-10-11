@@ -168,6 +168,7 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 
 	pubsub := r.redisClient.Client.PSubscribe(r.redisClient.Context, r.channel+"*")
 	r.redisListeners.Store(PSUB, pubsub)
+	// This goroutine is invoked only once.
 	go func() {
 		defer pubsub.Close()
 
@@ -191,6 +192,7 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 
 	sub := r.redisClient.Client.Subscribe(r.redisClient.Context, r.requestChannel, r.responseChannel, r.specificResponseChannel)
 	r.redisListeners.Store(SUB, sub)
+	// This goroutine is invoked only once.
 	go func() {
 		defer sub.Close()
 

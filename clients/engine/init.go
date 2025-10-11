@@ -83,6 +83,7 @@ func setupSignalHandling() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
+	// This goroutine is invoked only once.
 	go func() {
 		defer stop()
 

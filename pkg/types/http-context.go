@@ -89,6 +89,7 @@ func NewHttpContext(w http.ResponseWriter, r *http.Request) *HttpContext {
 
 	c.state.Store(false)
 
+	// This goroutine is invoked only once.
 	go c.contextWatcher()
 
 	return c
@@ -230,6 +231,7 @@ func (c *HttpContext) closeWithError(err error) {
 		if c.Cleanup != nil {
 			c.Cleanup()
 		}
+		// This goroutine is invoked only once.
 		go c.Emit("close", err)
 	})
 }

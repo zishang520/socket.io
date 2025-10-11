@@ -351,11 +351,13 @@ func (s *socketWithoutUpgrade) CreateTransport(name string) Transport {
 func (s *socketWithoutUpgrade) _open() {
 	if s.transports.Len() == 0 {
 		// Emit error on next tick so it can be listened to
+		// Needs further investigation
 		go s.Emit("error", errors.New("no transports available"))
 		return
 	}
 	transportName, err := s.transports.Get(0)
 	if err != nil {
+		// Needs further investigation
 		go s.Emit("error", err)
 		return
 	}
@@ -551,6 +553,7 @@ func (s *socketWithoutUpgrade) HasPingExpired() bool {
 		client_socket_log.Debug("throttled timer detected, scheduling connection close")
 		s._pingTimeoutTime.Store(0)
 
+		// Needs further investigation
 		go s._onClose("ping timeout", nil)
 	}
 

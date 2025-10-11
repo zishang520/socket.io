@@ -54,6 +54,7 @@ func (w *webTransport) Construct(ctx *types.HttpContext) {
 		w.OnClose()
 	})
 
+	// This goroutine is invoked only once.
 	go w.message()
 
 	w.SetWritable(true)
@@ -117,6 +118,7 @@ func (w *webTransport) onMessage(data types.BufferInterface) {
 // Writes a packet payload.
 func (w *webTransport) Send(packets []*packet.Packet) {
 	w.SetWritable(false)
+	// Needs further investigation
 	go w.send(packets)
 }
 func (w *webTransport) send(packets []*packet.Packet) {
