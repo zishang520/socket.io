@@ -3,7 +3,7 @@ module github.com/zishang520/socket.io/adapters/redis/v3
 go 1.24.1
 
 require (
-	github.com/redis/go-redis/v9 v9.14.0
+	github.com/redis/go-redis/v9 v9.16.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.0-rc.8
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-rc.8
