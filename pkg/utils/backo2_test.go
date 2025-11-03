@@ -8,21 +8,21 @@ import (
 func TestNewBackoff(t *testing.T) {
 	tests := []struct {
 		name     string
-		opts     []backoffOption
+		opts     []BackoffOption
 		wantMin  float64
 		wantMax  float64
 		wantFact float64
 	}{
 		{
 			name:     "default values",
-			opts:     []backoffOption{},
+			opts:     []BackoffOption{},
 			wantMin:  100,
 			wantMax:  10000,
 			wantFact: 2,
 		},
 		{
 			name:     "custom values",
-			opts:     []backoffOption{WithMin(200), WithMax(5000), WithFactor(1.5)},
+			opts:     []BackoffOption{WithMin(200), WithMax(5000), WithFactor(1.5)},
 			wantMin:  200,
 			wantMax:  5000,
 			wantFact: 1.5,
@@ -44,7 +44,7 @@ func TestBackoff_Duration(t *testing.T) {
 	var prev int64
 
 	// Test multiple attempts
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		curr := b.Duration()
 		if curr < prev {
 			t.Errorf("Duration decreased: prev=%v, curr=%v", prev, curr)
@@ -91,7 +91,7 @@ func TestBackoff_SetMethods(t *testing.T) {
 	b.SetJitter(0.5)
 	prev := b.Duration()
 	found := false
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		curr := b.Duration()
 		if curr != prev {
 			found = true
