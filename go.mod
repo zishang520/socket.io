@@ -10,7 +10,7 @@ require (
 	github.com/quic-go/quic-go v0.55.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zishang520/webtransport-go v0.9.1
-	resty.dev/v3 v3.0.0-beta.3
+	resty.dev/v3 v3.0.0-beta.4
 )
 
 require (
