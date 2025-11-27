@@ -14,7 +14,7 @@ set "args=!args:~0,4!"
 if /i "!args!"=="deps"  goto :deps
 if /i "!args!"=="fmt"   goto :fmt
 if /i "!args!"=="test"  goto :test
-if /i "!args!"=="clea"  goto :clean
+if /i "!args!"=="clean"  goto :clean
 
 goto :default
 
