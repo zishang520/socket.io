@@ -6,7 +6,7 @@ require (
 	github.com/andybalholm/brotli v1.2.0
 	github.com/gookit/color v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/klauspost/compress v1.18.1
+	github.com/klauspost/compress v1.18.2
 	github.com/quic-go/quic-go v0.57.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zishang520/webtransport-go v0.9.1
