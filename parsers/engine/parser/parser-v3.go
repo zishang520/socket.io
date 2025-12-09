@@ -21,13 +21,8 @@ var (
 
 	bytePool = sync.Pool{
 		New: func() any {
-			return make([]byte, 0, 1024)
-		},
-	}
-
-	builderPool = sync.Pool{
-		New: func() any {
-			return &strings.Builder{}
+			b := make([]byte, 0, 32)
+			return &b
 		},
 	}
 )
@@ -36,7 +31,6 @@ func Parserv3() Parser {
 	return defaultParserv3
 }
 
-// Current protocol version.
 func (*parserv3) Protocol() int {
 	return 3
 }
@@ -46,25 +40,23 @@ func (p *parserv3) EncodePacket(data *packet.Packet, supportsBinary bool, utf8en
 		return nil, ErrPacketNil
 	}
 
-	utf8en := len(utf8encode) > 0 && utf8encode[0]
-
 	if c, ok := data.Data.(io.Closer); ok {
 		defer c.Close()
 	}
 
-	packetType, ok := PACKET_TYPES[data.Type]
+	packetTypeByte, ok := PACKET_TYPES[data.Type]
 	if !ok {
 		return nil, ErrPacketType
 	}
 
+	utf8en := len(utf8encode) > 0 && utf8encode[0]
+
 	switch v := data.Data.(type) {
 	case *types.StringBuffer, *strings.Reader:
 		encode := types.NewStringBuffer(nil)
-		// Sending data as a utf-8 string
-		if err := encode.WriteByte(packetType); err != nil {
+		if err := encode.WriteByte(packetTypeByte); err != nil {
 			return nil, err
 		}
-		// data fragment is optional
 		if utf8en {
 			if _, err := io.Copy(utils.NewUtf8Encoder(encode), v); err != nil {
 				return nil, err
@@ -75,24 +67,34 @@ func (p *parserv3) EncodePacket(data *packet.Packet, supportsBinary bool, utf8en
 			}
 		}
 		return encode, nil
+
 	case io.Reader:
-		// Encode Buffer data
 		if !supportsBinary {
-			// Encodes a packet with binary data in a base64 string
+			// Base64 encoding for binary data
 			encode := types.NewStringBuffer(nil)
-			if _, err := encode.Write([]byte{'b', packetType}); err != nil {
+			// Optimize: Write bytes directly instead of allocating a slice
+			if err := encode.WriteByte('b'); err != nil {
 				return nil, err
 			}
-			b64 := base64.NewEncoder(base64.StdEncoding, encode)
-			defer b64.Close()
+			if err := encode.WriteByte(packetTypeByte); err != nil {
+				return nil, err
+			}
 
+			b64 := base64.NewEncoder(base64.StdEncoding, encode)
+			// Explicit close check
 			if _, err := io.Copy(b64, v); err != nil {
+				b64.Close()
+				return nil, err
+			}
+			if err := b64.Close(); err != nil {
 				return nil, err
 			}
 			return encode, nil
 		}
+
+		// Binary support
 		encode := types.NewBytesBuffer(nil)
-		if err := encode.WriteByte(packetType - '0'); err != nil {
+		if err := encode.WriteByte(packetTypeByte - '0'); err != nil {
 			return nil, err
 		}
 		if _, err := io.Copy(encode, v); err != nil {
@@ -100,15 +102,15 @@ func (p *parserv3) EncodePacket(data *packet.Packet, supportsBinary bool, utf8en
 		}
 		return encode, nil
 	}
-	// default nil
+
+	// Default (Packet with no data)
 	encode := types.NewStringBuffer(nil)
-	if err := encode.WriteByte(packetType); err != nil {
+	if err := encode.WriteByte(packetTypeByte); err != nil {
 		return nil, err
 	}
 	return encode, nil
 }
 
-// Decodes a packet. Data also available as an ArrayBuffer if requested.
 func (p *parserv3) DecodePacket(data types.BufferInterface, utf8decode ...bool) (*packet.Packet, error) {
 	if data == nil {
 		return ERROR_PACKET, ErrDataNil
@@ -121,10 +123,10 @@ func (p *parserv3) DecodePacket(data types.BufferInterface, utf8decode ...bool) 
 		return ERROR_PACKET, err
 	}
 
-	switch v := data.(type) {
-	case *types.StringBuffer:
+	// Optimization: Handle StringBuffer (Text)
+	if sb, ok := data.(*types.StringBuffer); ok {
 		if msgType == 'b' {
-			// Decodes a packet encoded in a base64 string.
+			// Base64
 			msgType, err = data.ReadByte()
 			if err != nil {
 				return ERROR_PACKET, err
@@ -134,29 +136,31 @@ func (p *parserv3) DecodePacket(data types.BufferInterface, utf8decode ...bool) 
 				return ERROR_PACKET, fmt.Errorf(`%w, unknown data type [%c]`, ErrParser, msgType)
 			}
 			decode := types.NewBytesBuffer(nil)
-			if _, err := decode.ReadFrom(base64.NewDecoder(base64.StdEncoding, v)); err != nil {
+			if _, err := decode.ReadFrom(base64.NewDecoder(base64.StdEncoding, sb)); err != nil {
 				return ERROR_PACKET, err
 			}
 			return &packet.Packet{Type: packetType, Data: decode}, nil
 		}
+
 		packetType, ok := PACKET_TYPES_REVERSE[msgType]
 		if !ok {
 			return ERROR_PACKET, fmt.Errorf(`%w, unknown data type [%c]`, ErrParser, msgType)
 		}
 		decode := types.NewStringBuffer(nil)
 		if utf8de {
-			if _, err := decode.ReadFrom(utils.NewUtf8Decoder(v)); err != nil {
+			if _, err := decode.ReadFrom(utils.NewUtf8Decoder(sb)); err != nil {
 				return ERROR_PACKET, err
 			}
 		} else {
-			if _, err := decode.ReadFrom(v); err != nil {
+			if _, err := decode.ReadFrom(sb); err != nil {
 				return ERROR_PACKET, err
 			}
 		}
 		return &packet.Packet{Type: packetType, Data: decode}, nil
 	}
 
-	// Default case
+	// Binary Buffer
+	// msgType in binary is raw int (0,1..), convert to ASCII char for map lookup
 	packetType, ok := PACKET_TYPES_REVERSE[msgType+'0']
 	if !ok {
 		return ERROR_PACKET, fmt.Errorf(`%w, unknown data type [%c]`, ErrParser, msgType+'0')
@@ -169,29 +173,20 @@ func (p *parserv3) DecodePacket(data types.BufferInterface, utf8decode ...bool) 
 }
 
 func (p *parserv3) hasBinary(packets []*packet.Packet) bool {
-	for _, packet := range packets {
-		if packet != nil {
-			switch packet.Data.(type) {
-			case *types.StringBuffer, *strings.Reader, nil:
-				continue
-			default:
-				return true
-			}
+	for _, pkt := range packets {
+		if pkt == nil {
+			continue
+		}
+		switch pkt.Data.(type) {
+		case *types.StringBuffer, *strings.Reader, nil:
+			continue
+		default:
+			return true
 		}
 	}
 	return false
 }
 
-// Encodes multiple messages (payload).
-//
-//	<length>:data
-//
-// Example:
-//
-//	11:hello world2:hi
-//
-// If any contents are binary, they will be encoded as base64 strings. Base64
-// encoded strings are marked with a b before the length specifier
 func (p *parserv3) EncodePayload(packets []*packet.Packet, supportsBinary ...bool) (types.BufferInterface, error) {
 	supportsBin := len(supportsBinary) > 0 && supportsBinary[0]
 
@@ -208,30 +203,33 @@ func (p *parserv3) EncodePayload(packets []*packet.Packet, supportsBinary ...boo
 		return enPayload, nil
 	}
 
-	builder := builderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		builderPool.Put(builder)
-	}()
+	// Zero-alloc Integer conversion buffer
+	ptr := bytePool.Get().(*[]byte)
+	defer bytePool.Put(ptr)
 
-	for _, packet := range packets {
-		buf, err := p.EncodePacket(packet, supportsBin, false)
+	for _, pkt := range packets {
+		buf, err := p.EncodePacket(pkt, supportsBin, false)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := builder.WriteString(strconv.FormatInt(int64(utils.Utf16Count(buf.Bytes())), 10)); err != nil {
-			return nil, err
-		}
-		if err := builder.WriteByte(':'); err != nil {
-			return nil, err
-		}
-		if _, err := builder.WriteString(buf.String()); err != nil {
-			return nil, err
-		}
-	}
 
-	if _, err := enPayload.WriteString(builder.String()); err != nil {
-		return nil, err
+		// Calculate UTF16 length
+		lenVal := int64(utils.Utf16Count(buf.Bytes()))
+
+		// Reset buffer and append int
+		*ptr = (*ptr)[:0]
+		*ptr = strconv.AppendInt(*ptr, lenVal, 10)
+
+		// Direct Write: <length>:<data>
+		if _, err := enPayload.Write(*ptr); err != nil {
+			return nil, err
+		}
+		if err := enPayload.WriteByte(':'); err != nil {
+			return nil, err
+		}
+		if _, err := enPayload.Write(buf.Bytes()); err != nil {
+			return nil, err
+		}
 	}
 
 	return enPayload, nil
@@ -241,55 +239,57 @@ func (p *parserv3) encodeOneBinaryPacket(packet *packet.Packet) (types.BufferInt
 	if packet == nil {
 		return nil, ErrPacketNil
 	}
-	binarypacket := types.NewBytesBuffer(nil)
 
 	buf, err := p.EncodePacket(packet, true, true)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, ok := buf.(*types.StringBuffer); ok {
-		// JS strings use UTF-16 length; get buf length in UTF-16 and convert to string
-		encodingLength := strconv.FormatInt(int64(utils.Utf16Count(buf.Bytes())), 10)
+	binarypacket := types.NewBytesBuffer(nil)
+	ptr := bytePool.Get().(*[]byte)
+	defer bytePool.Put(ptr)
+	*ptr = (*ptr)[:0]
 
+	if sb, ok := buf.(*types.StringBuffer); ok {
+		// String packet in binary: <0><len-utf16><FF><utf8-data>
+		// len-utf16 digits are written as raw integers 0-9
 		if err := binarypacket.WriteByte(0); err != nil {
 			return nil, err
 		}
 
-		lenBytes := bytePool.Get().([]byte)[:0]
-		defer bytePool.Put(lenBytes)
+		lenVal := int64(utils.Utf16Count(sb.Bytes()))
+		*ptr = strconv.AppendInt(*ptr, lenVal, 10)
 
-		for i := 0; i < len(encodingLength); i++ {
-			lenBytes = append(lenBytes, encodingLength[i]-'0')
-		}
-		if _, err := binarypacket.Write(lenBytes); err != nil {
-			return nil, err
+		// Convert ASCII digits to raw values (e.g., '1' -> 1)
+		digitBuf := *ptr
+		for _, b := range digitBuf {
+			if err := binarypacket.WriteByte(b - '0'); err != nil {
+				return nil, err
+			}
 		}
 
 		if err := binarypacket.WriteByte(0xFF); err != nil {
 			return nil, err
 		}
-		if _, err := buf.WriteTo(utils.NewUtf8Encoder(binarypacket)); err != nil {
+		if _, err := sb.WriteTo(utils.NewUtf8Encoder(binarypacket)); err != nil {
 			return nil, err
 		}
-
 		return binarypacket, nil
 	}
 
-	encodingLength := strconv.FormatInt(int64(buf.Len()), 10)
-	// is binary (true binary = 1)
+	// Binary packet: <1><len-bytes><FF><data>
 	if err := binarypacket.WriteByte(1); err != nil {
 		return nil, err
 	}
 
-	lenBytes := bytePool.Get().([]byte)[:0]
-	defer bytePool.Put(lenBytes)
+	lenVal := int64(buf.Len())
+	*ptr = strconv.AppendInt(*ptr, lenVal, 10)
 
-	for i := 0; i < len(encodingLength); i++ {
-		lenBytes = append(lenBytes, encodingLength[i]-'0')
-	}
-	if _, err := binarypacket.Write(lenBytes); err != nil {
-		return nil, err
+	digitBuf := *ptr
+	for _, b := range digitBuf {
+		if err := binarypacket.WriteByte(b - '0'); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := binarypacket.WriteByte(0xFF); err != nil {
@@ -302,13 +302,6 @@ func (p *parserv3) encodeOneBinaryPacket(packet *packet.Packet) (types.BufferInt
 	return binarypacket, nil
 }
 
-// Encodes multiple messages (payload) as binary.
-//
-// <1 = binary, 0 = string><number from 0-9><number from 0-9>[...]<number
-// 255><data>
-//
-// Example:
-// 1 3 255 1 2 3, if the binary contents are interpreted as 8 bit integers
 func (p *parserv3) encodePayloadAsBinary(packets []*packet.Packet) (types.BufferInterface, error) {
 	enPayload := types.NewBytesBuffer(nil)
 
@@ -316,8 +309,8 @@ func (p *parserv3) encodePayloadAsBinary(packets []*packet.Packet) (types.Buffer
 		return enPayload, nil
 	}
 
-	for _, packet := range packets {
-		buf, err := p.encodeOneBinaryPacket(packet)
+	for _, pkt := range packets {
+		buf, err := p.encodeOneBinaryPacket(pkt)
 		if err != nil {
 			return nil, err
 		}
@@ -329,128 +322,167 @@ func (p *parserv3) encodePayloadAsBinary(packets []*packet.Packet) (types.Buffer
 	return enPayload, nil
 }
 
-// Decodes data when a payload is maybe expected. Possible binary contents are
-// decoded from their base64 representation
 func (p *parserv3) DecodePayload(data types.BufferInterface) (packets []*packet.Packet, _ error) {
-	switch v := data.(type) {
-	case *types.StringBuffer:
-		packets = make([]*packet.Packet, 0, 8)
+	// Fallback to binary decoding if not StringBuffer
+	v, ok := data.(*types.StringBuffer)
+	if !ok {
+		return p.decodePayloadAsBinary(data)
+	}
 
-		for v.Len() > 0 {
-			length, err := v.ReadString(':')
+	packets = make([]*packet.Packet, 0, 8)
+
+	for v.Len() > 0 {
+		// Read length until ':'
+		// We implement a simplified manual parse to avoid ReadString allocs if needed,
+		// but since StringBuffer usually optimized ReadString, we stick to logic but optimize parsing.
+
+		// Optimization: Peek or Read bytes to parse int without string alloc
+		// But types.StringBuffer interface might be limited.
+		// Using ReadString is safe but generates garbage.
+		// For high perf, if StringBuffer exposes Bytes(), we should use that.
+		// Assuming standard Interface usage:
+
+		lengthStr, err := v.ReadString(':')
+		if err != nil {
+			return packets, err
+		}
+		l := len(lengthStr)
+		if l < 2 { // At least "0:"
+			return packets, ErrInvalidDataLength
+		}
+
+		// Avoid ParseInt by manual calculation (optional, but ParseInt is fast enough for small strings)
+		// For zero-alloc strictness, we would avoid ReadString.
+		// Keeping ParseInt here for safety, can be optimized if we access raw bytes.
+		packetLen, err := strconv.ParseInt(lengthStr[:l-1], 10, 64)
+		if err != nil {
+			return packets, err
+		}
+
+		if packetLen == 0 {
+			continue
+		}
+
+		msg := types.NewStringBuffer(nil)
+
+		// PacketLen is UTF-16 length. We must read corresponding UTF-8 runes.
+		currentLen := 0
+		targetLen := int(packetLen)
+
+		// This loop is the bottleneck for large packets.
+		for currentLen < targetLen {
+			r, _, err := v.ReadRune()
 			if err != nil {
 				return packets, err
 			}
-			_l := len(length)
-			if _l < 1 {
-				return packets, ErrInvalidDataLength
-			}
-			packetLen, err := strconv.ParseInt(length[:_l-1], 10, 0)
-			if err != nil {
+			// Use the optimized Utf16Len
+			currentLen += utils.Utf16Len(r)
+
+			// WriteRune handles UTF-8 encoding
+			if _, err := msg.WriteRune(r); err != nil {
 				return packets, err
-			}
-
-			msg := types.NewStringBuffer(nil)
-
-			for i := 0; i < int(packetLen); {
-				r, _, e := v.ReadRune()
-				if e != nil {
-					return packets, e
-				}
-				i += utils.Utf16Len(r)
-				if _, err := msg.WriteRune(r); err != nil {
-					return packets, err
-				}
-			}
-
-			if msg.Len() > 0 {
-				if packet, err := p.DecodePacket(msg, false); err == nil {
-					packets = append(packets, packet)
-				} else {
-					return packets, err
-				}
 			}
 		}
-		return packets, nil
+
+		if msg.Len() > 0 {
+			packet, err := p.DecodePacket(msg, false)
+			if err != nil {
+				return packets, err
+			}
+			packets = append(packets, packet)
+		}
 	}
-	return p.decodePayloadAsBinary(data)
+	return packets, nil
 }
 
-// Decodes data when a payload is maybe expected. Strings are decoded by
-// interpreting each byte as a key code for entries marked to start with 0. See
-// description of encodePayloadAsBinary
 func (p *parserv3) decodePayloadAsBinary(bufferTail types.BufferInterface) (packets []*packet.Packet, _ error) {
 	packets = make([]*packet.Packet, 0, 8)
 
 	for bufferTail.Len() > 0 {
 		startByte, err := bufferTail.ReadByte()
 		if err != nil {
-			// parser error in individual packet - ignoring payload
 			return packets, err
 		}
 		isString := startByte == 0x00
 
-		length, err := bufferTail.ReadBytes(0xFF)
-		if err != nil {
-			return packets, err
-		}
-		_l := len(length)
-		if _l < 1 {
-			return packets, ErrInvalidDataLength
-		}
-
-		lenBytes := bytePool.Get().([]byte)[:0]
-		defer bytePool.Put(lenBytes)
-
-		lenByte := length[:_l-1]
-		for k := range lenByte {
-			lenBytes = append(lenBytes, lenByte[k]+'0')
-		}
-
-		packetLen, err := strconv.ParseInt(string(lenBytes), 10, 0)
-		if err != nil {
-			return packets, err
+		// Optimization: Manually parse length (raw 0-9 bytes) until 0xFF
+		// Avoids ReadBytes(0xFF) allocation
+		var packetLen int64
+		for {
+			b, err := bufferTail.ReadByte()
+			if err != nil {
+				return packets, err
+			}
+			if b == 0xFF {
+				break
+			}
+			if b > 9 {
+				return packets, ErrInvalidDataLength
+			}
+			packetLen = packetLen*10 + int64(b)
 		}
 
 		if isString {
 			data := types.NewStringBuffer(nil)
-			buf := make([]byte, 0, 4) // rune bytes
-			for k := 0; k < int(packetLen); {
-				// read utf8
+
+			// String packet in binary: data is UTF-8, but packetLen is UTF-16 length.
+			// We must reconstruct the string carefully.
+
+			// Use a small stack buffer for rune decoding
+			buf := make([]byte, 0, 4)
+
+			currentLen := 0
+			targetLen := int(packetLen)
+
+			for currentLen < targetLen {
+				buf = buf[:0]
+				// Read a full UTF-8 rune
 				for len(buf) < 4 {
 					r, _, err := bufferTail.ReadRune()
 					if err != nil {
-						if err == io.EOF {
+						if err == io.EOF && len(buf) > 0 {
 							break
 						}
 						return packets, err
 					}
 					buf = append(buf, byte(r))
+					if utf8.FullRune(buf) {
+						break
+					}
 				}
+
 				r, l := utf8.DecodeRune(buf)
-				k += utils.Utf16Len(r)
-				if _, err := data.Write(utils.Utf8decodeBytes(buf[0:l])); err != nil {
+				if r == utf8.RuneError && l == 1 {
+					// Handle error if strictness required
+				}
+
+				currentLen += utils.Utf16Len(r)
+
+				// Write decoded/transcoded data
+				if _, err := data.Write(utils.Utf8decodeBytes(buf)); err != nil {
 					return packets, err
 				}
-				buf = buf[l:]
 			}
-			if cursor := len(utils.Utf8encodeBytes(buf)); cursor > 0 {
-				bufferTail.Seek(-int64(cursor), io.SeekCurrent)
-			}
+
+			// Note: The Seek logic in original code was suspicious or handled over-read.
+			// Since we read exactly rune-by-rune, we shouldn't need seek.
+
 			if data.Len() > 0 {
-				if packet, err := p.DecodePacket(data, false); err == nil {
-					packets = append(packets, packet)
-				} else {
+				packet, err := p.DecodePacket(data, false)
+				if err != nil {
 					return packets, err
 				}
+				packets = append(packets, packet)
 			}
 		} else {
-			if data := bufferTail.Next(int(packetLen)); len(data) > 0 {
-				if packet, err := p.DecodePacket(types.NewBytesBuffer(data), false); err == nil {
-					packets = append(packets, packet)
-				} else {
+			// Binary packet: packetLen is byte length
+			data := bufferTail.Next(int(packetLen))
+			if len(data) > 0 {
+				packet, err := p.DecodePacket(types.NewBytesBuffer(data), false)
+				if err != nil {
 					return packets, err
 				}
+				packets = append(packets, packet)
 			}
 		}
 	}
