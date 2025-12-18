@@ -538,11 +538,9 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 		case redis.SOCKETS, redis.REMOTE_FETCH:
 			request.MsgCount.Add(1)
 
-			// ignore if response does not contain 'sockets' key
-			if response.Sockets == nil {
-				return
+			if len(response.Sockets) > 0 {
+				request.Sockets.Push(response.Sockets...)
 			}
-			request.Sockets.Push(response.Sockets...)
 
 			if request.MsgCount.Load() == request.NumSub {
 				utils.ClearTimeout(request.Timeout.Load())
@@ -558,10 +556,9 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 			request.MsgCount.Add(1)
 
 			// ignore if response does not contain 'rooms' key
-			if response.Rooms == nil {
-				return
+			if len(response.Rooms) > 0 {
+				request.Rooms.Add(response.Rooms...)
 			}
-			request.Rooms.Add(response.Rooms...)
 
 			if request.MsgCount.Load() == request.NumSub {
 				utils.ClearTimeout(request.Timeout.Load())
