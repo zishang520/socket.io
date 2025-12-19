@@ -44,5 +44,5 @@ golang.org/x/time v0.12.0 h1:ScB/8o8olJvc+CQPWrK3fPZNfh7qgwCrY0zJmoEQLSE=
 golang.org/x/time v0.12.0/go.mod h1:CDIdPxbZBQxdj6cxyCIdrNogrJKMJ7pr37NYpMcMDSg=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
-resty.dev/v3 v3.0.0-beta.4 h1:2O77oFymtA4NT8AY87wAaSgSGUBk2yvvM1qno9VRXZU=
-resty.dev/v3 v3.0.0-beta.4/go.mod h1:NTOerrC/4T7/FE6tXIZGIysXXBdgNqwMZuKtxpea9NM=
+resty.dev/v3 v3.0.0-beta.5 h1:NV1xbqOLzSq7XMTs1t/HLPvu7xrxoXzF90SR4OO6faQ=
+resty.dev/v3 v3.0.0-beta.5/go.mod h1:NTOerrC/4T7/FE6tXIZGIysXXBdgNqwMZuKtxpea9NM=
