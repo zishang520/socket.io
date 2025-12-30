@@ -3,9 +3,9 @@ module github.com/zishang520/socket.io/adapters/adapter/v3
 go 1.24.1
 
 require (
-	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-rc.9
-	github.com/zishang520/socket.io/servers/socket/v3 v3.0.0-rc.9
-	github.com/zishang520/socket.io/v3 v3.0.0-rc.9
+	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-rc.10
+	github.com/zishang520/socket.io/servers/socket/v3 v3.0.0-rc.10
+	github.com/zishang520/socket.io/v3 v3.0.0-rc.10
 )
 
 require (
@@ -18,8 +18,8 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-rc.9 // indirect
-	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-rc.9 // indirect
+	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-rc.10 // indirect
+	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-rc.10 // indirect
 	github.com/zishang520/webtransport-go v0.9.1 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
