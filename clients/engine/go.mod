@@ -8,7 +8,7 @@ require (
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-rc.10
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-rc.10
 	github.com/zishang520/socket.io/v3 v3.0.0-rc.10
-	github.com/zishang520/webtransport-go v0.9.1
+	github.com/quic-go/webtransport-go v0.9.0
 )
 
 require (

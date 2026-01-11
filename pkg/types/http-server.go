@@ -12,7 +12,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
-	"github.com/zishang520/webtransport-go"
+	"github.com/quic-go/webtransport-go"
 )
 
 var (

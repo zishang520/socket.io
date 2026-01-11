@@ -16,7 +16,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 	webtrans "github.com/zishang520/socket.io/v3/pkg/webtransport"
-	"github.com/zishang520/webtransport-go"
+	"github.com/quic-go/webtransport-go"
 )
 
 type server struct {
