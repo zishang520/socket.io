@@ -63,6 +63,9 @@ func (s *HttpServer) webtransportServer(addr string, handler http.Handler) *webt
 		},
 	}
 
+	// Configure the H3 server for WebTransport (required for v0.10.0+)
+	webtransport.ConfigureHTTP3Server(server.H3)
+
 	s.servers.Push(server)
 
 	return server
