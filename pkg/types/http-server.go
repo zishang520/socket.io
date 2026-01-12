@@ -57,7 +57,7 @@ func (s *HttpServer) h3Server(handler http.Handler) *http3.Server {
 func (s *HttpServer) webtransportServer(addr string, handler http.Handler) *webtransport.Server {
 	// Start the servers
 	server := &webtransport.Server{
-		H3: http3.Server{Addr: addr, Handler: handler, Logger: http3_log},
+		H3: &http3.Server{Addr: addr, Handler: handler, Logger: http3_log},
 		CheckOrigin: func(_ *http.Request) bool {
 			return true
 		},
