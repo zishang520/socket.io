@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/zishang520/webtransport-go"
+	"github.com/quic-go/webtransport-go"
 )
 
 const (

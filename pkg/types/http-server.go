@@ -12,7 +12,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
-	"github.com/zishang520/webtransport-go"
+	"github.com/quic-go/webtransport-go"
 )
 
 var (
@@ -57,11 +57,14 @@ func (s *HttpServer) h3Server(handler http.Handler) *http3.Server {
 func (s *HttpServer) webtransportServer(addr string, handler http.Handler) *webtransport.Server {
 	// Start the servers
 	server := &webtransport.Server{
-		H3: http3.Server{Addr: addr, Handler: handler, Logger: http3_log},
+		H3: &http3.Server{Addr: addr, Handler: handler, Logger: http3_log},
 		CheckOrigin: func(_ *http.Request) bool {
 			return true
 		},
 	}
+
+	// Configure the H3 server for WebTransport (required for v0.10.0+)
+	webtransport.ConfigureHTTP3Server(server.H3)
 
 	s.servers.Push(server)
 

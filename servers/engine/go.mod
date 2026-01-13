@@ -6,15 +6,16 @@ require (
 	github.com/andybalholm/brotli v1.2.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.18.2
+	github.com/quic-go/webtransport-go v0.10.0
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-rc.10
 	github.com/zishang520/socket.io/v3 v3.0.0-rc.10
-	github.com/zishang520/webtransport-go v0.9.1
 )
 
 require (
+	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/gookit/color v1.6.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.58.0 // indirect
+	github.com/quic-go/quic-go v0.59.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
