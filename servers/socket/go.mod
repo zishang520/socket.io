@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	github.com/andybalholm/brotli v1.2.0
-	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/compress v1.18.3
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-rc.11
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-rc.11
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-rc.11

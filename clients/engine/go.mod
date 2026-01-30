@@ -15,7 +15,7 @@ require (
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/gookit/color v1.6.0 // indirect
-	github.com/klauspost/compress v1.18.2 // indirect
+	github.com/klauspost/compress v1.18.3 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
