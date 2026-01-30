@@ -20,10 +20,12 @@ var (
 	// ReservedEvents contains event names that have special meaning in Socket.IO
 	// and cannot be used as custom event names.
 	ReservedEvents = types.NewSet(
-		"connect",       // Used on the client side to indicate connection
-		"connect_error", // Used on the client side to indicate connection error
-		"disconnect",    // Used on both sides to indicate disconnection
-		"disconnecting", // Used on the server side during disconnection
+		"connect",        // Used on the client side to indicate connection
+		"connect_error",  // Used on the client side to indicate connection error
+		"disconnect",     // Used on both sides to indicate disconnection
+		"disconnecting",  // Used on the server side during disconnection
+		"newListener",    // Used by the Node.js EventEmitter
+		"removeListener", // Used by the Node.js EventEmitter
 	)
 )
 
@@ -375,12 +377,22 @@ func isSlice(payload any) bool {
 }
 
 // isValidEventPayload validates that an event payload has a valid event name.
+// The event name can be either a string (not in reserved events) or a number.
 func isValidEventPayload(payload any) bool {
 	data, ok := payload.([]any)
 	if !ok || len(data) == 0 {
 		return false
 	}
 
-	eventName, isString := data[0].(string)
-	return isString && !ReservedEvents.Has(eventName)
+	// Event name can be a string or a number
+	switch eventName := data[0].(type) {
+	case string:
+		return !ReservedEvents.Has(eventName)
+	case float64: // JSON numbers are decoded as float64 in Go
+		return true
+	case int, int64, int32:
+		return true
+	default:
+		return false
+	}
 }

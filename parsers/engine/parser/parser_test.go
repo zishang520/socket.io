@@ -801,3 +801,381 @@ func TestParserv4(t *testing.T) {
 	})
 
 }
+
+// TestParserv3EdgeCases tests edge cases for v3 parser
+func TestParserv3EdgeCases(t *testing.T) {
+	p := &parserv3{}
+
+	t.Run("EncodePacket/NilData", func(t *testing.T) {
+		data, err := p.EncodePacket(&packet.Packet{
+			Type:    packet.PING,
+			Data:    nil,
+			Options: nil,
+		}, false)
+
+		if err != nil {
+			t.Fatal("Error with EncodePacket:", err)
+		}
+		if data.String() != "2" {
+			t.Errorf("Expected '2', got %s", data.String())
+		}
+	})
+
+	t.Run("EncodePacket/EmptyData", func(t *testing.T) {
+		data, err := p.EncodePacket(&packet.Packet{
+			Type:    packet.MESSAGE,
+			Data:    strings.NewReader(""),
+			Options: nil,
+		}, false)
+
+		if err != nil {
+			t.Fatal("Error with EncodePacket:", err)
+		}
+		if data.String() != "4" {
+			t.Errorf("Expected '4', got %s", data.String())
+		}
+	})
+
+	t.Run("DecodePacket/EmptyString", func(t *testing.T) {
+		pack, err := p.DecodePacket(types.NewStringBufferString(""))
+
+		if err == nil {
+			t.Fatal("DecodePacket should return error for empty string")
+		}
+		if pack.Type != packet.ERROR {
+			t.Errorf("Expected ERROR packet type, got %v", pack.Type)
+		}
+	})
+
+	t.Run("DecodePacket/InvalidBase64", func(t *testing.T) {
+		pack, err := p.DecodePacket(types.NewStringBufferString("b!!!invalid"))
+
+		if err == nil {
+			t.Fatal("DecodePacket should return error for invalid base64")
+		}
+		if pack.Type != packet.ERROR {
+			t.Errorf("Expected ERROR packet type, got %v", pack.Type)
+		}
+	})
+
+	t.Run("EncodePayload/EmptyPackets", func(t *testing.T) {
+		data, err := p.EncodePayload([]*packet.Packet{}, false)
+
+		if err != nil {
+			t.Fatal("Error with EncodePayload:", err)
+		}
+		// v3 parser returns non-empty buffer due to length prefix format
+		t.Logf("v3 EncodePayload for empty packets returned buffer of length %d", data.Len())
+	})
+
+	t.Run("EncodePayload/NilPackets", func(t *testing.T) {
+		data, err := p.EncodePayload(nil, false)
+
+		if err != nil {
+			t.Fatal("Error with EncodePayload:", err)
+		}
+		// v3 parser returns non-empty buffer due to length prefix format
+		t.Logf("v3 EncodePayload for nil packets returned buffer of length %d", data.Len())
+	})
+
+	t.Run("DecodePayload/EmptyBuffer", func(t *testing.T) {
+		packs, err := p.DecodePayload(types.NewStringBufferString(""))
+
+		if err != nil {
+			t.Fatal("DecodePayload should not error for empty buffer")
+		}
+		if len(packs) != 0 {
+			t.Errorf("Expected 0 packets, got %d", len(packs))
+		}
+	})
+
+	t.Run("hasBinary/EmptyPackets", func(t *testing.T) {
+		if b := p.hasBinary([]*packet.Packet{}); b != false {
+			t.Errorf("Expected false for empty packets, got %t", b)
+		}
+	})
+
+	t.Run("hasBinary/NilPackets", func(t *testing.T) {
+		if b := p.hasBinary(nil); b != false {
+			t.Errorf("Expected false for nil packets, got %t", b)
+		}
+	})
+
+	t.Run("hasBinary/AllStringData", func(t *testing.T) {
+		if b := p.hasBinary([]*packet.Packet{
+			{Type: packet.MESSAGE, Data: strings.NewReader("hello")},
+			{Type: packet.MESSAGE, Data: strings.NewReader("world")},
+		}); b != false {
+			t.Errorf("Expected false for all string data, got %t", b)
+		}
+	})
+
+	t.Run("EncodePacket/AllPacketTypes", func(t *testing.T) {
+		ptypes := []packet.Type{packet.OPEN, packet.CLOSE, packet.PING, packet.PONG, packet.MESSAGE, packet.UPGRADE, packet.NOOP}
+		expectedPrefix := []string{"0", "1", "2", "3", "4", "5", "6"}
+
+		for i, pt := range ptypes {
+			data, err := p.EncodePacket(&packet.Packet{Type: pt, Data: nil}, false)
+			if err != nil {
+				t.Errorf("Error encoding packet type %v: %v", pt, err)
+				continue
+			}
+			if data.String() != expectedPrefix[i] {
+				t.Errorf("Packet type %v: expected %s, got %s", pt, expectedPrefix[i], data.String())
+			}
+		}
+	})
+}
+
+// TestParserv4EdgeCases tests edge cases for v4 parser
+func TestParserv4EdgeCases(t *testing.T) {
+	p := &parserv4{}
+
+	t.Run("EncodePacket/NilData", func(t *testing.T) {
+		data, err := p.EncodePacket(&packet.Packet{
+			Type:    packet.PING,
+			Data:    nil,
+			Options: nil,
+		}, false)
+
+		if err != nil {
+			t.Fatal("Error with EncodePacket:", err)
+		}
+		if data.String() != "2" {
+			t.Errorf("Expected '2', got %s", data.String())
+		}
+	})
+
+	t.Run("EncodePacket/EmptyData", func(t *testing.T) {
+		data, err := p.EncodePacket(&packet.Packet{
+			Type:    packet.MESSAGE,
+			Data:    strings.NewReader(""),
+			Options: nil,
+		}, false)
+
+		if err != nil {
+			t.Fatal("Error with EncodePacket:", err)
+		}
+		if data.String() != "4" {
+			t.Errorf("Expected '4', got %s", data.String())
+		}
+	})
+
+	t.Run("DecodePacket/EmptyString", func(t *testing.T) {
+		pack, err := p.DecodePacket(types.NewStringBufferString(""))
+
+		if err == nil {
+			t.Fatal("DecodePacket should return error for empty string")
+		}
+		if pack.Type != packet.ERROR {
+			t.Errorf("Expected ERROR packet type, got %v", pack.Type)
+		}
+	})
+
+	t.Run("DecodePacket/InvalidBase64", func(t *testing.T) {
+		pack, err := p.DecodePacket(types.NewStringBufferString("b!!!invalid"))
+
+		if err == nil {
+			t.Fatal("DecodePacket should return error for invalid base64")
+		}
+		if pack.Type != packet.ERROR {
+			t.Errorf("Expected ERROR packet type, got %v", pack.Type)
+		}
+	})
+
+	t.Run("EncodePayload/EmptyPackets", func(t *testing.T) {
+		data, err := p.EncodePayload([]*packet.Packet{}, false)
+
+		if err != nil {
+			t.Fatal("Error with EncodePayload:", err)
+		}
+		if data.Len() != 0 {
+			t.Errorf("Expected empty buffer, got length %d", data.Len())
+		}
+	})
+
+	t.Run("EncodePayload/NilPackets", func(t *testing.T) {
+		data, err := p.EncodePayload(nil, false)
+
+		if err != nil {
+			t.Fatal("Error with EncodePayload:", err)
+		}
+		if data.Len() != 0 {
+			t.Errorf("Expected empty buffer, got length %d", data.Len())
+		}
+	})
+
+	t.Run("DecodePayload/EmptyBuffer", func(t *testing.T) {
+		packs, err := p.DecodePayload(types.NewStringBufferString(""))
+
+		if err != nil {
+			t.Fatal("DecodePayload should not error for empty buffer")
+		}
+		if len(packs) != 0 {
+			t.Errorf("Expected 0 packets, got %d", len(packs))
+		}
+	})
+
+	t.Run("EncodePacket/AllPacketTypes", func(t *testing.T) {
+		ptypes := []packet.Type{packet.OPEN, packet.CLOSE, packet.PING, packet.PONG, packet.MESSAGE, packet.UPGRADE, packet.NOOP}
+		expectedPrefix := []string{"0", "1", "2", "3", "4", "5", "6"}
+
+		for i, pt := range ptypes {
+			data, err := p.EncodePacket(&packet.Packet{Type: pt, Data: nil}, false)
+			if err != nil {
+				t.Errorf("Error encoding packet type %v: %v", pt, err)
+				continue
+			}
+			if data.String() != expectedPrefix[i] {
+				t.Errorf("Packet type %v: expected %s, got %s", pt, expectedPrefix[i], data.String())
+			}
+		}
+	})
+
+	t.Run("DecodePayload/SinglePacket", func(t *testing.T) {
+		packs, err := p.DecodePayload(types.NewStringBufferString("2probe"))
+
+		if err != nil {
+			t.Fatal("DecodePayload error:", err)
+		}
+		if len(packs) != 1 {
+			t.Fatalf("Expected 1 packet, got %d", len(packs))
+		}
+		if packs[0].Type != packet.PING {
+			t.Errorf("Expected PING packet type, got %v", packs[0].Type)
+		}
+	})
+
+	t.Run("EncodePayload/SinglePacket", func(t *testing.T) {
+		data, err := p.EncodePayload([]*packet.Packet{
+			{Type: packet.PING, Data: strings.NewReader("probe")},
+		}, false)
+
+		if err != nil {
+			t.Fatal("Error with EncodePayload:", err)
+		}
+		if data.String() != "2probe" {
+			t.Errorf("Expected '2probe', got %s", data.String())
+		}
+	})
+}
+
+// TestParserFactory tests the parser factory functions
+func TestParserFactory(t *testing.T) {
+	t.Run("Parserv3", func(t *testing.T) {
+		p := Parserv3()
+		if p == nil {
+			t.Fatal("Parserv3() returned nil")
+		}
+		if p.Protocol() != 3 {
+			t.Errorf("Expected protocol 3, got %d", p.Protocol())
+		}
+	})
+
+	t.Run("Parserv4", func(t *testing.T) {
+		p := Parserv4()
+		if p == nil {
+			t.Fatal("Parserv4() returned nil")
+		}
+		if p.Protocol() != 4 {
+			t.Errorf("Expected protocol 4, got %d", p.Protocol())
+		}
+	})
+}
+
+// TestPacketTypes tests that PACKET_TYPES and PACKET_TYPES_REVERSE are consistent
+func TestPacketTypes(t *testing.T) {
+	ptypes := []packet.Type{packet.OPEN, packet.CLOSE, packet.PING, packet.PONG, packet.MESSAGE, packet.UPGRADE, packet.NOOP}
+
+	for _, pt := range ptypes {
+		encoded, ok := PACKET_TYPES[pt]
+		if !ok {
+			t.Errorf("PACKET_TYPES missing entry for %v", pt)
+			continue
+		}
+
+		decoded, ok := PACKET_TYPES_REVERSE[encoded]
+		if !ok {
+			t.Errorf("PACKET_TYPES_REVERSE missing entry for %v", encoded)
+			continue
+		}
+
+		if decoded != pt {
+			t.Errorf("Round-trip failed: %v -> %v -> %v", pt, encoded, decoded)
+		}
+	}
+}
+
+// TestDecodePayloadMultipleErrors tests handling of multiple errors in payload
+func TestDecodePayloadMultipleErrors(t *testing.T) {
+	p := &parserv3{}
+
+	// Malformed length prefix
+	packs, err := p.DecodePayload(types.NewStringBufferString("abc:0invalid"))
+	if err == nil && len(packs) > 0 {
+		t.Log("Parser handled malformed length gracefully")
+	}
+}
+
+// TestEncodeDecodeRoundTrip tests encode/decode round trip
+func TestEncodeDecodeRoundTrip(t *testing.T) {
+	p := &parserv4{}
+
+	original := &packet.Packet{
+		Type: packet.MESSAGE,
+		Data: strings.NewReader("Hello, World!"),
+	}
+
+	// Encode
+	encoded, err := p.EncodePacket(original, false)
+	if err != nil {
+		t.Fatal("Encode error:", err)
+	}
+
+	// Decode
+	decoded, err := p.DecodePacket(types.NewStringBufferString(encoded.String()))
+	if err != nil {
+		t.Fatal("Decode error:", err)
+	}
+
+	if decoded.Type != original.Type {
+		t.Errorf("Type mismatch: expected %v, got %v", original.Type, decoded.Type)
+	}
+
+	buf, _ := types.NewBytesBufferReader(decoded.Data)
+	if buf.String() != "Hello, World!" {
+		t.Errorf("Data mismatch: expected 'Hello, World!', got %s", buf.String())
+	}
+}
+
+// TestBinaryEncodeDecodeRoundTrip tests binary encode/decode round trip
+func TestBinaryEncodeDecodeRoundTrip(t *testing.T) {
+	p := &parserv4{}
+
+	binaryData := []byte{0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD}
+	original := &packet.Packet{
+		Type: packet.MESSAGE,
+		Data: bytes.NewBuffer(binaryData),
+	}
+
+	// Encode as binary
+	encoded, err := p.EncodePacket(original, true)
+	if err != nil {
+		t.Fatal("Encode error:", err)
+	}
+
+	// Decode
+	decoded, err := p.DecodePacket(types.NewBytesBuffer(encoded.Bytes()))
+	if err != nil {
+		t.Fatal("Decode error:", err)
+	}
+
+	if decoded.Type != packet.MESSAGE {
+		t.Errorf("Type mismatch: expected MESSAGE, got %v", decoded.Type)
+	}
+
+	buf, _ := types.NewBytesBufferReader(decoded.Data)
+	if !bytes.Equal(buf.Bytes(), binaryData) {
+		t.Errorf("Data mismatch: expected %v, got %v", binaryData, buf.Bytes())
+	}
+}

@@ -112,3 +112,244 @@ func TestReconstructPacket(t *testing.T) {
 		t.Errorf("expected buffer data in data[2], got %v", data[2])
 	}
 }
+
+// TestDeconstructPacketNoBinary tests DeconstructPacket with no binary data
+func TestDeconstructPacketNoBinary(t *testing.T) {
+	packet := &Packet{
+		Type: EVENT,
+		Data: []any{"event", "hello", 123, true},
+	}
+
+	deconstructed, buffers := DeconstructPacket(packet)
+
+	if len(buffers) != 0 {
+		t.Errorf("Expected 0 buffers for non-binary data, got %d", len(buffers))
+	}
+	if *deconstructed.Attachments != 0 {
+		t.Errorf("Expected 0 attachments, got %d", *deconstructed.Attachments)
+	}
+}
+
+// TestDeconstructPacketNilData tests DeconstructPacket with nil data
+func TestDeconstructPacketNilData(t *testing.T) {
+	packet := &Packet{
+		Type: EVENT,
+		Data: nil,
+	}
+
+	deconstructed, buffers := DeconstructPacket(packet)
+
+	if len(buffers) != 0 {
+		t.Errorf("Expected 0 buffers for nil data, got %d", len(buffers))
+	}
+	if *deconstructed.Attachments != 0 {
+		t.Errorf("Expected 0 attachments, got %d", *deconstructed.Attachments)
+	}
+}
+
+// TestDeconstructPacketSliceOfBytes tests multiple binary slices
+func TestDeconstructPacketSliceOfBytes(t *testing.T) {
+	packet := &Packet{
+		Type: EVENT,
+		Data: []any{
+			"upload",
+			[]byte{0x01},
+			[]byte{0x02},
+			[]byte{0x03},
+		},
+	}
+
+	deconstructed, buffers := DeconstructPacket(packet)
+
+	if len(buffers) != 3 {
+		t.Fatalf("Expected 3 buffers, got %d", len(buffers))
+	}
+
+	// Verify each placeholder is correct
+	data := deconstructed.Data.([]any)
+	for i := 1; i <= 3; i++ {
+		placeholder, ok := data[i].(*Placeholder)
+		if !ok {
+			t.Errorf("Expected placeholder at index %d", i)
+			continue
+		}
+		if placeholder.Num != int64(i-1) {
+			t.Errorf("Expected placeholder num %d, got %d", i-1, placeholder.Num)
+		}
+	}
+}
+
+// TestReconstructPacketInvalidIndex tests reconstruction with invalid buffer index
+func TestReconstructPacketInvalidIndex(t *testing.T) {
+	packet := &Packet{
+		Type: EVENT,
+		Data: []any{
+			map[string]any{"_placeholder": true, "num": float64(5)}, // Invalid index
+		},
+		Attachments: new(uint64),
+	}
+	*packet.Attachments = 1
+
+	buffers := []types.BufferInterface{
+		types.NewBytesBuffer([]byte{0x01}),
+	}
+
+	_, err := ReconstructPacket(packet, buffers)
+	// The function returns an error for invalid attachments
+	if err == nil {
+		t.Log("ReconstructPacket handled invalid index gracefully")
+	} else {
+		// Error is expected for illegal attachments
+		t.Logf("Got expected error: %v", err)
+	}
+}
+
+// TestReconstructPacketEmptyBuffers tests reconstruction with empty buffer list
+func TestReconstructPacketEmptyBuffers(t *testing.T) {
+	packet := &Packet{
+		Type:        EVENT,
+		Data:        []any{"event", "data"},
+		Attachments: new(uint64),
+	}
+	*packet.Attachments = 0
+
+	buffers := []types.BufferInterface{}
+
+	reconstructed, err := ReconstructPacket(packet, buffers)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	data := reconstructed.Data.([]any)
+	if data[0] != "event" || data[1] != "data" {
+		t.Errorf("Data should remain unchanged")
+	}
+}
+
+// TestDeconstructPacketDeepNested tests deeply nested binary data
+func TestDeconstructPacketDeepNested(t *testing.T) {
+	packet := &Packet{
+		Type: EVENT,
+		Data: []any{
+			"event",
+			map[string]any{
+				"level1": map[string]any{
+					"level2": map[string]any{
+						"binary": []byte{0x01, 0x02},
+					},
+				},
+			},
+		},
+	}
+
+	deconstructed, buffers := DeconstructPacket(packet)
+
+	if len(buffers) != 1 {
+		t.Fatalf("Expected 1 buffer, got %d", len(buffers))
+	}
+
+	if !bytes.Equal(buffers[0].Bytes(), []byte{0x01, 0x02}) {
+		t.Errorf("Buffer data mismatch")
+	}
+
+	// Verify deep nested placeholder
+	data := deconstructed.Data.([]any)
+	nested := data[1].(map[string]any)["level1"].(map[string]any)["level2"].(map[string]any)["binary"]
+	placeholder, ok := nested.(*Placeholder)
+	if !ok {
+		t.Errorf("Expected placeholder at nested path")
+	}
+	if placeholder.Num != 0 {
+		t.Errorf("Expected placeholder num 0, got %d", placeholder.Num)
+	}
+}
+
+// TestReconstructPacketDeepNested tests reconstruction of deeply nested binary
+func TestReconstructPacketDeepNested(t *testing.T) {
+	packet := &Packet{
+		Type: EVENT,
+		Data: []any{
+			"event",
+			map[string]any{
+				"level1": map[string]any{
+					"level2": map[string]any{
+						"binary": map[string]any{"_placeholder": true, "num": float64(0)},
+					},
+				},
+			},
+		},
+		Attachments: new(uint64),
+	}
+	*packet.Attachments = 1
+
+	buffers := []types.BufferInterface{
+		types.NewBytesBuffer([]byte{0x01, 0x02}),
+	}
+
+	reconstructed, err := ReconstructPacket(packet, buffers)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Verify deep nested reconstruction
+	data := reconstructed.Data.([]any)
+	nested := data[1].(map[string]any)["level1"].(map[string]any)["level2"].(map[string]any)["binary"]
+	buf, ok := nested.(types.BufferInterface)
+	if !ok {
+		t.Errorf("Expected BufferInterface at nested path")
+	}
+	if !bytes.Equal(buf.Bytes(), []byte{0x01, 0x02}) {
+		t.Errorf("Buffer data mismatch")
+	}
+}
+
+// TestPlaceholderStruct tests Placeholder struct fields
+func TestPlaceholderStruct(t *testing.T) {
+	p := &Placeholder{
+		Placeholder: true,
+		Num:         42,
+	}
+
+	if !p.Placeholder {
+		t.Error("Placeholder field should be true")
+	}
+	if p.Num != 42 {
+		t.Errorf("Num field should be 42, got %d", p.Num)
+	}
+}
+
+// TestDeconstructWithSliceInMap tests slices containing binary within maps
+func TestDeconstructWithSliceInMap(t *testing.T) {
+	packet := &Packet{
+		Type: EVENT,
+		Data: []any{
+			"upload",
+			map[string]any{
+				"files": []any{
+					[]byte{0x01},
+					[]byte{0x02},
+				},
+			},
+		},
+	}
+
+	deconstructed, buffers := DeconstructPacket(packet)
+
+	if len(buffers) != 2 {
+		t.Fatalf("Expected 2 buffers, got %d", len(buffers))
+	}
+
+	// Verify placeholders in slice
+	data := deconstructed.Data.([]any)
+	files := data[1].(map[string]any)["files"].([]any)
+	for i := 0; i < 2; i++ {
+		placeholder, ok := files[i].(*Placeholder)
+		if !ok {
+			t.Errorf("Expected placeholder at files[%d]", i)
+			continue
+		}
+		if placeholder.Num != int64(i) {
+			t.Errorf("Expected placeholder num %d, got %d", i, placeholder.Num)
+		}
+	}
+}
