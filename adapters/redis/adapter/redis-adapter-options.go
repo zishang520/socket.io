@@ -8,8 +8,15 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
+// Default configuration values for RedisAdapterOptions.
+const (
+	// DefaultRequestsTimeout is the default timeout for inter-node requests.
+	DefaultRequestsTimeout = 5000 * time.Millisecond
+)
+
 type (
 	// RedisAdapterOptionsInterface defines the interface for configuring RedisAdapterOptions.
+	// It extends EmitterOptionsInterface to include adapter-specific settings.
 	RedisAdapterOptionsInterface interface {
 		emitter.EmitterOptionsInterface
 
@@ -24,15 +31,16 @@ type (
 
 	// RedisAdapterOptions holds configuration for the Redis adapter.
 	//
-	// requestsTimeout: after this timeout the adapter will stop waiting for responses to a request (default: 5000ms).
-	// publishOnSpecificResponseChannel: whether to publish a response to the channel specific to the requesting node (default: false).
+	// Fields:
+	//   - requestsTimeout: Maximum time to wait for responses to inter-node requests.
+	//     Default: 5000ms. After this timeout, the adapter stops waiting for responses.
+	//   - publishOnSpecificResponseChannel: When true, responses are published to a
+	//     channel specific to the requesting node, reducing unnecessary message processing.
+	//     Default: false.
 	RedisAdapterOptions struct {
 		emitter.EmitterOptions
 
-		// requestsTimeout is the duration to wait for responses to a request.
-		requestsTimeout types.Optional[time.Duration]
-
-		// publishOnSpecificResponseChannel determines if responses are published to a node-specific channel.
+		requestsTimeout                  types.Optional[time.Duration]
 		publishOnSpecificResponseChannel types.Optional[bool]
 	}
 )
@@ -43,6 +51,7 @@ func DefaultRedisAdapterOptions() *RedisAdapterOptions {
 }
 
 // Assign copies non-nil fields from another RedisAdapterOptionsInterface.
+// This method is useful for merging user-provided options with defaults.
 func (s *RedisAdapterOptions) Assign(data RedisAdapterOptionsInterface) RedisAdapterOptionsInterface {
 	if data == nil {
 		return s
@@ -60,32 +69,43 @@ func (s *RedisAdapterOptions) Assign(data RedisAdapterOptionsInterface) RedisAda
 	return s
 }
 
-// SetRequestsTimeout sets the requests timeout duration.
+// SetRequestsTimeout sets the timeout duration for inter-node requests.
 func (s *RedisAdapterOptions) SetRequestsTimeout(requestsTimeout time.Duration) {
 	s.requestsTimeout = types.NewSome(requestsTimeout)
 }
+
+// GetRawRequestsTimeout returns the raw Optional value for requestsTimeout.
+// Returns nil if not explicitly set.
 func (s *RedisAdapterOptions) GetRawRequestsTimeout() types.Optional[time.Duration] {
 	return s.requestsTimeout
 }
+
+// RequestsTimeout returns the configured requests timeout.
+// Returns 0 if not explicitly set; callers should use DefaultRequestsTimeout as fallback.
 func (s *RedisAdapterOptions) RequestsTimeout() time.Duration {
 	if s.requestsTimeout == nil {
 		return 0
 	}
-
 	return s.requestsTimeout.Get()
 }
 
-// SetPublishOnSpecificResponseChannel sets whether to publish responses to a node-specific channel.
+// SetPublishOnSpecificResponseChannel sets whether responses should be published
+// to a node-specific channel.
 func (s *RedisAdapterOptions) SetPublishOnSpecificResponseChannel(publishOnSpecificResponseChannel bool) {
 	s.publishOnSpecificResponseChannel = types.NewSome(publishOnSpecificResponseChannel)
 }
+
+// GetRawPublishOnSpecificResponseChannel returns the raw Optional value.
+// Returns nil if not explicitly set.
 func (s *RedisAdapterOptions) GetRawPublishOnSpecificResponseChannel() types.Optional[bool] {
 	return s.publishOnSpecificResponseChannel
 }
+
+// PublishOnSpecificResponseChannel returns whether responses should be published
+// to a node-specific channel. Returns false if not explicitly set.
 func (s *RedisAdapterOptions) PublishOnSpecificResponseChannel() bool {
 	if s.publishOnSpecificResponseChannel == nil {
 		return false
 	}
-
 	return s.publishOnSpecificResponseChannel.Get()
 }

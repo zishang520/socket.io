@@ -1,8 +1,10 @@
 // Package redis provides Redis-based adapter types and interfaces for Socket.IO clustering.
+// These types define the message structures used for inter-node communication via Redis.
 package redis
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
@@ -10,17 +12,27 @@ import (
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
+// ErrNilRedisPacket indicates an attempt to unmarshal into a nil RedisPacket.
+var ErrNilRedisPacket = errors.New("cannot unmarshal into nil RedisPacket")
+
 type (
-	// RedisPacket represents a packet to be sent via Redis for broadcasting.
+	// RedisPacket represents a packet to be broadcast via Redis.
+	// It contains the server UID, the Socket.IO packet, and broadcast options.
 	RedisPacket struct {
 		_msgpack struct{} `json:"-" msgpack:",as_array"`
 
-		Uid    adapter.ServerId       `json:"-"`
-		Packet *parser.Packet         `json:"-"`
-		Opts   *adapter.PacketOptions `json:"-"`
+		// Uid identifies the source server that sent this packet.
+		Uid adapter.ServerId `json:"-"`
+
+		// Packet is the Socket.IO packet to be broadcast.
+		Packet *parser.Packet `json:"-"`
+
+		// Opts contains the broadcast options including target rooms and exclusions.
+		Opts *adapter.PacketOptions `json:"-"`
 	}
 
 	// RedisRequest represents a request message sent between servers via Redis.
+	// It is used for various inter-node operations such as remote joins, leaves, and fetches.
 	RedisRequest struct {
 		Type      adapter.MessageType    `json:"type,omitempty" msgpack:"type,omitempty"`
 		RequestId string                 `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
@@ -35,6 +47,7 @@ type (
 	}
 
 	// RedisResponse represents a response message sent between servers via Redis.
+	// It contains the response data for various inter-node requests.
 	RedisResponse struct {
 		Type        adapter.MessageType       `json:"type,omitempty" msgpack:"type,omitempty"`
 		RequestId   string                    `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
@@ -46,14 +59,18 @@ type (
 	}
 
 	// Parser defines the interface for encoding and decoding data for Redis communication.
+	// Implementations must be thread-safe as they may be called from multiple goroutines.
 	Parser interface {
+		// Encode serializes the given value into a byte slice.
 		Encode(any) ([]byte, error)
+
+		// Decode deserializes the byte slice into the given value.
 		Decode([]byte, any) error
 	}
 )
 
 // MarshalJSON implements the json.Marshaler interface for RedisPacket.
-// It serializes the RedisPacket as a JSON array containing [Uid, Packet, Opts].
+// It serializes the RedisPacket as a JSON array in the format [Uid, Packet, Opts].
 func (r *RedisPacket) MarshalJSON() ([]byte, error) {
 	if r == nil {
 		return json.Marshal(nil)
@@ -62,10 +79,11 @@ func (r *RedisPacket) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for RedisPacket.
-// It deserializes a JSON array back into the RedisPacket struct fields.
+// It deserializes a JSON array [Uid, Packet?, Opts?] back into the RedisPacket struct.
+// The Uid field is required; Packet and Opts are optional.
 func (r *RedisPacket) UnmarshalJSON(data []byte) error {
 	if r == nil {
-		return fmt.Errorf("cannot unmarshal into nil RedisPacket")
+		return ErrNilRedisPacket
 	}
 
 	var arr []json.RawMessage

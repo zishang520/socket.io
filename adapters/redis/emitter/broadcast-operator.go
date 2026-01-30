@@ -1,4 +1,4 @@
-// Package emitter provides a broadcast operator for emitting events to Socket.IO clients via Redis.
+// Package emitter provides broadcast capabilities for Socket.IO via Redis pub/sub.
 package emitter
 
 import (
@@ -13,8 +13,8 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-// RESERVED_EVENTS is a set of event names that are reserved and cannot be emitted by the user.
-var RESERVED_EVENTS = types.NewSet(
+// reservedEvents contains event names that are reserved by Socket.IO and cannot be emitted.
+var reservedEvents = types.NewSet(
 	"connect",
 	"connect_error",
 	"disconnect",
@@ -23,38 +23,49 @@ var RESERVED_EVENTS = types.NewSet(
 	"removeListener",
 )
 
-// BroadcastOperator allows targeting, excluding, and flagging rooms for event emission via Redis.
+// BroadcastOperator provides a fluent API for broadcasting events to Socket.IO clients via Redis.
+// It supports room targeting, exclusions, and broadcast flags through method chaining.
 type BroadcastOperator struct {
-	redisClient      *redis.RedisClient      // Redis client for publishing messages.
-	broadcastOptions *BroadcastOptions       // Options for broadcasting.
-	rooms            *types.Set[socket.Room] // Targeted rooms.
-	exceptRooms      *types.Set[socket.Room] // Rooms to exclude.
-	flags            *socket.BroadcastFlags  // Broadcast flags (e.g., compress, volatile).
+	redisClient      *redis.RedisClient      // Redis client for publishing messages
+	broadcastOptions *BroadcastOptions       // Configuration for broadcasting
+	rooms            *types.Set[socket.Room] // Target rooms for the broadcast
+	exceptRooms      *types.Set[socket.Room] // Rooms to exclude from the broadcast
+	flags            *socket.BroadcastFlags  // Broadcast flags (compress, volatile, etc.)
 }
 
-// MakeBroadcastOperator creates a new BroadcastOperator with default values.
+// MakeBroadcastOperator creates a new BroadcastOperator with empty room sets and default flags.
 func MakeBroadcastOperator() *BroadcastOperator {
-	b := &BroadcastOperator{
+	return &BroadcastOperator{
 		rooms:       types.NewSet[socket.Room](),
 		exceptRooms: types.NewSet[socket.Room](),
 		flags:       &socket.BroadcastFlags{},
 	}
-
-	return b
 }
 
-// NewBroadcastOperator creates and initializes a new BroadcastOperator.
-func NewBroadcastOperator(redisClient *redis.RedisClient, broadcastOptions *BroadcastOptions, rooms *types.Set[socket.Room], exceptRooms *types.Set[socket.Room], flags *socket.BroadcastFlags) *BroadcastOperator {
+// NewBroadcastOperator creates and initializes a new BroadcastOperator with the given configuration.
+// Nil parameters are replaced with safe defaults.
+func NewBroadcastOperator(
+	client *redis.RedisClient,
+	broadcastOptions *BroadcastOptions,
+	rooms *types.Set[socket.Room],
+	exceptRooms *types.Set[socket.Room],
+	flags *socket.BroadcastFlags,
+) *BroadcastOperator {
 	b := MakeBroadcastOperator()
-
-	b.Construct(redisClient, broadcastOptions, rooms, exceptRooms, flags)
-
+	b.Construct(client, broadcastOptions, rooms, exceptRooms, flags)
 	return b
 }
 
 // Construct initializes the BroadcastOperator with the given parameters.
-func (b *BroadcastOperator) Construct(redisClient *redis.RedisClient, broadcastOptions *BroadcastOptions, rooms *types.Set[socket.Room], exceptRooms *types.Set[socket.Room], flags *socket.BroadcastFlags) {
-	b.redisClient = redisClient
+// This method is called by NewBroadcastOperator and handles nil safety.
+func (b *BroadcastOperator) Construct(
+	client *redis.RedisClient,
+	broadcastOptions *BroadcastOptions,
+	rooms *types.Set[socket.Room],
+	exceptRooms *types.Set[socket.Room],
+	flags *socket.BroadcastFlags,
+) {
+	b.redisClient = client
 
 	if broadcastOptions == nil {
 		broadcastOptions = &BroadcastOptions{}
@@ -72,19 +83,21 @@ func (b *BroadcastOperator) Construct(redisClient *redis.RedisClient, broadcastO
 	}
 }
 
-// To targets one or more rooms for event emission.
+// To targets one or more rooms for the broadcast.
+// Returns a new BroadcastOperator with the additional rooms included.
 func (b *BroadcastOperator) To(room ...socket.Room) *BroadcastOperator {
 	rooms := types.NewSet(b.rooms.Keys()...)
 	rooms.Add(room...)
 	return NewBroadcastOperator(b.redisClient, b.broadcastOptions, rooms, b.exceptRooms, b.flags)
 }
 
-// In is an alias for To, targeting one or more rooms for event emission.
+// In is an alias for To, targeting one or more rooms for the broadcast.
 func (b *BroadcastOperator) In(room ...socket.Room) *BroadcastOperator {
 	return b.To(room...)
 }
 
-// Except excludes one or more rooms from event emission.
+// Except excludes one or more rooms from the broadcast.
+// Returns a new BroadcastOperator with the rooms added to the exclusion list.
 func (b *BroadcastOperator) Except(room ...socket.Room) *BroadcastOperator {
 	exceptRooms := types.NewSet(b.exceptRooms.Keys()...)
 	exceptRooms.Add(room...)
@@ -92,30 +105,33 @@ func (b *BroadcastOperator) Except(room ...socket.Room) *BroadcastOperator {
 }
 
 // Compress sets the compress flag for the broadcast.
+// When true, the message will be compressed before transmission.
 func (b *BroadcastOperator) Compress(compress bool) *BroadcastOperator {
 	flags := *b.flags
 	flags.Compress = &compress
 	return NewBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
 }
 
-// Volatile sets the volatile flag, allowing event data to be lost if the client is not ready.
+// Volatile sets the volatile flag for the broadcast.
+// When set, the event data may be lost if the client is not ready to receive.
 func (b *BroadcastOperator) Volatile() *BroadcastOperator {
 	flags := *b.flags
 	flags.Volatile = true
 	return NewBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
 }
 
-// Emit emits an event to all targeted clients, except reserved events.
+// Emit broadcasts an event with the given name and arguments to all targeted clients.
+// Returns an error if the event name is reserved or if broadcasting fails.
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
-	if RESERVED_EVENTS.Has(ev) {
+	if reservedEvents.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
 	if b.broadcastOptions.Parser == nil {
-		return errors.New(`broadcastOptions.Parser is not set`)
+		return errors.New("broadcastOptions.Parser is not set")
 	}
 
-	// set up packet object
+	// Construct the packet data
 	data := append([]any{ev}, args...)
 
 	packet := &parser.Packet{
@@ -130,8 +146,9 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Flags:  b.flags,
 	}
 
+	// Encode the packet using the configured parser
 	msg, err := b.broadcastOptions.Parser.Encode(&Packet{
-		Uid:    UID,
+		Uid:    emitterUID,
 		Packet: packet,
 		Opts:   opts,
 	})
@@ -139,20 +156,22 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		return err
 	}
 
+	// Determine the channel: use room-specific channel if targeting exactly one room
 	channel := b.broadcastOptions.BroadcastChannel
 	if b.rooms != nil && b.rooms.Len() == 1 {
 		for _, room := range b.rooms.Keys() {
 			channel += string(room) + "#"
-			break // Only need the first room since there's exactly one
+			break
 		}
 	}
 
-	emitter_log.Debug("publishing message to channel %s", channel)
+	emitterLog.Debug("publishing message to channel %s", channel)
 
 	return b.redisClient.Client.Publish(b.redisClient.Context, channel, msg).Err()
 }
 
-// SocketsJoin makes the matching socket instances join the specified rooms.
+// SocketsJoin makes all matching socket instances join the specified rooms.
+// This sends a REMOTE_JOIN request to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	request, err := json.Marshal(&Request{
 		Type: redis.REMOTE_JOIN,
@@ -169,7 +188,8 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
 }
 
-// SocketsLeave makes the matching socket instances leave the specified rooms.
+// SocketsLeave makes all matching socket instances leave the specified rooms.
+// This sends a REMOTE_LEAVE request to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	request, err := json.Marshal(&Request{
 		Type: redis.REMOTE_LEAVE,
@@ -186,7 +206,9 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
 }
 
-// DisconnectSockets disconnects the matching socket instances.
+// DisconnectSockets disconnects all matching socket instances.
+// If state is true, the underlying transport connection will be closed.
+// This sends a REMOTE_DISCONNECT request to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 	request, err := json.Marshal(&Request{
 		Type: redis.REMOTE_DISCONNECT,

@@ -13,42 +13,70 @@ import (
 )
 
 type (
-	// Packet is an alias for redis.RedisPacket, representing a packet sent via Redis.
+	// Packet is an alias for redis.RedisPacket, representing a broadcast packet sent via Redis.
 	Packet = redis.RedisPacket
 
-	// Request is an alias for redis.RedisRequest, representing a request sent via Redis.
+	// Request is an alias for redis.RedisRequest, representing an inter-node request.
 	Request = redis.RedisRequest
 
-	// RedisRequest extends the base RedisRequest with additional fields for internal request tracking.
-	RedisRequest struct {
-		Type      adapter.MessageType                   // The type of the message/request.
-		Resolve   func(*types.Slice[any])               // Callback to resolve the request.
-		Timeout   *atomic.Pointer[utils.Timer]          // Timeout for the request.
-		NumSub    int64                                 // Number of expected responses.
-		MsgCount  *atomic.Int64                         // Counter for received messages.
-		Rooms     *types.Set[socket.Room]               // Set of rooms involved in the request.
-		Sockets   *types.Slice[*adapter.SocketResponse] // Slice of socket responses.
-		Responses *types.Slice[any]                     // Slice of generic responses.
-	}
-
-	// Response is an alias for redis.RedisResponse, representing a response sent via Redis.
+	// Response is an alias for redis.RedisResponse, representing an inter-node response.
 	Response = redis.RedisResponse
 
 	// AckRequest is an alias for adapter.ClusterAckRequest, used for acknowledgement tracking.
 	AckRequest = adapter.ClusterAckRequest
 
+	// RedisRequest represents an internal request tracker with state management.
+	// It extends the base RedisRequest with fields for tracking request lifecycle.
+	RedisRequest struct {
+		// Type identifies the message/request type.
+		Type adapter.MessageType
+
+		// Resolve is the callback invoked when the request completes successfully.
+		Resolve func(*types.Slice[any])
+
+		// Timeout is the timer for request timeout handling.
+		Timeout *atomic.Pointer[utils.Timer]
+
+		// NumSub is the number of expected responses from other nodes.
+		NumSub int64
+
+		// MsgCount tracks the number of responses received.
+		MsgCount *atomic.Int64
+
+		// Rooms accumulates room information from responses.
+		Rooms *types.Set[socket.Room]
+
+		// Sockets accumulates socket information from responses.
+		Sockets *types.Slice[*adapter.SocketResponse]
+
+		// Responses accumulates generic response data.
+		Responses *types.Slice[any]
+	}
+
 	// RedisAdapter defines the interface for a Redis-based Socket.IO adapter.
+	// It extends the base socket.Adapter with Redis-specific functionality.
 	RedisAdapter interface {
 		socket.Adapter
 
+		// SetRedis configures the Redis client for the adapter.
 		SetRedis(*redis.RedisClient)
+
+		// SetOpts configures adapter options.
 		SetOpts(any)
 
+		// Uid returns the unique server identifier for this adapter instance.
 		Uid() adapter.ServerId
+
+		// RequestsTimeout returns the configured timeout for inter-node requests.
 		RequestsTimeout() time.Duration
+
+		// PublishOnSpecificResponseChannel indicates if responses use node-specific channels.
 		PublishOnSpecificResponseChannel() bool
+
+		// Parser returns the parser used for message encoding/decoding.
 		Parser() redis.Parser
 
+		// AllRooms returns a function to retrieve all rooms across the cluster.
 		AllRooms() func(func(*types.Set[socket.Room], error))
 	}
 )

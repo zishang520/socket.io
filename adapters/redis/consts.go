@@ -1,29 +1,42 @@
 // Package redis defines constants for Redis-based message types used in the Socket.IO adapter.
+// These message types are used for inter-node communication in a clustered Socket.IO environment.
 package redis
 
 import (
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 )
 
+// Message types for Socket.IO Redis adapter inter-node communication.
+// These constants define the different operations that can be performed
+// across multiple Socket.IO server nodes using Redis as the message broker.
 const (
-	// SOCKETS represents a message type for socket operations.
+	// SOCKETS requests a list of socket IDs from other nodes.
 	SOCKETS adapter.MessageType = iota
-	// ALL_ROOMS represents a message type for all rooms operations.
+
+	// ALL_ROOMS requests a list of all rooms from other nodes.
 	ALL_ROOMS
-	// REMOTE_JOIN represents a message type for remote join operations.
+
+	// REMOTE_JOIN instructs other nodes to join a socket to specified rooms.
 	REMOTE_JOIN
-	// REMOTE_LEAVE represents a message type for remote leave operations.
+
+	// REMOTE_LEAVE instructs other nodes to remove a socket from specified rooms.
 	REMOTE_LEAVE
-	// REMOTE_DISCONNECT represents a message type for remote disconnect operations.
+
+	// REMOTE_DISCONNECT instructs other nodes to disconnect a specific socket.
 	REMOTE_DISCONNECT
-	// REMOTE_FETCH represents a message type for remote fetch operations.
+
+	// REMOTE_FETCH requests detailed socket information from other nodes.
 	REMOTE_FETCH
-	// SERVER_SIDE_EMIT represents a message type for server-side emit operations.
+
+	// SERVER_SIDE_EMIT broadcasts a server-side event to other nodes.
 	SERVER_SIDE_EMIT
-	// BROADCAST represents a message type for broadcast operations.
+
+	// BROADCAST sends a packet to clients across all nodes.
 	BROADCAST
-	// BROADCAST_CLIENT_COUNT represents a message type for broadcast client count operations.
+
+	// BROADCAST_CLIENT_COUNT reports the number of clients that will receive a broadcast.
 	BROADCAST_CLIENT_COUNT
-	// BROADCAST_ACK represents a message type for broadcast acknowledgement operations.
+
+	// BROADCAST_ACK sends acknowledgement responses for broadcast operations.
 	BROADCAST_ACK
 )

@@ -1,4 +1,5 @@
-// Package emitter provides options and interfaces for configuring the Redis emitter in Socket.IO.
+// Package emitter provides an API for broadcasting messages to Socket.IO servers via Redis
+// without requiring a full Socket.IO server instance.
 package emitter
 
 import (
@@ -6,78 +7,97 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
+const (
+	// DefaultEmitterKey is the default Redis key prefix for the emitter.
+	DefaultEmitterKey = "socket.io"
+)
+
 type (
 	// EmitterOptionsInterface defines the interface for configuring emitter options.
+	// It provides getters and setters for all configurable options.
 	EmitterOptionsInterface interface {
+		// SetKey sets the Redis key prefix for channel names.
 		SetKey(string)
+		// GetRawKey returns the raw Optional wrapper for the key setting.
 		GetRawKey() types.Optional[string]
+		// Key returns the Redis key prefix, or empty string if not set.
 		Key() string
 
+		// SetParser sets the parser for encoding messages.
 		SetParser(redis.Parser)
+		// GetRawParser returns the raw Optional wrapper for the parser setting.
 		GetRawParser() types.Optional[redis.Parser]
+		// Parser returns the parser, or nil if not set.
 		Parser() redis.Parser
 	}
 
-	// EmitterOptions holds configuration for the Redis emitter.
-	//
-	// Key: the Redis key prefix (default: "socket.io").
-	// Parser: the parser used for encoding messages (default: msgpack).
+	// EmitterOptions holds configuration options for the Redis emitter.
+	// All fields are optional and will use default values if not explicitly set.
 	EmitterOptions struct {
-		// key is the Redis key prefix.
+		// key is the Redis key prefix used for constructing channel names.
+		// Default: "socket.io"
 		key types.Optional[string]
 
-		// parser is the parser to use for encoding messages sent to Redis.
+		// parser is the encoder/decoder used for serializing messages to Redis.
+		// Default: MessagePack parser
 		parser types.Optional[redis.Parser]
 	}
 )
 
-// DefaultEmitterOptions returns a new EmitterOptions with default values.
+// DefaultEmitterOptions creates a new EmitterOptions instance with default values.
 func DefaultEmitterOptions() *EmitterOptions {
 	return &EmitterOptions{}
 }
 
-// Assign copies non-nil fields from another EmitterOptionsInterface.
-func (s *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInterface {
+// Assign copies non-nil option values from another EmitterOptionsInterface.
+// This allows merging configuration from multiple sources.
+func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInterface {
 	if data == nil {
-		return s
+		return o
 	}
 
 	if data.GetRawKey() != nil {
-		s.SetKey(data.Key())
+		o.SetKey(data.Key())
 	}
 	if data.Parser() != nil {
-		s.SetParser(data.Parser())
+		o.SetParser(data.Parser())
 	}
 
-	return s
+	return o
 }
 
-// SetKey sets the Redis key prefix.
-func (s *EmitterOptions) SetKey(key string) {
-	s.key = types.NewSome(key)
+// SetKey sets the Redis key prefix for channel names.
+func (o *EmitterOptions) SetKey(key string) {
+	o.key = types.NewSome(key)
 }
-func (s *EmitterOptions) GetRawKey() types.Optional[string] {
-	return s.key
+
+// GetRawKey returns the raw Optional wrapper for the key setting.
+func (o *EmitterOptions) GetRawKey() types.Optional[string] {
+	return o.key
 }
-func (s *EmitterOptions) Key() string {
-	if s.key == nil {
+
+// Key returns the Redis key prefix, or empty string if not set.
+func (o *EmitterOptions) Key() string {
+	if o.key == nil {
 		return ""
 	}
-
-	return s.key.Get()
+	return o.key.Get()
 }
 
-// SetParser sets the parser for encoding messages.
-func (s *EmitterOptions) SetParser(parser redis.Parser) {
-	s.parser = types.NewSome(parser)
+// SetParser sets the parser for encoding messages sent to Redis.
+func (o *EmitterOptions) SetParser(parser redis.Parser) {
+	o.parser = types.NewSome(parser)
 }
-func (s *EmitterOptions) GetRawParser() types.Optional[redis.Parser] {
-	return s.parser
+
+// GetRawParser returns the raw Optional wrapper for the parser setting.
+func (o *EmitterOptions) GetRawParser() types.Optional[redis.Parser] {
+	return o.parser
 }
-func (s *EmitterOptions) Parser() redis.Parser {
-	if s.parser == nil {
+
+// Parser returns the configured parser, or nil if not set.
+func (o *EmitterOptions) Parser() redis.Parser {
+	if o.parser == nil {
 		return nil
 	}
-
-	return s.parser.Get()
+	return o.parser.Get()
 }
