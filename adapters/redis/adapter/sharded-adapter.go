@@ -36,7 +36,7 @@ func (sb *ShardedRedisAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 type shardedRedisAdapter struct {
 	adapter.ClusterAdapter
 
-	pubSubClient    *rds.PubSub
+	pubSubClients   *types.Map[string, *rds.PubSub] // channel -> pubsub client mapping
 	redisClient     *redis.RedisClient
 	opts            *ShardedRedisAdapterOptions
 	channel         string
@@ -48,6 +48,7 @@ func MakeShardedRedisAdapter() ShardedRedisAdapter {
 	c := &shardedRedisAdapter{
 		ClusterAdapter: adapter.MakeClusterAdapter(),
 		opts:           DefaultShardedRedisAdapterOptions(),
+		pubSubClients:  &types.Map[string, *rds.PubSub]{},
 	}
 	c.Prototype(c)
 	return c
@@ -89,65 +90,72 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	s.channel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
 	s.responseChannel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#" + string(s.Uid()) + "#"
 
-	s.pubSubClient = s.redisClient.Client.SSubscribe(s.redisClient.Context, s.channel, s.responseChannel)
+	// Subscribe to each channel separately to avoid CROSSSLOT errors in Redis Cluster
+	// See: https://github.com/zishang520/socket.io/issues/134
+	channelPubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, s.channel)
+	responsePubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, s.responseChannel)
+	s.pubSubClients.Store(s.channel, channelPubSub)
+	s.pubSubClients.Store(s.responseChannel, responsePubSub)
 
 	if s.opts.SubscriptionMode() == DynamicSubscriptionMode ||
 		s.opts.SubscriptionMode() == DynamicPrivateSubscriptionMode {
 		s.On("create-room", func(rooms ...any) {
 			if room := slices.TryGetAny[socket.Room](rooms, 0); s.shouldUseASeparateNamespace(room) {
-				if err := s.pubSubClient.SSubscribe(s.redisClient.Context, s.dynamicChannel(room)); err != nil {
-					s.redisClient.Emit("error", err)
-				}
+				dynamicChannel := s.dynamicChannel(room)
+				dynamicPubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, dynamicChannel)
+				s.pubSubClients.Store(dynamicChannel, dynamicPubSub)
+				// Start a goroutine to receive messages from the dynamic channel
+				go s.receiveMessages(dynamicPubSub)
 			}
 		})
 		s.On("delete-room", func(rooms ...any) {
 			if room := slices.TryGetAny[socket.Room](rooms, 0); s.shouldUseASeparateNamespace(room) {
-				if err := s.pubSubClient.SUnsubscribe(s.redisClient.Context, s.dynamicChannel(room)); err != nil {
-					s.redisClient.Emit("error", err)
+				dynamicChannel := s.dynamicChannel(room)
+				// Find and close the corresponding pubsub client
+				if pubSub, ok := s.pubSubClients.LoadAndDelete(dynamicChannel); ok {
+					if err := pubSub.SUnsubscribe(s.redisClient.Context, dynamicChannel); err != nil {
+						s.redisClient.Emit("error", err)
+					}
+					pubSub.Close()
 				}
 			}
 		})
 	}
 
-	// This goroutine is invoked only once.
-	go func() {
-		defer s.pubSubClient.Close()
-
-		for {
-			select {
-			case <-s.redisClient.Context.Done():
-				return
-			default:
-				msg, err := s.pubSubClient.ReceiveMessage(s.redisClient.Context)
-				if err != nil {
-					s.redisClient.Emit("error", err)
-					if err == rds.ErrClosed {
-						return
-					}
-					continue // retry receiving messages
-				}
-				s.onRawMessage([]byte(msg.Payload), msg.Channel)
-			}
-		}
-	}()
+	// Start goroutines to receive messages from the main channels
+	go s.receiveMessages(channelPubSub)
+	go s.receiveMessages(responsePubSub)
 }
 
-// Close unsubscribes from all channels and closes the Pub/Sub client.
+// Close unsubscribes from all channels and closes the Pub/Sub clients.
 func (s *shardedRedisAdapter) Close() {
-	channels := []string{s.channel, s.responseChannel}
+	// Close each pubsub client separately to avoid CROSSSLOT errors
+	s.pubSubClients.Range(func(channel string, pubSub *rds.PubSub) bool {
+		if err := pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
+			s.redisClient.Emit("error", err)
+		}
+		pubSub.Close()
+		return true
+	})
+}
 
-	if s.opts.SubscriptionMode() == DynamicSubscriptionMode ||
-		s.opts.SubscriptionMode() == DynamicPrivateSubscriptionMode {
-		s.Rooms().Range(func(room socket.Room, _sids *types.Set[socket.SocketId]) bool {
-			if s.shouldUseASeparateNamespace(room) {
-				channels = append(channels, s.dynamicChannel(room))
+// receiveMessages starts receiving messages from a Pub/Sub client.
+func (s *shardedRedisAdapter) receiveMessages(pubSub *rds.PubSub) {
+	for {
+		select {
+		case <-s.redisClient.Context.Done():
+			return
+		default:
+			msg, err := pubSub.ReceiveMessage(s.redisClient.Context)
+			if err != nil {
+				s.redisClient.Emit("error", err)
+				if err == rds.ErrClosed {
+					return
+				}
+				continue // retry receiving messages
 			}
-			return true
-		})
-	}
-
-	if err := s.pubSubClient.SUnsubscribe(s.redisClient.Context, channels...); err != nil {
-		s.redisClient.Emit("error", err)
+			s.onRawMessage([]byte(msg.Payload), msg.Channel)
+		}
 	}
 }
 
