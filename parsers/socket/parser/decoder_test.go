@@ -105,13 +105,13 @@ func TestDecodeString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := d.decodeString(types.NewStringBufferString(tt.input))
+			got, err := d.decodePacket(types.NewStringBufferString(tt.input))
 			if (err != nil) != tt.wantErr {
-				t.Errorf("decodeString(%s) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				t.Errorf("decodePacket(%s) error = %v, wantErr %v", tt.input, err, tt.wantErr)
 				return
 			}
 			if tt.want != nil && !reflect.DeepEqual(got.Data, tt.want.Data) {
-				t.Errorf("decodeString(%s) = %v, want %v", tt.input, got.Data, tt.want.Data)
+				t.Errorf("decodePacket(%s) = %v, want %v", tt.input, got.Data, tt.want.Data)
 			}
 		})
 	}
@@ -121,7 +121,7 @@ func TestDestroy(t *testing.T) {
 	d := NewDecoder().(*decoder)
 	d.reconstructor.Store(newBinaryReconstructor(&Packet{}))
 	d.Destroy()
-	if d.reconstructor.Load().reconPack.Load() != nil {
+	if d.reconstructor.Load().packet.Load() != nil {
 		t.Error("Destroy() did not clear the reconstructor")
 	}
 }
@@ -229,7 +229,7 @@ func TestDecoderErrorCases(t *testing.T) {
 
 	// Test case: Illegal attachments
 	err = d.Add("5abc[\"data\"]")
-	if err == nil || err.Error() != "Illegal attachments" {
+	if err == nil || err.Error() != "illegal attachments" {
 		t.Errorf("Expected error for illegal attachments, got: %v", err)
 	}
 

@@ -7,53 +7,62 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-// Protocol version.
+// Protocol is the Socket.IO protocol version.
 const Protocol = 5
 
-// binaryReconstructor manages a binary event's buffer sequence.
-// It should be constructed whenever a packet of type BINARY_EVENT is decoded.
+// binaryReconstructor manages the reconstruction of binary packets.
+// It collects binary buffers until the expected number of attachments
+// is received, then reconstructs the complete packet.
 type binaryReconstructor struct {
-	mu        sync.Mutex
-	buffers   []types.BufferInterface
-	reconPack atomic.Pointer[Packet]
+	mu      sync.Mutex
+	buffers []types.BufferInterface
+	packet  atomic.Pointer[Packet]
 }
 
-// newBinaryReconstructor creates a new binaryReconstructor.
+// newBinaryReconstructor creates a new binaryReconstructor for the given packet.
+// The packet should have its Attachments field set to the expected number of buffers.
 func newBinaryReconstructor(packet *Packet) *binaryReconstructor {
 	br := &binaryReconstructor{
-		buffers: []types.BufferInterface{},
+		buffers: make([]types.BufferInterface, 0),
 	}
-	br.reconPack.Store(packet)
+	br.packet.Store(packet)
 	return br
 }
 
-// takeBinaryData handles incoming binary data for the reconstruction.
-func (br *binaryReconstructor) takeBinaryData(binData types.BufferInterface) (*Packet, error) {
+// takeBinaryData adds a binary buffer to the reconstruction.
+// Returns the reconstructed packet when all expected buffers are received,
+// or nil if more buffers are needed.
+func (br *binaryReconstructor) takeBinaryData(data types.BufferInterface) (*Packet, error) {
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
-	br.buffers = append(br.buffers, binData)
+	br.buffers = append(br.buffers, data)
 
-	// Check if reconPack and Attachments are valid
-	if reconPack := br.reconPack.Load(); reconPack != nil && reconPack.Attachments != nil && uint64(len(br.buffers)) == *reconPack.Attachments {
-		// Done with buffer list - reconstruct the packet
-		packet, err := ReconstructPacket(reconPack, br.buffers)
-		br.cleanUp()
-		return packet, err
+	packet := br.packet.Load()
+	if packet == nil || packet.Attachments == nil {
+		return nil, nil
 	}
+
+	// Check if all expected buffers have been received
+	if uint64(len(br.buffers)) == *packet.Attachments {
+		reconstructedPacket, err := ReconstructPacket(packet, br.buffers)
+		br.reset()
+		return reconstructedPacket, err
+	}
+
 	return nil, nil
 }
 
-// cleanUp cleans up the reconstruction state.
-func (br *binaryReconstructor) cleanUp() {
+// reset clears the reconstruction state.
+func (br *binaryReconstructor) reset() {
 	br.buffers = nil
-	br.reconPack.Store(nil)
+	br.packet.Store(nil)
 }
 
-// finishedReconstruction cleans up the reconstruction state.
+// finishedReconstruction signals that reconstruction is complete or cancelled.
+// This should be called when the decoder is destroyed or reset.
 func (br *binaryReconstructor) finishedReconstruction() {
 	br.mu.Lock()
 	defer br.mu.Unlock()
-
-	br.cleanUp()
+	br.reset()
 }

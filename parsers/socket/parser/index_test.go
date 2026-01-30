@@ -104,7 +104,7 @@ func TestTakeBinaryDataErrorHandling(t *testing.T) {
 	}
 }
 
-func TestCleanUp(t *testing.T) {
+func TestReset(t *testing.T) {
 	packet := &Packet{
 		Type: EVENT,
 		Data: []any{
@@ -125,12 +125,12 @@ func TestCleanUp(t *testing.T) {
 	buf := types.NewBytesBufferString("data")
 	br.takeBinaryData(buf)
 
-	br.cleanUp()
+	br.reset()
 
 	if br.buffers != nil {
-		t.Errorf("Expected buffers to be nil after cleanup, got: %v", br.buffers)
+		t.Errorf("Expected buffers to be nil after reset, got: %v", br.buffers)
 	}
-	if br.reconPack.Load() != nil {
-		t.Errorf("Expected reconPack to be nil after cleanup, got: %v", br.reconPack.Load())
+	if br.packet.Load() != nil {
+		t.Errorf("Expected packet to be nil after reset, got: %v", br.packet.Load())
 	}
 }

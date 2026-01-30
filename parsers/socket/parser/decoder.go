@@ -14,236 +14,339 @@ import (
 )
 
 var (
-	parser_log = log.NewLog("socket.io:parser")
+	// parserLog is the logger for the parser package.
+	parserLog = log.NewLog("socket.io:parser")
 
-	// These strings must not be used as event names, as they have a special meaning.
-	RESERVED_EVENTS = types.NewSet(
-		"connect",       // used on the client side
-		"connect_error", // used on the client side
-		"disconnect",    // used on both sides
-		"disconnecting", // used on the server side
+	// ReservedEvents contains event names that have special meaning in Socket.IO
+	// and cannot be used as custom event names.
+	ReservedEvents = types.NewSet(
+		"connect",       // Used on the client side to indicate connection
+		"connect_error", // Used on the client side to indicate connection error
+		"disconnect",    // Used on both sides to indicate disconnection
+		"disconnecting", // Used on the server side during disconnection
 	)
 )
 
-// A socket.io Decoder instance
+// Error definitions for decoder operations.
+var (
+	ErrPlaintextDuringReconstruction = errors.New("got plaintext data when reconstructing a packet")
+	ErrBinaryWithoutReconstruction   = errors.New("got binary data when not reconstructing a packet")
+	ErrInvalidPayload                = errors.New("invalid payload")
+	ErrIllegalNamespace              = errors.New("illegal namespace")
+	ErrIllegalID                     = errors.New("illegal id")
+)
+
+// decoder implements the Decoder interface for Socket.IO packet decoding.
 type decoder struct {
 	types.EventEmitter
 
+	// reconstructor manages binary packet reconstruction state.
 	reconstructor atomic.Pointer[binaryReconstructor]
 }
 
+// NewDecoder creates a new Decoder instance.
 func NewDecoder() Decoder {
 	return &decoder{EventEmitter: types.NewEventEmitter()}
 }
 
-// Decodes an encoded packet string into packet JSON.
+// Add processes incoming data (string or binary) and emits decoded packets.
+// For string data, it decodes immediately. For binary data, it accumulates
+// buffers until the packet is complete, then emits the reconstructed packet.
 func (d *decoder) Add(data any) error {
-	switch tdata := data.(type) {
+	switch typedData := data.(type) {
 	case string:
-		if d.reconstructor.Load() != nil {
-			return errors.New("got plaintext data when reconstructing a packet")
-		}
-		return d.decodeAsString(types.NewStringBufferString(tdata))
+		return d.handleStringData(types.NewStringBufferString(typedData))
+
 	case *strings.Reader:
-		if d.reconstructor.Load() != nil {
-			return errors.New("got plaintext data when reconstructing a packet")
-		}
-		rdata, err := types.NewStringBufferReader(tdata)
+		buffer, err := types.NewStringBufferReader(typedData)
 		if err != nil {
 			return err
 		}
-		return d.decodeAsString(rdata)
+		return d.handleStringData(buffer)
+
 	case *types.StringBuffer:
-		if d.reconstructor.Load() != nil {
-			return errors.New("got plaintext data when reconstructing a packet")
-		}
-		return d.decodeAsString(tdata)
+		return d.handleStringData(typedData)
+
 	default:
-		if !IsBinary(data) {
-			return errors.New(fmt.Sprintf("Unknown type: %v", data))
-		}
-
-		// raw binary data
-		reconstructor := d.reconstructor.Load()
-		if reconstructor == nil {
-			return errors.New("got binary data when not reconstructing a packet")
-		}
-
-		rdata := types.NewBytesBuffer(nil)
-		switch tdata := data.(type) {
-		case io.Reader:
-			if c, ok := data.(io.Closer); ok {
-				defer c.Close()
-			}
-			if _, err := rdata.ReadFrom(tdata); err != nil {
-				return err
-			}
-		case []byte:
-			if _, err := rdata.Write(tdata); err != nil {
-				return err
-			}
-		}
-		packet, err := reconstructor.takeBinaryData(rdata)
-		if err != nil {
-			return errors.New(fmt.Sprintf("Decode error: %v", err.Error()))
-		}
-		if packet != nil {
-			// received final buffer
-			d.reconstructor.Store(nil)
-			d.Emit("decoded", packet)
-		}
+		return d.handleBinaryData(data)
 	}
-
-	return nil
 }
 
-func (d *decoder) decodeAsString(str types.BufferInterface) error {
-	packet, err := d.decodeString(str)
+// handleStringData processes string-based packet data.
+func (d *decoder) handleStringData(buffer types.BufferInterface) error {
+	if d.reconstructor.Load() != nil {
+		return ErrPlaintextDuringReconstruction
+	}
+	return d.decodeAsString(buffer)
+}
+
+// handleBinaryData processes binary packet data for reconstruction.
+func (d *decoder) handleBinaryData(data any) error {
+	if !IsBinary(data) {
+		return fmt.Errorf("unknown type: %T", data)
+	}
+
+	reconstructor := d.reconstructor.Load()
+	if reconstructor == nil {
+		return ErrBinaryWithoutReconstruction
+	}
+
+	buffer, err := d.readBinaryData(data)
 	if err != nil {
-		parser_log.Debug("decode err %v", err)
 		return err
 	}
-	if packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK {
-		// binary packet's json
-		d.reconstructor.Store(newBinaryReconstructor(packet))
-		// no attachments, labeled binary but no binary data to follow
-		if attachments := packet.Attachments; attachments != nil && *attachments == 0 {
-			d.Emit("decoded", packet)
-		}
-	} else {
-		// non-binary full packet
+
+	packet, err := reconstructor.takeBinaryData(buffer)
+	if err != nil {
+		return fmt.Errorf("decode error: %w", err)
+	}
+
+	if packet != nil {
+		// Received final buffer, packet is complete
+		d.reconstructor.Store(nil)
 		d.Emit("decoded", packet)
 	}
+
 	return nil
 }
 
-// Decode a packet String (JSON data)
-func (d *decoder) decodeString(str types.BufferInterface) (packet *Packet, err error) {
-	defer func(str string) {
-		if err == nil {
-			parser_log.Debug("decoded %s as %v", str, packet)
-		}
-	}(str.String())
+// readBinaryData reads binary data from various source types into a buffer.
+func (d *decoder) readBinaryData(data any) (types.BufferInterface, error) {
+	buffer := types.NewBytesBuffer(nil)
 
-	// look up type
-	packet = &Packet{}
-	msgType, err := str.ReadByte()
+	switch typedData := data.(type) {
+	case io.Reader:
+		if closer, ok := data.(io.Closer); ok {
+			defer closer.Close()
+		}
+		if _, err := buffer.ReadFrom(typedData); err != nil {
+			return nil, err
+		}
+	case []byte:
+		if _, err := buffer.Write(typedData); err != nil {
+			return nil, err
+		}
+	}
+
+	return buffer, nil
+}
+
+// decodeAsString decodes a string buffer and handles binary packet initialization.
+func (d *decoder) decodeAsString(buffer types.BufferInterface) error {
+	packet, err := d.decodePacket(buffer)
 	if err != nil {
-		return nil, errors.New("invalid payload")
+		parserLog.Debug("decode error: %v", err)
+		return err
 	}
-	packet.Type = PacketType(int(msgType) - '0')
-	if !packet.Type.Valid() {
-		return nil, errors.New(fmt.Sprintf("unknown packet type %d", packet.Type))
-	}
-	// look up attachments if type binary
+
 	if packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK {
-		buf, err := str.ReadString('-')
-		if err != nil {
-			// The scan is over and it is not found '-' indicating that there is a problem.
-			return nil, errors.New("Illegal attachments")
+		d.reconstructor.Store(newBinaryReconstructor(packet))
+		// If no attachments expected, emit immediately
+		if packet.Attachments != nil && *packet.Attachments == 0 {
+			d.Emit("decoded", packet)
 		}
-		_l := len(buf)
-		if _l < 2 { // 'xxx-'
-			return nil, errors.New("Illegal attachments")
-		}
-		attachments, err := strconv.ParseUint(buf[:_l-1], 10, 64)
-		if err != nil {
-			return nil, errors.New("Illegal attachments")
-		}
-		packet.Attachments = &attachments
-	}
-
-	// look up namespace (if any)
-	if nsp, err := str.ReadByte(); err != nil {
-		if err != io.EOF {
-			return nil, errors.New("Illegal namespace")
-		}
-		packet.Nsp = "/"
 	} else {
-		if '/' == nsp {
-			_nsp, err := str.ReadString(',')
-			if err != nil {
-				if err != io.EOF {
-					return nil, errors.New("Illegal namespace")
-				}
-				packet.Nsp = "/" + _nsp
-			} else {
-				packet.Nsp = "/" + _nsp[:len(_nsp)-1]
-			}
-		} else {
-			if err := str.UnreadByte(); err != nil {
-				return nil, errors.New("Illegal namespace")
-			}
-			packet.Nsp = "/"
-		}
+		// Non-binary packet, emit immediately
+		d.Emit("decoded", packet)
 	}
 
-	if str.Len() > 0 {
-		// look up id
-		id := new(strings.Builder)
+	return nil
+}
 
-		for {
-			b, err := str.ReadByte()
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return nil, err
-			}
-			if '0' <= b && '9' >= b {
-				if err := id.WriteByte(b); err != nil {
-					return nil, err
-				}
-			} else {
-				if err := str.UnreadByte(); err != nil {
-					return nil, errors.New("Illegal id")
-				}
-				break
-			}
-		}
+// decodePacket parses a packet from a string buffer.
+func (d *decoder) decodePacket(buffer types.BufferInterface) (*Packet, error) {
+	originalStr := buffer.String() // For debug logging
+	packet := &Packet{}
 
-		if id.Len() > 0 {
-			id, err := strconv.ParseUint(id.String(), 10, 64)
-			if err != nil {
-				return nil, err
-			}
-			packet.Id = &id
-		}
+	// Parse packet type
+	if err := d.parsePacketType(buffer, packet); err != nil {
+		return nil, err
 	}
 
-	var payload any
-
-	// look up json data
-	if str.Len() > 0 {
-		if json.NewDecoder(str).Decode(&payload) != nil {
-			return nil, errors.New("invalid payload")
-		}
+	// Parse attachments for binary packets
+	if err := d.parseAttachments(buffer, packet); err != nil {
+		return nil, err
 	}
 
-	if !isPayloadValid(packet.Type, payload) {
-		return nil, errors.New("invalid payload")
+	// Parse namespace
+	if err := d.parseNamespace(buffer, packet); err != nil {
+		return nil, err
 	}
 
-	packet.Data = payload
+	// Parse packet ID
+	if err := d.parsePacketID(buffer, packet); err != nil {
+		return nil, err
+	}
 
+	// Parse payload data
+	if err := d.parsePayload(buffer, packet); err != nil {
+		return nil, err
+	}
+
+	parserLog.Debug("decoded %s as %v", originalStr, packet)
 	return packet, nil
 }
 
-// Deallocates a parser's resources
+// parsePacketType reads and validates the packet type.
+func (d *decoder) parsePacketType(buffer types.BufferInterface, packet *Packet) error {
+	typeByte, err := buffer.ReadByte()
+	if err != nil {
+		return ErrInvalidPayload
+	}
+
+	packet.Type = PacketType(int(typeByte) - '0')
+	if !packet.Type.Valid() {
+		return fmt.Errorf("unknown packet type %d", packet.Type)
+	}
+
+	return nil
+}
+
+// parseAttachments reads attachment count for binary packets.
+func (d *decoder) parseAttachments(buffer types.BufferInterface, packet *Packet) error {
+	if packet.Type != BINARY_EVENT && packet.Type != BINARY_ACK {
+		return nil
+	}
+
+	attachmentStr, err := buffer.ReadString('-')
+	if err != nil {
+		return ErrIllegalAttachments
+	}
+
+	strLen := len(attachmentStr)
+	if strLen < 2 { // Must be at least "X-" where X is a digit
+		return ErrIllegalAttachments
+	}
+
+	attachmentCount, err := strconv.ParseUint(attachmentStr[:strLen-1], 10, 64)
+	if err != nil {
+		return ErrIllegalAttachments
+	}
+
+	packet.Attachments = &attachmentCount
+	return nil
+}
+
+// parseNamespace reads the namespace from the buffer.
+func (d *decoder) parseNamespace(buffer types.BufferInterface, packet *Packet) error {
+	firstByte, err := buffer.ReadByte()
+	if err != nil {
+		if err == io.EOF {
+			packet.Nsp = "/"
+			return nil
+		}
+		return ErrIllegalNamespace
+	}
+
+	if firstByte != '/' {
+		// No namespace specified, use default and put byte back
+		if err := buffer.UnreadByte(); err != nil {
+			return ErrIllegalNamespace
+		}
+		packet.Nsp = "/"
+		return nil
+	}
+
+	// Read the rest of the namespace until comma
+	nspSuffix, err := buffer.ReadString(',')
+	if err != nil {
+		if err == io.EOF {
+			packet.Nsp = "/" + nspSuffix
+			return nil
+		}
+		return ErrIllegalNamespace
+	}
+
+	// Remove trailing comma
+	packet.Nsp = "/" + nspSuffix[:len(nspSuffix)-1]
+	return nil
+}
+
+// parsePacketID reads the optional packet ID for acknowledgments.
+func (d *decoder) parsePacketID(buffer types.BufferInterface, packet *Packet) error {
+	if buffer.Len() == 0 {
+		return nil
+	}
+
+	var idBuilder strings.Builder
+
+	for {
+		b, err := buffer.ReadByte()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		if b >= '0' && b <= '9' {
+			if err := idBuilder.WriteByte(b); err != nil {
+				return err
+			}
+		} else {
+			if err := buffer.UnreadByte(); err != nil {
+				return ErrIllegalID
+			}
+			break
+		}
+	}
+
+	if idBuilder.Len() > 0 {
+		packetID, err := strconv.ParseUint(idBuilder.String(), 10, 64)
+		if err != nil {
+			return err
+		}
+		packet.Id = &packetID
+	}
+
+	return nil
+}
+
+// parsePayload reads and validates the JSON payload.
+func (d *decoder) parsePayload(buffer types.BufferInterface, packet *Packet) error {
+	if buffer.Len() == 0 {
+		return d.validatePayload(packet.Type, nil)
+	}
+
+	var payload any
+	if err := json.NewDecoder(buffer).Decode(&payload); err != nil {
+		return ErrInvalidPayload
+	}
+
+	if err := d.validatePayload(packet.Type, payload); err != nil {
+		return err
+	}
+
+	packet.Data = payload
+	return nil
+}
+
+// validatePayload checks if the payload is valid for the given packet type.
+func (d *decoder) validatePayload(packetType PacketType, payload any) error {
+	if !isPayloadValid(packetType, payload) {
+		return ErrInvalidPayload
+	}
+	return nil
+}
+
+// Destroy releases the decoder's resources and stops any ongoing reconstruction.
 func (d *decoder) Destroy() {
 	if reconstructor := d.reconstructor.Load(); reconstructor != nil {
 		reconstructor.finishedReconstruction()
 	}
 }
 
-func isPayloadValid(t PacketType, payload any) bool {
-	switch t {
+// Payload validation helpers
+
+// isPayloadValid checks if the payload matches the expected format for the packet type.
+func isPayloadValid(packetType PacketType, payload any) bool {
+	switch packetType {
 	case CONNECT:
-		return payload == nil || isStringMap(payload)
+		return payload == nil || isMap(payload)
 	case DISCONNECT:
 		return payload == nil
 	case CONNECT_ERROR:
-		return isStringMap(payload) || isString(payload)
+		return isMap(payload) || isString(payload)
 	case EVENT, BINARY_EVENT:
 		return isValidEventPayload(payload)
 	case ACK, BINARY_ACK:
@@ -253,27 +356,31 @@ func isPayloadValid(t PacketType, payload any) bool {
 	}
 }
 
-func isStringMap(payload any) bool {
+// isMap checks if the payload is a map[string]any.
+func isMap(payload any) bool {
 	_, ok := payload.(map[string]any)
 	return ok
 }
 
+// isString checks if the payload is a string.
 func isString(payload any) bool {
 	_, ok := payload.(string)
 	return ok
 }
 
+// isSlice checks if the payload is a slice.
 func isSlice(payload any) bool {
 	_, ok := payload.([]any)
 	return ok
 }
 
+// isValidEventPayload validates that an event payload has a valid event name.
 func isValidEventPayload(payload any) bool {
 	data, ok := payload.([]any)
 	if !ok || len(data) == 0 {
 		return false
 	}
 
-	event, isString := data[0].(string)
-	return isString && !RESERVED_EVENTS.Has(event)
+	eventName, isString := data[0].(string)
+	return isString && !ReservedEvents.Has(eventName)
 }

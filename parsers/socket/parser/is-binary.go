@@ -7,19 +7,24 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-// IsBinary returns true if the data is a binary type (Buffer or File).
+// IsBinary determines if the given data is a binary type.
+// Returns true for []byte and io.Reader types (excluding StringBuffer and strings.Reader),
+// which are treated as binary data in the Socket.IO protocol.
 func IsBinary(data any) bool {
 	switch data.(type) {
 	case *types.StringBuffer, *strings.Reader:
+		// StringBuffer and strings.Reader are text-based, not binary
 		return false
 	case []byte, io.Reader:
+		// Byte slices and other readers are considered binary
 		return true
 	default:
 		return false
 	}
 }
 
-// HasBinary checks recursively if the data contains any binary data.
+// HasBinary recursively checks if the data contains any binary content.
+// It traverses slices and maps to detect nested binary data.
 func HasBinary(data any) bool {
 	switch v := data.(type) {
 	case nil:
@@ -30,14 +35,15 @@ func HasBinary(data any) bool {
 				return true
 			}
 		}
+		return false
 	case map[string]any:
 		for _, value := range v {
 			if HasBinary(value) {
 				return true
 			}
 		}
+		return false
 	default:
 		return IsBinary(data)
 	}
-	return false
 }
