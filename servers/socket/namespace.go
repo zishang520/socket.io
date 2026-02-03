@@ -279,7 +279,7 @@ func (n *namespace) Add(client *Client, auth map[string]any, fn func(*Socket)) {
 				namespace_log.Debug("middleware error, sending CONNECT_ERROR packet to the client")
 				socket._cleanup()
 				if client.conn.Protocol() == 3 {
-					if e := err.Data(); e != nil {
+					if e := err.Data; e != nil {
 						socket._error(e)
 						return
 					}
@@ -288,7 +288,7 @@ func (n *namespace) Add(client *Client, auth map[string]any, fn func(*Socket)) {
 				} else {
 					socket._error(map[string]any{
 						"message": err.Error(),
-						"data":    err.Data(),
+						"data":    err.Data,
 					})
 					return
 				}

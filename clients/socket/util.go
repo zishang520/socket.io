@@ -52,7 +52,7 @@ func processHandshake(d map[string]any) (*Handshake, error) {
 
 // processExtendedError parses an error map into an ExtendedError struct.
 // Returns an error if required fields are missing or invalid.
-func processExtendedError(d map[string]any) (*ExtendedError, error) {
+func processExtendedError(d map[string]any) (*types.ExtendedError, error) {
 	if d == nil {
 		return nil, fmt.Errorf("map input cannot be nil")
 	}
@@ -66,7 +66,7 @@ func processExtendedError(d map[string]any) (*ExtendedError, error) {
 		return nil, err
 	}
 
-	return &ExtendedError{
+	return &types.ExtendedError{
 		Message: message,
 		Data:    data,
 	}, nil
