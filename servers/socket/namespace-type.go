@@ -160,25 +160,14 @@ type ParentNamespace interface {
 	CreateChild(string) Namespace
 }
 
-type ExtendedError struct {
-	message string
-	data    any
-}
+// ExtendedError is an alias to types.ExtendedError for backward compatibility
+// and convenience in server-side socket code.
+type ExtendedError = types.ExtendedError
 
+// NewExtendedError creates a new ExtendedError with the given message and data.
+// This is a convenience wrapper around types.NewExtendedError.
 func NewExtendedError(message string, data any) *ExtendedError {
-	return &ExtendedError{message: message, data: data}
-}
-
-func (e *ExtendedError) Err() error {
-	return e
-}
-
-func (e *ExtendedError) Data() any {
-	return e.data
-}
-
-func (e *ExtendedError) Error() string {
-	return e.message
+	return types.NewExtendedError(message, data)
 }
 
 type SessionData struct {
