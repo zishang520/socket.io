@@ -108,31 +108,31 @@ func (e *Emitter) Emit(ev string, args ...any) error {
 }
 
 // To targets specific room(s) for event emission.
-// Returns a BroadcastOperator for method chaining.
-func (e *Emitter) To(rooms ...socket.Room) *BroadcastOperator {
+// Returns a BroadcastOperatorInterface for method chaining.
+func (e *Emitter) To(rooms ...socket.Room) BroadcastOperatorInterface {
 	return e.newBroadcastOperator().To(rooms...)
 }
 
 // In is an alias for To, targeting specific room(s) for event emission.
-func (e *Emitter) In(rooms ...socket.Room) *BroadcastOperator {
+func (e *Emitter) In(rooms ...socket.Room) BroadcastOperatorInterface {
 	return e.newBroadcastOperator().In(rooms...)
 }
 
 // Except excludes specific room(s) from event emission.
-// Returns a BroadcastOperator for method chaining.
-func (e *Emitter) Except(rooms ...socket.Room) *BroadcastOperator {
+// Returns a BroadcastOperatorInterface for method chaining.
+func (e *Emitter) Except(rooms ...socket.Room) BroadcastOperatorInterface {
 	return e.newBroadcastOperator().Except(rooms...)
 }
 
 // Volatile sets a flag indicating the event data may be lost if the client
 // is not ready to receive messages (e.g., due to network issues).
-func (e *Emitter) Volatile() *BroadcastOperator {
+func (e *Emitter) Volatile() BroadcastOperatorInterface {
 	return e.newBroadcastOperator().Volatile()
 }
 
 // Compress sets the compress flag for the broadcast.
 // When true, the message will be compressed before sending.
-func (e *Emitter) Compress(compress bool) *BroadcastOperator {
+func (e *Emitter) Compress(compress bool) BroadcastOperatorInterface {
 	return e.newBroadcastOperator().Compress(compress)
 }
 
@@ -164,6 +164,24 @@ func (e *Emitter) ServerSideEmit(args ...any) error {
 		}
 	}
 
+	// Use sharded mode with ClusterMessage format for Redis Cluster
+	if e.opts.Sharded() {
+		message := &ClusterMessage{
+			Uid:  emitterUID,
+			Nsp:  e.nsp,
+			Type: adapter.SERVER_SIDE_EMIT,
+			Data: &ServerSideEmitMessage{
+				Packet: args,
+			},
+		}
+		msg, err := e.broadcastOptions.Parser.Encode(message)
+		if err != nil {
+			return err
+		}
+		return e.redisClient.Client.SPublish(e.redisClient.Context, e.broadcastOptions.BroadcastChannel, msg).Err()
+	}
+
+	// Normal mode: use Request format and PUBLISH
 	request, err := json.Marshal(&Request{
 		Uid:  emitterUID,
 		Type: redis.SERVER_SIDE_EMIT,
@@ -173,14 +191,15 @@ func (e *Emitter) ServerSideEmit(args ...any) error {
 		return err
 	}
 
-	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
-	if e.broadcastOptions.Sharded {
-		return e.redisClient.Client.SPublish(e.redisClient.Context, e.broadcastOptions.RequestChannel, request).Err()
-	}
 	return e.redisClient.Client.Publish(e.redisClient.Context, e.broadcastOptions.RequestChannel, request).Err()
 }
 
-// newBroadcastOperator creates a new BroadcastOperator with the emitter's configuration.
-func (e *Emitter) newBroadcastOperator() *BroadcastOperator {
+// newBroadcastOperator creates a new broadcast operator with the emitter's configuration.
+// If sharded mode is enabled, it creates a ShardedBroadcastOperator that uses SPUBLISH.
+// Otherwise, it creates a regular BroadcastOperator that uses PUBLISH.
+func (e *Emitter) newBroadcastOperator() BroadcastOperatorInterface {
+	if e.opts.Sharded() {
+		return NewShardedBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil)
+	}
 	return NewBroadcastOperator(e.redisClient, e.broadcastOptions, nil, nil, nil)
 }

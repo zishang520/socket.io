@@ -85,20 +85,20 @@ func (b *BroadcastOperator) Construct(
 
 // To targets one or more rooms for the broadcast.
 // Returns a new BroadcastOperator with the additional rooms included.
-func (b *BroadcastOperator) To(room ...socket.Room) *BroadcastOperator {
+func (b *BroadcastOperator) To(room ...socket.Room) BroadcastOperatorInterface {
 	rooms := types.NewSet(b.rooms.Keys()...)
 	rooms.Add(room...)
 	return NewBroadcastOperator(b.redisClient, b.broadcastOptions, rooms, b.exceptRooms, b.flags)
 }
 
 // In is an alias for To, targeting one or more rooms for the broadcast.
-func (b *BroadcastOperator) In(room ...socket.Room) *BroadcastOperator {
+func (b *BroadcastOperator) In(room ...socket.Room) BroadcastOperatorInterface {
 	return b.To(room...)
 }
 
 // Except excludes one or more rooms from the broadcast.
 // Returns a new BroadcastOperator with the rooms added to the exclusion list.
-func (b *BroadcastOperator) Except(room ...socket.Room) *BroadcastOperator {
+func (b *BroadcastOperator) Except(room ...socket.Room) BroadcastOperatorInterface {
 	exceptRooms := types.NewSet(b.exceptRooms.Keys()...)
 	exceptRooms.Add(room...)
 	return NewBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, exceptRooms, b.flags)
@@ -106,7 +106,7 @@ func (b *BroadcastOperator) Except(room ...socket.Room) *BroadcastOperator {
 
 // Compress sets the compress flag for the broadcast.
 // When true, the message will be compressed before transmission.
-func (b *BroadcastOperator) Compress(compress bool) *BroadcastOperator {
+func (b *BroadcastOperator) Compress(compress bool) BroadcastOperatorInterface {
 	flags := *b.flags
 	flags.Compress = &compress
 	return NewBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
@@ -114,7 +114,7 @@ func (b *BroadcastOperator) Compress(compress bool) *BroadcastOperator {
 
 // Volatile sets the volatile flag for the broadcast.
 // When set, the event data may be lost if the client is not ready to receive.
-func (b *BroadcastOperator) Volatile() *BroadcastOperator {
+func (b *BroadcastOperator) Volatile() BroadcastOperatorInterface {
 	flags := *b.flags
 	flags.Volatile = true
 	return NewBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
@@ -169,10 +169,6 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 	emitterLog.Debug("publishing message to channel %s", channel)
 
-	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
-	if b.broadcastOptions.Sharded {
-		return b.redisClient.Client.SPublish(b.redisClient.Context, channel, msg).Err()
-	}
 	return b.redisClient.Client.Publish(b.redisClient.Context, channel, msg).Err()
 }
 
@@ -191,10 +187,6 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 		return err
 	}
 
-	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
-	if b.broadcastOptions.Sharded {
-		return b.redisClient.Client.SPublish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
-	}
 	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
 }
 
@@ -213,10 +205,6 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 		return err
 	}
 
-	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
-	if b.broadcastOptions.Sharded {
-		return b.redisClient.Client.SPublish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
-	}
 	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
 }
 
@@ -236,9 +224,5 @@ func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 		return err
 	}
 
-	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
-	if b.broadcastOptions.Sharded {
-		return b.redisClient.Client.SPublish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
-	}
 	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
 }

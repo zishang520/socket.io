@@ -127,21 +127,24 @@ func TestBroadcastOperator_To(t *testing.T) {
 		if result == b {
 			t.Error("Expected new BroadcastOperator instance")
 		}
-		if !result.rooms.Has("room1") {
+		bop := result.(*BroadcastOperator)
+		if !bop.rooms.Has("room1") {
 			t.Error("Expected room1 to be added")
 		}
 	})
 
 	t.Run("multiple rooms", func(t *testing.T) {
 		result := b.To("room1", "room2", "room3")
-		if result.rooms.Len() != 3 {
-			t.Errorf("Expected 3 rooms, got %d", result.rooms.Len())
+		bop := result.(*BroadcastOperator)
+		if bop.rooms.Len() != 3 {
+			t.Errorf("Expected 3 rooms, got %d", bop.rooms.Len())
 		}
 	})
 
 	t.Run("chaining", func(t *testing.T) {
 		result := b.To("room1").To("room2")
-		if !result.rooms.Has("room1") || !result.rooms.Has("room2") {
+		bop := result.(*BroadcastOperator)
+		if !bop.rooms.Has("room1") || !bop.rooms.Has("room2") {
 			t.Error("Expected both rooms after chaining")
 		}
 	})
@@ -153,7 +156,8 @@ func TestBroadcastOperator_In(t *testing.T) {
 
 	// In should behave the same as To
 	result := b.In("room1")
-	if !result.rooms.Has("room1") {
+	bop := result.(*BroadcastOperator)
+	if !bop.rooms.Has("room1") {
 		t.Error("Expected room1 to be added via In")
 	}
 }
@@ -167,15 +171,17 @@ func TestBroadcastOperator_Except(t *testing.T) {
 		if result == b {
 			t.Error("Expected new BroadcastOperator instance")
 		}
-		if !result.exceptRooms.Has("excluded") {
+		bop := result.(*BroadcastOperator)
+		if !bop.exceptRooms.Has("excluded") {
 			t.Error("Expected room to be added to exceptRooms")
 		}
 	})
 
 	t.Run("multiple rooms", func(t *testing.T) {
 		result := b.Except("ex1", "ex2")
-		if result.exceptRooms.Len() != 2 {
-			t.Errorf("Expected 2 except rooms, got %d", result.exceptRooms.Len())
+		bop := result.(*BroadcastOperator)
+		if bop.exceptRooms.Len() != 2 {
+			t.Errorf("Expected 2 except rooms, got %d", bop.exceptRooms.Len())
 		}
 	})
 }
@@ -189,14 +195,16 @@ func TestBroadcastOperator_Compress(t *testing.T) {
 		if result == b {
 			t.Error("Expected new BroadcastOperator instance")
 		}
-		if result.flags.Compress == nil || !*result.flags.Compress {
+		bop := result.(*BroadcastOperator)
+		if bop.flags.Compress == nil || !*bop.flags.Compress {
 			t.Error("Expected Compress to be true")
 		}
 	})
 
 	t.Run("compress false", func(t *testing.T) {
 		result := b.Compress(false)
-		if result.flags.Compress == nil || *result.flags.Compress {
+		bop := result.(*BroadcastOperator)
+		if bop.flags.Compress == nil || *bop.flags.Compress {
 			t.Error("Expected Compress to be false")
 		}
 	})
@@ -210,7 +218,8 @@ func TestBroadcastOperator_Volatile(t *testing.T) {
 	if result == b {
 		t.Error("Expected new BroadcastOperator instance")
 	}
-	if !result.flags.Volatile {
+	bop := result.(*BroadcastOperator)
+	if !bop.flags.Volatile {
 		t.Error("Expected Volatile to be true")
 	}
 }

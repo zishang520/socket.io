@@ -3,7 +3,9 @@
 package emitter
 
 import (
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
 type (
@@ -33,6 +35,20 @@ type (
 		SubscriptionMode redis.SubscriptionMode
 	}
 
+	// BroadcastOperatorInterface defines the common interface for broadcast operators.
+	// Both BroadcastOperator and ShardedBroadcastOperator implement this interface.
+	BroadcastOperatorInterface interface {
+		To(room ...socket.Room) BroadcastOperatorInterface
+		In(room ...socket.Room) BroadcastOperatorInterface
+		Except(room ...socket.Room) BroadcastOperatorInterface
+		Compress(compress bool) BroadcastOperatorInterface
+		Volatile() BroadcastOperatorInterface
+		Emit(ev string, args ...any) error
+		SocketsJoin(rooms ...socket.Room) error
+		SocketsLeave(rooms ...socket.Room) error
+		DisconnectSockets(state bool) error
+	}
+
 	// Packet is an alias for redis.RedisPacket.
 	// It represents a Socket.IO packet with routing options.
 	Packet = redis.RedisPacket
@@ -44,4 +60,24 @@ type (
 	// Response is an alias for redis.RedisResponse.
 	// It represents an inter-server response message.
 	Response = redis.RedisResponse
+
+	// ClusterMessage is an alias for adapter.ClusterMessage.
+	// It is used in sharded mode for cluster communication.
+	ClusterMessage = adapter.ClusterMessage
+
+	// BroadcastMessage is an alias for adapter.BroadcastMessage.
+	// It is used in sharded mode for broadcasting.
+	BroadcastMessage = adapter.BroadcastMessage
+
+	// SocketsJoinLeaveMessage is an alias for adapter.SocketsJoinLeaveMessage.
+	// It is used in sharded mode for join/leave operations.
+	SocketsJoinLeaveMessage = adapter.SocketsJoinLeaveMessage
+
+	// DisconnectSocketsMessage is an alias for adapter.DisconnectSocketsMessage.
+	// It is used in sharded mode for disconnection operations.
+	DisconnectSocketsMessage = adapter.DisconnectSocketsMessage
+
+	// ServerSideEmitMessage is an alias for adapter.ServerSideEmitMessage.
+	// It is used in sharded mode for server-side emit operations.
+	ServerSideEmitMessage = adapter.ServerSideEmitMessage
 )
