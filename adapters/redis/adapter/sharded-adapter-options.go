@@ -2,31 +2,18 @@
 // The sharded adapter leverages Redis 7.0's sharded Pub/Sub for improved scalability.
 package adapter
 
-import "github.com/zishang520/socket.io/v3/pkg/types"
-
-// SubscriptionMode determines how Redis Pub/Sub channels are managed.
-type SubscriptionMode string
-
-// Subscription mode constants for sharded Redis adapter.
-const (
-	// StaticSubscriptionMode uses 2 fixed channels per namespace.
-	// This mode is simpler but may have higher message overhead for large deployments.
-	StaticSubscriptionMode SubscriptionMode = "static"
-
-	// DynamicSubscriptionMode uses 2 + 1 channel per public room per namespace.
-	// This optimizes message routing for public rooms but excludes private rooms.
-	DynamicSubscriptionMode SubscriptionMode = "dynamic"
-
-	// DynamicPrivateSubscriptionMode creates separate channels for both public and private rooms.
-	// This provides the finest granularity but uses the most Redis resources.
-	DynamicPrivateSubscriptionMode SubscriptionMode = "dynamic-private"
+import (
+	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 // Default configuration values for ShardedRedisAdapterOptions.
 const (
-	DefaultShardedChannelPrefix    = "socket.io"
-	DefaultShardedSubscriptionMode = DynamicSubscriptionMode
+	DefaultShardedChannelPrefix = "socket.io"
 )
+
+// DefaultShardedSubscriptionMode is the default subscription mode for the sharded adapter.
+var DefaultShardedSubscriptionMode = redis.DynamicSubscriptionMode
 
 type (
 	// ShardedRedisAdapterOptionsInterface defines the interface for configuring ShardedRedisAdapterOptions.
@@ -35,9 +22,9 @@ type (
 		GetRawChannelPrefix() types.Optional[string]
 		ChannelPrefix() string
 
-		SetSubscriptionMode(SubscriptionMode)
-		GetRawSubscriptionMode() types.Optional[SubscriptionMode]
-		SubscriptionMode() SubscriptionMode
+		SetSubscriptionMode(redis.SubscriptionMode)
+		GetRawSubscriptionMode() types.Optional[redis.SubscriptionMode]
+		SubscriptionMode() redis.SubscriptionMode
 	}
 
 	// ShardedRedisAdapterOptions holds configuration for the sharded Redis adapter.
@@ -47,7 +34,7 @@ type (
 	//   - subscriptionMode: Determines the channel management strategy. Default: DynamicSubscriptionMode.
 	ShardedRedisAdapterOptions struct {
 		channelPrefix    types.Optional[string]
-		subscriptionMode types.Optional[SubscriptionMode]
+		subscriptionMode types.Optional[redis.SubscriptionMode]
 	}
 )
 
@@ -93,18 +80,18 @@ func (s *ShardedRedisAdapterOptions) ChannelPrefix() string {
 }
 
 // SetSubscriptionMode sets the subscription mode for channel management.
-func (s *ShardedRedisAdapterOptions) SetSubscriptionMode(subscriptionMode SubscriptionMode) {
+func (s *ShardedRedisAdapterOptions) SetSubscriptionMode(subscriptionMode redis.SubscriptionMode) {
 	s.subscriptionMode = types.NewSome(subscriptionMode)
 }
 
 // GetRawSubscriptionMode returns the raw Optional value for subscriptionMode.
-func (s *ShardedRedisAdapterOptions) GetRawSubscriptionMode() types.Optional[SubscriptionMode] {
+func (s *ShardedRedisAdapterOptions) GetRawSubscriptionMode() types.Optional[redis.SubscriptionMode] {
 	return s.subscriptionMode
 }
 
 // SubscriptionMode returns the configured subscription mode.
 // Returns empty string if not set; callers should use DefaultShardedSubscriptionMode as fallback.
-func (s *ShardedRedisAdapterOptions) SubscriptionMode() SubscriptionMode {
+func (s *ShardedRedisAdapterOptions) SubscriptionMode() redis.SubscriptionMode {
 	if s.subscriptionMode == nil {
 		return ""
 	}

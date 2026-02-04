@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -473,7 +474,7 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offset string) {
 	broadcastTypeStr := strconv.Itoa(int(adapter.BROADCAST))
 
-	for i := 0; i < restoreSessionMaxXRangeCalls; i++ {
+	for range restoreSessionMaxXRangeCalls {
 		entries, err := r.redisClient.Client.XRange(
 			r.redisClient.Context,
 			r.opts.StreamName(),
@@ -529,19 +530,14 @@ func (redisStreamsAdapter) shouldIncludePacket(sessionRooms *types.Set[socket.Ro
 	// Check if packet targets the session's rooms
 	included := len(opts.Rooms) == 0
 	if !included {
-		for _, room := range opts.Rooms {
-			if sessionRooms.Has(room) {
-				included = true
-				break
-			}
+		if slices.ContainsFunc(opts.Rooms, sessionRooms.Has) {
+			included = true
 		}
 	}
 
 	// Check if session is excluded
-	for _, room := range opts.Except {
-		if sessionRooms.Has(room) {
-			return false
-		}
+	if slices.ContainsFunc(opts.Except, sessionRooms.Has) {
+		return false
 	}
 
 	return included

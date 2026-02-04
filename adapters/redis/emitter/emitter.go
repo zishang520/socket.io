@@ -87,6 +87,8 @@ func (e *Emitter) Construct(client *redis.RedisClient, opts *EmitterOptions, nsp
 		BroadcastChannel: key + "#" + e.nsp + "#",
 		RequestChannel:   key + "-request#" + e.nsp + "#",
 		Parser:           e.opts.Parser(),
+		Sharded:          e.opts.Sharded(),
+		SubscriptionMode: e.opts.SubscriptionMode(),
 	}
 }
 
@@ -171,6 +173,10 @@ func (e *Emitter) ServerSideEmit(args ...any) error {
 		return err
 	}
 
+	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
+	if e.broadcastOptions.Sharded {
+		return e.redisClient.Client.SPublish(e.redisClient.Context, e.broadcastOptions.RequestChannel, request).Err()
+	}
 	return e.redisClient.Client.Publish(e.redisClient.Context, e.broadcastOptions.RequestChannel, request).Err()
 }
 

@@ -22,9 +22,6 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-// Private session room ID length used to identify private rooms.
-const privateRoomIdLength = 20
-
 // ShardedRedisAdapterBuilder creates sharded Redis adapters for Socket.IO namespaces.
 type ShardedRedisAdapterBuilder struct {
 	// Redis is the Redis client used for sharded Pub/Sub communication.
@@ -109,8 +106,8 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	s.pubSubClients.Store(s.responseChannel, responsePubSub)
 
 	// Set up dynamic subscription mode handlers
-	if s.opts.SubscriptionMode() == DynamicSubscriptionMode ||
-		s.opts.SubscriptionMode() == DynamicPrivateSubscriptionMode {
+	if s.opts.SubscriptionMode() == redis.DynamicSubscriptionMode ||
+		s.opts.SubscriptionMode() == redis.DynamicPrivateSubscriptionMode {
 		s.setupDynamicSubscriptions()
 	}
 
@@ -211,25 +208,12 @@ func (s *shardedRedisAdapter) computeChannel(message *adapter.ClusterMessage) st
 	// Use dynamic channel for single-room broadcasts
 	if len(data.Opts.Rooms) == 1 {
 		room := data.Opts.Rooms[0]
-		if s.shouldUseDynamicChannel(room) {
+		if redis.ShouldUseDynamicChannel(s.opts.SubscriptionMode(), room) {
 			return s.dynamicChannel(room)
 		}
 	}
 
 	return s.channel
-}
-
-// shouldUseDynamicChannel determines if a dynamic channel should be used for the given room.
-func (s *shardedRedisAdapter) shouldUseDynamicChannel(room socket.Room) bool {
-	switch s.opts.SubscriptionMode() {
-	case DynamicSubscriptionMode:
-		// Private rooms (session IDs) have length of privateRoomIdLength
-		return len(string(room)) != privateRoomIdLength
-	case DynamicPrivateSubscriptionMode:
-		return true
-	default:
-		return false
-	}
 }
 
 // dynamicChannel returns the dynamic channel name for a specific room.
@@ -409,9 +393,9 @@ func (s *shardedRedisAdapter) shouldUseASeparateNamespace(room socket.Room) bool
 	_, isPrivateRoom := s.Sids().Load(socket.SocketId(room))
 
 	switch s.opts.SubscriptionMode() {
-	case DynamicSubscriptionMode:
+	case redis.DynamicSubscriptionMode:
 		return !isPrivateRoom
-	case DynamicPrivateSubscriptionMode:
+	case redis.DynamicPrivateSubscriptionMode:
 		return true
 	default:
 		return false

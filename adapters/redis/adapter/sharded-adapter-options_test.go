@@ -2,29 +2,31 @@ package adapter
 
 import (
 	"testing"
+
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 )
 
 func TestSubscriptionModeConstants(t *testing.T) {
 	t.Run("StaticSubscriptionMode", func(t *testing.T) {
-		if StaticSubscriptionMode != "static" {
-			t.Errorf("Expected 'static', got %q", StaticSubscriptionMode)
+		if redis.StaticSubscriptionMode != "static" {
+			t.Errorf("Expected 'static', got %q", redis.StaticSubscriptionMode)
 		}
 	})
 
 	t.Run("DynamicSubscriptionMode", func(t *testing.T) {
-		if DynamicSubscriptionMode != "dynamic" {
-			t.Errorf("Expected 'dynamic', got %q", DynamicSubscriptionMode)
+		if redis.DynamicSubscriptionMode != "dynamic" {
+			t.Errorf("Expected 'dynamic', got %q", redis.DynamicSubscriptionMode)
 		}
 	})
 
 	t.Run("DynamicPrivateSubscriptionMode", func(t *testing.T) {
-		if DynamicPrivateSubscriptionMode != "dynamic-private" {
-			t.Errorf("Expected 'dynamic-private', got %q", DynamicPrivateSubscriptionMode)
+		if redis.DynamicPrivateSubscriptionMode != "dynamic-private" {
+			t.Errorf("Expected 'dynamic-private', got %q", redis.DynamicPrivateSubscriptionMode)
 		}
 	})
 
 	t.Run("DefaultShardedSubscriptionMode", func(t *testing.T) {
-		if DefaultShardedSubscriptionMode != DynamicSubscriptionMode {
+		if DefaultShardedSubscriptionMode != redis.DynamicSubscriptionMode {
 			t.Errorf("Expected DynamicSubscriptionMode, got %q", DefaultShardedSubscriptionMode)
 		}
 	})
@@ -58,8 +60,8 @@ func TestShardedRedisAdapterOptions_SubscriptionMode(t *testing.T) {
 	})
 
 	t.Run("set StaticSubscriptionMode", func(t *testing.T) {
-		opts.SetSubscriptionMode(StaticSubscriptionMode)
-		if opts.SubscriptionMode() != StaticSubscriptionMode {
+		opts.SetSubscriptionMode(redis.StaticSubscriptionMode)
+		if opts.SubscriptionMode() != redis.StaticSubscriptionMode {
 			t.Fatalf("Expected StaticSubscriptionMode, got %v", opts.SubscriptionMode())
 		}
 		if opts.GetRawSubscriptionMode() == nil {
@@ -68,8 +70,8 @@ func TestShardedRedisAdapterOptions_SubscriptionMode(t *testing.T) {
 	})
 
 	t.Run("set DynamicSubscriptionMode", func(t *testing.T) {
-		opts.SetSubscriptionMode(DynamicSubscriptionMode)
-		if opts.SubscriptionMode() != DynamicSubscriptionMode {
+		opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
+		if opts.SubscriptionMode() != redis.DynamicSubscriptionMode {
 			t.Fatalf("Expected DynamicSubscriptionMode, got %v", opts.SubscriptionMode())
 		}
 	})
@@ -103,13 +105,13 @@ func TestShardedRedisAdapterOptions_Assign(t *testing.T) {
 
 	t.Run("assign from ShardedRedisAdapterOptions", func(t *testing.T) {
 		source := DefaultShardedRedisAdapterOptions()
-		source.SetSubscriptionMode(StaticSubscriptionMode)
+		source.SetSubscriptionMode(redis.StaticSubscriptionMode)
 		source.SetChannelPrefix("src-prefix")
 
 		target := DefaultShardedRedisAdapterOptions()
 		target.Assign(source)
 
-		if target.SubscriptionMode() != StaticSubscriptionMode {
+		if target.SubscriptionMode() != redis.StaticSubscriptionMode {
 			t.Fatalf("Expected StaticSubscriptionMode, got %v", target.SubscriptionMode())
 		}
 		if target.ChannelPrefix() != "src-prefix" {
@@ -122,14 +124,14 @@ func TestShardedRedisAdapterOptions_Assign(t *testing.T) {
 		source.SetChannelPrefix("new-prefix")
 
 		target := DefaultShardedRedisAdapterOptions()
-		target.SetSubscriptionMode(StaticSubscriptionMode)
+		target.SetSubscriptionMode(redis.StaticSubscriptionMode)
 		target.Assign(source)
 
 		if target.ChannelPrefix() != "new-prefix" {
 			t.Fatalf("Expected 'new-prefix', got %s", target.ChannelPrefix())
 		}
 		// Original subscription mode should be preserved
-		if target.SubscriptionMode() != StaticSubscriptionMode {
+		if target.SubscriptionMode() != redis.StaticSubscriptionMode {
 			t.Fatalf("Expected StaticSubscriptionMode to be preserved, got %v", target.SubscriptionMode())
 		}
 	})

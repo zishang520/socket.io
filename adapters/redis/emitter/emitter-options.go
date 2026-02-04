@@ -29,6 +29,22 @@ type (
 		GetRawParser() types.Optional[redis.Parser]
 		// Parser returns the parser, or nil if not set.
 		Parser() redis.Parser
+
+		// SetSharded enables or disables Redis sharded Pub/Sub.
+		// When enabled, uses SPUBLISH for Redis Cluster sharded Pub/Sub (Redis 7.0+).
+		SetSharded(bool)
+		// GetRawSharded returns the raw Optional wrapper for the sharded setting.
+		GetRawSharded() types.Optional[bool]
+		// Sharded returns whether sharded Pub/Sub is enabled.
+		Sharded() bool
+
+		// SetSubscriptionMode sets the subscription mode for sharded Pub/Sub.
+		// This should match the adapter's subscriptionMode setting.
+		SetSubscriptionMode(redis.SubscriptionMode)
+		// GetRawSubscriptionMode returns the raw Optional wrapper for the subscriptionMode setting.
+		GetRawSubscriptionMode() types.Optional[redis.SubscriptionMode]
+		// SubscriptionMode returns the subscription mode.
+		SubscriptionMode() redis.SubscriptionMode
 	}
 
 	// EmitterOptions holds configuration options for the Redis emitter.
@@ -41,6 +57,16 @@ type (
 		// parser is the encoder/decoder used for serializing messages to Redis.
 		// Default: MessagePack parser
 		parser types.Optional[redis.Parser]
+
+		// sharded enables Redis sharded Pub/Sub (SPUBLISH) for Redis Cluster mode.
+		// Set to true when using Redis Cluster with sharded Pub/Sub (Redis 7.0+).
+		// Default: false
+		sharded types.Optional[bool]
+
+		// subscriptionMode controls how room-specific channels are computed.
+		// This should match the adapter's subscriptionMode setting.
+		// Default: DynamicSubscriptionMode
+		subscriptionMode types.Optional[redis.SubscriptionMode]
 	}
 )
 
@@ -61,6 +87,12 @@ func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 	}
 	if data.Parser() != nil {
 		o.SetParser(data.Parser())
+	}
+	if data.GetRawSharded() != nil {
+		o.SetSharded(data.Sharded())
+	}
+	if data.GetRawSubscriptionMode() != nil {
+		o.SetSubscriptionMode(data.SubscriptionMode())
 	}
 
 	return o
@@ -100,4 +132,44 @@ func (o *EmitterOptions) Parser() redis.Parser {
 		return nil
 	}
 	return o.parser.Get()
+}
+
+// SetSharded enables or disables Redis sharded Pub/Sub.
+// When true, uses SPUBLISH command for Redis Cluster sharded Pub/Sub (Redis 7.0+).
+func (o *EmitterOptions) SetSharded(sharded bool) {
+	o.sharded = types.NewSome(sharded)
+}
+
+// GetRawSharded returns the raw Optional wrapper for the sharded setting.
+func (o *EmitterOptions) GetRawSharded() types.Optional[bool] {
+	return o.sharded
+}
+
+// Sharded returns whether sharded Pub/Sub is enabled.
+// Returns false if not set.
+func (o *EmitterOptions) Sharded() bool {
+	if o.sharded == nil {
+		return false
+	}
+	return o.sharded.Get()
+}
+
+// SetSubscriptionMode sets the subscription mode for sharded Pub/Sub.
+// This should match the adapter's subscriptionMode setting.
+func (o *EmitterOptions) SetSubscriptionMode(mode redis.SubscriptionMode) {
+	o.subscriptionMode = types.NewSome(mode)
+}
+
+// GetRawSubscriptionMode returns the raw Optional wrapper for the subscriptionMode setting.
+func (o *EmitterOptions) GetRawSubscriptionMode() types.Optional[redis.SubscriptionMode] {
+	return o.subscriptionMode
+}
+
+// SubscriptionMode returns the subscription mode.
+// Returns DynamicSubscriptionMode if not set.
+func (o *EmitterOptions) SubscriptionMode() redis.SubscriptionMode {
+	if o.subscriptionMode == nil {
+		return redis.DynamicSubscriptionMode
+	}
+	return o.subscriptionMode.Get()
 }

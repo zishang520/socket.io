@@ -121,3 +121,44 @@ func (r *RedisPacket) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
+
+// SubscriptionMode determines how Redis Pub/Sub channels are managed.
+// This type is shared between the adapter and emitter packages.
+type SubscriptionMode string
+
+// Subscription mode constants for Redis adapter.
+const (
+	// StaticSubscriptionMode uses 2 fixed channels per namespace.
+	// This mode is simpler but may have higher message overhead for large deployments.
+	StaticSubscriptionMode SubscriptionMode = "static"
+
+	// DynamicSubscriptionMode uses 2 + 1 channel per public room per namespace.
+	// This optimizes message routing for public rooms but excludes private rooms (socket IDs).
+	DynamicSubscriptionMode SubscriptionMode = "dynamic"
+
+	// DynamicPrivateSubscriptionMode creates separate channels for both public and private rooms.
+	// This provides the finest granularity but uses the most Redis resources.
+	DynamicPrivateSubscriptionMode SubscriptionMode = "dynamic-private"
+
+	// DefaultSubscriptionMode is the default subscription mode.
+	DefaultSubscriptionMode = DynamicSubscriptionMode
+)
+
+// privateRoomIdLength is the length of a socket ID, used to determine if a room is private.
+// Private rooms (socket IDs) have exactly this length.
+const PrivateRoomIdLength = 20
+
+// ShouldUseDynamicChannel determines if a dynamic channel should be used for the given room.
+// This function is shared between the adapter and emitter packages to ensure consistent behavior.
+func ShouldUseDynamicChannel(mode SubscriptionMode, room socket.Room) bool {
+	switch mode {
+	case DynamicSubscriptionMode:
+		// Private rooms (session IDs) have length of PrivateRoomIdLength
+		return len(string(room)) != PrivateRoomIdLength
+	case DynamicPrivateSubscriptionMode:
+		return true
+	default:
+		// StaticSubscriptionMode or empty: always use main channel
+		return false
+	}
+}

@@ -156,17 +156,23 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		return err
 	}
 
-	// Determine the channel: use room-specific channel if targeting exactly one room
+	// Determine the channel based on SubscriptionMode
 	channel := b.broadcastOptions.BroadcastChannel
 	if b.rooms != nil && b.rooms.Len() == 1 {
 		for _, room := range b.rooms.Keys() {
-			channel += string(room) + "#"
+			if redis.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, room) {
+				channel += string(room) + "#"
+			}
 			break
 		}
 	}
 
 	emitterLog.Debug("publishing message to channel %s", channel)
 
+	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
+	if b.broadcastOptions.Sharded {
+		return b.redisClient.Client.SPublish(b.redisClient.Context, channel, msg).Err()
+	}
 	return b.redisClient.Client.Publish(b.redisClient.Context, channel, msg).Err()
 }
 
@@ -185,6 +191,10 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 		return err
 	}
 
+	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
+	if b.broadcastOptions.Sharded {
+		return b.redisClient.Client.SPublish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
+	}
 	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
 }
 
@@ -203,6 +213,10 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 		return err
 	}
 
+	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
+	if b.broadcastOptions.Sharded {
+		return b.redisClient.Client.SPublish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
+	}
 	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
 }
 
@@ -222,5 +236,9 @@ func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 		return err
 	}
 
+	// Use SPUBLISH for sharded Pub/Sub (Redis Cluster), otherwise use PUBLISH
+	if b.broadcastOptions.Sharded {
+		return b.redisClient.Client.SPublish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
+	}
 	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
 }

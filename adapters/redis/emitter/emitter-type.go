@@ -23,6 +23,14 @@ type (
 
 		// Parser is the encoder/decoder for serializing messages.
 		Parser redis.Parser
+
+		// Sharded indicates whether to use Redis sharded Pub/Sub (SPUBLISH).
+		// Set to true when using Redis Cluster with sharded Pub/Sub (Redis 7.0+).
+		Sharded bool
+
+		// SubscriptionMode controls how room-specific channels are computed.
+		// This should match the adapter's subscriptionMode setting.
+		SubscriptionMode redis.SubscriptionMode
 	}
 
 	// Packet is an alias for redis.RedisPacket.
