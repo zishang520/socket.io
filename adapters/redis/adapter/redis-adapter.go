@@ -619,10 +619,9 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 	case redis.SOCKETS, redis.REMOTE_FETCH:
 		request.MsgCount.Add(1)
 
-		if response.Sockets == nil {
-			return
+		if len(response.Sockets) > 0 {
+			request.Sockets.Push(response.Sockets...)
 		}
-		request.Sockets.Push(response.Sockets...)
 
 		if request.MsgCount.Load() == request.NumSub {
 			utils.ClearTimeout(request.Timeout.Load())
@@ -637,10 +636,9 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 	case redis.ALL_ROOMS:
 		request.MsgCount.Add(1)
 
-		if response.Rooms == nil {
-			return
+		if len(response.Rooms) > 0 {
+			request.Rooms.Add(response.Rooms...)
 		}
-		request.Rooms.Add(response.Rooms...)
 
 		if request.MsgCount.Load() == request.NumSub {
 			utils.ClearTimeout(request.Timeout.Load())
