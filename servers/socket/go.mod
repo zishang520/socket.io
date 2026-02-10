@@ -4,7 +4,7 @@ go 1.24.1
 
 require (
 	github.com/andybalholm/brotli v1.2.0
-	github.com/klauspost/compress v1.18.3
+	github.com/klauspost/compress v1.18.4
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-rc.11
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-rc.11
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-rc.11
@@ -21,10 +21,10 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/crypto v0.47.0 // indirect
-	golang.org/x/net v0.49.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/crypto v0.48.0 // indirect
+	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 )
 
 replace (

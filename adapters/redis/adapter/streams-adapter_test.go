@@ -63,9 +63,9 @@ func TestRawClusterMessage_EmptyValues(t *testing.T) {
 
 func TestRawClusterMessage_WrongType(t *testing.T) {
 	rawMsg := RawClusterMessage{
-		"uid":  123,    // Not a string
-		"nsp":  true,   // Not a string
-		"type": 1,      // Not a string
+		"uid":  123,     // Not a string
+		"nsp":  true,    // Not a string
+		"type": 1,       // Not a string
 		"data": []int{}, // Not a string
 	}
 

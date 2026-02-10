@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"sync"
 
+	wt "github.com/quic-go/webtransport-go"
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
@@ -18,7 +19,6 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/webtransport"
-	wt "github.com/quic-go/webtransport-go"
 )
 
 // webTransport implements the WebTransport transport for Engine.IO.

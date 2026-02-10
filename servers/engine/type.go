@@ -5,11 +5,11 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/quic-go/webtransport-go"
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/servers/engine/v3/config"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/types"
-	"github.com/quic-go/webtransport-go"
 )
 
 type (

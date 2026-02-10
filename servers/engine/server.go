@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/config"
@@ -16,7 +17,6 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 	webtrans "github.com/zishang520/socket.io/v3/pkg/webtransport"
-	"github.com/quic-go/webtransport-go"
 )
 
 type server struct {
