@@ -2,7 +2,7 @@ module github.com/zishang520/socket.io/parsers/engine/v3
 
 go 1.24.1
 
-require github.com/zishang520/socket.io/v3 v3.0.0-rc.11
+require github.com/zishang520/socket.io/v3 v3.0.0-rc.12
 
 require (
 	github.com/dunglas/httpsfv v1.1.0 // indirect
