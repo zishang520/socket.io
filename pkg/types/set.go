@@ -2,6 +2,8 @@ package types
 
 import (
 	"encoding/json"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -31,9 +33,7 @@ func (s *Set[KType]) Add(keys ...KType) bool {
 	defer s.mu.Unlock()
 
 	for _, key := range keys {
-		if _, exists := s.cache[key]; !exists {
-			s.cache[key] = NULL
-		}
+		s.cache[key] = NULL // idempotent; skip existence check
 	}
 	return true
 }
@@ -53,12 +53,12 @@ func (s *Set[KType]) Delete(keys ...KType) bool {
 	return true
 }
 
-// Clear removes all items from the set.
+// Clear removes all items from the set, reusing the underlying map memory.
 func (s *Set[KType]) Clear() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.cache = map[KType]Void{}
+	clear(s.cache)
 	return true
 }
 
@@ -84,12 +84,7 @@ func (s *Set[KType]) All() map[KType]Void {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	_tmp := make(map[KType]Void, len(s.cache))
-	for k := range s.cache {
-		_tmp[k] = NULL
-	}
-
-	return _tmp
+	return maps.Clone(s.cache)
 }
 
 // Keys returns a slice containing all keys in the set.
@@ -97,12 +92,20 @@ func (s *Set[KType]) Keys() []KType {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	list := make([]KType, 0, len(s.cache))
-	for k := range s.cache {
-		list = append(list, k)
-	}
+	return s.keys()
+}
 
-	return list
+// keys returns a slice of all keys without locking (caller must hold lock).
+func (s *Set[KType]) keys() []KType {
+	return slices.Collect(maps.Keys(s.cache))
+}
+
+// populate replaces the set contents from a slice of keys (caller must hold write lock).
+func (s *Set[KType]) populate(keys []KType) {
+	s.cache = make(map[KType]Void, len(keys))
+	for _, key := range keys {
+		s.cache[key] = NULL
+	}
 }
 
 // MarshalJSON implements the json.Marshaler interface.
@@ -110,32 +113,19 @@ func (s *Set[KType]) MarshalJSON() ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	keys := make([]KType, 0, len(s.cache))
-
-	for key := range s.cache {
-		keys = append(keys, key)
-	}
-
-	return json.Marshal(keys)
+	return json.Marshal(s.keys())
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (s *Set[KType]) UnmarshalJSON(data []byte) error {
 	var keys []KType
-
-	// Unmarshal the JSON data into a slice of keys
 	if err := json.Unmarshal(data, &keys); err != nil {
 		return err
 	}
 
-	// Clear the current set and populate with the new keys
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cache = make(map[KType]Void, len(keys))
-	for _, key := range keys {
-		s.cache[key] = NULL
-	}
-
+	s.populate(keys)
 	return nil
 }
 
@@ -144,31 +134,18 @@ func (s *Set[KType]) MarshalMsgpack() ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	keys := make([]KType, 0, len(s.cache))
-
-	for key := range s.cache {
-		keys = append(keys, key)
-	}
-
-	return msgpack.Marshal(keys)
+	return msgpack.Marshal(s.keys())
 }
 
 // UnmarshalMsgpack implements the msgpack.Unmarshaler interface.
 func (s *Set[KType]) UnmarshalMsgpack(data []byte) error {
 	var keys []KType
-
-	// Unmarshal the MessagePack data into a slice of keys
 	if err := msgpack.Unmarshal(data, &keys); err != nil {
 		return err
 	}
 
-	// Clear the current set and populate with the new keys
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cache = make(map[KType]Void, len(keys))
-	for _, key := range keys {
-		s.cache[key] = NULL
-	}
-
+	s.populate(keys)
 	return nil
 }

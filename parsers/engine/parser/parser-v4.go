@@ -38,7 +38,7 @@ func (p *parserv4) EncodePacket(pkt *packet.Packet, supportsBinary bool, _ ...bo
 
 	// Ensure data is closed if it implements io.Closer
 	if c, ok := pkt.Data.(io.Closer); ok {
-		defer c.Close() //nolint:errcheck
+		defer func() { _ = c.Close() }()
 	}
 
 	typeByte, ok := lookupPacketByte(pkt.Type)

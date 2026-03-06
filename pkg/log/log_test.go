@@ -39,7 +39,7 @@ func TestNewLog(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envDebug != "" {
 				_ = os.Setenv("DEBUG", tt.envDebug)
-				defer os.Unsetenv("DEBUG") //nolint:errcheck
+				defer func() { _ = os.Unsetenv("DEBUG") }()
 			}
 
 			logger := NewLog(tt.prefix)
@@ -152,7 +152,7 @@ func TestDebugWithNamespace(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_ = os.Setenv("DEBUG", tt.envDebug)
-			defer os.Unsetenv("DEBUG") //nolint:errcheck
+			defer func() { _ = os.Unsetenv("DEBUG") }()
 
 			logger := NewLog(tt.prefix)
 			buf.Reset()

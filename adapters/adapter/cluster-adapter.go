@@ -193,7 +193,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			return
 		}
 		called := &sync.Once{}
-		callback := socket.Ack(func(arg []any, _ error) {
+		callback := func(arg []any, _ error) {
 			// only one argument is expected
 			called.Do(func() {
 				adapter_log.Debug("[%s] calling acknowledgement with %v", c.uid, arg)
@@ -205,7 +205,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					},
 				})
 			})
-		})
+		}
 
 		c.Nsp().OnServerSideEmit(append(packet, callback))
 
@@ -317,7 +317,7 @@ func (c *clusterAdapter) addOffsetIfNecessary(packet *parser.Packet, opts *socke
 	// packets with acknowledgement are not stored because the acknowledgement function cannot be serialized and
 	// restored on another server upon reconnection
 	withoutAcknowledgement := packet.Id == nil
-	notVolatile := opts == nil || opts.Flags == nil || opts.Flags.Volatile == false
+	notVolatile := opts == nil || opts.Flags == nil || !opts.Flags.Volatile
 
 	if isEventPacket && withoutAcknowledgement && notVolatile {
 		packet.Data = append(utils.TryCast[[]any](packet.Data), offset)

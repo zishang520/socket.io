@@ -35,7 +35,7 @@ func (p *parserv3) EncodePacket(data *packet.Packet, supportsBinary bool, utf8en
 	}
 
 	if c, ok := data.Data.(io.Closer); ok {
-		defer c.Close() //nolint:errcheck
+		defer func() { _ = c.Close() }()
 	}
 
 	utf8en := len(utf8encode) > 0 && utf8encode[0]

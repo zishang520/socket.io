@@ -119,7 +119,7 @@ func (d *decoder) readBinaryData(data any) (types.BufferInterface, error) {
 	switch typedData := data.(type) {
 	case io.Reader:
 		if closer, ok := data.(io.Closer); ok {
-			defer closer.Close() //nolint:errcheck
+			defer func() { _ = closer.Close() }()
 		}
 		if _, err := buffer.ReadFrom(typedData); err != nil {
 			return nil, err

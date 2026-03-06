@@ -2,6 +2,7 @@ package types
 
 import (
 	"errors"
+	"slices"
 	"sync"
 )
 
@@ -12,15 +13,16 @@ var (
 	ErrInvalidSliceRange = errors.New("invalid slice range")
 )
 
-// Slice is a generic type that holds elements of any type.
+// Slice is a thread-safe generic slice type.
 type Slice[T any] struct {
 	mu       sync.RWMutex
 	elements []T
 }
 
 // NewSlice creates and returns a new Slice.
+// The input elements are copied to avoid aliasing with the caller's backing array.
 func NewSlice[T any](elements ...T) *Slice[T] {
-	return &Slice[T]{elements: elements}
+	return &Slice[T]{elements: slices.Clone(elements)}
 }
 
 // Push adds one or more elements to the end of the slice and returns the new length.
@@ -33,12 +35,20 @@ func (s *Slice[T]) Push(elements ...T) int {
 }
 
 // Unshift adds one or more elements to the beginning of the slice and returns the new length.
+// Uses a single allocation instead of the double-append pattern.
 func (s *Slice[T]) Unshift(elements ...T) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.elements = append(elements, s.elements...)
-	return len(s.elements)
+	if len(elements) == 0 {
+		return len(s.elements)
+	}
+	newLen := len(s.elements) + len(elements)
+	merged := make([]T, newLen)
+	copy(merged, elements)
+	copy(merged[len(elements):], s.elements)
+	s.elements = merged
+	return newLen
 }
 
 // Pop removes the last element from the slice and returns it, or an error if the slice is empty.
@@ -46,11 +56,13 @@ func (s *Slice[T]) Pop() (element T, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(s.elements) == 0 {
+	n := len(s.elements)
+	if n == 0 {
 		return element, ErrSliceEmpty
 	}
-	element = s.elements[len(s.elements)-1]
-	s.elements = s.elements[:len(s.elements)-1]
+	element = s.elements[n-1]
+	clear(s.elements[n-1 : n]) // zero out removed slot to help GC for pointer types
+	s.elements = s.elements[:n-1]
 	return element, nil
 }
 
@@ -63,6 +75,7 @@ func (s *Slice[T]) Shift() (element T, err error) {
 		return element, ErrSliceEmpty
 	}
 	element = s.elements[0]
+	clear(s.elements[:1]) // zero out removed slot to help GC for pointer types
 	s.elements = s.elements[1:]
 	return element, nil
 }
@@ -98,10 +111,7 @@ func (s *Slice[T]) Slice(start, end int) ([]T, error) {
 	if start < 0 || end > len(s.elements) || start > end {
 		return nil, ErrInvalidSliceRange
 	}
-
-	result := make([]T, end-start)
-	copy(result, s.elements[start:end])
-	return result, nil
+	return slices.Clone(s.elements[start:end]), nil
 }
 
 // Filter returns a new slice containing all elements that satisfy the provided function.
@@ -125,27 +135,52 @@ func (s *Slice[T]) Splice(start, deleteCount int, insert ...T) ([]T, error) {
 	return s.splice(start, deleteCount, insert...)
 }
 
+// splice performs the splice operation without locking.
+// Avoids the double-append pattern (append(a, append(b, c...)...)) which creates
+// a temporary intermediate slice, and instead operates in-place with a single allocation.
 func (s *Slice[T]) splice(start, deleteCount int, insert ...T) ([]T, error) {
-	if start < 0 || start > len(s.elements) {
+	n := len(s.elements)
+	if start < 0 || start > n {
 		return nil, ErrIndexOutOfBounds
 	}
 
-	deleteCount = min(deleteCount, len(s.elements)-start)
+	deleteCount = min(deleteCount, n-start)
 	removed := make([]T, deleteCount)
 	copy(removed, s.elements[start:start+deleteCount])
 
-	s.elements = append(s.elements[:start], append(insert, s.elements[start+deleteCount:]...)...)
+	diff := len(insert) - deleteCount
+	switch {
+	case diff == 0:
+		// Exact replacement: copy in place, no resize needed
+		copy(s.elements[start:], insert)
+	case diff > 0:
+		// Growing: extend slice, shift tail right, then insert
+		s.elements = slices.Grow(s.elements, diff)[:n+diff]
+		copy(s.elements[start+len(insert):], s.elements[start+deleteCount:n])
+		copy(s.elements[start:], insert)
+	default:
+		// Shrinking: insert, shift tail left, zero out freed slots for GC
+		copy(s.elements[start:], insert)
+		copy(s.elements[start+len(insert):], s.elements[start+deleteCount:])
+		newLen := n + diff
+		clear(s.elements[newLen:n]) // zero out freed tail for GC
+		s.elements = s.elements[:newLen]
+	}
+
 	return removed, nil
 }
 
 // Remove removes the first element in the slice that satisfies the conditional function.
+// Uses copy instead of append for single-element removal and zeroes the freed slot.
 func (s *Slice[T]) Remove(condition func(T) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for i, el := range s.elements {
 		if condition(el) {
-			s.elements = append(s.elements[:i], s.elements[i+1:]...)
+			copy(s.elements[i:], s.elements[i+1:])
+			clear(s.elements[len(s.elements)-1:]) // zero out freed slot for GC
+			s.elements = s.elements[:len(s.elements)-1]
 			break
 		}
 	}
@@ -163,6 +198,7 @@ func (s *Slice[T]) RemoveAll(condition func(T) bool) {
 			n++
 		}
 	}
+	clear(s.elements[n:]) // zero out freed tail for GC
 	s.elements = s.elements[:n]
 }
 
@@ -194,8 +230,7 @@ func (s *Slice[T]) RangeAndSplice(f func(T, int) (bool, int, int, []T), reverse 
 
 	if len(reverse) > 0 && reverse[0] {
 		for i := len(s.elements) - 1; i >= 0; i-- {
-			element := s.elements[i]
-			if condition, start, deleteCount, insert := f(element, i); condition {
+			if condition, start, deleteCount, insert := f(s.elements[i], i); condition {
 				return s.splice(start, deleteCount, insert...)
 			}
 		}
@@ -221,7 +256,6 @@ func (s *Slice[T]) FindIndex(condition func(T) bool) int {
 			return i
 		}
 	}
-
 	return -1
 }
 
@@ -254,13 +288,7 @@ func (s *Slice[T]) All() []T {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.all()
-}
-
-func (s *Slice[T]) all() []T {
-	result := make([]T, len(s.elements))
-	copy(result, s.elements)
-	return result
+	return slices.Clone(s.elements)
 }
 
 // Clear removes all the elements in the slice.
@@ -272,7 +300,8 @@ func (s *Slice[T]) Clear() {
 }
 
 func (s *Slice[T]) clear() {
-	s.elements = s.elements[:0]
+	clear(s.elements)           // zero out all elements for GC
+	s.elements = s.elements[:0] // retain backing array for reuse
 }
 
 // AllAndClear returns all the elements in the slice and clears the slice.
@@ -280,8 +309,9 @@ func (s *Slice[T]) AllAndClear() []T {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	defer s.clear()
-	return s.all()
+	result := slices.Clone(s.elements)
+	s.clear()
+	return result
 }
 
 // Len returns the number of elements in the slice.
