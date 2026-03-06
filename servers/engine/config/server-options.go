@@ -74,7 +74,7 @@ type (
 		// how many ms before sending a new ping packet
 		pingInterval types.Optional[time.Duration]
 
-		// how many ms before an uncompleted transport upgrade is cancelled
+		// how many ms before an uncompleted transport upgrade is canceled
 		upgradeTimeout types.Optional[time.Duration]
 
 		// how many bytes or characters a message can be, before closing the session (to avoid DoS).
@@ -199,7 +199,7 @@ func (s *ServerOptions) PingInterval() time.Duration {
 	return s.pingInterval.Get()
 }
 
-// how many ms before an uncompleted transport upgrade is cancelled
+// how many ms before an uncompleted transport upgrade is canceled
 func (s *ServerOptions) SetUpgradeTimeout(upgradeTimeout time.Duration) {
 	s.upgradeTimeout = types.NewSome(upgradeTimeout)
 }

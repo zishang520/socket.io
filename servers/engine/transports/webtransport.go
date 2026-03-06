@@ -47,10 +47,10 @@ func (w *webTransport) Construct(ctx *types.HttpContext) {
 
 	w.session = ctx.WebTransport
 
-	w.session.On("error", func(errs ...any) {
+	_ = w.session.On("error", func(errs ...any) {
 		w.OnError("webtransport error", slices.TryGetAny[error](errs, 0))
 	})
-	w.session.Once("close", func(...any) {
+	_ = w.session.Once("close", func(...any) {
 		w.OnClose()
 	})
 
@@ -105,14 +105,14 @@ func (w *webTransport) message() {
 			}
 		}
 		if c, ok := message.(io.Closer); ok {
-			c.Close()
+			_ = c.Close()
 		}
 	}
 }
 
 func (w *webTransport) onMessage(data types.BufferInterface) {
 	wt_log.Debug(`webTransport received "%s"`, data)
-	w.Transport.OnData(data)
+	w.OnData(data)
 }
 
 // Writes a packet payload.
@@ -203,7 +203,7 @@ func (w *webTransport) write(data types.BufferInterface, _ bool) {
 // Closes the transport.
 func (w *webTransport) DoClose(fn types.Callable) {
 	wt_log.Debug(`closing WebTransport session`)
-	defer w.session.CloseWithError(0, "")
+	defer func() { _ = w.session.CloseWithError(0, "") }()
 	if fn != nil {
 		fn()
 	}

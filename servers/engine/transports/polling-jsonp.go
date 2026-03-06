@@ -78,14 +78,14 @@ func (j *jsonp) DoWrite(ctx *types.HttpContext, data types.BufferInterface, opti
 		defer callback(err)
 
 		// Respond with 500 Internal Server Error if encoding fails
-		ctx.SetStatusCode(http.StatusInternalServerError)
-		ctx.Write(nil)
+		_ = ctx.SetStatusCode(http.StatusInternalServerError)
+		_, _ = ctx.Write(nil)
 		return
 	}
 
 	// prepare response
 	res := types.NewStringBufferString(j.head)
-	res.Write(payload)
-	res.WriteString(j.foot)
+	_, _ = res.Write(payload)
+	_, _ = res.WriteString(j.foot)
 	j.Polling.DoWrite(ctx, res, options, callback)
 }

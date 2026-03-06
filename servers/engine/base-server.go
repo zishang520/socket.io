@@ -331,7 +331,7 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 		transport.SetMaxHttpBufferSize(bs.opts.MaxHttpBufferSize())
 	}
 
-	transport.On("headers", func(args ...any) {
+	_ = transport.On("headers", func(args ...any) {
 		headers, req := slices.TryGetAny[*types.ParameterBag](args, 0), slices.TryGetAny[*types.HttpContext](args, 1)
 		if !ctx.Query().Has("sid") {
 			if cookie := bs.opts.Cookie(); cookie != nil {
@@ -349,7 +349,7 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 	bs.clients.Store(id, socket)
 	bs.clientsCount.Add(1)
 
-	socket.Once("close", func(...any) {
+	_ = socket.Once("close", func(...any) {
 		bs.clients.Delete(id)
 		bs.clientsCount.Add(^uint64(0))
 	})

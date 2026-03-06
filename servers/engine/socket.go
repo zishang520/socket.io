@@ -277,11 +277,11 @@ func (s *socket) setTransport(transport transports.Transport) {
 
 	s.transport.Store(&transport)
 
-	transport.Once("error", onError)
-	transport.On("ready", onReady)
-	transport.On("packet", onPacket)
-	transport.On("drain", onDrain)
-	transport.Once("close", onClose)
+	_ = transport.Once("error", onError)
+	_ = transport.On("ready", onReady)
+	_ = transport.On("packet", onPacket)
+	_ = transport.On("drain", onDrain)
+	_ = transport.Once("close", onClose)
 
 	s.cleanupFn.Push(func() {
 		transport.RemoveListener("error", onError)
@@ -318,7 +318,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 			return
 		}
 		sb := new(strings.Builder)
-		io.Copy(sb, data.Data)
+		_, _ = io.Copy(sb, data.Data)
 		if data.Type == packet.PING && sb.String() == "probe" {
 			socket_log.Debug("got probe ping packet, sending pong")
 			transport.Send([]*packet.Packet{{Type: packet.PONG, Data: strings.NewReader("probe")}})
@@ -399,11 +399,11 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 		}
 	}, s.server.Opts().UpgradeTimeout()))
 
-	transport.On("packet", onPacket)
-	transport.Once("close", onTransportClose)
-	transport.Once("error", onError)
+	_ = transport.On("packet", onPacket)
+	_ = transport.Once("close", onTransportClose)
+	_ = transport.Once("error", onError)
 
-	s.Once("close", onClose)
+	_ = s.Once("close", onClose)
 }
 
 // Clears listeners and timers associated with current transport.
@@ -416,7 +416,7 @@ func (s *socket) clearTransport() {
 	})
 
 	// silence further transport errors and prevent uncaught exceptions
-	s.Transport().On("error", func(...any) {
+	_ = s.Transport().On("error", func(...any) {
 		socket_log.Debug("error triggered by discarded transport")
 	})
 
@@ -565,7 +565,7 @@ func (s *socket) Close(discard bool) {
 
 	if length := s.writeBuffer.Len(); length > 0 {
 		socket_log.Debug("there are %d remaining packets in the buffer, waiting for the 'drain' event", length)
-		s.Once("drain", func(...any) {
+		_ = s.Once("drain", func(...any) {
 			socket_log.Debug("all packets have been sent, closing the transport")
 			s.closeTransport(discard)
 		})

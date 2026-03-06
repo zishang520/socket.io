@@ -45,10 +45,10 @@ func (w *websocket) Construct(ctx *types.HttpContext) {
 
 	w.socket = ctx.Websocket
 
-	w.socket.On("error", func(errs ...any) {
+	_ = w.socket.On("error", func(errs ...any) {
 		w.OnError("websocket error", slices.TryGetAny[error](errs, 0))
 	})
-	w.socket.Once("close", func(...any) {
+	_ = w.socket.Once("close", func(...any) {
 		w.OnClose()
 	})
 
@@ -104,21 +104,21 @@ func (w *websocket) message() {
 		case ws.CloseMessage:
 			w.socket.Emit("close")
 			if c, ok := message.(io.Closer); ok {
-				c.Close()
+				_ = c.Close()
 			}
 			return
 		case ws.PingMessage:
 		case ws.PongMessage:
 		}
 		if c, ok := message.(io.Closer); ok {
-			c.Close()
+			_ = c.Close()
 		}
 	}
 }
 
 func (w *websocket) onMessage(data types.BufferInterface) {
 	ws_log.Debug(`websocket received "%s"`, data)
-	w.Transport.OnData(data)
+	w.OnData(data)
 }
 
 // Writes a packet payload.
@@ -208,7 +208,7 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 // Closes the transport.
 func (w *websocket) DoClose(fn types.Callable) {
 	ws_log.Debug(`closing`)
-	defer w.socket.Close()
+	defer func() { _ = w.socket.Close() }()
 	if fn != nil {
 		fn()
 	}

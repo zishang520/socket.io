@@ -65,13 +65,14 @@ func (p *polling) Name() string {
 func (p *polling) OnRequest(ctx *types.HttpContext) {
 	method := ctx.Method()
 
-	if method == http.MethodGet {
+	switch method {
+	case http.MethodGet:
 		p.onPollRequest(ctx)
-	} else if method == http.MethodPost {
+	case http.MethodPost:
 		p.onDataRequest(ctx)
-	} else {
-		ctx.SetStatusCode(http.StatusInternalServerError)
-		ctx.Write(nil)
+	default:
+		_ = ctx.SetStatusCode(http.StatusInternalServerError)
+		_, _ = ctx.Write(nil)
 	}
 }
 
@@ -81,8 +82,8 @@ func (p *polling) onPollRequest(ctx *types.HttpContext) {
 		polling_log.Debug("request overlap")
 		// assert: p.res, '.req should be (un)set together'
 		p.OnError("overlap from client", nil)
-		ctx.SetStatusCode(http.StatusBadRequest)
-		ctx.Write(nil)
+		_ = ctx.SetStatusCode(http.StatusBadRequest)
+		_, _ = ctx.Write(nil)
 		return
 	}
 
@@ -100,7 +101,7 @@ func (p *polling) onPollRequest(ctx *types.HttpContext) {
 		p.req.Store(nil)
 	}
 
-	ctx.Once("close", onClose)
+	_ = ctx.Once("close", onClose)
 
 	p.SetWritable(true)
 	p.Emit("ready")
@@ -121,8 +122,8 @@ func (p *polling) onDataRequest(ctx *types.HttpContext) {
 	if p.dataCtx.Load() != nil {
 		// assert: p.dataRes, '.dataCtx should be (un)set together'
 		p.OnError("data request overlap from client", nil)
-		ctx.SetStatusCode(http.StatusBadRequest)
-		ctx.Write(nil)
+		_ = ctx.SetStatusCode(http.StatusBadRequest)
+		_, _ = ctx.Write(nil)
 		return
 	}
 
@@ -147,13 +148,13 @@ func (p *polling) onDataRequest(ctx *types.HttpContext) {
 		p.dataCtx.Store(nil)
 	}
 
-	ctx.Once("close", onClose)
+	_ = ctx.Once("close", onClose)
 
 	if ctx.Request().ContentLength > p.MaxHttpBufferSize() {
 		cleanup()
 
-		ctx.SetStatusCode(http.StatusRequestEntityTooLarge)
-		ctx.Write(nil)
+		_ = ctx.SetStatusCode(http.StatusRequestEntityTooLarge)
+		_, _ = ctx.Write(nil)
 		return
 	}
 
@@ -164,8 +165,8 @@ func (p *polling) onDataRequest(ctx *types.HttpContext) {
 		packet = types.NewStringBuffer(nil)
 	}
 	if body := ctx.Request().Body; body != nil {
-		packet.ReadFrom(body)
-		body.Close()
+		_, _ = packet.ReadFrom(body)
+		_ = body.Close()
 	}
 	p.Proto().OnData(packet)
 
@@ -180,8 +181,8 @@ func (p *polling) onDataRequest(ctx *types.HttpContext) {
 
 	// The following process in nodejs is asynchronous.
 	ctx.ResponseHeaders().With(p.headers(ctx, headers).All())
-	ctx.SetStatusCode(http.StatusOK)
-	io.WriteString(ctx, "ok")
+	_ = ctx.SetStatusCode(http.StatusOK)
+	_, _ = io.WriteString(ctx, "ok")
 }
 
 // Processes the incoming data payload.
@@ -286,8 +287,8 @@ func (p *polling) DoWrite(ctx *types.HttpContext, data types.BufferInterface, op
 
 		headers.Set("Content-Length", length)
 		ctx.ResponseHeaders().With(p.headers(ctx, headers).All())
-		ctx.SetStatusCode(http.StatusOK)
-		io.Copy(ctx, data)
+		_ = ctx.SetStatusCode(http.StatusOK)
+		_, _ = io.Copy(ctx, data)
 	}
 
 	if p.HttpCompression() == nil || (options != nil && options.Compress != nil && !*options.Compress) {
@@ -311,8 +312,8 @@ func (p *polling) DoWrite(ctx *types.HttpContext, data types.BufferInterface, op
 		ctx.Cleanup()
 		defer callback(err)
 
-		ctx.SetStatusCode(http.StatusInternalServerError)
-		ctx.Write(nil)
+		_ = ctx.SetStatusCode(http.StatusInternalServerError)
+		_, _ = ctx.Write(nil)
 		return
 	}
 
@@ -330,7 +331,7 @@ func (p *polling) compress(data types.BufferInterface, encoding string) (types.B
 		if err != nil {
 			return nil, err
 		}
-		defer gz.Close()
+		defer func() { _ = gz.Close() }()
 		if _, err := io.Copy(gz, data); err != nil {
 			return nil, err
 		}
@@ -339,13 +340,13 @@ func (p *polling) compress(data types.BufferInterface, encoding string) (types.B
 		if err != nil {
 			return nil, err
 		}
-		defer fl.Close()
+		defer func() { _ = fl.Close() }()
 		if _, err := io.Copy(fl, data); err != nil {
 			return nil, err
 		}
 	case "br":
 		br := brotli.NewWriterLevel(buf, brotli.DefaultCompression)
-		defer br.Close()
+		defer func() { _ = br.Close() }()
 		if _, err := io.Copy(br, data); err != nil {
 			return nil, err
 		}
@@ -354,7 +355,7 @@ func (p *polling) compress(data types.BufferInterface, encoding string) (types.B
 		if err != nil {
 			return nil, err
 		}
-		defer zd.Close()
+		defer func() { _ = zd.Close() }()
 		if _, err := io.Copy(zd, data); err != nil {
 			return nil, err
 		}
@@ -369,8 +370,8 @@ func (p *polling) DoClose(fn types.Callable) {
 	if dataCtx := p.dataCtx.Load(); dataCtx != nil && !dataCtx.IsDone() {
 		polling_log.Debug("aborting ongoing data request")
 		dataCtx.ResponseHeaders().Set("Connection", "close")
-		dataCtx.SetStatusCode(http.StatusTooManyRequests)
-		dataCtx.Write(nil)
+		_ = dataCtx.SetStatusCode(http.StatusTooManyRequests)
+		_, _ = dataCtx.Write(nil)
 	}
 
 	onClose := func() {
