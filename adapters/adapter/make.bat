@@ -3,7 +3,7 @@ setlocal ENABLEDELAYEDEXPANSION
 pushd "%~dp0"
 
 :: Set Go proxy
-set "GOPROXY=https://goproxy.io,direct"
+set "GOPROXY=https://proxy.golang.org,direct"
 
 :: Normalize and simplify the argument
 set "args=%~1"

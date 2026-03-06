@@ -8,7 +8,7 @@ SHELL := /bin/bash
 MAKEFLAGS += --no-print-directory
 
 # Environment
-export GOPROXY := https://goproxy.io,direct
+export GOPROXY := https://proxy.golang.org,direct
 TEST_TIMEOUT   := 60s
 
 # Project Metadata

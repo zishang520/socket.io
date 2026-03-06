@@ -1,5 +1,5 @@
 # Set Go proxy (optional override)
-export GOPROXY ?= https://goproxy.io,direct
+export GOPROXY ?= https://proxy.golang.org,direct
 
 .PHONY: all deps fmt clean test
 

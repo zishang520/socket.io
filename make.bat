@@ -16,7 +16,7 @@ set "C_YELLOW=%ESC%[33m"
 set "C_RED=%ESC%[31m"
 
 :: Configuration
-set "GOPROXY=https://goproxy.io,direct"
+set "GOPROXY=https://proxy.golang.org,direct"
 set "MODULES=parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/redis clients/engine clients/socket"
 set "TEST_TIMEOUT=60s"
 set "VERSION_FILE=pkg\version\version.go"

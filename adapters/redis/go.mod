@@ -1,9 +1,9 @@
 module github.com/zishang520/socket.io/adapters/redis/v3
 
-go 1.24.1
+go 1.25.0
 
 require (
-	github.com/redis/go-redis/v9 v9.17.3
+	github.com/redis/go-redis/v9 v9.18.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.0-rc.12
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.0-rc.12
@@ -26,8 +26,9 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-rc.12 // indirect
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-rc.12 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 )
