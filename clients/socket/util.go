@@ -9,7 +9,7 @@ import (
 // on registers an event listener for the given event name on the EventEmitter.
 // It returns a Callable to remove the listener.
 func on(evt types.EventEmitter, ev types.EventName, fn types.EventListener) types.Callable {
-	evt.On(ev, fn)
+	_ = evt.On(ev, fn)
 	return func() {
 		evt.RemoveListener(ev, fn)
 	}
@@ -25,8 +25,8 @@ func extractValue[T any](m map[string]any, key string) (v T, err error) {
 	if !ok {
 		return v, fmt.Errorf("missing '%s' field", key)
 	}
-	if v, ok := val.(T); ok {
-		return v, nil
+	if value, ok := val.(T); ok {
+		return value, nil
 	}
 	return v, fmt.Errorf("invalid type for '%s' field: expected %T, got %T", key, v, val)
 }

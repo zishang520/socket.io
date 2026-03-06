@@ -28,14 +28,14 @@ func ExampleSocket_basic() {
 			log.Fatal(err)
 		}
 
-		socket.On("connect", func(...any) {
-			socket.Emit("message", "Hello server!")
+		_ = socket.On("connect", func(...any) {
+			_ = socket.Emit("message", "Hello server!")
 			fmt.Println("Connected!")
 			defer socket.Close()
 			close(done)
 		})
 
-		socket.On("reply", func(args ...any) {
+		_ = socket.On("reply", func(args ...any) {
 			if len(args) > 0 {
 				if msg, ok := args[0].(string); ok {
 					fmt.Printf("Received: %s\n", msg)
@@ -45,7 +45,7 @@ func ExampleSocket_basic() {
 	})
 
 	<-done
-	httpServer.Close(nil)
+	_ = httpServer.Close(nil)
 
 	// Output:
 	// Connected!
@@ -69,12 +69,12 @@ func ExampleSocket_disconnect() {
 			log.Fatal(err)
 		}
 
-		socket.On("connect", func(...any) {
+		_ = socket.On("connect", func(...any) {
 			fmt.Println("Connected!")
 			socket.Disconnect()
 		})
 
-		socket.On("disconnect", func(args ...any) {
+		_ = socket.On("disconnect", func(args ...any) {
 			if len(args) > 0 {
 				if reason, ok := args[0].(string); ok {
 					fmt.Printf("Disconnected: %s\n", reason)
@@ -87,7 +87,7 @@ func ExampleSocket_disconnect() {
 	})
 
 	<-done
-	httpServer.Close(nil)
+	_ = httpServer.Close(nil)
 
 	// Output:
 	// Connected!
@@ -100,9 +100,9 @@ func ExampleSocket_emitWithAck() {
 	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
 
 	httpServer := types.NewWebServer(nil)
-	server.NewServer(httpServer, config).On("connection", func(clients ...any) {
+	_ = server.NewServer(httpServer, config).On("connection", func(clients ...any) {
 		socket := clients[0].(*server.Socket)
-		socket.On("custom-event", func(args ...any) {
+		_ = socket.On("custom-event", func(args ...any) {
 			if len(args) > 0 {
 				ack, ok := args[len(args)-1].(server.Ack)
 				if ok {
@@ -134,7 +134,7 @@ func ExampleSocket_emitWithAck() {
 	})
 
 	<-done
-	httpServer.Close(nil)
+	_ = httpServer.Close(nil)
 
 	// Output:
 	// Server acknowledged with: [received hello]
@@ -158,16 +158,16 @@ func ExampleSocket_volatile() {
 			log.Fatal(err)
 		}
 
-		socket.On("connect", func(...any) {
+		_ = socket.On("connect", func(...any) {
 			// The server may or may not receive this message
-			socket.Volatile().Emit("hello", "world")
+			_ = socket.Volatile().Emit("hello", "world")
 			defer socket.Close()
 			close(done)
 		})
 	})
 
 	<-done
-	httpServer.Close(nil)
+	_ = httpServer.Close(nil)
 }
 
 // ExampleSocket_onAny demonstrates how to listen to all events
@@ -176,10 +176,10 @@ func ExampleSocket_onAny() {
 	config.SetTransports(types.NewSet(server.Polling, server.WebSocket, server.WebTransport))
 
 	httpServer := types.NewWebServer(nil)
-	server.NewServer(httpServer, config).On("connection", func(clients ...any) {
+	_ = server.NewServer(httpServer, config).On("connection", func(clients ...any) {
 		socket := clients[0].(*server.Socket)
-		socket.On("test-event", func(args ...any) {
-			socket.Emit("test-event")
+		_ = socket.On("test-event", func(args ...any) {
+			_ = socket.Emit("test-event")
 		})
 	})
 
@@ -199,11 +199,11 @@ func ExampleSocket_onAny() {
 			close(done)
 		})
 
-		socket.Emit("test-event", "data")
+		_ = socket.Emit("test-event", "data")
 	})
 
 	<-done
-	httpServer.Close(nil)
+	_ = httpServer.Close(nil)
 
 	// Output:
 	// Caught event: test-event
@@ -239,7 +239,7 @@ func ExampleSocket_timeout() {
 	})
 
 	<-done
-	httpServer.Close(nil)
+	_ = httpServer.Close(nil)
 
 	// Output:
 	// Event timed out
@@ -277,20 +277,20 @@ func ExampleSocket_auth() {
 	})
 
 	// Handle successful connections
-	io.On("connection", func(clients ...any) {
+	_ = io.On("connection", func(clients ...any) {
 		socket := clients[0].(*server.Socket)
 		fmt.Printf("Client connected\n")
 
-		socket.On("secure-message", func(args ...any) {
+		_ = socket.On("secure-message", func(args ...any) {
 			if len(args) > 0 {
 				if msg, ok := args[0].(string); ok {
 					fmt.Printf("Received secure message: %s\n", msg)
-					socket.Emit("secure-reply", "Message received securely")
+					_ = socket.Emit("secure-reply", "Message received securely")
 				}
 			}
 		})
 
-		socket.On("disconnect", func(args ...any) {
+		_ = socket.On("disconnect", func(args ...any) {
 			fmt.Printf("Client disconnected\n")
 		})
 	})
@@ -308,12 +308,12 @@ func ExampleSocket_auth() {
 			log.Fatal(err)
 		}
 
-		socket.On("connect", func(...any) {
+		_ = socket.On("connect", func(...any) {
 			fmt.Println("Client connected successfully!")
-			socket.Emit("secure-message", "Hello from authenticated client!")
+			_ = socket.Emit("secure-message", "Hello from authenticated client!")
 		})
 
-		socket.On("secure-reply", func(args ...any) {
+		_ = socket.On("secure-reply", func(args ...any) {
 			if len(args) > 0 {
 				if msg, ok := args[0].(string); ok {
 					fmt.Printf("Server reply: %s\n", msg)
@@ -323,7 +323,7 @@ func ExampleSocket_auth() {
 			close(done)
 		})
 
-		socket.On("connect_error", func(args ...any) {
+		_ = socket.On("connect_error", func(args ...any) {
 			if len(args) > 0 {
 				fmt.Printf("Connection error: %v\n", args[0])
 			}
@@ -333,7 +333,7 @@ func ExampleSocket_auth() {
 	})
 
 	<-done
-	httpServer.Close(nil)
+	_ = httpServer.Close(nil)
 
 	// Output:
 	// Authentication successful for token: test
@@ -376,7 +376,7 @@ func ExampleSocket_authFailed() {
 	})
 
 	// Handle successful connections (won't be reached in this example)
-	io.On("connection", func(clients ...any) {
+	_ = io.On("connection", func(clients ...any) {
 		socket := clients[0].(*server.Socket)
 		fmt.Printf("Client connected with ID: %s\n", socket.Id())
 	})
@@ -394,11 +394,11 @@ func ExampleSocket_authFailed() {
 			log.Fatal(err)
 		}
 
-		socket.On("connect", func(...any) {
+		_ = socket.On("connect", func(...any) {
 			fmt.Println("This shouldn't be called due to auth failure")
 		})
 
-		socket.On("connect_error", func(args ...any) {
+		_ = socket.On("connect_error", func(args ...any) {
 			fmt.Printf("Authentication failed as expected: %v\n", args[0])
 			defer socket.Close()
 			close(done)
@@ -406,7 +406,7 @@ func ExampleSocket_authFailed() {
 	})
 
 	<-done
-	httpServer.Close(nil)
+	_ = httpServer.Close(nil)
 
 	// Output:
 	// Authentication failed - invalid or missing token
@@ -447,26 +447,26 @@ func ExampleSocket_authWithUserInfo() {
 	})
 
 	// Handle successful connections
-	io.On("connection", func(clients ...any) {
+	_ = io.On("connection", func(clients ...any) {
 		socket := clients[0].(*server.Socket)
 
 		// Access user data
-		userId, _ := socket.Data().(map[string]string)["userId"]
-		username, _ := socket.Data().(map[string]string)["username"]
+		userId := socket.Data().(map[string]string)["userId"]
+		username := socket.Data().(map[string]string)["username"]
 
 		fmt.Printf("Welcome %s! (User ID: %s)\n",
 			username, userId)
 
-		socket.On("user-action", func(args ...any) {
+		_ = socket.On("user-action", func(args ...any) {
 			if len(args) > 0 {
 				if action, ok := args[0].(string); ok {
 					fmt.Printf("User %s performed action: %s\n", username, action)
 				}
 			}
-			socket.Emit("logout")
+			_ = socket.Emit("logout")
 		})
 
-		socket.Emit("ready")
+		_ = socket.Emit("ready")
 	})
 
 	done := make(chan struct{})
@@ -484,20 +484,20 @@ func ExampleSocket_authWithUserInfo() {
 			log.Fatal(err)
 		}
 
-		socket.On("ready", func(...any) {
-			socket.Emit("user-action", "login")
+		_ = socket.On("ready", func(...any) {
+			_ = socket.Emit("user-action", "login")
 		})
 
-		socket.On("logout", func(...any) {
+		_ = socket.On("logout", func(...any) {
 			defer socket.Close()
 			close(done)
 		})
 
-		socket.On("connect", func(...any) {
+		_ = socket.On("connect", func(...any) {
 			fmt.Println("Connected with user authentication!")
 		})
 
-		socket.On("connect_error", func(args ...any) {
+		_ = socket.On("connect_error", func(args ...any) {
 			fmt.Printf("Connection error: %v\n", args[0])
 			defer socket.Close()
 			close(done)
@@ -505,7 +505,7 @@ func ExampleSocket_authWithUserInfo() {
 	})
 
 	<-done
-	httpServer.Close(nil)
+	_ = httpServer.Close(nil)
 
 	// Output:
 	// User authenticated: testuser (ID: 123)

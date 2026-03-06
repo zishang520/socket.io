@@ -50,6 +50,7 @@ jobs:
 
     - name: Run Lint, Build and Test
       run: |
+        make lint
         make vet
         make build
         make test

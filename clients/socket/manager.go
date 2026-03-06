@@ -284,7 +284,7 @@ func (m *Manager) Open(fn func(error)) *Manager {
 		manager_log.Debug("error")
 		m.cleanup()
 		m._readyState.Store(ReadyStateClosed)
-		m.EventEmitter.Emit("error", err)
+		m.Emit("error", err)
 		if fn != nil {
 			fn(err)
 		} else {
@@ -335,7 +335,7 @@ func (m *Manager) onopen(socket Engine) {
 
 	// mark as open
 	m._readyState.Store(ReadyStateOpen)
-	m.EventEmitter.Emit("open")
+	m.Emit("open")
 
 	// add new subs
 	m.subs.Push(
@@ -351,7 +351,7 @@ func (m *Manager) onopen(socket Engine) {
 
 // Called upon a ping.
 func (m *Manager) onping(...any) {
-	m.EventEmitter.Emit("ping")
+	m.Emit("ping")
 }
 
 // Called with data.
@@ -364,13 +364,13 @@ func (m *Manager) ondata(datas ...any) {
 // Called when parser fully decodes a packet.
 func (m *Manager) ondecoded(packets ...any) {
 	// Needs further investigation
-	go m.EventEmitter.Emit("packet", packets...)
+	go m.Emit("packet", packets...)
 }
 
 // Called upon socket error.
 func (m *Manager) onerror(errs ...any) {
 	manager_log.Debug("error: %v", errs)
-	m.EventEmitter.Emit("error", errs...)
+	m.Emit("error", errs...)
 }
 
 // Socket creates or returns an existing Socket instance for the specified namespace.
@@ -458,7 +458,7 @@ func (m *Manager) onclose(reason string, description error) {
 	}
 	m.backoff.Reset()
 	m._readyState.Store(ReadyStateClosed)
-	m.EventEmitter.Emit("close", reason, description)
+	m.Emit("close", reason, description)
 
 	if m._reconnection.Load() && !m.skipReconnect.Load() {
 		m.reconnect()
@@ -475,7 +475,7 @@ func (m *Manager) reconnect() {
 	if float64(m.backoff.Attempts()) >= m.ReconnectionAttempts() {
 		manager_log.Debug("reconnect failed")
 		m.backoff.Reset()
-		m.EventEmitter.Emit("reconnect_failed")
+		m.Emit("reconnect_failed")
 		m._reconnecting.Store(false)
 	} else {
 		delay := m.backoff.Duration()
@@ -488,7 +488,7 @@ func (m *Manager) reconnect() {
 			}
 
 			manager_log.Debug("attempting reconnect")
-			m.EventEmitter.Emit("reconnect_attempt", m.backoff.Attempts())
+			m.Emit("reconnect_attempt", m.backoff.Attempts())
 
 			// check again for the case socket closed in above events
 			if m.skipReconnect.Load() {
@@ -500,7 +500,7 @@ func (m *Manager) reconnect() {
 					manager_log.Debug("reconnect attempt error")
 					m._reconnecting.Store(false)
 					m.reconnect()
-					m.EventEmitter.Emit("reconnect_error", err)
+					m.Emit("reconnect_error", err)
 				} else {
 					manager_log.Debug("reconnect success")
 					m.onreconnect()
@@ -523,5 +523,5 @@ func (m *Manager) onreconnect() {
 	attempt := m.backoff.Attempts()
 	m._reconnecting.Store(false)
 	m.backoff.Reset()
-	m.EventEmitter.Emit("reconnect", attempt)
+	m.Emit("reconnect", attempt)
 }

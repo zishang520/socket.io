@@ -274,7 +274,7 @@ func (s *Socket) Open() *Socket {
 //	// this is equivalent to
 //	socket.Emit("message", "hello")
 func (s *Socket) Send(args ...any) *Socket {
-	s.Emit("message", args...)
+	_ = s.Emit("message", args...)
 	return s
 }
 
@@ -404,7 +404,7 @@ func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack) {
 //	})
 func (s *Socket) EmitWithAck(ev string, args ...any) func(socket.Ack) {
 	return func(ack socket.Ack) {
-		s.Emit(ev, append(args, ack)...)
+		_ = s.Emit(ev, append(args, ack)...)
 	}
 }
 
@@ -424,21 +424,21 @@ func (s *Socket) _addToQueue(args []any) {
 	}
 
 	args = append(args, func(responseArgs []any, err error) {
-		if q, err := s._queue.Get(0); err != nil || packet != q {
+		if q, queueErr := s._queue.Get(0); queueErr != nil || packet != q {
 			// the packet has already been acknowledged
 			return
 		}
 		if err != nil {
 			if tryCount := packet.TryCount.Load(); float64(tryCount) > s._opts.Retries() {
 				socket_log.Debug("packet [%d] is discarded after %d tries", packet.Id, tryCount)
-				s._queue.Shift()
+				_, _ = s._queue.Shift()
 				if ack != nil {
 					ack(nil, err)
 				}
 			}
 		} else {
 			socket_log.Debug("packet [%d] was successfully sent", packet.Id)
-			s._queue.Shift()
+			_, _ = s._queue.Shift()
 			if ack != nil {
 				ack(responseArgs, nil)
 			}
@@ -474,7 +474,7 @@ func (s *Socket) _drainQueue(force bool) {
 	packet.TryCount.Add(1)
 	socket_log.Debug("sending packet [%d] (try n°%d)", packet.Id, packet.TryCount.Load())
 	s.flags.Store(packet.Flags)
-	s.Emit(slices.TryGetAny[string](packet.Args, 0), slices.Slice(packet.Args, 1)...)
+	_ = s.Emit(slices.TryGetAny[string](packet.Args, 0), slices.Slice(packet.Args, 1)...)
 }
 
 // packet sends a packet.
