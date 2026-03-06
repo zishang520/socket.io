@@ -135,7 +135,7 @@ DecodePayload(data types.BufferInterface) ([]*packet.Packet, error)
 
 ### Prerequisites
 
-- Go 1.24.1 or higher
+- Go 1.25.0+
 - Make
 
 ### Testing

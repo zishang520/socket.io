@@ -2,37 +2,40 @@ name: Go CI
 
 on:
   push:
-    branches: [ "main" , "dev" ]
+    branches: [ "main", "dev" ]
   pull_request:
-    branches: [ "main" , "dev" ]
+    branches: [ "main", "dev" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     name: Build, Test, Lint and Analyze
     runs-on: ubuntu-latest
 
-    services:
-      redis:
-        image: redis:7.0
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli -a root ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 3
+    permissions:
+      contents: read
+
+    env:
+      GOPROXY: https://proxy.golang.org,direct
+      GOTOOLCHAIN: go1.25.0+auto
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: "1.24.x"
+        go-version: "1.25.x"
+        cache: true
 
-    - name: Set Go proxy
-      run: echo "GOPROXY=https://proxy.golang.org,direct" >> $GITHUB_ENV
+    - name: Start Redis with Password and No-Save
+      run: |
+        docker run -d -p 6379:6379 --name ci-redis redis:alpine \
+          redis-server --requirepass root --save "" --appendonly no
 
     - name: Wait for Redis to be ready
       run: |
@@ -45,10 +48,8 @@ jobs:
           sleep 3;
         done
 
-    - name: Run vet
-      run: make vet
-
-    - name: Run Build and Test via Makefile
+    - name: Run Lint, Build and Test
       run: |
+        make vet
         make build
         make test
