@@ -38,7 +38,7 @@ func (p *parserv4) EncodePacket(pkt *packet.Packet, supportsBinary bool, _ ...bo
 
 	// Ensure data is closed if it implements io.Closer
 	if c, ok := pkt.Data.(io.Closer); ok {
-		defer c.Close()
+		defer c.Close() //nolint:errcheck
 	}
 
 	typeByte, ok := lookupPacketByte(pkt.Type)
@@ -93,7 +93,7 @@ func (p *parserv4) encodeAsBase64(data io.Reader) (types.BufferInterface, error)
 
 	b64 := base64.NewEncoder(base64.StdEncoding, encode)
 	if _, err := io.Copy(b64, data); err != nil {
-		b64.Close()
+		_ = b64.Close()
 		return nil, err
 	}
 	if err := b64.Close(); err != nil {

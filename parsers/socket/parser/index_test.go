@@ -123,7 +123,7 @@ func TestReset(t *testing.T) {
 	br := newBinaryReconstructor(packet)
 
 	buf := types.NewBytesBufferString("data")
-	br.takeBinaryData(buf)
+	_, _ = br.takeBinaryData(buf)
 
 	br.reset()
 

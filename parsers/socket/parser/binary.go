@@ -59,11 +59,11 @@ func extractBinaryData(data any, buffers *[]types.BufferInterface) *Placeholder 
 	switch typedData := data.(type) {
 	case io.Reader:
 		if closer, ok := data.(io.Closer); ok {
-			defer closer.Close()
+			defer closer.Close() //nolint:errcheck
 		}
-		buffer.ReadFrom(typedData)
+		_, _ = buffer.ReadFrom(typedData)
 	case []byte:
-		buffer.Write(typedData)
+		_, _ = buffer.Write(typedData)
 	}
 
 	*buffers = append(*buffers, buffer)

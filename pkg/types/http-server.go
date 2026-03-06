@@ -171,7 +171,7 @@ func (s *HttpServer) ListenHTTP3TLS(addr string, certFile string, keyFile string
 
 	// Idempotent repeated calls
 	go func() {
-		defer func() { _ = udpConn.Close() }()
+		defer udpConn.Close() //nolint:errcheck
 
 		hErr := make(chan error)
 		qErr := make(chan error)

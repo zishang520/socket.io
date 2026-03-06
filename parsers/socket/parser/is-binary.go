@@ -2,6 +2,7 @@ package parser
 
 import (
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -30,12 +31,7 @@ func HasBinary(data any) bool {
 	case nil:
 		return false
 	case []any:
-		for _, item := range v {
-			if HasBinary(item) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(v, HasBinary)
 	case map[string]any:
 		for _, value := range v {
 			if HasBinary(value) {

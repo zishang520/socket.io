@@ -165,7 +165,7 @@ func TestParserv3(t *testing.T) {
 		}
 
 		if c, ok := pack.Data.(io.Closer); ok {
-			defer c.Close()
+			defer c.Close() //nolint:errcheck
 		}
 
 		buf, err := types.NewBytesBufferReader(pack.Data)
@@ -196,7 +196,7 @@ func TestParserv3(t *testing.T) {
 		}
 
 		if c, ok := pack.Data.(io.Closer); ok {
-			defer c.Close()
+			defer c.Close() //nolint:errcheck
 		}
 
 		buf, err := types.NewBytesBufferReader(pack.Data)
@@ -227,7 +227,7 @@ func TestParserv3(t *testing.T) {
 		}
 
 		if c, ok := pack.Data.(io.Closer); ok {
-			defer c.Close()
+			defer c.Close() //nolint:errcheck
 		}
 
 		buf, err := types.NewBytesBufferReader(pack.Data)
@@ -258,7 +258,7 @@ func TestParserv3(t *testing.T) {
 		}
 
 		if c, ok := pack.Data.(io.Closer); ok {
-			defer c.Close()
+			defer c.Close() //nolint:errcheck
 		}
 
 		buf, err := types.NewBytesBufferReader(pack.Data)
@@ -360,7 +360,7 @@ func TestParserv3(t *testing.T) {
 			}
 
 			if c, ok := packs[0].Data.(io.Closer); ok {
-				defer c.Close()
+				defer c.Close() //nolint:errcheck
 			}
 
 			buf, err := types.NewBytesBufferReader(packs[0].Data)
@@ -386,7 +386,7 @@ func TestParserv3(t *testing.T) {
 			}
 
 			if c, ok := packs[1].Data.(io.Closer); ok {
-				defer c.Close()
+				defer c.Close() //nolint:errcheck
 			}
 
 			buf, err := types.NewBytesBufferReader(packs[1].Data)
@@ -420,7 +420,7 @@ func TestParserv3(t *testing.T) {
 			}
 
 			if c, ok := packs[0].Data.(io.Closer); ok {
-				defer c.Close()
+				defer c.Close() //nolint:errcheck
 			}
 
 			buf, err := types.NewBytesBufferReader(packs[0].Data)
@@ -446,7 +446,7 @@ func TestParserv3(t *testing.T) {
 			}
 
 			if c, ok := packs[1].Data.(io.Closer); ok {
-				defer c.Close()
+				defer c.Close() //nolint:errcheck
 			}
 
 			buf, err := types.NewBytesBufferReader(packs[1].Data)
@@ -538,7 +538,7 @@ func TestParserv4(t *testing.T) {
 		}
 
 		if c, ok := pack.Data.(io.Closer); ok {
-			defer c.Close()
+			defer c.Close() //nolint:errcheck
 		}
 
 		buf, err := types.NewBytesBufferReader(pack.Data)
@@ -569,7 +569,7 @@ func TestParserv4(t *testing.T) {
 		}
 
 		if c, ok := pack.Data.(io.Closer); ok {
-			defer c.Close()
+			defer c.Close() //nolint:errcheck
 		}
 
 		buf, err := types.NewBytesBufferReader(pack.Data)
@@ -600,7 +600,7 @@ func TestParserv4(t *testing.T) {
 		}
 
 		if c, ok := pack.Data.(io.Closer); ok {
-			defer c.Close()
+			defer c.Close() //nolint:errcheck
 		}
 
 		buf, err := types.NewBytesBufferReader(pack.Data)
@@ -698,7 +698,7 @@ func TestParserv4(t *testing.T) {
 			}
 
 			if c, ok := packs[0].Data.(io.Closer); ok {
-				defer c.Close()
+				defer c.Close() //nolint:errcheck
 			}
 
 			buf, err := types.NewBytesBufferReader(packs[0].Data)
@@ -724,7 +724,7 @@ func TestParserv4(t *testing.T) {
 			}
 
 			if c, ok := packs[1].Data.(io.Closer); ok {
-				defer c.Close()
+				defer c.Close() //nolint:errcheck
 			}
 
 			buf, err := types.NewBytesBufferReader(packs[1].Data)
@@ -758,7 +758,7 @@ func TestParserv4(t *testing.T) {
 			}
 
 			if c, ok := packs[0].Data.(io.Closer); ok {
-				defer c.Close()
+				defer c.Close() //nolint:errcheck
 			}
 
 			buf, err := types.NewBytesBufferReader(packs[0].Data)
@@ -784,7 +784,7 @@ func TestParserv4(t *testing.T) {
 			}
 
 			if c, ok := packs[1].Data.(io.Closer); ok {
-				defer c.Close()
+				defer c.Close() //nolint:errcheck
 			}
 
 			buf, err := types.NewBytesBufferReader(packs[1].Data)

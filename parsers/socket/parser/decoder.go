@@ -119,7 +119,7 @@ func (d *decoder) readBinaryData(data any) (types.BufferInterface, error) {
 	switch typedData := data.(type) {
 	case io.Reader:
 		if closer, ok := data.(io.Closer); ok {
-			defer closer.Close()
+			defer closer.Close() //nolint:errcheck
 		}
 		if _, err := buffer.ReadFrom(typedData); err != nil {
 			return nil, err
@@ -242,7 +242,7 @@ func (d *decoder) parseNamespace(buffer types.BufferInterface, packet *Packet) e
 
 	if firstByte != '/' {
 		// No namespace specified, use default and put byte back
-		if err := buffer.UnreadByte(); err != nil {
+		if unreadErr := buffer.UnreadByte(); unreadErr != nil {
 			return ErrIllegalNamespace
 		}
 		packet.Nsp = "/"

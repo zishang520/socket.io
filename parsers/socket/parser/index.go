@@ -59,7 +59,7 @@ func (br *binaryReconstructor) reset() {
 	br.packet.Store(nil)
 }
 
-// finishedReconstruction signals that reconstruction is complete or cancelled.
+// finishedReconstruction signals that reconstruction is complete or canceled.
 // This should be called when the decoder is destroyed or reset.
 func (br *binaryReconstructor) finishedReconstruction() {
 	br.mu.Lock()

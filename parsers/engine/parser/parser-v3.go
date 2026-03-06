@@ -35,7 +35,7 @@ func (p *parserv3) EncodePacket(data *packet.Packet, supportsBinary bool, utf8en
 	}
 
 	if c, ok := data.Data.(io.Closer); ok {
-		defer c.Close()
+		defer c.Close() //nolint:errcheck
 	}
 
 	utf8en := len(utf8encode) > 0 && utf8encode[0]
@@ -77,7 +77,7 @@ func (p *parserv3) EncodePacket(data *packet.Packet, supportsBinary bool, utf8en
 			}
 			b64 := base64.NewEncoder(base64.StdEncoding, encode)
 			if _, err := io.Copy(b64, v); err != nil {
-				b64.Close()
+				_ = b64.Close()
 				return nil, err
 			}
 			if err := b64.Close(); err != nil {

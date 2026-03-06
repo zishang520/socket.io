@@ -342,7 +342,7 @@ func TestDeconstructWithSliceInMap(t *testing.T) {
 	// Verify placeholders in slice
 	data := deconstructed.Data.([]any)
 	files := data[1].(map[string]any)["files"].([]any)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		placeholder, ok := files[i].(*Placeholder)
 		if !ok {
 			t.Errorf("Expected placeholder at files[%d]", i)

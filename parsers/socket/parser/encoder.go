@@ -45,26 +45,26 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 
 	// Add attachment count for binary packets
 	if (packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK) && packet.Attachments != nil {
-		buffer.WriteString(strconv.FormatUint(*packet.Attachments, 10))
-		buffer.WriteByte('-')
+		_, _ = buffer.WriteString(strconv.FormatUint(*packet.Attachments, 10))
+		_ = buffer.WriteByte('-')
 	}
 
 	// Add namespace (if not the default "/")
 	if len(packet.Nsp) > 0 && packet.Nsp != "/" {
-		buffer.WriteString(packet.Nsp)
-		buffer.WriteByte(',')
+		_, _ = buffer.WriteString(packet.Nsp)
+		_ = buffer.WriteByte(',')
 	}
 
 	// Add packet ID for acknowledgments
 	if packet.Id != nil {
-		buffer.WriteString(strconv.FormatUint(*packet.Id, 10))
+		_, _ = buffer.WriteString(strconv.FormatUint(*packet.Id, 10))
 	}
 
 	// Add JSON-encoded data
 	if packet.Data != nil {
 		processedData := preprocessData(packet.Data)
 		if jsonBytes, err := json.Marshal(processedData); err == nil {
-			buffer.Write(jsonBytes)
+			_, _ = buffer.Write(jsonBytes)
 		}
 	}
 

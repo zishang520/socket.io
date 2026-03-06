@@ -192,7 +192,7 @@ func TestDecoderEmitDecoded(t *testing.T) {
 	d := NewDecoder().(*decoder)
 
 	var decodedPacket *Packet
-	d.On("decoded", func(args ...any) {
+	_ = d.On("decoded", func(args ...any) {
 		if len(args) > 0 {
 			if p, ok := args[0].(*Packet); ok {
 				decodedPacket = p
@@ -405,7 +405,7 @@ func TestBinaryPacketReconstruction(t *testing.T) {
 	d := NewDecoder().(*decoder)
 
 	var decodedPacket *Packet
-	d.On("decoded", func(args ...any) {
+	_ = d.On("decoded", func(args ...any) {
 		if len(args) > 0 {
 			if p, ok := args[0].(*Packet); ok {
 				decodedPacket = p
@@ -460,7 +460,7 @@ func TestMultipleBinaryAttachments(t *testing.T) {
 	d := NewDecoder().(*decoder)
 
 	var decodedPacket *Packet
-	d.On("decoded", func(args ...any) {
+	_ = d.On("decoded", func(args ...any) {
 		if len(args) > 0 {
 			if p, ok := args[0].(*Packet); ok {
 				decodedPacket = p
@@ -498,7 +498,7 @@ func TestZeroAttachments(t *testing.T) {
 	d := NewDecoder().(*decoder)
 
 	var decodedPacket *Packet
-	d.On("decoded", func(args ...any) {
+	_ = d.On("decoded", func(args ...any) {
 		if len(args) > 0 {
 			if p, ok := args[0].(*Packet); ok {
 				decodedPacket = p
