@@ -38,8 +38,8 @@ func TestBroadcastFlagsInheritance(t *testing.T) {
 	if flags.Binary != true {
 		t.Errorf("Expected Binary to be true, got %v", flags.Binary)
 	}
-	if flags.Options.Compress != nil && *flags.Options.Compress != true {
-		t.Errorf("Expected Options.Compress to be true, got %v", flags.Options.Compress)
+	if flags.Compress != nil && *flags.Compress != true {
+		t.Errorf("Expected Options.Compress to be true, got %v", flags.Compress)
 	}
 }
 

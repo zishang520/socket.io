@@ -69,7 +69,7 @@ func (p *parentNamespace) InitAdapter() {
 
 func (p *parentNamespace) Emit(ev string, args ...any) error {
 	for _, nsp := range p.children.Keys() {
-		nsp.Emit(ev, args...)
+		_ = nsp.Emit(ev, args...)
 	}
 	return nil
 }
@@ -80,8 +80,8 @@ func (p *parentNamespace) CreateChild(name string) Namespace {
 
 	namespace.Fns().Replace(p.Fns().All())
 
-	namespace.On("connect", p.Listeners("connect")...)
-	namespace.On("connection", p.Listeners("connection")...)
+	_ = namespace.On("connect", p.Listeners("connect")...)
+	_ = namespace.On("connection", p.Listeners("connection")...)
 	p.children.Add(namespace)
 
 	if p.Server().Opts().CleanupEmptyChildNamespaces() {

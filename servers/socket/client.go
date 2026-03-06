@@ -70,10 +70,10 @@ func (c *Client) Request() *types.HttpContext {
 
 // setup sets up event listeners for the client.
 func (c *Client) setup() {
-	c.decoder.On("decoded", c.ondecoded)
-	c.conn.On("data", c.ondata)
-	c.conn.On("error", c.onerror)
-	c.conn.Once("close", c.onclose)
+	_ = c.decoder.On("decoded", c.ondecoded)
+	_ = c.conn.On("data", c.ondata)
+	_ = c.conn.On("error", c.onerror)
+	_ = c.conn.Once("close", c.onclose)
 
 	c.connectTimeout.Store(utils.SetTimeout(func() {
 		if c.nsps.Len() == 0 {

@@ -255,7 +255,7 @@ func (s *Socket) Construct(nsp Namespace, client *Client, auth map[string]any, p
 	// prevents crash when the socket receives an "error" event without listener
 	//
 	// Golang defines the error by itself. It seems that this logic is not needed?
-	s.On("error", func(...any) {})
+	_ = s.On("error", func(...any) {})
 }
 
 // Builds the `handshake` BC object
@@ -353,7 +353,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 // Return:  a `func(socket.Ack)` that will be fulfilled when all clients have acknowledged the event
 func (s *Socket) EmitWithAck(ev string, args ...any) func(Ack) {
 	return func(ack Ack) {
-		s.Emit(ev, append(args, ack)...)
+		_ = s.Emit(ev, append(args, ack)...)
 	}
 }
 
@@ -403,13 +403,13 @@ func (s *Socket) Except(room ...Room) *BroadcastOperator {
 //		socket.Emit("message", "hello");
 //	});
 func (s *Socket) Send(args ...any) *Socket {
-	s.Emit("message", args...)
+	_ = s.Emit("message", args...)
 	return s
 }
 
 // Sends a `message` event. Alias of Send.
 func (s *Socket) Write(args ...any) *Socket {
-	s.Emit("message", args...)
+	_ = s.Emit("message", args...)
 	return s
 }
 
@@ -560,9 +560,9 @@ func (s *Socket) _onerror(err any) {
 //
 // Param: reason
 // Param: description
-func (s *Socket) _onclose(args ...any) *Socket {
+func (s *Socket) _onclose(args ...any) {
 	if !s.Connected() {
-		return s
+		return
 	}
 	socket_log.Debug("closing socket - reason %v", slices.TryGet(args, 0))
 	s.EmitReserved("disconnecting", args...)
@@ -580,7 +580,6 @@ func (s *Socket) _onclose(args ...any) *Socket {
 	s.client._remove(s)
 	s.connected.Store(false)
 	s.EmitReserved("disconnect", args...)
-	return nil
 }
 
 // Makes the socket leave all the rooms it was part of and prevents it from joining any other room
@@ -807,7 +806,7 @@ func (s *Socket) PrependAny(listener types.EventListener) *Socket {
 func (s *Socket) OffAny(listener types.EventListener) *Socket {
 	if listener != nil {
 		anyListeners := reflect.ValueOf(listener).Pointer()
-		s._anyListeners.RangeAndSplice(func(listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
+		_, _ = s._anyListeners.RangeAndSplice(func(listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
 			return reflect.ValueOf(listener).Pointer() == anyListeners, i, 1, nil
 		})
 	} else {
@@ -838,7 +837,7 @@ func (s *Socket) PrependAnyOutgoing(listener types.EventListener) *Socket {
 func (s *Socket) OffAnyOutgoing(listener types.EventListener) *Socket {
 	if listener != nil {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
-		s._anyOutgoingListeners.RangeAndSplice(func(listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
+		_, _ = s._anyOutgoingListeners.RangeAndSplice(func(listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
 			return reflect.ValueOf(listener).Pointer() == listenerPointer, i, 1, nil
 		})
 	} else {

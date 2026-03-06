@@ -387,7 +387,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		if expectedEtag == etag || weakEtag == etag {
 			server_log.Debug("serve client %s 304", _type)
 			w.WriteHeader(http.StatusNotModified)
-			w.Write(nil)
+			_, _ = w.Write(nil)
 			return
 		}
 	}
@@ -426,17 +426,17 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	encoding := utils.Contains(r.Header.Get("Accept-Encoding"), []string{"gzip", "deflate", "br", "zstd"})
 
 	switch encoding {
 	case "br":
 		br := brotli.NewWriterLevel(w, brotli.DefaultCompression)
-		defer br.Close()
+		defer func() { _ = br.Close() }()
 		w.Header().Set("Content-Encoding", "br")
 		w.WriteHeader(http.StatusOK)
-		io.Copy(br, file)
+		_, _ = io.Copy(br, file)
 	case "gzip":
 		gz, err := gzip.NewWriterLevel(w, gzip.DefaultCompression)
 		if err != nil {
@@ -444,10 +444,10 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		defer gz.Close()
+		defer func() { _ = gz.Close() }()
 		w.Header().Set("Content-Encoding", "gzip")
 		w.WriteHeader(http.StatusOK)
-		io.Copy(gz, file)
+		_, _ = io.Copy(gz, file)
 	case "deflate":
 		fl, err := flate.NewWriter(w, flate.DefaultCompression)
 		if err != nil {
@@ -455,10 +455,10 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		defer fl.Close()
+		defer func() { _ = fl.Close() }()
 		w.Header().Set("Content-Encoding", "deflate")
 		w.WriteHeader(http.StatusOK)
-		io.Copy(fl, file)
+		_, _ = io.Copy(fl, file)
 	case "zstd":
 		zd, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedDefault))
 		if err != nil {
@@ -466,13 +466,13 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		defer zd.Close()
+		defer func() { _ = zd.Close() }()
 		w.Header().Set("Content-Encoding", "zstd")
 		w.WriteHeader(http.StatusOK)
-		io.Copy(zd, file)
+		_, _ = io.Copy(zd, file)
 	default:
 		w.WriteHeader(http.StatusOK)
-		io.Copy(w, file)
+		_, _ = io.Copy(w, file)
 	}
 }
 
@@ -480,7 +480,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 // egs is the engine.io (or compatible) server.
 func (s *Server) Bind(egs engine.BaseServer) *Server {
 	s.engine = egs
-	s.engine.On("connection", s.onconnection)
+	_ = s.engine.On("connection", s.onconnection)
 	return s
 }
 
@@ -505,7 +505,7 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 		s.parentNsps.Store(n, parentNsp)
 
 		if fn != nil {
-			parentNsp.On("connect", fn)
+			_ = parentNsp.On("connect", fn)
 		}
 		return parentNsp
 	case *regexp.Regexp:
@@ -518,7 +518,7 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 		s.parentNamespacesFromRegExp.Store(n, parentNsp)
 
 		if fn != nil {
-			parentNsp.On("connect", fn)
+			_ = parentNsp.On("connect", fn)
 		}
 		return parentNsp
 	}
@@ -563,7 +563,7 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 	}
 
 	if fn != nil {
-		namespace.On("connect", fn)
+		_ = namespace.On("connect", fn)
 	}
 	return namespace
 }
@@ -580,7 +580,7 @@ func (s *Server) Close(fn func(error)) {
 	})
 
 	if s.httpServer != nil {
-		s.httpServer.Close(fn)
+		_ = s.httpServer.Close(fn)
 		// The engine has been closed through the close event processing, and the subsequent process is exited here.
 		return
 	}
@@ -617,7 +617,7 @@ func (s *Server) Except(room ...Room) *BroadcastOperator {
 
 // Emit broadcasts an event to all connected clients.
 func (s *Server) Emit(ev string, args ...any) *Server {
-	s.sockets.Emit(ev, args...)
+	_ = s.sockets.Emit(ev, args...)
 	return s
 }
 
@@ -625,7 +625,7 @@ func (s *Server) Emit(ev string, args ...any) *Server {
 func (s *Server) Send(args ...any) *Server {
 	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
 	// if you specify the EmitEvents, the type of args will be never.
-	s.sockets.Emit("message", args...)
+	_ = s.sockets.Emit("message", args...)
 	return s
 }
 
@@ -633,7 +633,7 @@ func (s *Server) Send(args ...any) *Server {
 func (s *Server) Write(args ...any) *Server {
 	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
 	// if you specify the EmitEvents, the type of args will be never.
-	s.sockets.Emit("message", args...)
+	_ = s.sockets.Emit("message", args...)
 	return s
 }
 

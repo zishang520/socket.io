@@ -840,7 +840,7 @@ func (s *Socket) PrependAny(listener types.EventListener) *Socket {
 func (s *Socket) OffAny(listener types.EventListener) *Socket {
 	if listener != nil {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
-		s._anyListeners.RangeAndSplice(func(_listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
+		_, _ = s._anyListeners.RangeAndSplice(func(_listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
 			return reflect.ValueOf(listener).Pointer() == listenerPointer, i, 1, nil
 		})
 	} else {
@@ -906,7 +906,7 @@ func (s *Socket) PrependAnyOutgoing(listener types.EventListener) *Socket {
 func (s *Socket) OffAnyOutgoing(listener types.EventListener) *Socket {
 	if listener != nil {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
-		s._anyOutgoingListeners.RangeAndSplice(func(_listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
+		_, _ = s._anyOutgoingListeners.RangeAndSplice(func(_listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
 			return reflect.ValueOf(listener).Pointer() == listenerPointer, i, 1, nil
 		})
 	} else {

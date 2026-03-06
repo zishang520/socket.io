@@ -204,7 +204,7 @@ func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []typ
 		if p, ok := encodedPackets[0].(*types.StringBuffer); ok {
 			// "4" being the "message" packet type in the Engine.IO protocol
 			data := types.NewStringBufferString("4")
-			data.Write(p.Bytes())
+			_, _ = data.Write(p.Bytes())
 			// see https://github.com/websockets/ws/issues/617#issuecomment-283002469
 			packetOpts.WsPreEncodedFrame = data
 		}

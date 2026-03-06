@@ -183,7 +183,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 // EmitWithAck broadcasts an event and waits for acknowledgements from all clients.
 func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(Ack) {
 	return func(ack Ack) {
-		b.Emit(ev, append(args, ack)...)
+		_ = b.Emit(ev, append(args, ack)...)
 	}
 }
 

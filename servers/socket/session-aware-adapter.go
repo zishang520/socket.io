@@ -63,7 +63,7 @@ func (s *sessionAwareAdapter) Construct(nsp Namespace) {
 			}
 			return true
 		})
-		s.packets.RangeAndSplice(func(packet *PersistedPacket, i int) (bool, int, int, []*PersistedPacket) {
+		_, _ = s.packets.RangeAndSplice(func(packet *PersistedPacket, i int) (bool, int, int, []*PersistedPacket) {
 			return packet.EmittedAt < threshold, 0, i + 1, nil
 		}, true)
 	}, 60*1000*time.Millisecond)

@@ -403,7 +403,7 @@ func (n *namespace) Emit(ev string, args ...any) error {
 func (n *namespace) Send(args ...any) Namespace {
 	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
 	// if you specify the EmitEvents, the type of args will be never.
-	n.Emit("message", args...)
+	_ = n.Emit("message", args...)
 	return n
 }
 
@@ -411,7 +411,7 @@ func (n *namespace) Send(args ...any) Namespace {
 func (n *namespace) Write(args ...any) Namespace {
 	// This type-cast is needed because EmitEvents likely doesn't have `message` as a key.
 	// if you specify the EmitEvents, the type of args will be never.
-	n.Emit("message", args...)
+	_ = n.Emit("message", args...)
 	return n
 }
 
