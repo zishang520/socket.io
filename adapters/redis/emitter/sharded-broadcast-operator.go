@@ -158,11 +158,9 @@ func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
 func (b *ShardedBroadcastOperator) computeChannel() string {
 	// In dynamic subscription mode, if there's only one room, use a room-specific channel
 	if b.rooms != nil && b.rooms.Len() == 1 {
-		for _, room := range b.rooms.Keys() {
-			if redis.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, room) {
-				return b.broadcastOptions.BroadcastChannel + string(room) + "#"
-			}
-			break
+		keys := b.rooms.Keys()
+		if redis.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, keys[0]) {
+			return b.broadcastOptions.BroadcastChannel + string(keys[0]) + "#"
 		}
 	}
 	return b.broadcastOptions.BroadcastChannel

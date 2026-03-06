@@ -30,7 +30,7 @@ type RedisClient struct {
 //
 // Parameters:
 //   - ctx: The context that controls the lifecycle of Redis operations.
-//     When cancelled, all subscriptions and pending operations will be terminated.
+//     When canceled, all subscriptions and pending operations will be terminated.
 //   - client: A Redis UniversalClient instance that handles the actual Redis communication.
 //
 // Returns:

@@ -19,7 +19,7 @@ type (
 	// RedisPacket represents a packet to be broadcast via Redis.
 	// It contains the server UID, the Socket.IO packet, and broadcast options.
 	RedisPacket struct {
-		_msgpack struct{} `json:"-" msgpack:",as_array"`
+		_msgpack struct{} `json:"-" msgpack:",as_array"` //nolint:unused
 
 		// Uid identifies the source server that sent this packet.
 		Uid adapter.ServerId `json:"-"`

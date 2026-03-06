@@ -13,7 +13,7 @@ func TestNewRedisClient(t *testing.T) {
 		client := rds.NewClient(&rds.Options{
 			Addr: "localhost:6379",
 		})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		rc := NewRedisClient(ctx, client)
 
@@ -32,9 +32,9 @@ func TestNewRedisClient(t *testing.T) {
 		client := rds.NewClient(&rds.Options{
 			Addr: "localhost:6379",
 		})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		rc := NewRedisClient(nil, client)
+		rc := NewRedisClient(context.TODO(), client)
 
 		if rc == nil {
 			t.Fatal("Expected non-nil RedisClient")
@@ -49,13 +49,13 @@ func TestNewRedisClient(t *testing.T) {
 		client := rds.NewClient(&rds.Options{
 			Addr: "localhost:6379",
 		})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		rc := NewRedisClient(ctx, client)
 
 		// Test that EventEmitter is properly initialized
 		called := false
-		rc.On("test", func(args ...any) {
+		_ = rc.On("test", func(args ...any) {
 			called = true
 		})
 
@@ -71,12 +71,12 @@ func TestNewRedisClient(t *testing.T) {
 		client := rds.NewClient(&rds.Options{
 			Addr: "localhost:6379",
 		})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		rc := NewRedisClient(ctx, client)
 
 		var receivedError error
-		rc.On("error", func(args ...any) {
+		_ = rc.On("error", func(args ...any) {
 			if len(args) > 0 {
 				if err, ok := args[0].(error); ok {
 					receivedError = err
@@ -99,7 +99,7 @@ func TestRedisClient_WithClusterClient(t *testing.T) {
 		client := rds.NewClusterClient(&rds.ClusterOptions{
 			Addrs: []string{"localhost:7000", "localhost:7001", "localhost:7002"},
 		})
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		rc := NewRedisClient(ctx, client)
 

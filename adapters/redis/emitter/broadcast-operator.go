@@ -159,11 +159,9 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	// Determine the channel based on SubscriptionMode
 	channel := b.broadcastOptions.BroadcastChannel
 	if b.rooms != nil && b.rooms.Len() == 1 {
-		for _, room := range b.rooms.Keys() {
-			if redis.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, room) {
-				channel += string(room) + "#"
-			}
-			break
+		keys := b.rooms.Keys()
+		if redis.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, keys[0]) {
+			channel += string(keys[0]) + "#"
 		}
 	}
 

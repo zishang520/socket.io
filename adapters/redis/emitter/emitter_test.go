@@ -74,15 +74,15 @@ func TestEmitter(t *testing.T) {
 	})
 
 	t.Run("SocketsJoin", func(t *testing.T) {
-		emit.SocketsJoin("room")
+		_ = emit.SocketsJoin("room")
 	})
 
 	t.Run("SocketsLeave", func(t *testing.T) {
-		emit.SocketsLeave("room")
+		_ = emit.SocketsLeave("room")
 	})
 
 	t.Run("DisconnectSockets", func(t *testing.T) {
-		emit.DisconnectSockets(false)
+		_ = emit.DisconnectSockets(false)
 	})
 
 	t.Run("ServerSideEmit", func(t *testing.T) {
@@ -139,14 +139,14 @@ func TestBroadcastOperator(t *testing.T) {
 	})
 
 	t.Run("SocketsJoin", func(t *testing.T) {
-		b.SocketsJoin("room")
+		_ = b.SocketsJoin("room")
 	})
 
 	t.Run("SocketsLeave", func(t *testing.T) {
-		b.SocketsLeave("room")
+		_ = b.SocketsLeave("room")
 	})
 
 	t.Run("DisconnectSockets", func(t *testing.T) {
-		b.DisconnectSockets(false)
+		_ = b.DisconnectSockets(false)
 	})
 }

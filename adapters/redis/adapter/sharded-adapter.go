@@ -118,7 +118,7 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 
 // setupDynamicSubscriptions sets up event handlers for dynamic room subscriptions.
 func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
-	s.On("create-room", func(rooms ...any) {
+	if err := s.On("create-room", func(rooms ...any) {
 		room := slices.TryGetAny[socket.Room](rooms, 0)
 		if !s.shouldUseASeparateNamespace(room) {
 			return
@@ -128,9 +128,11 @@ func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
 		dynamicPubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, dynamicChannel)
 		s.pubSubClients.Store(dynamicChannel, dynamicPubSub)
 		go s.receiveMessages(dynamicPubSub)
-	})
+	}); err != nil {
+		redisLog.Debug("error registering create-room handler: %v", err)
+	}
 
-	s.On("delete-room", func(rooms ...any) {
+	if err := s.On("delete-room", func(rooms ...any) {
 		room := slices.TryGetAny[socket.Room](rooms, 0)
 		if !s.shouldUseASeparateNamespace(room) {
 			return
@@ -141,9 +143,13 @@ func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
 			if err := pubSub.SUnsubscribe(s.redisClient.Context, dynamicChannel); err != nil {
 				s.redisClient.Emit("error", err)
 			}
-			pubSub.Close()
+			if err := pubSub.Close(); err != nil {
+				s.redisClient.Emit("error", err)
+			}
 		}
-	})
+	}); err != nil {
+		redisLog.Debug("error registering delete-room handler: %v", err)
+	}
 }
 
 // Close unsubscribes from all channels and closes the Pub/Sub clients.
@@ -152,7 +158,9 @@ func (s *shardedRedisAdapter) Close() {
 		if err := pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
 			s.redisClient.Emit("error", err)
 		}
-		pubSub.Close()
+		if err := pubSub.Close(); err != nil {
+			s.redisClient.Emit("error", err)
+		}
 		return true
 	})
 }

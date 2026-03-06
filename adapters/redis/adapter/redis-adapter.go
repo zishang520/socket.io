@@ -189,7 +189,9 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 		}
 	}
 
-	r.redisClient.On("error", r.friendlyErrorHandler)
+	if err := r.redisClient.On("error", r.friendlyErrorHandler); err != nil {
+		redisLog.Debug("error registering Redis error handler: %v", err)
+	}
 
 	// Subscribe to broadcast channel with pattern matching
 	pubsub := r.redisClient.Client.PSubscribe(r.redisClient.Context, r.channel+"*")
@@ -206,7 +208,7 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 
 // handlePatternMessages processes messages from pattern subscriptions.
 func (r *redisAdapter) handlePatternMessages(pubsub *rds.PubSub) {
-	defer pubsub.Close()
+	defer func() { _ = pubsub.Close() }()
 
 	for {
 		select {
@@ -228,7 +230,7 @@ func (r *redisAdapter) handlePatternMessages(pubsub *rds.PubSub) {
 
 // handleChannelMessages processes messages from channel subscriptions.
 func (r *redisAdapter) handleChannelMessages(sub *rds.PubSub) {
-	defer sub.Close()
+	defer func() { _ = sub.Close() }()
 
 	for {
 		select {
@@ -363,7 +365,7 @@ func (r *redisAdapter) handleSocketsRequest(request *Request) {
 		return
 	}
 
-	sockets := r.Adapter.Sockets(types.NewSet(request.Rooms...))
+	sockets := r.Sockets(types.NewSet(request.Rooms...))
 	response, err := json.Marshal(&Response{
 		RequestId: request.RequestId,
 		Sockets: slices.Map(sockets.Keys(), func(socketId socket.SocketId) *adapter.SocketResponse {
@@ -497,7 +499,7 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 
 	// Handle with acknowledgement
 	called := &sync.Once{}
-	callback := socket.Ack(func(args []any, err error) {
+	callback := func(args []any, err error) {
 		called.Do(func() {
 			redisLog.Debug("calling acknowledgement with %v", args)
 			response, err := json.Marshal(&Response{
@@ -513,7 +515,7 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 				r.redisClient.Emit("error", err)
 			}
 		})
-	})
+	}
 	r.Nsp().OnServerSideEmit(append(request.Data, callback))
 }
 

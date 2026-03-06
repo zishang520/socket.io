@@ -328,9 +328,9 @@ func (r *redisStreamsAdapter) decode(rawMessage RawClusterMessage) (*adapter.Clu
 	if data[0] == '{' {
 		rawData = json.RawMessage(data)
 	} else {
-		decodedData, err := base64.StdEncoding.DecodeString(data)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode base64 data: %w", err)
+		decodedData, b64Err := base64.StdEncoding.DecodeString(data)
+		if b64Err != nil {
+			return nil, fmt.Errorf("failed to decode base64 data: %w", b64Err)
 		}
 		rawData = msgpack.RawMessage(decodedData)
 	}
