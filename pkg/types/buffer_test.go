@@ -24,7 +24,7 @@ func (r *negativeReader) Read([]byte) (int, error) { return -1, nil }
 
 func init() {
 	testBytes = make([]byte, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		testBytes[i] = 'a' + byte(i%26)
 	}
 	testString = string(testBytes)
@@ -122,7 +122,7 @@ func empty(t *testing.T, testname string, buf *Buffer, s string, fub []byte) {
 func TestBasicOperations(t *testing.T) {
 	var buf Buffer
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		check(t, "TestBasicOperations (1)", &buf, "")
 
 		buf.Reset()
@@ -137,7 +137,7 @@ func TestBasicOperations(t *testing.T) {
 		}
 		check(t, "TestBasicOperations (4)", &buf, "a")
 
-		buf.WriteByte(testString[1])
+		_ = buf.WriteByte(testString[1])
 		check(t, "TestBasicOperations (5)", &buf, "ab")
 
 		n, err = buf.Write(testBytes[2:26])
@@ -155,7 +155,7 @@ func TestBasicOperations(t *testing.T) {
 		empty(t, "TestBasicOperations (9)", &buf, testString[0:20], make([]byte, 5))
 		empty(t, "TestBasicOperations (10)", &buf, "", make([]byte, 100))
 
-		buf.WriteByte(testString[1])
+		_ = buf.WriteByte(testString[1])
 		c, err := buf.ReadByte()
 		if want := testString[1]; err != nil || c != want {
 			t.Errorf("ReadByte: got (%q, %v), want (%q, %v)", c, err, want, nil)
@@ -214,7 +214,7 @@ func TestLargeByteReads(t *testing.T) {
 func TestMixedReadsAndWrites(t *testing.T) {
 	var buf Buffer
 	s := ""
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wlen := rand.Intn(len(testString))
 		if i%2 == 0 {
 			s = fillString(t, "TestMixedReadsAndWrites (1)", &buf, s, 1, testString[0:wlen])
@@ -240,7 +240,7 @@ func TestCapWithPreallocatedSlice(t *testing.T) {
 
 func TestCapWithSliceAndWrittenData(t *testing.T) {
 	buf := NewBuffer(make([]byte, 0, 10))
-	buf.Write([]byte("test"))
+	_, _ = buf.Write([]byte("test"))
 	n := buf.Cap()
 	if n != 10 {
 		t.Errorf("expected 10, got %d", n)
@@ -259,7 +259,7 @@ func TestReadFrom(t *testing.T) {
 	for i := 3; i < 30; i += 3 {
 		s := fillBytes(t, "TestReadFrom (1)", &buf, "", 5, testBytes[0:len(testBytes)/i])
 		var b Buffer
-		b.ReadFrom(&buf)
+		_, _ = b.ReadFrom(&buf)
 		empty(t, "TestReadFrom (2)", &b, s, make([]byte, len(testString)))
 	}
 }
@@ -277,7 +277,7 @@ func (r panicReader) Read(p []byte) (int, error) {
 // it is "grown" before a Read that panics
 func TestReadFromPanicReader(t *testing.T) {
 
-	// First verify non-panic behaviour
+	// First verify non-panic behavior
 	var buf Buffer
 	i, err := buf.ReadFrom(panicReader{})
 	if err != nil {
@@ -291,10 +291,10 @@ func TestReadFromPanicReader(t *testing.T) {
 	// Confirm that when Reader panics, the empty buffer remains empty
 	var buf2 Buffer
 	defer func() {
-		recover()
+		_ = recover()
 		check(t, "TestReadFromPanicReader (2)", &buf2, "")
 	}()
-	buf2.ReadFrom(panicReader{panic: true})
+	_, _ = buf2.ReadFrom(panicReader{panic: true})
 }
 
 func TestReadFromNegativeReader(t *testing.T) {
@@ -314,7 +314,7 @@ func TestReadFromNegativeReader(t *testing.T) {
 		}
 	}()
 
-	b.ReadFrom(new(negativeReader))
+	_, _ = b.ReadFrom(new(negativeReader))
 }
 
 func TestWriteTo(t *testing.T) {
@@ -322,7 +322,7 @@ func TestWriteTo(t *testing.T) {
 	for i := 3; i < 30; i += 3 {
 		s := fillBytes(t, "TestWriteTo (1)", &buf, "", 5, testBytes[0:len(testBytes)/i])
 		var b Buffer
-		buf.WriteTo(&b)
+		_, _ = buf.WriteTo(&b)
 		empty(t, "TestWriteTo (2)", &b, s, make([]byte, len(testString)))
 	}
 }
@@ -330,11 +330,11 @@ func TestWriteTo(t *testing.T) {
 func TestWriteAppend(t *testing.T) {
 	var got Buffer
 	var want []byte
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		b := got.AvailableBuffer()
 		b = strconv.AppendInt(b, int64(i), 10)
 		want = strconv.AppendInt(want, int64(i), 10)
-		got.Write(b)
+		_, _ = got.Write(b)
 	}
 	if !bytes.Equal(got.Bytes(), want) {
 		t.Fatalf("Bytes() = %q, want %q", got.Bytes(), want)
@@ -343,10 +343,10 @@ func TestWriteAppend(t *testing.T) {
 	// With a sufficiently sized buffer, there should be no allocations.
 	n := testing.AllocsPerRun(100, func() {
 		got.Reset()
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			b := got.AvailableBuffer()
 			b = strconv.AppendInt(b, int64(i), 10)
-			got.Write(b)
+			_, _ = got.Write(b)
 		}
 	})
 	if n > 0 {
@@ -359,8 +359,8 @@ func TestRuneIO(t *testing.T) {
 	// Built a test slice while we write the data
 	b := make([]byte, utf8.UTFMax*NRune)
 	var buf Buffer
-	n := 0
-	for r := rune(0); r < NRune; r++ {
+	var n int
+	for r := range rune(NRune) {
 		size := utf8.EncodeRune(b[n:], r)
 		nbytes, err := buf.WriteRune(r)
 		if err != nil {
@@ -380,7 +380,7 @@ func TestRuneIO(t *testing.T) {
 
 	p := make([]byte, utf8.UTFMax)
 	// Read it back with ReadRune
-	for r := rune(0); r < NRune; r++ {
+	for r := range rune(NRune) {
 		size := utf8.EncodeRune(p, r)
 		nr, nbytes, err := buf.ReadRune()
 		if nr != r || nbytes != size || err != nil {
@@ -403,8 +403,8 @@ func TestRuneIO(t *testing.T) {
 	}
 
 	// check not at EOF
-	buf.Write(b)
-	for r := rune(0); r < NRune; r++ {
+	_, _ = buf.Write(b)
+	for r := range rune(NRune) {
 		r1, size, _ := buf.ReadRune()
 		if err := buf.UnreadRune(); err != nil {
 			t.Fatalf("UnreadRune(%U) got error %q", r, err)
@@ -421,7 +421,7 @@ func TestWriteInvalidRune(t *testing.T) {
 	// utf8.RuneError.
 	for _, r := range []rune{-1, utf8.MaxRune + 1} {
 		var buf Buffer
-		buf.WriteRune(r)
+		_, _ = buf.WriteRune(r)
 		check(t, fmt.Sprintf("TestWriteInvalidRune (%d)", r), &buf, "\uFFFD")
 	}
 }
@@ -443,9 +443,7 @@ func TestNext(t *testing.T) {
 				}
 				bb := buf.Next(k)
 				want := k
-				if want > j-i {
-					want = j - i
-				}
+				want = min(want, j-i)
 				if len(bb) != want {
 					t.Fatalf("in %d,%d: len(Next(%d)) == %d", i, j, k, len(bb))
 				}
@@ -577,7 +575,7 @@ func TestGrow(t *testing.T) {
 			yBytes := bytes.Repeat(y, growLen)
 			allocs := testing.AllocsPerRun(100, func() {
 				buf.Grow(growLen)
-				buf.Write(yBytes)
+				_, _ = buf.Write(yBytes)
 			})
 			// Check no allocation occurs in write, as long as we're single-threaded.
 			if allocs != 0 {
@@ -634,7 +632,7 @@ func TestUnreadByte(t *testing.T) {
 	}
 
 	// check not at EOF
-	b.WriteString("abcdefghijklmnopqrstuvwxyz")
+	_, _ = b.WriteString("abcdefghijklmnopqrstuvwxyz")
 
 	// after unsuccessful read
 	if n, err := b.Read(nil); n != 0 || err != nil {
@@ -664,11 +662,11 @@ func TestUnreadByte(t *testing.T) {
 func TestBufferGrowth(t *testing.T) {
 	var b Buffer
 	buf := make([]byte, 1024)
-	b.Write(buf[0:1])
+	_, _ = b.Write(buf[0:1])
 	var cap0 int
-	for i := 0; i < 5<<10; i++ {
-		b.Write(buf)
-		b.Read(buf)
+	for i := range 5 << 10 {
+		_, _ = b.Write(buf)
+		_, _ = b.Read(buf)
 		if i == 0 {
 			cap0 = b.Cap()
 		}
@@ -685,10 +683,10 @@ func BenchmarkWriteByte(b *testing.B) {
 	const n = 4 << 10
 	b.SetBytes(n)
 	buf := NewBuffer(make([]byte, n))
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		buf.Reset()
-		for i := 0; i < n; i++ {
-			buf.WriteByte('x')
+		for range n {
+			_ = buf.WriteByte('x')
 		}
 	}
 }
@@ -698,10 +696,10 @@ func BenchmarkWriteRune(b *testing.B) {
 	const r = '☺'
 	b.SetBytes(int64(n * utf8.RuneLen(r)))
 	buf := NewBuffer(make([]byte, n*utf8.UTFMax))
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		buf.Reset()
-		for i := 0; i < n; i++ {
-			buf.WriteRune(r)
+		for range n {
+			_, _ = buf.WriteRune(r)
 		}
 	}
 }
@@ -709,12 +707,12 @@ func BenchmarkWriteRune(b *testing.B) {
 // From Issue 5154.
 func BenchmarkBufferNotEmptyWriteRead(b *testing.B) {
 	buf := make([]byte, 1024)
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		var b Buffer
-		b.Write(buf[0:1])
-		for i := 0; i < 5<<10; i++ {
-			b.Write(buf)
-			b.Read(buf)
+		_, _ = b.Write(buf[0:1])
+		for range 5 << 10 {
+			_, _ = b.Write(buf)
+			_, _ = b.Read(buf)
 		}
 	}
 }
@@ -722,15 +720,15 @@ func BenchmarkBufferNotEmptyWriteRead(b *testing.B) {
 // Check that we don't compact too often. From Issue 5154.
 func BenchmarkBufferFullSmallReads(b *testing.B) {
 	buf := make([]byte, 1024)
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		var b Buffer
-		b.Write(buf)
+		_, _ = b.Write(buf)
 		for b.Len()+20 < b.Cap() {
-			b.Write(buf[:10])
+			_, _ = b.Write(buf[:10])
 		}
-		for i := 0; i < 5<<10; i++ {
-			b.Read(buf[:1])
-			b.Write(buf[:1])
+		for range 5 << 10 {
+			_, _ = b.Read(buf[:1])
+			_, _ = b.Write(buf[:1])
 		}
 	}
 }
@@ -740,10 +738,10 @@ func BenchmarkBufferWriteBlock(b *testing.B) {
 	for _, n := range []int{1 << 12, 1 << 16, 1 << 20} {
 		b.Run(fmt.Sprintf("N%d", n), func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				var bb Buffer
 				for bb.Len() < n {
-					bb.Write(block)
+					_, _ = bb.Write(block)
 				}
 			}
 		})
@@ -755,11 +753,11 @@ func BenchmarkBufferAppendNoCopy(b *testing.B) {
 	bb.Grow(16 << 20)
 	b.SetBytes(int64(bb.Available()))
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		bb.Reset()
 		b := bb.AvailableBuffer()
-		b = b[:cap(b)] // use max capacity to simulate a large append operation
-		bb.Write(b)    // should be nearly infinitely fast
+		b = b[:cap(b)]     // use max capacity to simulate a large append operation
+		_, _ = bb.Write(b) // should be nearly infinitely fast
 	}
 }
 
@@ -806,7 +804,7 @@ func TestBufferClone(t *testing.T) {
 	}
 
 	p = make([]byte, clone.Len())
-	n, err = clone.Read(p)
+	_, err = clone.Read(p)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}

@@ -82,7 +82,7 @@ help:
 	@printf "  update     Run 'go get -u' and refresh deps\n"
 	@printf "  build      Build all modules\n"
 	@printf "  fmt        Format code (go fmt)\n"
-	@printf "  vet        Run go vet\n"	@printf "  lint       Run golangci-lint\n"	@printf "  clean      Clean build cache\n"
+	@printf "  vet        Run go vet\n"	@printf "  lint       Run golangci-lint (use FIX=1 to auto-fix)\n"	@printf "  clean      Clean build cache\n"
 	@printf "  test       Run tests with race detection\n"
 	@printf "  version    Update version file and sync submodules\n"
 	@printf "  release    Create git tags for Root and Modules\n"
@@ -112,7 +112,7 @@ vet: deps
 
 lint: deps
 	@command -v golangci-lint >/dev/null 2>&1 || { printf "$(C_RED)[Error] golangci-lint is not installed. See https://golangci-lint.run/welcome/install/$(C_RESET)\n"; exit 1; }
-	$(call EXECUTE,Lint,golangci-lint run ./...)
+	$(call EXECUTE,Lint,golangci-lint run $(if $(FIX),--fix) ./...)
 
 clean:
 	$(call EXECUTE,Clean,go clean -v -r ./...)

@@ -171,14 +171,14 @@ func (s *HttpServer) ListenHTTP3TLS(addr string, certFile string, keyFile string
 
 	// Idempotent repeated calls
 	go func() {
-		defer udpConn.Close()
+		defer func() { _ = udpConn.Close() }()
 
 		hErr := make(chan error)
 		qErr := make(chan error)
 		// Idempotent repeated calls
 		go func() {
 			hErr <- s.httpServer(addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				server.SetQUICHeaders(w.Header())
+				_ = server.SetQUICHeaders(w.Header())
 				s.ServeHTTP(w, r)
 			})).ListenAndServeTLS(certFile, keyFile)
 		}()
@@ -189,7 +189,7 @@ func (s *HttpServer) ListenHTTP3TLS(addr string, certFile string, keyFile string
 
 		select {
 		case err := <-hErr:
-			server.Close()
+			_ = server.Close()
 			if err != http.ErrServerClosed {
 				panic(err)
 			}

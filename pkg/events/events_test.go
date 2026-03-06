@@ -46,7 +46,7 @@ func leaveFromRoom(user string, room string) {
 func ExampleEvents() {
 	// regiter our events to the default event emmiter
 	for evt, listeners := range testEvents {
-		_event.On(evt, listeners...)
+		_ = _event.On(evt, listeners...)
 	}
 
 	user := "user1"
@@ -67,8 +67,8 @@ func TestEvents(t *testing.T) {
 	e := NewEventEmitter()
 	expectedPayload := "this is my payload"
 
-	e.On("my_event", func(payload ...any) {
-		if len(payload) <= 0 {
+	if err := e.On("my_event", func(payload ...any) {
+		if len(payload) == 0 {
 			t.Fatal("Expected payload but got nothing")
 		}
 
@@ -77,13 +77,11 @@ func TestEvents(t *testing.T) {
 		} else if s != expectedPayload {
 			t.Fatalf("Eexpected %s, got: %s", expectedPayload, s)
 		}
-	})
-
-	e.Emit("my_event", expectedPayload)
-	if e.Len() != 1 {
-		t.Fatalf("Length of the events is: %d, while expecting: %d", e.Len(), 1)
+	}); err != nil {
+		t.Fatal(err)
 	}
 
+	e.Emit("my_event", expectedPayload)
 	if e.Len() != 1 {
 		t.Fatalf("Length of the listeners is: %d, while expecting: %d", e.ListenerCount("my_event"), 1)
 	}
@@ -103,7 +101,7 @@ func TestEventsOnce(t *testing.T) {
 	_event.Clear()
 
 	var count = 0
-	_event.Once("my_event", func(payload ...any) {
+	if err := _event.Once("my_event", func(payload ...any) {
 		if count > 0 {
 			t.Fatalf("Once's listener fired more than one time! count: %d", count)
 		}
@@ -111,7 +109,9 @@ func TestEventsOnce(t *testing.T) {
 			t.Fatalf("Once's listeners (from Listeners) should be: %d but has: %d", 2, l)
 		}
 		count++
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if l := _event.ListenerCount("my_event"); l != 1 {
 		t.Fatalf("Real  event's listeners should be: %d but has: %d", 1, l)
 	}
@@ -151,10 +151,18 @@ func TestRemoveListener(t *testing.T) {
 
 	once := func(payload ...any) {}
 
-	e.Once("once_event", once)
-	e.AddListener("my_event", listener)
-	e.AddListener("my_event", func(payload ...any) {})
-	e.AddListener("another_event", func(payload ...any) {})
+	if err := e.Once("once_event", once); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.AddListener("my_event", listener); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.AddListener("my_event", func(payload ...any) {}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.AddListener("another_event", func(payload ...any) {}); err != nil {
+		t.Fatal(err)
+	}
 
 	e.Emit("my_event")
 
@@ -187,7 +195,7 @@ func TestRemoveListener(t *testing.T) {
 
 func BenchmarkConcurrentEmit(b *testing.B) {
 	emitter := NewEventEmitter()
-	emitter.On("bench", func(...any) {})
+	_ = emitter.On("bench", func(...any) {})
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -203,10 +211,10 @@ func TestConcurrentAddListeners(t *testing.T) {
 	var wg sync.WaitGroup
 
 	wg.Add(numListeners)
-	for i := 0; i < numListeners; i++ {
+	for range numListeners {
 		go func() {
 			defer wg.Done()
-			emitter.On("test", func(...any) {})
+			_ = emitter.On("test", func(...any) {})
 		}()
 	}
 	wg.Wait()
@@ -227,7 +235,7 @@ func TestConcurrentEmitRemoveListener(t *testing.T) {
 		emitter.RemoveListener("inc", listener)
 	}
 	for range numListeners {
-		emitter.On("inc", listener)
+		_ = emitter.On("inc", listener)
 	}
 
 	const numEmits = 100
@@ -245,7 +253,7 @@ func TestConcurrentEmitRemoveListener(t *testing.T) {
 	}
 
 	// Stress test verification
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		emitter.Emit("inc")
 		if c := emitter.ListenerCount("inc"); c > 0 {
 			t.Fatalf("Found %d dangling listeners after cleanup", c)
@@ -263,7 +271,7 @@ func TestConcurrentEmit(t *testing.T) {
 
 	const numListeners = 50
 	for range numListeners {
-		emitter.On("inc", func(...any) {
+		_ = emitter.On("inc", func(...any) {
 			atomic.AddInt32(&counter, 1)
 		})
 	}
@@ -292,9 +300,11 @@ func TestConcurrentOnce(t *testing.T) {
 		wg      sync.WaitGroup
 	)
 
-	emitter.Once("once", func(...any) {
+	if err := emitter.Once("once", func(...any) {
 		atomic.AddInt32(&counter, 1)
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	const numEmits = 100
 	wg.Add(numEmits)
@@ -319,7 +329,7 @@ func TestConcurrentRemoveAll(t *testing.T) {
 	// Add initial listeners
 	const numListeners = 50
 	for range numListeners {
-		emitter.On("test", func(...any) {})
+		_ = emitter.On("test", func(...any) {})
 	}
 
 	// Concurrently trigger and remove listeners

@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -126,10 +127,8 @@ func (e *CloseError) Error() string {
 // with one of the specified codes.
 func IsCloseError(err error, codes ...int) bool {
 	if e, ok := err.(*CloseError); ok {
-		for _, code := range codes {
-			if e.Code == code {
-				return true
-			}
+		if slices.Contains(codes, e.Code) {
+			return true
 		}
 	}
 	return false
@@ -139,12 +138,7 @@ func IsCloseError(err error, codes ...int) bool {
 // *CloseError with a code not in the list of expected codes.
 func IsUnexpectedCloseError(err error, expectedCodes ...int) bool {
 	if e, ok := err.(*CloseError); ok {
-		for _, code := range expectedCodes {
-			if e.Code == code {
-				return false
-			}
-		}
-		return true
+		return !slices.Contains(expectedCodes, e.Code)
 	}
 	return false
 }
@@ -460,8 +454,8 @@ func (c *Conn) read(n int) ([]byte, error) {
 	if err == io.EOF {
 		err = errUnexpectedEOF
 	}
-	if _, err := c.br.Discard(len(p)); err != nil {
-		return p, err
+	if _, discardErr := c.br.Discard(len(p)); discardErr != nil {
+		return p, discardErr
 	}
 	return p, err
 }
@@ -477,8 +471,8 @@ func (c *Conn) write(_ int, deadline time.Time, buf0, buf1 []byte) error {
 		return err
 	}
 
-	if err := c.stream.SetWriteDeadline(deadline); err != nil {
-		return c.writeFatal(err)
+	if wdErr := c.stream.SetWriteDeadline(deadline); wdErr != nil {
+		return c.writeFatal(wdErr)
 	}
 	if len(buf1) == 0 {
 		_, err = c.stream.Write(buf0)

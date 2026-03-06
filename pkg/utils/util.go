@@ -16,8 +16,9 @@ func TryCast[T any](val any) T {
 	return r
 }
 
+//go:fix inline
 func Ptr[T any](v T) *T {
-	return &v
+	return new(v)
 }
 
 // Tap calls the given function with the given value, then returns the value.

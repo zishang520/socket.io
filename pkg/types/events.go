@@ -67,7 +67,7 @@ func (e Events) CopyTo(emitter EventEmitter) {
 		// register the events to/with their listeners
 		for evt, listeners := range e {
 			if len(listeners) > 0 {
-				emitter.AddListener(evt, listeners...)
+				_ = emitter.AddListener(evt, listeners...)
 			}
 		}
 	}

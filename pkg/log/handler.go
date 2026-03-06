@@ -25,7 +25,7 @@ func (h *PrefixSimpleHandler) Enabled(_ context.Context, _ slog.Level) bool {
 	return true
 }
 
-func (h *PrefixSimpleHandler) Handle(_ context.Context, r slog.Record) error {
+func (h *PrefixSimpleHandler) Handle(_ context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
 	h.mu.RLock()
 	prefix := h.prefix
 	h.mu.RUnlock()

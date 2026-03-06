@@ -403,7 +403,7 @@ var (
 
 func makeBenchSlice[E any](size int) []E {
 	s := make([]E, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		var val any = i
 		s[i] = val.(E)
 	}

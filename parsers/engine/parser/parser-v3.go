@@ -379,7 +379,7 @@ func (p *parserv3) decodeBinaryPayload(bufferTail types.BufferInterface) ([]*pac
 		}
 		// Convert raw digits to ASCII digits
 		lenByte := lengthBytes[:l-1]
-		for k := 0; k < len(lenByte); k++ {
+		for k := range lenByte {
 			lenByte[k] += '0'
 		}
 		packetLen, err := strconv.ParseInt(string(lenByte), 10, 64)

@@ -103,7 +103,7 @@ func (b *BytesBuffer) GoString() string {
 		// Special case, useful in debugging.
 		return "<nil>"
 	}
-	return fmt.Sprintf("%v", b.Buffer.Bytes())
+	return fmt.Sprintf("%v", b.Bytes())
 }
 
 func NewBytesBufferReader(r io.Reader) (BufferInterface, error) {
@@ -137,7 +137,7 @@ func (sb *StringBuffer) GoString() string {
 		// Special case, useful in debugging.
 		return "<nil>"
 	}
-	return sb.Buffer.String()
+	return sb.String()
 }
 
 // MarshalJSON returns sb as the JSON encoding of m.

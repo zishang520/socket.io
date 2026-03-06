@@ -228,8 +228,9 @@ func (m *Map[TKey, TValue]) LoadOrStore(key TKey, value TValue) (actual TValue, 
 	// Avoid locking if it's a clean hit.
 	read := m.loadReadOnly()
 	if e, ok := read.m[key]; ok {
-		actual, loaded, ok := e.tryLoadOrStore(value)
-		if ok {
+		var stored bool
+		actual, loaded, stored = e.tryLoadOrStore(value)
+		if stored {
 			return actual, loaded
 		}
 	}

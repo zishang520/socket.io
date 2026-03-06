@@ -15,8 +15,8 @@ fmt:
 	go fmt ./...
 
 lint:
-	@echo "[lint] Running golangci-lint..."
-	golangci-lint run ./...
+	@echo "[lint] Running golangci-lint$(if $(FIX), with --fix)..."
+	golangci-lint run $(if $(FIX),--fix) ./...
 
 clean:
 	@echo "[clean] Cleaning build artifacts..."

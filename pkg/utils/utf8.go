@@ -136,7 +136,7 @@ func utf8encodeBytes(dst, src []byte) int {
 	return ndst
 }
 
-func utf8decodeBytes(dst, src []byte) (ndst, nsrc int, err error) {
+func utf8decodeBytes(dst, src []byte) (ndst, nsrc int) {
 	for len(src) > 0 {
 		r, l := utf8.DecodeRune(src)
 		src = src[l:]
@@ -166,10 +166,7 @@ func NewUtf8Encoder(w io.Writer) io.Writer {
 
 func (e *utf8encoder) Write(p []byte) (n int, err error) {
 	for len(p) > 0 && e.err == nil {
-		chunkSize := bufferSize / 2
-		if len(p) < chunkSize {
-			chunkSize = len(p)
-		}
+		chunkSize := min(len(p), bufferSize/2)
 
 		encoded := utf8encodeBytes(e.out[:], p[:chunkSize])
 		_, e.err = e.w.Write(e.out[:encoded])
@@ -213,7 +210,7 @@ func (d *utf8decoder) Read(p []byte) (n int, err error) {
 		// Decode leftover input from last read.
 		var nn, nsrc, ndst int
 		if d.nbuf > 0 {
-			ndst, nsrc, d.err = utf8decodeBytes(d.outbuf[0:], d.buf[0:d.nbuf])
+			ndst, nsrc = utf8decodeBytes(d.outbuf[0:], d.buf[0:d.nbuf])
 			if ndst > 0 {
 				d.out = d.outbuf[0:ndst]
 				d.nbuf = copy(d.buf[0:], d.buf[nsrc:d.nbuf])

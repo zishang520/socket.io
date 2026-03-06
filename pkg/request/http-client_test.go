@@ -57,7 +57,7 @@ func TestHTTPClient_Request(t *testing.T) {
 		switch r.URL.Path {
 		case "/get":
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("get response"))
+			_, _ = w.Write([]byte("get response"))
 		case "/post":
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
@@ -65,7 +65,7 @@ func TestHTTPClient_Request(t *testing.T) {
 			}
 			body, _ := io.ReadAll(r.Body)
 			w.WriteHeader(http.StatusOK)
-			w.Write(body)
+			_, _ = w.Write(body)
 		case "/headers":
 			customHeader := r.Header.Get("X-Custom-Header")
 			w.Header().Set("X-Response-Header", customHeader)

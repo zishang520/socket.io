@@ -159,7 +159,7 @@ func TestConcurrentRange(t *testing.T) {
 
 	m := new(sync.Map)
 	for n := int64(1); n <= mapSize; n++ {
-		m.Store(n, int64(n))
+		m.Store(n, n)
 	}
 
 	done := make(chan struct{})
@@ -317,7 +317,7 @@ func TestConcurrentClear(t *testing.T) {
 	wg.Add(30) // 10 goroutines for writing, 10 goroutines for reading, 10 goroutines for waiting
 
 	// Writing data to the map concurrently
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(k, v int) {
 			defer wg.Done()
 			m.Store(k, v)
@@ -325,7 +325,7 @@ func TestConcurrentClear(t *testing.T) {
 	}
 
 	// Reading data from the map concurrently
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(k int) {
 			defer wg.Done()
 			if value, ok := m.Load(k); ok {
@@ -337,7 +337,7 @@ func TestConcurrentClear(t *testing.T) {
 	}
 
 	// Clearing data from the map concurrently
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer wg.Done()
 			m.Clear()

@@ -81,7 +81,7 @@ func TestBackoff_SetMethods(t *testing.T) {
 
 	newMax := 10000.0
 	b.SetMax(newMax)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		if got := b.Duration(); got > int64(newMax) {
 			t.Errorf("SetMax failed: got %v, want <= %v", got, newMax)
 		}

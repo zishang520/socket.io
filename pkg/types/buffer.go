@@ -259,11 +259,7 @@ func growSlice(b []byte, n int) []byte {
 	// Instead use the append-make pattern with a nil slice to ensure that
 	// we allocate buffers rounded up to the closest size class.
 	c := len(b) + n // ensure enough space for n elements
-	if c < 2*cap(b) {
-		// The growth rate has historically always been 2x. In the future,
-		// we could rely purely on append to determine the growth rate.
-		c = 2 * cap(b)
-	}
+	c = max(c, 2*cap(b))
 	b2 := append([]byte(nil), make([]byte, c)...)
 	i := copy(b2, b)
 	return b2[:i]
@@ -317,7 +313,7 @@ func (b *Buffer) WriteByte(c byte) error {
 func (b *Buffer) WriteRune(r rune) (n int, err error) {
 	// Compare as uint32 to correctly handle negative runes.
 	if uint32(r) < utf8.RuneSelf {
-		b.WriteByte(byte(r))
+		_ = b.WriteByte(byte(r))
 		return 1, nil
 	}
 	b.lastRead = opInvalid

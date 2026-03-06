@@ -66,8 +66,12 @@ if /I "%~1"=="lint" (
         echo %C_RED%[Error] golangci-lint is not installed. See https://golangci-lint.run/welcome/install/%C_RESET%
         exit /b 1
     )
-    call :RunBatch "go mod tidy && go mod vendor" "%~2" "Deps"
-    if !ERRORLEVEL! EQU 0 call :RunBatch "golangci-lint run ./..." "%~2" "Lint"
+    set "LINT_MODULE=%~2"
+    set "LINT_FIX="
+    if /I "%~2"=="--fix" (set "LINT_FIX=--fix" & set "LINT_MODULE=")
+    if /I "%~3"=="--fix" set "LINT_FIX=--fix"
+    call :RunBatch "go mod tidy && go mod vendor" "!LINT_MODULE!" "Deps"
+    if !ERRORLEVEL! EQU 0 call :RunBatch "golangci-lint run !LINT_FIX! ./..." "!LINT_MODULE!" "Lint"
     goto :finalize
 )
 
@@ -255,7 +259,7 @@ exit /b 0
     echo %C_CYAN%Composite Commands:%C_RESET%
     echo   update      Update all dependencies (-u) and vendor
     echo   vet         Run 'vet' after tidying modules
-    echo   lint        Run golangci-lint after tidying modules
+    echo   lint        Run golangci-lint after tidying modules (add --fix to auto-fix)
     echo.
     echo %C_CYAN%Release Management:%C_RESET%
     echo   version vX.Y.Z     Bump VERSION file and sync %CORE_DEPENDENCY% in all modules

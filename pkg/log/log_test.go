@@ -38,8 +38,8 @@ func TestNewLog(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.envDebug != "" {
-				os.Setenv("DEBUG", tt.envDebug)
-				defer os.Unsetenv("DEBUG")
+				_ = os.Setenv("DEBUG", tt.envDebug)
+				defer func() { _ = os.Unsetenv("DEBUG") }()
 			}
 
 			logger := NewLog(tt.prefix)
@@ -151,8 +151,8 @@ func TestDebugWithNamespace(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Setenv("DEBUG", tt.envDebug)
-			defer os.Unsetenv("DEBUG")
+			_ = os.Setenv("DEBUG", tt.envDebug)
+			defer func() { _ = os.Unsetenv("DEBUG") }()
 
 			logger := NewLog(tt.prefix)
 			buf.Reset()
@@ -227,7 +227,7 @@ func TestFormattedMethods(t *testing.T) {
 
 func TestLog(t *testing.T) {
 	DEBUG = true
-	os.Setenv("DEBUG", "")
+	_ = os.Setenv("DEBUG", "")
 	_log := NewLog("namespace")
 	buf := new(bytes.Buffer)
 
