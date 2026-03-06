@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	rds "github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
@@ -36,10 +37,35 @@ func (sb *ShardedRedisAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	return NewShardedRedisAdapter(nsp, sb.Redis, sb.Opts)
 }
 
+// nodePubSubEntry pools dynamic channel subscriptions destined for the same
+// Redis Cluster master node onto a single TCP connection.
+//
+// Because SSUBSCRIBE is routed to the master that owns the channel's slot,
+// all channels mapping to the same master share one PubSub (and therefore
+// one TCP connection) instead of one connection per channel.
+type nodePubSubEntry struct {
+	pubSub   *rds.PubSub
+	refCount *atomic.Int32 // number of dynamic channels currently subscribed via this entry
+}
+
 type shardedRedisAdapter struct {
 	adapter.ClusterAdapter
 
-	pubSubClients   *types.Map[string, *rds.PubSub] // Channel to PubSub client mapping
+	// pubSubClients holds the two static PubSub connections: one for the main
+	// broadcast channel and one for the per-server response channel.
+	pubSubClients *types.Map[string, *rds.PubSub]
+
+	// nodePubSubs pools dynamic room subscriptions by Redis Cluster master node
+	// address. Channels that map to the same master share a single TCP connection
+	// instead of each opening a dedicated one, which is the root cause of issue #140.
+	nodePubSubs *types.Map[string, *nodePubSubEntry]
+	// chanToAddr maps each active dynamic channel back to its master node address
+	// so that unsubscribeNode can locate the right pool entry in O(1).
+	chanToAddr *types.Map[string, string]
+	// ncDynamicPubSubs holds dynamic channel subscriptions for non-ClusterClient
+	// backends (e.g. standalone Redis or Ring). Each channel gets its own PubSub.
+	ncDynamicPubSubs *types.Map[string, *rds.PubSub]
+
 	redisClient     *redis.RedisClient
 	opts            *ShardedRedisAdapterOptions
 	channel         string
@@ -50,9 +76,12 @@ type shardedRedisAdapter struct {
 // Call Construct() to complete initialization.
 func MakeShardedRedisAdapter() ShardedRedisAdapter {
 	c := &shardedRedisAdapter{
-		ClusterAdapter: adapter.MakeClusterAdapter(),
-		opts:           DefaultShardedRedisAdapterOptions(),
-		pubSubClients:  &types.Map[string, *rds.PubSub]{},
+		ClusterAdapter:   adapter.MakeClusterAdapter(),
+		opts:             DefaultShardedRedisAdapterOptions(),
+		pubSubClients:    &types.Map[string, *rds.PubSub]{},
+		nodePubSubs:      &types.Map[string, *nodePubSubEntry]{},
+		chanToAddr:       &types.Map[string, string]{},
+		ncDynamicPubSubs: &types.Map[string, *rds.PubSub]{},
 	}
 	c.Prototype(c)
 	return c
@@ -123,11 +152,7 @@ func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
 		if !s.shouldUseASeparateNamespace(room) {
 			return
 		}
-
-		dynamicChannel := s.dynamicChannel(room)
-		dynamicPubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, dynamicChannel)
-		s.pubSubClients.Store(dynamicChannel, dynamicPubSub)
-		go s.receiveMessages(dynamicPubSub)
+		s.subscribeNode(s.dynamicChannel(room))
 	}); err != nil {
 		redisLog.Debug("error registering create-room handler: %v", err)
 	}
@@ -137,23 +162,111 @@ func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
 		if !s.shouldUseASeparateNamespace(room) {
 			return
 		}
-
-		dynamicChannel := s.dynamicChannel(room)
-		if pubSub, ok := s.pubSubClients.LoadAndDelete(dynamicChannel); ok {
-			if err := pubSub.SUnsubscribe(s.redisClient.Context, dynamicChannel); err != nil {
-				s.redisClient.Emit("error", err)
-			}
-			if err := pubSub.Close(); err != nil {
-				s.redisClient.Emit("error", err)
-			}
-		}
+		s.unsubscribeNode(s.dynamicChannel(room))
 	}); err != nil {
 		redisLog.Debug("error registering delete-room handler: %v", err)
 	}
 }
 
-// Close unsubscribes from all channels and closes the Pub/Sub clients.
+// subscribeNode subscribes to a dynamic channel using master-node-based connection pooling.
+//
+// For ClusterClient backends, MasterForKey resolves the channel to its owning master node.
+// All channels that land on the same master share one PubSub (and therefore one TCP
+// connection). The first channel for a given master opens exactly one new TCP connection
+// via nodeClient.SSubscribe; every subsequent channel for the same master is added via
+// the PubSub instance method, which reuses the existing connection by sending an extra
+// SSUBSCRIBE command — no new TCP connection is opened.
+//
+// For non-ClusterClient backends the adapter falls back to one PubSub per channel.
+func (s *shardedRedisAdapter) subscribeNode(channel string) {
+	clusterClient, isCluster := s.redisClient.Client.(*rds.ClusterClient)
+	if !isCluster {
+		// Non-cluster fallback: one PubSub per channel, tracked in ncDynamicPubSubs.
+		if _, exists := s.ncDynamicPubSubs.Load(channel); exists {
+			return // idempotency guard
+		}
+		pubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, channel)
+		s.ncDynamicPubSubs.Store(channel, pubSub)
+		go s.receiveMessages(pubSub)
+		return
+	}
+
+	nodeClient, err := clusterClient.MasterForKey(s.redisClient.Context, channel)
+	if err != nil {
+		s.redisClient.Emit("error", fmt.Errorf("subscribeNode: MasterForKey(%q): %w", channel, err))
+		return
+	}
+	addr := nodeClient.Options().Addr
+
+	// Idempotency guard: if this channel is already tracked, do nothing.
+	// This prevents refCount drift when create-room fires more than once for
+	// the same room without an intervening delete-room.
+	if _, alreadyTracked := s.chanToAddr.Load(channel); alreadyTracked {
+		return
+	}
+
+	if entry, exists := s.nodePubSubs.Load(addr); exists {
+		// Reuse the existing connection: PubSub.SSubscribe (instance method) sends
+		// SSUBSCRIBE on the already-open TCP socket without opening a new one.
+		if err := entry.pubSub.SSubscribe(s.redisClient.Context, channel); err != nil {
+			s.redisClient.Emit("error", fmt.Errorf("subscribeNode: SSubscribe(%q): %w", channel, err))
+			return
+		}
+		entry.refCount.Add(1)
+		s.chanToAddr.Store(channel, addr)
+		return
+	}
+
+	// First channel for this node: open one new TCP connection to that master.
+	pubSub := nodeClient.SSubscribe(s.redisClient.Context, channel)
+	s.nodePubSubs.Store(addr, &nodePubSubEntry{pubSub: pubSub, refCount: utils.Tap(&atomic.Int32{}, func(i *atomic.Int32) {
+		i.Store(1)
+	})})
+	s.chanToAddr.Store(channel, addr)
+	go s.receiveMessages(pubSub)
+}
+
+// unsubscribeNode removes a dynamic channel from its node pool entry.
+// When the last channel for a node is removed, the shared PubSub (and its TCP
+// connection) is closed and the pool entry is deleted.
+func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
+	// Non-cluster fallback path.
+	if pubSub, ok := s.ncDynamicPubSubs.LoadAndDelete(channel); ok {
+		if err := pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
+			s.redisClient.Emit("error", err)
+		}
+		if err := pubSub.Close(); err != nil {
+			s.redisClient.Emit("error", err)
+		}
+		return
+	}
+
+	addr, ok := s.chanToAddr.LoadAndDelete(channel)
+	if !ok {
+		return
+	}
+
+	entry, exists := s.nodePubSubs.Load(addr)
+	if !exists {
+		return
+	}
+
+	if err := entry.pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
+		s.redisClient.Emit("error", err)
+	}
+
+	if entry.refCount.Add(-1) <= 0 {
+		if err := entry.pubSub.Close(); err != nil {
+			s.redisClient.Emit("error", err)
+		}
+		s.nodePubSubs.Delete(addr)
+	}
+}
+
+// Close unsubscribes from all channels and closes all Pub/Sub connections.
 func (s *shardedRedisAdapter) Close() {
+	// Close static PubSub connections (main channel + response channel)
+	// and any non-cluster dynamic channels stored in pubSubClients.
 	s.pubSubClients.Range(func(channel string, pubSub *rds.PubSub) bool {
 		if err := pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
 			s.redisClient.Emit("error", err)
@@ -163,6 +276,23 @@ func (s *shardedRedisAdapter) Close() {
 		}
 		return true
 	})
+
+	// Close all node-pooled and non-cluster dynamic PubSub connections.
+	s.nodePubSubs.Range(func(_ string, entry *nodePubSubEntry) bool {
+		if err := entry.pubSub.Close(); err != nil {
+			s.redisClient.Emit("error", err)
+		}
+		return true
+	})
+	s.nodePubSubs.Clear()
+	s.chanToAddr.Clear()
+	s.ncDynamicPubSubs.Range(func(_ string, pubSub *rds.PubSub) bool {
+		if err := pubSub.Close(); err != nil {
+			s.redisClient.Emit("error", err)
+		}
+		return true
+	})
+	s.ncDynamicPubSubs.Clear()
 }
 
 // receiveMessages continuously receives and processes messages from a Pub/Sub client.
