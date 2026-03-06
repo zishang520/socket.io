@@ -162,7 +162,7 @@ func (w *webTransport) message() {
 			}
 		}
 		if c, ok := message.(io.Closer); ok {
-			c.Close()
+			_ = c.Close()
 		}
 	}
 }
@@ -197,10 +197,10 @@ func (w *webTransport) handshake() {
 // addEventListeners sets up event handlers for the WebTransport connection.
 // This method configures error and close event handlers and starts the message reading loop.
 func (w *webTransport) addEventListeners() {
-	w.session.On("error", func(errs ...any) {
+	_ = w.session.On("error", func(errs ...any) {
 		w.OnError("webtransport error", slices.TryGetAny[error](errs, 0), w.session.Session().Context())
 	})
-	w.session.Once("close", func(...any) {
+	_ = w.session.Once("close", func(...any) {
 		client_webtransport_log.Debug(`transport closed gracefully`)
 		w.OnClose(NewTransportError("webtransport connection closed", nil, w.session.Session().Context()).Err())
 	})
@@ -307,7 +307,7 @@ func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
 // This method ensures proper cleanup of the WebTransport connection.
 func (w *webTransport) DoClose() {
 	if w.session != nil {
-		defer w.session.CloseWithError(0, "")
+		defer func() { _ = w.session.CloseWithError(0, "") }()
 	}
 }
 

@@ -86,7 +86,7 @@ func (p *polling) Pause(onPause func()) {
 		if p._polling.Load() {
 			client_polling_log.Debug("we are currently polling - waiting to pause")
 			total.Add(1)
-			p.Once("pollComplete", func(...any) {
+			_ = p.Once("pollComplete", func(...any) {
 				client_polling_log.Debug("pre-pause polling complete")
 				if total.Add(^uint32(0)) == 0 {
 					pause()
@@ -95,7 +95,7 @@ func (p *polling) Pause(onPause func()) {
 		}
 		if !p.Writable() {
 			total.Add(1)
-			p.Once("drain", func(...any) {
+			_ = p.Once("drain", func(...any) {
 				client_polling_log.Debug("pre-pause writing complete")
 				if total.Add(^uint32(0)) == 0 {
 					pause()
@@ -148,7 +148,7 @@ func (p *polling) OnData(data types.BufferInterface) {
 
 // DoClose gracefully closes the polling transport, sending a close packet if needed.
 func (p *polling) DoClose() {
-	defer p.client.Close()
+	defer func() { _ = p.client.Close() }()
 	cleanup := func(...any) {
 		client_polling_log.Debug("writing close packet")
 		p.Write([]*packet.Packet{{Type: packet.CLOSE}})
@@ -158,7 +158,7 @@ func (p *polling) DoClose() {
 		cleanup()
 	} else {
 		client_polling_log.Debug("transport not open - deferring close")
-		p.Once("open", cleanup)
+		_ = p.Once("open", cleanup)
 	}
 }
 
@@ -206,7 +206,7 @@ func (p *polling) doPoll() {
 		p.OnError("fetch read error", err, nil)
 		return
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if !res.Ok() {
 		p.OnError("fetch read error", res.Err, res.Request.Context())
 		return
@@ -227,7 +227,7 @@ func (p *polling) doWrite(data types.BufferInterface, fn func()) {
 		p.OnError("fetch write error", err, nil)
 		return
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if !res.Ok() {
 		p.OnError("fetch write error", res.Err, res.Request.Context())
 		return

@@ -161,14 +161,14 @@ func (w *websocket) message() {
 		case ws.CloseMessage:
 			w.socket.Emit("close")
 			if c, ok := message.(io.Closer); ok {
-				c.Close()
+				_ = c.Close()
 			}
 			return
 		case ws.PingMessage:
 		case ws.PongMessage:
 		}
 		if c, ok := message.(io.Closer); ok {
-			c.Close()
+			_ = c.Close()
 		}
 	}
 }
@@ -177,10 +177,10 @@ func (w *websocket) message() {
 // This method configures error and close event handlers and starts the
 // message reading loop.
 func (w *websocket) addEventListeners() {
-	w.socket.On("error", func(errs ...any) {
+	_ = w.socket.On("error", func(errs ...any) {
 		w.OnError("websocket error", slices.TryGetAny[error](errs, 0), nil)
 	})
-	w.socket.Once("close", func(...any) {
+	_ = w.socket.Once("close", func(...any) {
 		w.OnClose(NewTransportError("websocket connection closed", nil, nil).Err())
 	})
 
@@ -298,7 +298,7 @@ func (w *websocket) doWrite(data types.BufferInterface, compress bool) {
 // This method ensures proper cleanup of the WebSocket connection.
 func (w *websocket) DoClose() {
 	if w.socket != nil {
-		defer w.socket.Close()
+		defer func() { _ = w.socket.Close() }()
 	}
 }
 

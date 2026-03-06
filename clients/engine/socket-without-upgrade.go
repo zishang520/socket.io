@@ -285,14 +285,14 @@ func (s *socketWithoutUpgrade) Construct(uri string, opts SocketOptionsInterface
 			}
 		}
 
-		events.Once(EventBeforeUnload, s._beforeunloadEventListener)
+		_ = events.Once(EventBeforeUnload, s._beforeunloadEventListener)
 
 		if s.hostname != "localhost" {
 			client_socket_log.Debug("adding listener for the 'offline' event")
 			s._offlineEventListener = func(...any) {
 				s._onClose("transport close", errors.New("network connection lost"))
 			}
-			events.Once(EventOffline, s._offlineEventListener)
+			_ = events.Once(EventOffline, s._offlineEventListener)
 		}
 	}
 
@@ -379,21 +379,21 @@ func (s *socketWithoutUpgrade) _open() {
 func (s *socketWithoutUpgrade) SetTransport(transport Transport) {
 	client_socket_log.Debug("setting transport %s", transport.Name())
 
-	if transport := s.Transport(); transport != nil {
-		client_socket_log.Debug("clearing existing transport %s", transport.Name())
-		transport.Clear()
+	if oldTransport := s.Transport(); oldTransport != nil {
+		client_socket_log.Debug("clearing existing transport %s", oldTransport.Name())
+		oldTransport.Clear()
 	}
 
 	// set up transport
 	s.transport.Store(&transport)
 
 	// set up transport listeners
-	transport.On("drain", func(...any) { s._onDrain() })
-	transport.On("packet", func(packets ...any) {
+	_ = transport.On("drain", func(...any) { s._onDrain() })
+	_ = transport.On("packet", func(packets ...any) {
 		s._onPacket(slices.TryGetAny[*packet.Packet](packets, 0))
 	})
-	transport.On("error", func(err ...any) { s._onError(slices.TryGetAny[error](err, 0)) })
-	transport.On("close", func(reason ...any) { s._onClose("transport close", slices.TryGetAny[error](reason, 0)) })
+	_ = transport.On("error", func(err ...any) { s._onError(slices.TryGetAny[error](err, 0)) })
+	_ = transport.On("close", func(reason ...any) { s._onClose("transport close", slices.TryGetAny[error](reason, 0)) })
 }
 
 // OnOpen is called when the connection is successfully established.
@@ -508,7 +508,7 @@ func (s *socketWithoutUpgrade) Flush() {
 // _getWritablePackets prepares packets for sending while respecting payload size limits.
 // It handles packet encoding and size calculation for different transport types.
 func (s *socketWithoutUpgrade) _getWritablePackets() (res []*packet.Packet) {
-	if !(s._maxPayload != 0 && s.Transport().Name() == transports.POLLING && s.writeBuffer.Len() > 1) {
+	if s._maxPayload == 0 || s.Transport().Name() != transports.POLLING || s.writeBuffer.Len() <= 1 {
 		return s.writeBuffer.AllAndClear()
 	}
 
@@ -589,7 +589,7 @@ func (s *socketWithoutUpgrade) _sendPacket(_type packet.Type, data io.Reader, op
 	s.writeBuffer.Push(packet)
 
 	if fn != nil {
-		s.Once("flush", func(...any) {
+		_ = s.Once("flush", func(...any) {
 			fn()
 		})
 	}
@@ -614,14 +614,14 @@ func (s *socketWithoutUpgrade) Close() SocketWithoutUpgrade {
 
 	waitForUpgrade := func() {
 		// wait for upgrade to finish since we can't send packets while pausing a transport
-		s.Once("upgrade", cleanupAndClose)
-		s.Once("upgradeError", cleanupAndClose)
+		_ = s.Once("upgrade", cleanupAndClose)
+		_ = s.Once("upgradeError", cleanupAndClose)
 	}
 
 	if readyState := s.ReadyState(); SocketStateOpening == readyState || SocketStateOpen == readyState {
 		s.readyState.Store(SocketStateClosing)
 		if s.writeBuffer.Len() > 0 {
-			s.Once("drain", func(...any) {
+			_ = s.Once("drain", func(...any) {
 				if s.Upgrading() {
 					waitForUpgrade()
 				} else {
@@ -646,7 +646,7 @@ func (s *socketWithoutUpgrade) _onError(err error) {
 
 	if s.opts.TryAllTransports() && s.transports.Len() > 1 && s.ReadyState() == SocketStateOpening {
 		client_socket_log.Debug("trying next transport")
-		s.transports.Shift()
+		_, _ = s.transports.Shift()
 		s._open()
 		return
 	}

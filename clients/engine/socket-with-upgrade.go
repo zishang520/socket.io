@@ -121,7 +121,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 				Data: types.NewStringBufferString("probe"),
 			},
 		})
-		transport.Once("packet", func(msgs ...any) {
+		_ = transport.Once("packet", func(msgs ...any) {
 			if failed.Load() {
 				return
 			}
@@ -130,7 +130,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 				return
 			}
 			sb := new(strings.Builder)
-			io.Copy(sb, msg.Data)
+			_, _ = io.Copy(sb, msg.Data)
 
 			if msg.Type == packet.PONG && sb.String() == "probe" {
 				client_socket_log.Debug(`probe transport "%s" pong`, name)
@@ -210,12 +210,12 @@ func (s *socketWithUpgrade) _probe(name string) {
 		s.RemoveListener("upgrading", onupgrade)
 	}
 
-	transport.Once("open", onTransportOpen)
-	transport.Once("error", onerror)
-	transport.Once("close", onTransportClose)
+	_ = transport.Once("open", onTransportOpen)
+	_ = transport.Once("error", onerror)
+	_ = transport.Once("close", onTransportClose)
 
-	s.Once("close", onclose)
-	s.Once("upgrading", onupgrade)
+	_ = s.Once("close", onclose)
+	_ = s.Once("upgrading", onupgrade)
 
 	if s._upgrades.Has(transports.WEBTRANSPORT) && name != transports.WEBTRANSPORT {
 		// favor WebTransport
