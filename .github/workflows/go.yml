@@ -2,55 +2,94 @@ name: Go CI
 
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: ["main", "dev"]
   pull_request:
-    branches: [ "main", "dev" ]
+    branches: ["main", "dev"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: Build, Test, Lint and Analyze
+  lint:
+    name: Lint Modules
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - "."
+          - "parsers/engine"
+          - "parsers/socket"
+          - "servers/engine"
+          - "servers/socket"
+          - "adapters/adapter"
+          - "adapters/redis"
+          - "clients/engine"
+          - "clients/socket"
 
     env:
       GOPROXY: https://proxy.golang.org,direct
       GOTOOLCHAIN: go1.26.0+auto
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: "1.26.x"
-        cache: true
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: false
 
-    - name: Start Redis with Password and No-Save
-      run: |
-        docker run -d -p 6379:6379 --name ci-redis redis:alpine \
-          redis-server --requirepass root --save "" --appendonly no
+      - name: Run make deps
+        run: make deps
 
-    - name: Wait for Redis to be ready
-      run: |
-        for i in {1..10}; do
-          if echo "PING" | nc -w 2 localhost 6379 > /dev/null; then
-            echo "Redis is ready";
-            break;
-          fi;
-          echo "Waiting for Redis...";
-          sleep 3;
-        done
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.10.1
 
-    - name: Run Lint, Build and Test
-      run: |
-        make lint
-        make vet
-        make build
-        make test
+          working-directory: ${{ matrix.module }}
+
+          args: --timeout=5m --config=${{ github.workspace }}/.golangci.yml
+
+  build-and-test:
+    name: Build, Test and Analyze
+    runs-on: ubuntu-latest
+    needs: lint
+
+    env:
+      GOPROXY: https://proxy.golang.org,direct
+      GOTOOLCHAIN: go1.26.0+auto
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: Start Redis with Password and No-Save
+        run: |
+          docker run -d -p 6379:6379 --name ci-redis redis:alpine \
+            redis-server --requirepass root --save "" --appendonly no
+
+      - name: Wait for Redis to be ready
+        run: |
+          for i in {1..10}; do
+            if echo "PING" | nc -w 2 localhost 6379 > /dev/null; then
+              echo "Redis is ready";
+              break;
+            fi;
+            echo "Waiting for Redis...";
+            sleep 3;
+          done
+
+      - name: Build and Test
+        run: |
+          make build
+          make test
