@@ -20,6 +20,7 @@ type BufferInterface interface {
 	Bytes() []byte
 	AvailableBuffer() []byte
 	fmt.Stringer
+	Peek(int) ([]byte, error)
 	fmt.GoStringer
 	Len() int
 	Size() int64
