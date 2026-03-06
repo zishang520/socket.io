@@ -79,7 +79,7 @@ This is a **Go monorepo**. Each submodule is organized as an independent Go modu
 
 ## Development Setup
 
-- Install [Go](https://go.dev) **version 1.25.0+**
+- Install [Go](https://go.dev) **version 1.26.0+**
 - Clone the repository and use Go Workspaces (`go work`) to link submodules if needed
 
 ## Useful Commands

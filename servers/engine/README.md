@@ -113,7 +113,7 @@ opts.SetMaxHttpBufferSize(1e6)
 
 ### Prerequisites
 
-- Go 1.25.0+
+- Go 1.26.0+
 - Make
 
 ### Testing

@@ -1,6 +1,6 @@
 module github.com/zishang520/socket.io/parsers/engine/v3
 
-go 1.25.0
+go 1.26.0
 
 require github.com/zishang520/socket.io/v3 v3.0.0-rc.12
 

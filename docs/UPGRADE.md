@@ -746,6 +746,6 @@ data := err.Data
 | Recommendation | Details |
 |----------------|---------|
 | **Backup First** | Always backup your codebase before upgrading |
-| **Go Version** | Ensure you're using Go 1.25.0+ or higher |
+| **Go Version** | Ensure you're using Go 1.26.0+ or higher |
 | **Staged Rollout** | Consider upgrading non-critical components first |
 | **Client Coordination** | Coordinate with frontend team for client compatibility |

@@ -20,7 +20,7 @@ jobs:
 
     env:
       GOPROXY: https://proxy.golang.org,direct
-      GOTOOLCHAIN: go1.25.0+auto
+      GOTOOLCHAIN: go1.26.0+auto
 
     steps:
     - name: Checkout code
@@ -29,7 +29,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: "1.25.x"
+        go-version: "1.26.x"
         cache: true
 
     - name: Start Redis with Password and No-Save
