@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -384,6 +385,10 @@ func (p *parserv3) decodeBinaryPayload(bufferTail types.BufferInterface) ([]*pac
 		packetLen, err := strconv.ParseInt(string(lenByte), 10, 64)
 		if err != nil {
 			return packets, err
+		}
+		// Ensure packetLen can be safely converted to int and is non-negative.
+		if packetLen < 0 || packetLen > int64(math.MaxInt) {
+			return packets, ErrInvalidDataLength
 		}
 
 		if isString {
