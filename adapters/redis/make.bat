@@ -13,13 +13,14 @@ set "args=!args:~0,4!"
 :: Dispatch to command
 if /i "!args!"=="deps"  goto :deps
 if /i "!args!"=="fmt"   goto :fmt
+if /i "!args!"=="lint"  goto :lint
 if /i "!args!"=="test"  goto :test
 if /i "!args!"=="clean"  goto :clean
 
 goto :default
 
 :default
-    echo Usage: %~n0 [deps ^| fmt ^| clean ^| test]
+    echo Usage: %~n0 [deps ^| fmt ^| lint ^| clean ^| test]
     GOTO :EOF
 
 :deps
@@ -31,7 +32,10 @@ goto :default
     echo [fmt] Formatting Go code...
     go fmt ./...
     GOTO :EOF
-
+:lint
+    echo [lint] Running golangci-lint...
+    golangci-lint run ./...
+    GOTO :EOF
 :clean
     echo [clean] Cleaning build artifacts...
     go clean -v -r ./...

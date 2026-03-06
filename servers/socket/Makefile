@@ -1,10 +1,10 @@
 # Set Go proxy (optional override)
 export GOPROXY ?= https://proxy.golang.org,direct
 
-.PHONY: all deps fmt clean test
+.PHONY: all deps fmt lint clean test
 
 all:
-	@echo "Usage: make [deps | fmt | clean | test]"
+	@echo "Usage: make [deps | fmt | lint | clean | test]"
 
 deps:
 	@echo "[deps] Tidying Go module dependencies..."
@@ -13,6 +13,10 @@ deps:
 fmt:
 	@echo "[fmt] Formatting Go code..."
 	go fmt ./...
+
+lint:
+	@echo "[lint] Running golangci-lint..."
+	golangci-lint run ./...
 
 clean:
 	@echo "[clean] Cleaning build artifacts..."

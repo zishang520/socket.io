@@ -61,7 +61,7 @@ endef
 #  TARGETS (The Interfaces)
 # ==============================================================================
 
-.PHONY: all help env deps get update build fmt vet clean test version release
+.PHONY: all help env deps get update build fmt vet lint clean test version release
 
 all: help
 
@@ -82,8 +82,7 @@ help:
 	@printf "  update     Run 'go get -u' and refresh deps\n"
 	@printf "  build      Build all modules\n"
 	@printf "  fmt        Format code (go fmt)\n"
-	@printf "  vet        Run go vet\n"
-	@printf "  clean      Clean build cache\n"
+	@printf "  vet        Run go vet\n"	@printf "  lint       Run golangci-lint\n"	@printf "  clean      Clean build cache\n"
 	@printf "  test       Run tests with race detection\n"
 	@printf "  version    Update version file and sync submodules\n"
 	@printf "  release    Create git tags for Root and Modules\n"
@@ -110,6 +109,10 @@ fmt:
 
 vet: deps
 	$(call EXECUTE,Vet,go vet ./...)
+
+lint: deps
+	@command -v golangci-lint >/dev/null 2>&1 || { printf "$(C_RED)[Error] golangci-lint is not installed. See https://golangci-lint.run/welcome/install/$(C_RESET)\n"; exit 1; }
+	$(call EXECUTE,Lint,golangci-lint run ./...)
 
 clean:
 	$(call EXECUTE,Clean,go clean -v -r ./...)
