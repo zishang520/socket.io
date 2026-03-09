@@ -326,19 +326,22 @@ func (p *parserv3) decodeStringPayload(v *types.StringBuffer) ([]*packet.Packet,
 		if l < 2 {
 			return packets, ErrInvalidDataLength
 		}
-		packetLen, err := strconv.ParseInt(length[:l-1], 10, 64)
+		packetLen, err := strconv.Atoi(length[:l-1])
 		if err != nil {
 			return packets, err
 		}
-
+		// Ensure packetLen can be safely converted to int and is non-negative.
+		if packetLen < 0 {
+			return packets, ErrInvalidDataLength
+		}
 		// Read packet data (packetLen is UTF-16 length)
 		msg := types.NewStringBuffer(nil)
-		for i := int64(0); i < packetLen; {
+		for i := 0; i < packetLen; {
 			r, _, e := v.ReadRune()
 			if e != nil {
 				return packets, e
 			}
-			i += int64(utils.Utf16Len(r))
+			i += utils.Utf16Len(r)
 			if _, err := msg.WriteRune(r); err != nil {
 				return packets, err
 			}
@@ -382,12 +385,12 @@ func (p *parserv3) decodeBinaryPayload(bufferTail types.BufferInterface) ([]*pac
 		for k := range lenByte {
 			lenByte[k] += '0'
 		}
-		packetLen, err := strconv.ParseInt(string(lenByte), 10, 64)
+		packetLen, err := strconv.Atoi(string(lenByte))
 		if err != nil {
 			return packets, err
 		}
 		// Ensure packetLen can be safely converted to int and is non-negative.
-		if packetLen < 0 || packetLen > int64(math.MaxInt) {
+		if packetLen < 0 {
 			return packets, ErrInvalidDataLength
 		}
 
@@ -395,7 +398,7 @@ func (p *parserv3) decodeBinaryPayload(bufferTail types.BufferInterface) ([]*pac
 			data := types.NewStringBuffer(nil)
 			runeBuf := make([]byte, 0, 4)
 
-			for k := int64(0); k < packetLen; {
+			for k := 0; k < packetLen; {
 				runeBuf = runeBuf[:0]
 				// read utf8 rune bytes
 				for len(runeBuf) < 4 {
@@ -412,7 +415,7 @@ func (p *parserv3) decodeBinaryPayload(bufferTail types.BufferInterface) ([]*pac
 					}
 				}
 				r, runeLen := utf8.DecodeRune(runeBuf)
-				k += int64(utils.Utf16Len(r))
+				k += utils.Utf16Len(r)
 				if _, err := data.Write(utils.Utf8decodeBytes(runeBuf[:runeLen])); err != nil {
 					return packets, err
 				}
@@ -426,7 +429,7 @@ func (p *parserv3) decodeBinaryPayload(bufferTail types.BufferInterface) ([]*pac
 				packets = append(packets, pkt)
 			}
 		} else {
-			if rawData := bufferTail.Next(int(packetLen)); len(rawData) > 0 {
+			if rawData := bufferTail.Next(packetLen); len(rawData) > 0 {
 				pkt, err := p.DecodePacket(types.NewBytesBuffer(rawData), false)
 				if err != nil {
 					return packets, err

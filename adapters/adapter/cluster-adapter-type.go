@@ -161,3 +161,8 @@ const (
 	BROADCAST_ACK
 	ADAPTER_CLOSE
 )
+
+// IsValid performs a fast bounds check to ensure the MessageType is within defined enum constants.
+func (m MessageType) IsValid() bool {
+	return m >= INITIAL_HEARTBEAT && m <= ADAPTER_CLOSE
+}

@@ -48,7 +48,7 @@ func (sb *ShardedRedisAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 type nodePubSubEntry struct {
 	mu       sync.Mutex
 	pubSub   *rds.PubSub
-	refCount atomic.Int32 // number of active dynamic channels on this connection
+	refCount atomic.Int64 // number of active dynamic channels on this connection
 }
 
 type shardedRedisAdapter struct {
@@ -240,8 +240,12 @@ func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
 		if mu, exists := s.ncDynamicMutexes.Load(channel); exists {
 			mu.Lock()
 			if pubSub, ok := s.ncDynamicPubSubs.LoadAndDelete(channel); ok {
-				_ = pubSub.SUnsubscribe(s.redisClient.Context, channel)
-				_ = pubSub.Close()
+				if err := pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
+					s.redisClient.Emit("error", err)
+				}
+				if err := pubSub.Close(); err != nil {
+					s.redisClient.Emit("error", err)
+				}
 			}
 			mu.Unlock()
 			s.ncDynamicMutexes.Delete(channel)
@@ -282,15 +286,21 @@ func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
 // Close unsubscribes from all channels and shuts down every Pub/Sub connection.
 func (s *shardedRedisAdapter) Close() {
 	s.pubSubClients.Range(func(channel string, pubSub *rds.PubSub) bool {
-		_ = pubSub.SUnsubscribe(s.redisClient.Context, channel)
-		_ = pubSub.Close()
+		if err := pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
+			s.redisClient.Emit("error", err)
+		}
+		if err := pubSub.Close(); err != nil {
+			s.redisClient.Emit("error", err)
+		}
 		return true
 	})
 
 	s.nodePubSubs.Range(func(addr string, entry *nodePubSubEntry) bool {
 		entry.mu.Lock()
 		if entry.pubSub != nil {
-			_ = entry.pubSub.Close()
+			if err := entry.pubSub.Close(); err != nil {
+				s.redisClient.Emit("error", err)
+			}
 		}
 		entry.mu.Unlock()
 		return true
@@ -300,7 +310,9 @@ func (s *shardedRedisAdapter) Close() {
 	s.chanToAddr.Clear()
 
 	s.ncDynamicPubSubs.Range(func(_ string, pubSub *rds.PubSub) bool {
-		_ = pubSub.Close()
+		if err := pubSub.Close(); err != nil {
+			s.redisClient.Emit("error", err)
+		}
 		return true
 	})
 
