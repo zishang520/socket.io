@@ -20,8 +20,7 @@ import (
 //   - implement ClusterAdapter.DoPublish and ClusterAdapter.DoPublishResponse
 //   - call ClusterAdapter.OnMessage and ClusterAdapter.OnResponse
 type (
-	ClusterAdapterBuilder struct {
-	}
+	ClusterAdapterBuilder struct{}
 
 	// clusterAdapter implements the ClusterAdapter interface for cluster communication.
 	clusterAdapter struct {
@@ -87,11 +86,11 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			return
 		}
 
-		withAck := data.RequestId != nil
-		if withAck {
+		opts := DecodeOptions(data.Opts)
+		if data.RequestId != nil {
 			c.Adapter.BroadcastWithAck(
 				data.Packet,
-				DecodeOptions(data.Opts),
+				opts,
 				func(clientCount uint64) {
 					adapter_log.Debug("[%s] waiting for %d client acknowledgements", c.uid, clientCount)
 					c.PublishResponse(message.Uid, &ClusterResponse{
@@ -114,37 +113,30 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 				},
 			)
 		} else {
-			opts := DecodeOptions(data.Opts)
 			c.addOffsetIfNecessary(data.Packet, opts, offset)
 			c.Adapter.Broadcast(data.Packet, opts)
 		}
 
 	case SOCKETS_JOIN:
-		data, ok := message.Data.(*SocketsJoinLeaveMessage)
-		if !ok {
+		if data, ok := message.Data.(*SocketsJoinLeaveMessage); ok {
+			c.Adapter.AddSockets(DecodeOptions(data.Opts), data.Rooms)
+		} else {
 			adapter_log.Debug("[%s] invalid data for SOCKETS_JOIN message", c.uid)
-			return
 		}
-		c.Adapter.AddSockets(DecodeOptions(data.Opts), data.Rooms)
 
 	case SOCKETS_LEAVE:
-		data, ok := message.Data.(*SocketsJoinLeaveMessage)
-		if !ok {
+		if data, ok := message.Data.(*SocketsJoinLeaveMessage); ok {
+			c.Adapter.DelSockets(DecodeOptions(data.Opts), data.Rooms)
+		} else {
 			adapter_log.Debug("[%s] invalid data for SOCKETS_LEAVE message", c.uid)
-			return
 		}
-		c.Adapter.DelSockets(DecodeOptions(data.Opts), data.Rooms)
 
 	case DISCONNECT_SOCKETS:
-		data, ok := message.Data.(*DisconnectSocketsMessage)
-		if !ok {
+		if data, ok := message.Data.(*DisconnectSocketsMessage); ok {
+			c.Adapter.DisconnectSockets(DecodeOptions(data.Opts), data.Close)
+		} else {
 			adapter_log.Debug("[%s] invalid data for DISCONNECT_SOCKETS message", c.uid)
-			return
 		}
-		c.Adapter.DisconnectSockets(
-			DecodeOptions(data.Opts),
-			data.Close,
-		)
 
 	case FETCH_SOCKETS:
 		data, ok := message.Data.(*FetchSocketsMessage)
@@ -152,17 +144,15 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			adapter_log.Debug("[%s] invalid data for FETCH_SOCKETS message", c.uid)
 			return
 		}
-		adapter_log.Debug(
-			"[%s] calling fetchSockets with opts %v",
-			c.uid,
-			data.Opts,
-		)
+		adapter_log.Debug("[%s] calling fetchSockets with opts %v", c.uid, data.Opts)
+
 		c.Adapter.FetchSockets(DecodeOptions(data.Opts))(
 			func(localSockets []socket.SocketDetails, err error) {
 				if err != nil {
 					adapter_log.Debug("FETCH_SOCKETS Adapter.OnMessage error: %s", err.Error())
 					return
 				}
+
 				c.PublishResponse(message.Uid, &ClusterResponse{
 					Type: FETCH_SOCKETS_RESPONSE,
 					Data: &FetchSocketsResponse{
@@ -176,8 +166,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 							}
 						}),
 					},
-				},
-				)
+				})
 			},
 		)
 
@@ -192,9 +181,10 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			c.Nsp().OnServerSideEmit(packet)
 			return
 		}
+
 		called := &sync.Once{}
 		callback := func(arg []any, _ error) {
-			// only one argument is expected
+			// only one argument is expected, ensure Exactly-Once semantics
 			called.Do(func() {
 				adapter_log.Debug("[%s] calling acknowledgement with %v", c.uid, arg)
 				c.PublishResponse(message.Uid, &ClusterResponse{
@@ -222,25 +212,23 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 	switch response.Type {
 	case BROADCAST_CLIENT_COUNT:
-		data, ok := response.Data.(*BroadcastClientCount)
-		if !ok {
+		if data, ok := response.Data.(*BroadcastClientCount); ok {
+			adapter_log.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+			if ackRequest, ok := c.ackRequests.Load(data.RequestId); ok {
+				ackRequest.ClientCountCallback(data.ClientCount)
+			}
+		} else {
 			adapter_log.Debug("[%s] invalid data for BROADCAST_CLIENT_COUNT message", c.uid)
-			return
-		}
-		adapter_log.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
-		if ackRequest, ok := c.ackRequests.Load(data.RequestId); ok {
-			ackRequest.ClientCountCallback(data.ClientCount)
 		}
 
 	case BROADCAST_ACK:
-		data, ok := response.Data.(*BroadcastAck)
-		if !ok {
+		if data, ok := response.Data.(*BroadcastAck); ok {
+			adapter_log.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+			if ackRequest, ok := c.ackRequests.Load(data.RequestId); ok {
+				ackRequest.Ack(data.Packet, nil)
+			}
+		} else {
 			adapter_log.Debug("[%s] invalid data for BROADCAST_ACK message", c.uid)
-			return
-		}
-		adapter_log.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
-		if ackRequest, ok := c.ackRequests.Load(data.RequestId); ok {
-			ackRequest.Ack(data.Packet, nil)
 		}
 
 	case FETCH_SOCKETS_RESPONSE:
@@ -250,13 +238,13 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 			return
 		}
 		adapter_log.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+
 		if request, ok := c.requests.Load(data.RequestId); ok {
-			request.Current.Add(1)
 			request.Responses.Push(slices.Map(data.Sockets, func(client *SocketResponse) any {
 				return socket.SocketDetails(NewRemoteSocket(client))
 			})...)
 
-			if request.Current.Load() == request.Expected {
+			if request.Current.Add(1) == request.Expected {
 				utils.ClearTimeout(request.Timeout.Load())
 				request.Resolve(request.Responses)
 				c.requests.Delete(data.RequestId)
@@ -270,11 +258,11 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 			return
 		}
 		adapter_log.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+
 		if request, ok := c.requests.Load(data.RequestId); ok {
-			request.Current.Add(1)
 			request.Responses.Push(data.Packet)
 
-			if request.Current.Load() == request.Expected {
+			if request.Current.Add(1) == request.Expected {
 				utils.ClearTimeout(request.Timeout.Load())
 				request.Resolve(request.Responses)
 				c.requests.Delete(data.RequestId)
@@ -359,9 +347,7 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 }
 
 func (c *clusterAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socket.Room) {
-	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
-
-	if !onlyLocal {
+	if opts == nil || opts.Flags == nil || !opts.Flags.Local {
 		_, err := c.PublishAndReturnOffset(&ClusterMessage{
 			Type: SOCKETS_JOIN,
 			Data: &SocketsJoinLeaveMessage{
@@ -373,14 +359,11 @@ func (c *clusterAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socke
 			adapter_log.Debug("[%s] error while publishing message: %s", c.uid, err.Error())
 		}
 	}
-
 	c.Adapter.AddSockets(opts, rooms)
 }
 
 func (c *clusterAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socket.Room) {
-	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
-
-	if !onlyLocal {
+	if opts == nil || opts.Flags == nil || !opts.Flags.Local {
 		_, err := c.PublishAndReturnOffset(&ClusterMessage{
 			Type: SOCKETS_LEAVE,
 			Data: &SocketsJoinLeaveMessage{
@@ -392,14 +375,11 @@ func (c *clusterAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socke
 			adapter_log.Debug("[%s] error while publishing message: %s", c.uid, err.Error())
 		}
 	}
-
 	c.Adapter.DelSockets(opts, rooms)
 }
 
 func (c *clusterAdapter) DisconnectSockets(opts *socket.BroadcastOptions, state bool) {
-	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
-
-	if !onlyLocal {
+	if opts == nil || opts.Flags == nil || !opts.Flags.Local {
 		_, err := c.PublishAndReturnOffset(&ClusterMessage{
 			Type: DISCONNECT_SOCKETS,
 			Data: &DisconnectSocketsMessage{
@@ -411,7 +391,6 @@ func (c *clusterAdapter) DisconnectSockets(opts *socket.BroadcastOptions, state 
 			adapter_log.Debug("[%s] error while publishing message: %s", c.uid, err.Error())
 		}
 	}
-
 	c.Adapter.DisconnectSockets(opts, state)
 }
 
@@ -468,12 +447,12 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 }
 
 func (c *clusterAdapter) ServerSideEmit(packet []any) error {
-	if len(packet) == 0 {
+	packetLen := len(packet)
+	if packetLen == 0 {
 		return fmt.Errorf("packet cannot be empty")
 	}
 
-	data_len := len(packet)
-	ack, withAck := packet[data_len-1].(socket.Ack)
+	ack, withAck := packet[packetLen-1].(socket.Ack)
 	if !withAck {
 		c.Publish(&ClusterMessage{
 			Type: SERVER_SIDE_EMIT,
@@ -485,7 +464,6 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 	}
 
 	expectedResponseCount := c.ServerCount() - 1
-
 	adapter_log.Debug(`[%s] waiting for %d responses to "serverSideEmit" request`, c.uid, expectedResponseCount)
 
 	if expectedResponseCount <= 0 {
@@ -494,7 +472,6 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 	}
 
 	requestId, err := RandomId()
-
 	if err != nil {
 		return err
 	}
@@ -526,15 +503,14 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 		Type: SERVER_SIDE_EMIT,
 		Data: &ServerSideEmitMessage{
 			RequestId: &requestId, // the presence of this attribute defines whether an acknowledgement is needed
-			Packet:    packet[:data_len-1],
+			Packet:    packet[:packetLen-1],
 		},
 	})
 	return nil
 }
 
 func (c *clusterAdapter) Publish(message *ClusterMessage) {
-	_, err := c.PublishAndReturnOffset(message)
-	if err != nil {
+	if _, err := c.PublishAndReturnOffset(message); err != nil {
 		adapter_log.Debug(`[%s] error while publishing message: %s`, c.uid, err.Error())
 	}
 }
@@ -554,8 +530,7 @@ func (c *clusterAdapter) PublishResponse(requesterUid ServerId, response *Cluste
 	response.Uid = c.uid
 	response.Nsp = c.Nsp().Name()
 
-	err := c.Proto().(ClusterAdapter).DoPublishResponse(requesterUid, response)
-	if err != nil {
+	if err := c.Proto().(ClusterAdapter).DoPublishResponse(requesterUid, response); err != nil {
 		adapter_log.Debug(`[%s] error while publishing response: %s`, c.uid, err.Error())
 	}
 }
