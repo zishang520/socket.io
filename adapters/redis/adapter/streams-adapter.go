@@ -38,6 +38,8 @@ const (
 	// restoreSessionMaxXRangeCalls limits the number of XRANGE calls during session restoration.
 	restoreSessionMaxXRangeCalls = 100
 
+	restoreSessionPageSize = 1000
+
 	// xReadBlockTimeout is the blocking timeout for XREAD operations.
 	xReadBlockTimeout = 5000 * time.Millisecond
 
@@ -59,6 +61,7 @@ type RedisStreamsAdapterBuilder struct {
 	namespaceToAdapters types.Map[string, RedisStreamsAdapter]
 	polling             atomic.Bool // Indicates if polling loop is active
 	shouldClose         atomic.Bool // Signals the polling loop to stop
+	cancelFunc          types.Atomic[context.CancelFunc]
 }
 
 // startPolling continuously reads messages from the Redis stream and dispatches them to the appropriate adapter.
@@ -66,10 +69,11 @@ func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, options 
 	offset := "$"
 
 	for {
-		// Check termination conditions
-		if sb.shouldClose.Load() || sb.namespaceToAdapters.Len() == 0 {
+		select {
+		case <-ctx.Done():
 			sb.polling.Store(false)
 			return
+		default:
 		}
 
 		response, err := sb.Redis.Client.XRead(ctx, &rds.XReadArgs{
@@ -80,7 +84,11 @@ func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, options 
 		}).Result()
 
 		if err != nil {
+			if errors.Is(err, rds.Nil) || errors.Is(err, context.Canceled) {
+				continue
+			}
 			redisStreamsLog.Debug("error reading from stream: %s", err.Error())
+			time.Sleep(1 * time.Second)
 			continue
 		}
 
@@ -136,15 +144,19 @@ func (sb *RedisStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 
 	// Start polling loop if not already running
 	if sb.polling.CompareAndSwap(false, true) {
-		sb.shouldClose.Store(false)
-		go sb.startPolling(sb.Redis.Context, options)
+		ctx, cancelFunc := context.WithCancel(sb.Redis.Context)
+		sb.cancelFunc.Store(cancelFunc)
+		go sb.startPolling(ctx, options)
 	}
 
 	// Register cleanup callback
 	adapterInstance.Cleanup(func() {
 		sb.namespaceToAdapters.Delete(nsp.Name())
 		if sb.namespaceToAdapters.Len() == 0 {
-			sb.shouldClose.Store(true)
+			if cancelFunc := sb.cancelFunc.Load(); cancelFunc != nil {
+				cancelFunc()
+				sb.cancelFunc.Store(nil)
+			}
 		}
 	})
 
@@ -471,11 +483,12 @@ func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offs
 	broadcastTypeStr := strconv.Itoa(int(adapter.BROADCAST))
 
 	for range restoreSessionMaxXRangeCalls {
-		entries, err := r.redisClient.Client.XRange(
+		entries, err := r.redisClient.Client.XRangeN(
 			r.redisClient.Context,
 			r.opts.StreamName(),
 			r.nextOffset(offset),
 			"+",
+			restoreSessionPageSize,
 		).Result()
 
 		if err != nil || len(entries) == 0 {
@@ -497,19 +510,20 @@ func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offs
 			}
 			offset = entry.ID
 		}
+
+		if len(entries) < restoreSessionPageSize {
+			break
+		}
 	}
 }
 
 // nextOffset computes the next stream entry ID by incrementing the sequence number.
 // Redis stream IDs have the format "timestamp-sequence".
 func (redisStreamsAdapter) nextOffset(offset string) string {
-	dashPos := strings.LastIndex(offset, "-")
-	if dashPos == -1 {
+	timestamp, sequence, found := strings.Cut(offset, "-")
+	if !found {
 		return offset
 	}
-
-	timestamp := offset[:dashPos]
-	sequence := offset[dashPos+1:]
 
 	if seqNum, err := strconv.ParseUint(sequence, 10, 64); err == nil {
 		return timestamp + "-" + strconv.FormatUint(seqNum+1, 10)
