@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"math"
 	"strconv"
 	"strings"
 	"unicode/utf8"

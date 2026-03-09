@@ -3,6 +3,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -56,13 +57,14 @@ type RedisStreamsAdapterBuilder struct {
 	Opts RedisStreamsAdapterOptionsInterface
 
 	namespaceToAdapters types.Map[string, RedisStreamsAdapter]
-	offset              types.Atomic[string] // Default: "$" (read new entries only)
-	polling             atomic.Bool          // Indicates if polling loop is active
-	shouldClose         atomic.Bool          // Signals the polling loop to stop
+	polling             atomic.Bool // Indicates if polling loop is active
+	shouldClose         atomic.Bool // Signals the polling loop to stop
 }
 
-// poll continuously reads messages from the Redis stream and dispatches them to the appropriate adapter.
-func (sb *RedisStreamsAdapterBuilder) poll(options RedisStreamsAdapterOptionsInterface) {
+// startPolling continuously reads messages from the Redis stream and dispatches them to the appropriate adapter.
+func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, options RedisStreamsAdapterOptionsInterface) {
+	offset := "$"
+
 	for {
 		// Check termination conditions
 		if sb.shouldClose.Load() || sb.namespaceToAdapters.Len() == 0 {
@@ -70,13 +72,7 @@ func (sb *RedisStreamsAdapterBuilder) poll(options RedisStreamsAdapterOptionsInt
 			return
 		}
 
-		// Get current offset, defaulting to "$" for new entries only
-		offset := sb.offset.Load()
-		if offset == "" {
-			offset = "$"
-		}
-
-		response, err := sb.Redis.Client.XRead(sb.Redis.Context, &rds.XReadArgs{
+		response, err := sb.Redis.Client.XRead(ctx, &rds.XReadArgs{
 			Streams: []string{options.StreamName()},
 			ID:      offset,
 			Count:   options.ReadCount(),
@@ -105,7 +101,7 @@ func (sb *RedisStreamsAdapterBuilder) poll(options RedisStreamsAdapterOptionsInt
 				}
 			}
 
-			sb.offset.Store(entry.ID)
+			offset = entry.ID
 		}
 	}
 }
@@ -141,7 +137,7 @@ func (sb *RedisStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	// Start polling loop if not already running
 	if sb.polling.CompareAndSwap(false, true) {
 		sb.shouldClose.Store(false)
-		go sb.poll(options)
+		go sb.startPolling(sb.Redis.Context, options)
 	}
 
 	// Register cleanup callback
