@@ -60,7 +60,6 @@ type RedisStreamsAdapterBuilder struct {
 
 	namespaceToAdapters types.Map[string, RedisStreamsAdapter]
 	polling             atomic.Bool // Indicates if polling loop is active
-	shouldClose         atomic.Bool // Signals the polling loop to stop
 	cancelFunc          types.Atomic[context.CancelFunc]
 }
 
@@ -68,6 +67,7 @@ type RedisStreamsAdapterBuilder struct {
 func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, options RedisStreamsAdapterOptionsInterface) {
 	offset := "$"
 
+	// poll
 	for {
 		select {
 		case <-ctx.Done():
