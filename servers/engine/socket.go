@@ -376,7 +376,6 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 		cleanup()
 		if transport != nil {
 			transport.Close()
-			transport = nil
 		}
 	}
 

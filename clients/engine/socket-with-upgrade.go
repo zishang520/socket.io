@@ -159,7 +159,6 @@ func (s *socketWithUpgrade) _probe(name string) {
 						},
 					})
 					s.Emit("upgrade", transport)
-					transport = nil
 					s.SetUpgrading(false)
 					s.Proto().Flush()
 				})
@@ -177,7 +176,6 @@ func (s *socketWithUpgrade) _probe(name string) {
 		failed.Store(true)
 		cleanup()
 		transport.Close()
-		transport = nil
 	}
 
 	onerror := func(errs ...any) {
