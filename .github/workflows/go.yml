@@ -30,7 +30,6 @@ jobs:
 
     env:
       GOPROXY: https://proxy.golang.org,direct
-      GOTOOLCHAIN: go1.26.0+auto
 
     steps:
       - name: Checkout code
@@ -40,7 +39,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
-          cache: false
+          cache: true
 
       - name: Run make deps
         run: make deps
@@ -61,7 +60,6 @@ jobs:
 
     env:
       GOPROXY: https://proxy.golang.org,direct
-      GOTOOLCHAIN: go1.26.0+auto
 
     steps:
       - name: Checkout code
