@@ -9,6 +9,7 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/webtransport"
@@ -21,8 +22,9 @@ var (
 type webTransport struct {
 	Transport
 
-	session *types.WebTransportConn
-	mu      sync.Mutex
+	session    *types.WebTransportConn
+	mu         sync.Mutex
+	writeQueue *queue.Queue
 }
 
 // WebTransport transport
@@ -46,6 +48,7 @@ func (w *webTransport) Construct(ctx *types.HttpContext) {
 	w.Transport.Construct(ctx)
 
 	w.session = ctx.WebTransport
+	w.writeQueue = queue.New()
 
 	_ = w.session.On("error", func(errs ...any) {
 		w.OnError("webtransport error", slices.TryGetAny[error](errs, 0))
@@ -118,8 +121,7 @@ func (w *webTransport) onMessage(data types.BufferInterface) {
 // Writes a packet payload.
 func (w *webTransport) Send(packets []*packet.Packet) {
 	w.SetWritable(false)
-	// Needs further investigation
-	go w.send(packets)
+	w.writeQueue.Enqueue(func() { w.send(packets) })
 }
 func (w *webTransport) send(packets []*packet.Packet) {
 	defer func() {
@@ -203,6 +205,7 @@ func (w *webTransport) write(data types.BufferInterface, _ bool) {
 // Closes the transport.
 func (w *webTransport) DoClose(fn types.Callable) {
 	wt_log.Debug(`closing WebTransport session`)
+	w.writeQueue.TryClose()
 	defer func() { _ = w.session.CloseWithError(0, "") }()
 	if fn != nil {
 		fn()

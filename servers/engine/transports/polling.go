@@ -16,6 +16,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -32,6 +33,7 @@ type polling struct {
 
 	shouldClose atomic.Pointer[types.Callable]
 	mu          sync.Mutex
+	writeQueue  *queue.Queue
 }
 
 // HTTP polling New.
@@ -55,6 +57,7 @@ func (p *polling) Construct(ctx *types.HttpContext) {
 	p.Transport.Construct(ctx)
 
 	p.closeTimeout = 30 * 1000 * time.Millisecond
+	p.writeQueue = queue.New()
 }
 
 func (p *polling) Name() string {
@@ -217,8 +220,7 @@ func (p *polling) OnClose() {
 // Writes a packet payload.
 func (p *polling) Send(packets []*packet.Packet) {
 	p.SetWritable(false)
-	// Needs further investigation
-	go p.send(packets)
+	p.writeQueue.Enqueue(func() { p.send(packets) })
 }
 func (p *polling) send(packets []*packet.Packet) {
 	p.mu.Lock()
@@ -366,6 +368,7 @@ func (p *polling) compress(data types.BufferInterface, encoding string) (types.B
 // Closes the transport.
 func (p *polling) DoClose(fn types.Callable) {
 	polling_log.Debug("closing")
+	p.writeQueue.TryClose()
 
 	if dataCtx := p.dataCtx.Load(); dataCtx != nil && !dataCtx.IsDone() {
 		polling_log.Debug("aborting ongoing data request")

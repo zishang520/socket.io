@@ -8,6 +8,7 @@ import (
 
 	"github.com/zishang520/socket.io/clients/engine/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
@@ -78,6 +79,8 @@ type Manager struct {
 	decoder parser.Decoder
 	// Private
 	skipReconnect atomic.Bool
+
+	taskQueue *queue.Queue
 }
 
 // MakeManager creates a new Manager instance with default event emitter, namespace map, and subscriptions.
@@ -85,8 +88,9 @@ func MakeManager() *Manager {
 	r := &Manager{
 		EventEmitter: types.NewEventEmitter(),
 
-		nsps: &types.Map[string, *Socket]{},
-		subs: types.NewSlice[types.Callable](),
+		nsps:      &types.Map[string, *Socket]{},
+		subs:      types.NewSlice[types.Callable](),
+		taskQueue: queue.New(),
 	}
 	return r
 }
@@ -363,8 +367,7 @@ func (m *Manager) ondata(datas ...any) {
 
 // Called when parser fully decodes a packet.
 func (m *Manager) ondecoded(packets ...any) {
-	// Needs further investigation
-	go m.Emit("packet", packets...)
+	m.taskQueue.Enqueue(func() { m.Emit("packet", packets...) })
 }
 
 // Called upon socket error.

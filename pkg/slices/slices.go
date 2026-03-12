@@ -135,7 +135,9 @@ func IsEmpty[S ~[]E, E any](s S) bool {
 	return len(s) == 0
 }
 
-// IsValidIndex checks if index is valid for the slice
+// IsValidIndex checks if index is valid for the slice.
+//
+//go:inline
 func IsValidIndex[S ~[]E, E any](s S, idx int) bool {
-	return idx >= 0 && idx < len(s)
+	return uint(idx) < uint(len(s))
 }

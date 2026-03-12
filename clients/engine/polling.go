@@ -10,6 +10,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/request"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
@@ -32,6 +33,8 @@ type polling struct {
 
 	// _polling indicates if a polling request is currently in progress.
 	_polling atomic.Bool
+
+	writeQueue *queue.Queue
 }
 
 // Name returns the identifier for the polling transport ("polling").
@@ -59,6 +62,7 @@ func NewPolling(socket Socket, opts SocketOptionsInterface) Polling {
 // Construct initializes the Polling transport with the given socket and options.
 func (p *polling) Construct(socket Socket, opts SocketOptionsInterface) {
 	p.Transport.Construct(socket, opts)
+	p.writeQueue = queue.New()
 	p.client = request.NewHTTPClient(
 		request.WithLogger(NewLog("HTTPClient")),
 		request.WithTimeout(p.Opts().RequestTimeout()),
@@ -112,8 +116,7 @@ func (p *polling) _poll() {
 	client_polling_log.Debug("polling")
 	p._polling.Store(true)
 	p.Emit("poll")
-	// This goroutine is repeatedly invoked after OnData receives data; otherwise, it may cause blocking.
-	go p.doPoll()
+	p.writeQueue.Enqueue(func() { p.doPoll() })
 }
 
 // _onPacket handles incoming packets and updates the transport state accordingly.
@@ -148,6 +151,7 @@ func (p *polling) OnData(data types.BufferInterface) {
 
 // DoClose gracefully closes the polling transport, sending a close packet if needed.
 func (p *polling) DoClose() {
+	p.writeQueue.TryClose()
 	defer func() { _ = p.client.Close() }()
 	cleanup := func(...any) {
 		client_polling_log.Debug("writing close packet")
@@ -165,8 +169,7 @@ func (p *polling) DoClose() {
 // Write encodes and sends packets to the server asynchronously.
 func (p *polling) Write(packets []*packet.Packet) {
 	p.SetWritable(false)
-	// Needs further investigation
-	go p.write(packets)
+	p.writeQueue.Enqueue(func() { p.write(packets) })
 }
 
 // write performs the actual packet writing operation asynchronously.

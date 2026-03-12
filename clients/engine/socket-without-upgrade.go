@@ -19,6 +19,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/events"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
@@ -91,7 +92,8 @@ type socketWithoutUpgrade struct {
 	priorWebsocketSuccess atomic.Bool // Previous WebSocket connection success flag
 	protocol              int         // Engine.IO protocol version
 
-	flushMu sync.Mutex
+	flushMu   sync.Mutex
+	taskQueue *queue.Queue
 }
 
 // Prototype sets the prototype for method rewriting.
@@ -177,6 +179,7 @@ func MakeSocketWithoutUpgrade() SocketWithoutUpgrade {
 		_pingInterval: -1,
 		_pingTimeout:  -1,
 		_maxPayload:   -1,
+		taskQueue:     queue.New(),
 	}
 
 	s._pingTimeoutTime.Store(math.Inf(1))
@@ -351,14 +354,12 @@ func (s *socketWithoutUpgrade) CreateTransport(name string) Transport {
 func (s *socketWithoutUpgrade) _open() {
 	if s.transports.Len() == 0 {
 		// Emit error on next tick so it can be listened to
-		// Needs further investigation
-		go s.Emit("error", errors.New("no transports available"))
+		s.taskQueue.Enqueue(func() { s.Emit("error", errors.New("no transports available")) })
 		return
 	}
 	transportName, err := s.transports.Get(0)
 	if err != nil {
-		// Needs further investigation
-		go s.Emit("error", err)
+		s.taskQueue.Enqueue(func() { s.Emit("error", err) })
 		return
 	}
 	if s.opts.RememberUpgrade() && s.PriorWebsocketSuccess() && s.transports.FindIndex(func(s string) bool {
@@ -553,8 +554,7 @@ func (s *socketWithoutUpgrade) HasPingExpired() bool {
 		client_socket_log.Debug("throttled timer detected, scheduling connection close")
 		s._pingTimeoutTime.Store(0)
 
-		// Needs further investigation
-		go s._onClose("ping timeout", nil)
+		s.taskQueue.Enqueue(func() { s._onClose("ping timeout", nil) })
 	}
 
 	return hasExpired
@@ -695,5 +695,7 @@ func (s *socketWithoutUpgrade) _onClose(reason string, description error) {
 		// clean buffers after, so users can still
 		// grab the buffers on `close` event
 		s.writeBuffer.Clear()
+
+		s.taskQueue.TryClose()
 	}
 }

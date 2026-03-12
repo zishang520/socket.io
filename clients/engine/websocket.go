@@ -12,6 +12,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/request"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -43,6 +44,8 @@ type websocket struct {
 	// mu protects concurrent access to the WebSocket connection.
 	// This ensures thread-safe operations on the connection.
 	mu sync.Mutex
+
+	writeQueue *queue.Queue
 }
 
 // Name returns the identifier for the WebSocket transport.
@@ -94,6 +97,8 @@ func NewWebSocket(socket Socket, opts SocketOptionsInterface) WebSocket {
 //   - opts: The socket options configuration
 func (w *websocket) Construct(socket Socket, opts SocketOptionsInterface) {
 	w.Transport.Construct(socket, opts)
+
+	w.writeQueue = queue.New()
 
 	w.dialer = &ws.Dialer{
 		Proxy:             http.ProxyFromEnvironment,
@@ -198,8 +203,7 @@ func (w *websocket) addEventListeners() {
 func (w *websocket) Write(packets []*packet.Packet) {
 	w.SetWritable(false)
 
-	// Needs further investigation
-	go w.write(packets)
+	w.writeQueue.Enqueue(func() { w.write(packets) })
 }
 
 // write performs the actual packet writing operation.
@@ -297,6 +301,7 @@ func (w *websocket) doWrite(data types.BufferInterface, compress bool) {
 // DoClose gracefully closes the WebSocket connection.
 // This method ensures proper cleanup of the WebSocket connection.
 func (w *websocket) DoClose() {
+	w.writeQueue.TryClose()
 	if w.socket != nil {
 		defer func() { _ = w.socket.Close() }()
 	}

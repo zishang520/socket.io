@@ -11,6 +11,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
@@ -132,6 +133,8 @@ type (
 		_anyOutgoingListeners *types.Slice[types.EventListener]
 
 		canJoin atomic.Bool
+
+		taskQueue *queue.Queue
 	}
 )
 
@@ -144,6 +147,7 @@ func MakeSocket() *Socket {
 		fns:                   types.NewSlice[SocketMiddleware](),
 		_anyListeners:         types.NewSlice[types.EventListener](),
 		_anyOutgoingListeners: types.NewSlice[types.EventListener](),
+		taskQueue:             queue.New(),
 	}
 	s.flags.Store(&BroadcastFlags{})
 	s.canJoin.Store(true)
@@ -587,6 +591,14 @@ func (s *Socket) _cleanup() {
 	s.leaveAll()
 	s.nsp.Remove(s)
 	s.canJoin.Store(false)
+	s.taskQueue.TryClose()
+}
+
+// Enqueue adds a task to the socket's sequential task queue for ordered execution.
+// This ensures that events and packet processing for this socket are serialized,
+// preventing race conditions from Go's preemptive scheduling.
+func (s *Socket) Enqueue(task func()) {
+	s.taskQueue.Enqueue(task)
 }
 
 // Produces an `error` packet.
@@ -697,8 +709,7 @@ func (s *Socket) Timeout(timeout time.Duration) *Socket {
 func (s *Socket) dispatch(event []any) {
 	socket_log.Debug("dispatching an event %v", event)
 	s.run(event, func(err error) {
-		// Needs further investigation
-		go func(err error) {
+		s.Enqueue(func() {
 			if err != nil {
 				s._onerror(err)
 				return
@@ -708,7 +719,7 @@ func (s *Socket) dispatch(event []any) {
 			} else {
 				socket_log.Debug("ignore packet received after disconnection")
 			}
-		}(err)
+		})
 	})
 }
 

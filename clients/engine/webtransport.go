@@ -15,6 +15,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/request"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -39,6 +40,8 @@ type webTransport struct {
 
 	// mu is a mutex to protect concurrent access to the WebTransport connection
 	mu sync.Mutex
+
+	writeQueue *queue.Queue
 }
 
 // Name returns the identifier for the WebTransport transport.
@@ -77,6 +80,8 @@ func NewWebTransport(socket Socket, opts SocketOptionsInterface) WebTransport {
 // This sets up the WebTransport dialer with appropriate configuration for the connection.
 func (w *webTransport) Construct(socket Socket, opts SocketOptionsInterface) {
 	w.Transport.Construct(socket, opts)
+
+	w.writeQueue = queue.New()
 
 	w.dialer = &wt.Dialer{
 		TLSClientConfig: w.Opts().TLSClientConfig(),
@@ -217,8 +222,7 @@ func (w *webTransport) addEventListeners() {
 func (w *webTransport) Write(packets []*packet.Packet) {
 	w.SetWritable(false)
 
-	// Needs further investigation
-	go w.write(packets)
+	w.writeQueue.Enqueue(func() { w.write(packets) })
 }
 func (w *webTransport) write(packets []*packet.Packet) {
 	// fake drain
@@ -306,6 +310,7 @@ func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
 // DoClose gracefully closes the WebTransport connection.
 // This method ensures proper cleanup of the WebTransport connection.
 func (w *webTransport) DoClose() {
+	w.writeQueue.TryClose()
 	if w.session != nil {
 		defer func() { _ = w.session.CloseWithError(0, "") }()
 	}
