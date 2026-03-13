@@ -41,11 +41,11 @@ if /I "%~1"=="version" goto :cmd_version
 if /I "%~1"=="release" goto :cmd_release
 
 :: Execution Wrappers
-if /I "%~1"=="deps"    call :RunBatch "go mod tidy && go mod vendor" "%~2" "Deps"   & goto :finalize
-if /I "%~1"=="get"     call :RunBatch "go get ./..."                 "%~2" "Get"    & goto :finalize
-if /I "%~1"=="build"   call :RunBatch "go build ./..."               "%~2" "Build"  & goto :finalize
-if /I "%~1"=="fmt"     call :RunBatch "go fmt ./..."                 "%~2" "Fmt"    & goto :finalize
-if /I "%~1"=="clean"   call :RunBatch "go clean -v -r ./..."         "%~2" "Clean"  & goto :finalize
+if /I "%~1"=="deps"    call :RunBatch "go mod tidy && go mod vendor" "%~2" "Deps"    & goto :finalize
+if /I "%~1"=="get"     call :RunBatch "go get ./..."                  "%~2" "Get"     & goto :finalize
+if /I "%~1"=="build"   call :RunBatch "go build ./..."                "%~2" "Build"   & goto :finalize
+if /I "%~1"=="fmt"     call :RunBatch "go fmt ./..."                  "%~2" "Fmt"     & goto :finalize
+if /I "%~1"=="clean"   call :RunBatch "go clean -v -r ./..."          "%~2" "Clean"   & goto :finalize
 
 :: Composite Commands
 if /I "%~1"=="update" (
@@ -71,7 +71,8 @@ if /I "%~1"=="lint" (
     if /I "%~2"=="--fix" (set "LINT_FIX=--fix" & set "LINT_MODULE=")
     if /I "%~3"=="--fix" set "LINT_FIX=--fix"
     call :RunBatch "go mod tidy && go mod vendor" "!LINT_MODULE!" "Deps"
-    if !ERRORLEVEL! EQU 0 call :RunBatch "golangci-lint run !LINT_FIX! ./..." "!LINT_MODULE!" "Lint"
+    :: Added <nul to prevent golangci-lint from locking VT input mode
+    if !ERRORLEVEL! EQU 0 call :RunBatch "golangci-lint run !LINT_FIX! ./... <nul" "!LINT_MODULE!" "Lint"
     goto :finalize
 )
 
@@ -79,7 +80,8 @@ if /I "%~1"=="test" (
     call :RunBatch "go mod tidy && go mod vendor" "%~2" "Deps"
     echo %C_CYAN%[Test] Cleaning test cache...%C_RESET%
     go clean -testcache
-    call :RunBatch "go test -timeout=%TEST_TIMEOUT% -race -cover -covermode=atomic ./..." "%~2" "Test"
+    :: Added <nul to prevent go test from locking VT input mode
+    call :RunBatch "go test -timeout=%TEST_TIMEOUT% -race -cover -covermode=atomic ./... <nul" "%~2" "Test"
     goto :finalize
 )
 
@@ -163,8 +165,8 @@ exit /b 0
         exit /b 1
     )
 
-    :: Validate Version Format using PowerShell
-    powershell -NoProfile -Command "if ('%NEW_VER%' -notmatch '^v\d+\.\d+\.\d+(-[\w\.]+)?$') { exit 1 }"
+    :: Validate Version Format using PowerShell (Added <nul)
+    powershell -NoProfile -Command "if ('%NEW_VER%' -notmatch '^v\d+\.\d+\.\d+(-[\w\.]+)?$') { exit 1 }" <nul
     if %ERRORLEVEL% NEQ 0 (
         echo %C_RED%[Error] Invalid version format: %NEW_VER% ^(Expected vX.Y.Z^)%C_RESET%
         exit /b 1
@@ -177,8 +179,8 @@ exit /b 0
 
     echo %C_CYAN%[Version] updating %VERSION_FILE% to %NEW_VER%...%C_RESET%
 
-    :: Update version in Go file
-    powershell -NoProfile -Command "(Get-Content '%VERSION_FILE%') -replace 'VERSION = \".*?\"', 'VERSION = \"%NEW_VER%\"' | Set-Content '%VERSION_FILE%'"
+    :: Update version in Go file (Added <nul)
+    powershell -NoProfile -Command "(Get-Content '%VERSION_FILE%') -replace 'VERSION = \".*?\"', 'VERSION = \"%NEW_VER%\"' | Set-Content '%VERSION_FILE%'" <nul
     if %ERRORLEVEL% NEQ 0 exit /b 1
 
     :: Update Dependencies in Modules
@@ -217,8 +219,8 @@ exit /b 0
     if /I "%~2"=="--force" set "FORCE_FLAG=-f"
     if /I "%~2"=="-f"      set "FORCE_FLAG=-f"
 
-    :: Extract Version from file using PowerShell (More robust than findstr for quotes)
-    for /F "usebackq tokens=*" %%V in (`powershell -NoProfile -Command "(Select-String 'VERSION =' '%VERSION_FILE%').Line.Split([char]34)[1]"`) do set "CURRENT_VER=%%V"
+    :: Extract Version from file using PowerShell (Added ^<nul for safety inside the loop)
+    for /F "usebackq tokens=*" %%V in (`powershell -NoProfile -Command "(Select-String 'VERSION =' '%VERSION_FILE%').Line.Split([char]34)[1]" ^<nul`) do set "CURRENT_VER=%%V"
 
     if "%CURRENT_VER%"=="" (
         echo %C_RED%[Error] Could not parse version from %VERSION_FILE%%C_RESET%
@@ -249,20 +251,20 @@ exit /b 0
     echo %C_YELLOW%Usage: make.bat [command] [module_path] [options]%C_RESET%
     echo.
     echo %C_CYAN%Standard Commands:%C_RESET%
-    echo   deps        Run 'go mod tidy ^& vendor'
-    echo   get         Run 'go get ./...'
-    echo   build       Run 'go build ./...'
-    echo   fmt         Run 'go fmt ./...'
-    echo   clean       Run 'go clean' (recursive)
-    echo   test        Run tests with race detection and coverage
+    echo    deps        Run 'go mod tidy ^& vendor'
+    echo    get         Run 'go get ./...'
+    echo    build       Run 'go build ./...'
+    echo    fmt         Run 'go fmt ./...'
+    echo    clean       Run 'go clean' (recursive)
+    echo    test        Run tests with race detection and coverage
     echo.
     echo %C_CYAN%Composite Commands:%C_RESET%
-    echo   update      Update all dependencies (-u) and vendor
-    echo   vet         Run 'vet' after tidying modules
-    echo   lint        Run golangci-lint after tidying modules (add --fix to auto-fix)
+    echo    update      Update all dependencies (-u) and vendor
+    echo    vet         Run 'vet' after tidying modules
+    echo    lint        Run golangci-lint after tidying modules (add --fix to auto-fix)
     echo.
     echo %C_CYAN%Release Management:%C_RESET%
-    echo   version vX.Y.Z     Bump VERSION file and sync %CORE_DEPENDENCY% in all modules
-    echo   release [--force]  Create git tags for root and all modules based on VERSION file
+    echo    version vX.Y.Z      Bump VERSION file and sync %CORE_DEPENDENCY% in all modules
+    echo    release [--force]  Create git tags for root and all modules based on VERSION file
     echo.
     exit /b 0
