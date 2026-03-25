@@ -69,7 +69,9 @@ All package imports across your entire codebase must be systematically updated. 
 - Socket.IO Parser (`parsers/socket/v3`)
 - Engine.IO Server (`servers/engine/v3`)
 - Socket.IO Server (`servers/socket/v3`)
-- Redis Adapter (`adapters/redis/v3`)
+- Cache Adapter (`adapters/cache/v3`) — backend-agnostic adapter/emitter
+- Redis Client (`adapters/cache/redis/v3`)
+- Valkey Client (`adapters/cache/valkey/v3`)
 - Engine.IO Client (`clients/engine/v3`)
 - Socket.IO Client (`clients/socket/v3`)
 - Common Types and Utils (`v3/pkg`)
@@ -352,43 +354,86 @@ data := err.Data  // Now uses direct field access
 </details>
 
 <details>
-<summary>Redis SubscriptionMode Type Migration</summary>
+<summary>Cache Adapter / Redis Client Restructure</summary>
 
-The `SubscriptionMode` type has been moved from `adapters/redis/adapter` package to the root `adapters/redis` package for better organization and sharing between adapter and emitter.
+All adapter and emitter logic has moved out of `adapters/redis` into a new backend-agnostic `adapters/cache` module. `adapters/cache/redis` now contains only the Redis client wrapper (`RedisClient`), and a new `adapters/cache/valkey` module provides Valkey support.
 
-**Likelihood Of Impact: Medium (if using Redis sharded adapter)**
+**Likelihood Of Impact: High (any use of the Redis adapter or emitter)**
 
 ```go
 // Before
-import "github.com/zishang520/socket.io/adapters/redis/v3/adapter"
+import (
+    "github.com/zishang520/socket.io/adapters/redis/v3/adapter"
+    "github.com/zishang520/socket.io/adapters/redis/v3/emitter"
+)
 
-opts := adapter.NewShardedRedisAdapterOptions()
-opts.SetSubscriptionMode(adapter.DynamicSubscriptionMode)
+io.Adapter(&adapter.RedisAdapterBuilder{Redis: redisClient})
+e := emitter.NewEmitter(redisClient, nil)
 
 // After
 import (
-    "github.com/zishang520/socket.io/adapters/redis/v3"
-    "github.com/zishang520/socket.io/adapters/redis/v3/adapter"
+    goredis       "github.com/redis/go-redis/v9"
+    cacheadapter  "github.com/zishang520/socket.io/adapters/cache/v3/adapter"
+    cacheemitter  "github.com/zishang520/socket.io/adapters/cache/v3/emitter"
+    redisc        "github.com/zishang520/socket.io/adapters/cache/redis/v3"
 )
 
-opts := adapter.NewShardedRedisAdapterOptions()
+rdb := goredis.NewClient(&goredis.Options{Addr: "localhost:6379"})
+client := redisc.NewRedisClient(ctx, rdb) // wrap your existing client
+
+io.Adapter(&cacheadapter.CacheAdapterBuilder{Cache: client})
+e := cacheemitter.NewEmitter(client, nil)
+```
+
+Both `NewRedisClient` and `NewValkeyClient` accept a pre-existing connection, so no extra connections are created.
+
+**Valkey support (new):**
+
+```go
+import (
+    vk      "github.com/valkey-io/valkey-go"
+    redisc  "github.com/zishang520/socket.io/adapters/cache/valkey/v3"
+)
+
+vc, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"127.0.0.1:6379"}})
+client := valkeyc.NewValkeyClient(ctx, vc)
+
+io.Adapter(&cacheadapter.CacheAdapterBuilder{Cache: client})
+```
+</details>
+
+<details>
+<summary>SubscriptionMode Type Migration (cache package)</summary>
+
+`SubscriptionMode` and related constants have moved from `adapters/redis` to the `adapters/cache` root package.
+
+**Likelihood Of Impact: Medium (if using the sharded adapter)**
+
+```go
+// Before
+import "github.com/zishang520/socket.io/adapters/redis/v3"
+
 opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
+
+// After
+import cache "github.com/zishang520/socket.io/adapters/cache/v3"
+
+opts.SetSubscriptionMode(cache.DynamicSubscriptionMode)
 ```
 
 **Key changes:**
 
 | Before | After |
 |--------|-------|
-| `adapter.SubscriptionMode` | `redis.SubscriptionMode` |
-| `adapter.StaticSubscriptionMode` | `redis.StaticSubscriptionMode` |
-| `adapter.DynamicSubscriptionMode` | `redis.DynamicSubscriptionMode` |
-| `adapter.DynamicPrivateSubscriptionMode` | `redis.DynamicPrivateSubscriptionMode` |
+| `redis.SubscriptionMode` | `cache.SubscriptionMode` |
+| `redis.StaticSubscriptionMode` | `cache.StaticSubscriptionMode` |
+| `redis.DynamicSubscriptionMode` | `cache.DynamicSubscriptionMode` |
+| `redis.DynamicPrivateSubscriptionMode` | `cache.DynamicPrivateSubscriptionMode` |
 
 **New additions:**
 
-- `redis.DefaultSubscriptionMode` - Default mode constant
-- `redis.PrivateRoomIdLength` - Length constant for private room detection
-- `redis.ShouldUseDynamicChannel(mode, room)` - Shared helper function
+- `cache.PrivateRoomIdLength` - Length constant for private room detection
+- `cache.ShouldUseDynamicChannel(mode, room)` - Shared helper function
 
 **Emitter options extended:**
 
@@ -412,7 +457,9 @@ go get github.com/zishang520/socket.io/parsers/socket/v3@latest
 go get github.com/zishang520/socket.io/servers/engine/v3@latest
 go get github.com/zishang520/socket.io/servers/socket/v3@latest
 go get github.com/zishang520/socket.io/adapters/adapter/v3@latest
-go get github.com/zishang520/socket.io/adapters/redis/v3@latest
+go get github.com/zishang520/socket.io/adapters/cache/v3@latest          # adapter + emitter
+go get github.com/zishang520/socket.io/adapters/cache/redis/v3@latest    # Redis backend
+go get github.com/zishang520/socket.io/adapters/cache/valkey/v3@latest   # Valkey backend (optional)
 go get github.com/zishang520/socket.io/clients/engine/v3@latest
 go get github.com/zishang520/socket.io/clients/socket/v3@latest
 ```
@@ -433,7 +480,9 @@ require (
     github.com/zishang520/socket.io/servers/engine/v3 v3.0.0
     github.com/zishang520/socket.io/servers/socket/v3 v3.0.0
     github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.0
-    github.com/zishang520/socket.io/adapters/redis/v3 v3.0.0
+    github.com/zishang520/socket.io/adapters/cache/v3 v3.0.0
+    github.com/zishang520/socket.io/adapters/cache/redis/v3 v3.0.0   // Redis backend
+    // github.com/zishang520/socket.io/adapters/cache/valkey/v3 v3.0.0  // Valkey backend
     github.com/zishang520/socket.io/clients/engine/v3 v3.0.0
     github.com/zishang520/socket.io/clients/socket/v3 v3.0.0
 )
@@ -491,22 +540,30 @@ Update all Socket.IO import paths throughout your application using the followin
 | `github.com/zishang520/socket.io/v2/socket` | `github.com/zishang520/socket.io/servers/socket/v3` |
 | `github.com/zishang520/socket.io/v2/adapter` | `github.com/zishang520/socket.io/adapters/adapter/v3` |
 
-### Redis Adapter
+### Cache Adapter (Redis / Valkey)
 
 | v1 Import | v3 Import |
 |-----------|-----------|
-| `github.com/zishang520/socket.io-go-redis/adapter` | `github.com/zishang520/socket.io/adapters/redis/v3/adapter` |
-| `github.com/zishang520/socket.io-go-redis/emitter` | `github.com/zishang520/socket.io/adapters/redis/v3/emitter` |
-| `github.com/zishang520/socket.io-go-redis/types` | `github.com/zishang520/socket.io/adapters/redis/v3` |
+| `github.com/zishang520/socket.io-go-redis/adapter` | `github.com/zishang520/socket.io/adapters/cache/v3/adapter` |
+| `github.com/zishang520/socket.io-go-redis/emitter` | `github.com/zishang520/socket.io/adapters/cache/v3/emitter` |
+| `github.com/zishang520/socket.io-go-redis/types` | `github.com/zishang520/socket.io/adapters/cache/v3` |
 
-### Redis Adapter Internal Migrations (v3)
+The Redis client wrapper is a separate module:
 
-| Before (adapter subpackage) | After (redis root package) |
-|-----------------------------|----------------------------|
-| `adapter.SubscriptionMode` | `redis.SubscriptionMode` |
-| `adapter.StaticSubscriptionMode` | `redis.StaticSubscriptionMode` |
-| `adapter.DynamicSubscriptionMode` | `redis.DynamicSubscriptionMode` |
-| `adapter.DynamicPrivateSubscriptionMode` | `redis.DynamicPrivateSubscriptionMode` |
+| Purpose | v3 Module |
+|---------|-----------|
+| Adapter + emitter logic | `github.com/zishang520/socket.io/adapters/cache/v3` |
+| Redis backend (`go-redis/v9`) | `github.com/zishang520/socket.io/adapters/cache/redis/v3` |
+| Valkey backend (`valkey-go`) | `github.com/zishang520/socket.io/adapters/cache/valkey/v3` |
+
+### Cache Adapter SubscriptionMode
+
+| Before | After |
+|--------|-------|
+| `redis.SubscriptionMode` | `cache.SubscriptionMode` |
+| `redis.StaticSubscriptionMode` | `cache.StaticSubscriptionMode` |
+| `redis.DynamicSubscriptionMode` | `cache.DynamicSubscriptionMode` |
+| `redis.DynamicPrivateSubscriptionMode` | `cache.DynamicPrivateSubscriptionMode` |
 
 ### Engine.IO Client
 
@@ -656,20 +713,30 @@ data := err.Data()
 data := err.Data
 ```
 
-### Redis SubscriptionMode Migration
+### Cache Adapter / SubscriptionMode Migration
 
-If using the sharded Redis adapter, update `SubscriptionMode` imports:
+If using the sharded adapter, update adapter, emitter, and `SubscriptionMode` imports:
 
 ```go
 // Before
-import "github.com/zishang520/socket.io/adapters/redis/v3/adapter"
+import (
+    "github.com/zishang520/socket.io/adapters/redis/v3/adapter"
+    "github.com/zishang520/socket.io/adapters/redis/v3"
+)
 
-opts.SetSubscriptionMode(adapter.DynamicSubscriptionMode)
+io.Adapter(&adapter.RedisAdapterBuilder{Redis: redisClient})
+opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
 
 // After
-import "github.com/zishang520/socket.io/adapters/redis/v3"
+import (
+    cache        "github.com/zishang520/socket.io/adapters/cache/v3"
+    cacheadapter "github.com/zishang520/socket.io/adapters/cache/v3/adapter"
+    redisc       "github.com/zishang520/socket.io/adapters/cache/redis/v3"
+)
 
-opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
+client := redisc.NewRedisClient(ctx, rdb)
+io.Adapter(&cacheadapter.CacheAdapterBuilder{Cache: client})
+opts.SetSubscriptionMode(cache.DynamicSubscriptionMode)
 ```
 
 ---
@@ -689,7 +756,7 @@ go test ./...
 - Client connections and disconnections
 - Event emission and reception
 - Namespace and room operations
-- Redis adapter broadcasting (if applicable)
+- Cache adapter broadcasting (Redis or Valkey backend)
 
 ### 3. Enable Debug Logging
 
