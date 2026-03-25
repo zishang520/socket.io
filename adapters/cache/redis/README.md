@@ -1,20 +1,20 @@
-# adapters/redis
+# adapters/cache/redis
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/redis/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/redis/v3)
-[![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/adapters/redis/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/adapters/redis/v3)
+[![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/cache/redis/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/cache/redis/v3)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/adapters/cache/redis/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/adapters/cache/redis/v3)
 
 ## Description
 
 Redis client wrapper (`RedisClient`) implementing the `cache.CacheClient` interface from
-[`adapters/cache`](../cache).  This module contains **only** the client wrapper; all adapter
-and emitter logic now lives in `adapters/cache`.
+[`adapters/cache`](../README.md).  This module contains **only** the client wrapper; all adapter
+and emitter logic lives in `adapters/cache`.
 
-For Valkey support see [`adapters/valkey`](../valkey).
+For Valkey support see [`adapters/cache/valkey`](../valkey).
 
 ## Installation
 
 ```bash
-go get github.com/zishang520/socket.io/adapters/redis/v3
+go get github.com/zishang520/socket.io/adapters/cache/redis/v3
 go get github.com/zishang520/socket.io/adapters/cache/v3
 ```
 
@@ -24,6 +24,7 @@ go get github.com/zishang520/socket.io/adapters/cache/v3
 - Implements `cache.CacheClient` and `cache.CacheSubscription`
 - Error propagation via the `EventEmitter` interface (`On("error", …)`)
 - Transparent nil-error mapping (`rds.Nil` → `cache.ErrNil`)
+
 ## How to use
 
 ```go
@@ -34,7 +35,7 @@ import (
     "fmt"
 
     rds          "github.com/redis/go-redis/v9"
-    redisc       "github.com/zishang520/socket.io/adapters/redis/v3"
+    redisc       "github.com/zishang520/socket.io/adapters/cache/redis/v3"
     cacheadapter "github.com/zishang520/socket.io/adapters/cache/v3/adapter"
     "github.com/zishang520/socket.io/servers/socket/v3"
 )
@@ -53,7 +54,7 @@ func main() {
 }
 ```
 
-See [`adapters/cache`](../cache) for the full list of adapter modes and options.
+See [`adapters/cache`](../README.md) for the full list of adapter modes and options.
 
 ## License
 

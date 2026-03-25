@@ -8,12 +8,12 @@ Backend-agnostic Socket.IO cluster adapter and emitter.
 - All three adapter modes: **classic pub/sub**, **sharded pub/sub** (Redis 7+ / Valkey), and **Redis Streams**
 - The emitter for sending events from non-Socket.IO services
 
-Client implementations live in separate modules:
+Client implementations live as sub-modules:
 
 | Module | Backend |
 |---|---|
-| [`adapters/redis`](../redis) | Redis (standalone, sentinel, cluster) via `go-redis/v9` |
-| [`adapters/valkey`](../valkey) | Valkey (standalone, cluster) via `valkey-go` |
+| [`adapters/cache/redis`](redis) | Redis (standalone, sentinel, cluster) via `go-redis/v9` |
+| [`adapters/cache/valkey`](valkey) | Valkey (standalone, cluster) via `valkey-go` |
 
 ---
 
@@ -24,7 +24,7 @@ Client implementations live in separate modules:
 ```go
 import (
     cacheadapter "github.com/zishang520/socket.io/adapters/cache/v3/adapter"
-    redisc       "github.com/zishang520/socket.io/adapters/redis/v3"
+    redisc       "github.com/zishang520/socket.io/adapters/cache/redis/v3"
     goredis      "github.com/redis/go-redis/v9"
 )
 
@@ -39,7 +39,7 @@ io.Adapter(&cacheadapter.CacheAdapterBuilder{Cache: client})
 ```go
 import (
     cacheadapter "github.com/zishang520/socket.io/adapters/cache/v3/adapter"
-    valkeyc      "github.com/zishang520/socket.io/adapters/valkey/v3"
+    valkeyc      "github.com/zishang520/socket.io/adapters/cache/valkey/v3"
     "github.com/valkey-io/valkey-go"
 )
 
@@ -117,7 +117,7 @@ e.To("room1").Emit("hello", "world")
 
 ## Implementing a custom backend
 
-Implement `cache.CacheClient` and `cache.CacheSubscription`. The compile-time assertions in `adapters/redis` and `adapters/valkey` show the expected patterns.
+Implement `cache.CacheClient` and `cache.CacheSubscription`. The compile-time assertions in `adapters/cache/redis` and `adapters/cache/valkey` show the expected patterns.
 
 ```go
 var _ cache.CacheClient       = (*MyClient)(nil)

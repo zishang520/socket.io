@@ -1,4 +1,4 @@
-# adapters/valkey
+# adapters/cache/valkey
 
 Valkey client adapter for Socket.IO clustering.
 
@@ -7,7 +7,7 @@ This module provides `ValkeyClient`, a `cache.CacheClient` implementation backed
 adapters to use [Valkey](https://valkey.io/) as the pub/sub and stream backend.
 
 [Valkey](https://valkey.io/) is an open-source, Redis-compatible data store — the
-`adapters/valkey` module gives you a drop-in alternative to `adapters/redis` for
+`adapters/cache/valkey` module gives you a drop-in alternative to `adapters/cache/redis` for
 environments that run Valkey instead of (or alongside) Redis.
 
 ---
@@ -15,7 +15,7 @@ environments that run Valkey instead of (or alongside) Redis.
 ## Installation
 
 ```sh
-go get github.com/zishang520/socket.io/adapters/valkey/v3
+go get github.com/zishang520/socket.io/adapters/cache/valkey/v3
 ```
 
 ---
@@ -26,9 +26,9 @@ go get github.com/zishang520/socket.io/adapters/valkey/v3
 import (
     "context"
 
-    vk          "github.com/valkey-io/valkey-go"
+    vk           "github.com/valkey-io/valkey-go"
     cacheadapter "github.com/zishang520/socket.io/adapters/cache/v3/adapter"
-    valkeyc      "github.com/zishang520/socket.io/adapters/valkey/v3"
+    valkeyc      "github.com/zishang520/socket.io/adapters/cache/valkey/v3"
 )
 
 func main() {

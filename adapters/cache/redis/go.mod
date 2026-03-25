@@ -1,4 +1,4 @@
-module github.com/zishang520/socket.io/adapters/redis/v3
+module github.com/zishang520/socket.io/adapters/cache/redis/v3
 
 go 1.26.0
 
@@ -35,11 +35,11 @@ require (
 )
 
 replace (
-	github.com/zishang520/socket.io/adapters/adapter/v3 => ../adapter
-	github.com/zishang520/socket.io/adapters/cache/v3 => ../cache
-	github.com/zishang520/socket.io/parsers/engine/v3 => ../../parsers/engine
-	github.com/zishang520/socket.io/parsers/socket/v3 => ../../parsers/socket
-	github.com/zishang520/socket.io/servers/engine/v3 => ../../servers/engine
-	github.com/zishang520/socket.io/servers/socket/v3 => ../../servers/socket
-	github.com/zishang520/socket.io/v3 => ../../
+	github.com/zishang520/socket.io/adapters/adapter/v3 => ../../adapter
+	github.com/zishang520/socket.io/adapters/cache/v3 => ../
+	github.com/zishang520/socket.io/parsers/engine/v3 => ../../../parsers/engine
+	github.com/zishang520/socket.io/parsers/socket/v3 => ../../../parsers/socket
+	github.com/zishang520/socket.io/servers/engine/v3 => ../../../servers/engine
+	github.com/zishang520/socket.io/servers/socket/v3 => ../../../servers/socket
+	github.com/zishang520/socket.io/v3 => ../../../
 )
