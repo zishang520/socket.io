@@ -72,18 +72,16 @@ func TestParseNumSubPairs_Empty(t *testing.T) {
 
 // TestValkeySubscription_Close verifies that Close cancels the message channel.
 func TestValkeySubscription_Close(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	ctx, cancel := context.WithCancel(t.Context())
 	s := &valkeySubscription{
-		cancel: func() { cancel() },
+		cancel: cancel,
 		ch:     make(chan *cache.CacheMessage, 1),
 	}
 
 	if err := s.Close(); err != nil {
 		t.Errorf("Close() returned unexpected error: %v", err)
 	}
-	// After closing, the context should be cancelled.
+	// After closing, the context should be canceled.
 	select {
 	case <-ctx.Done():
 		// expected

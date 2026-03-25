@@ -30,7 +30,7 @@ type RedisClient struct {
 // NewRedisClient creates a new RedisClient with the given context and go-redis client.
 //
 // Parameters:
-//   - ctx: Lifecycle context. When cancelled, all subscriptions are terminated.
+//   - ctx: Lifecycle context. When canceled, all subscriptions are terminated.
 //     Defaults to context.Background() if nil.
 //   - client: A go-redis UniversalClient (supports standalone, sentinel, and cluster).
 //

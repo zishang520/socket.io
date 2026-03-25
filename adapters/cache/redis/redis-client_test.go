@@ -31,7 +31,7 @@ var _ cache.CacheSubscription = (*redisSubscription)(nil)
 func TestNewRedisClient_NilContext(t *testing.T) {
 	srv := miniredis.RunT(t)
 	rdb := rds.NewClient(&rds.Options{Addr: srv.Addr()})
-	c := NewRedisClient(nil, rdb)
+	c := NewRedisClient(nil, rdb) //nolint:staticcheck
 	if c.Context() == nil {
 		t.Fatal("Context() must not return nil when constructed with nil context")
 	}
@@ -43,8 +43,7 @@ func TestNewRedisClient_NilContext(t *testing.T) {
 func TestNewRedisClient_ContextPreserved(t *testing.T) {
 	srv := miniredis.RunT(t)
 	rdb := rds.NewClient(&rds.Options{Addr: srv.Addr()})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	c := NewRedisClient(ctx, rdb)
 	if c.Context() != ctx {
 		t.Error("Context() should return the context passed to NewRedisClient")
@@ -142,7 +141,7 @@ func TestRedisClient_XAdd_WithMaxLen(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if _, err := client.XAdd(ctx, "capped", 3, true, map[string]any{"n": i}); err != nil {
 			t.Fatalf("XAdd[%d]: %v", i, err)
 		}
@@ -163,7 +162,7 @@ func TestRedisClient_XRangeN(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if _, err := client.XAdd(ctx, "stream2", 0, false, map[string]any{"i": i}); err != nil {
 			t.Fatalf("XAdd[%d]: %v", i, err)
 		}

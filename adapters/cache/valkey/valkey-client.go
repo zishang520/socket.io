@@ -273,7 +273,7 @@ func toStreamEntries(entries []vk.XRangeEntry) []cache.CacheStreamEntry {
 
 // valkeySubscription wraps a valkey-go Receive call and exposes messages via
 // a buffered Go channel.  The subscription terminates when Close is called or
-// when the context passed to the factory is cancelled.
+// when the context passed to the factory is canceled.
 type valkeySubscription struct {
 	cancel context.CancelFunc
 	ch     chan *cache.CacheMessage

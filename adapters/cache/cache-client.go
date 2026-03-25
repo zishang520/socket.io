@@ -58,7 +58,7 @@ type CacheStream struct {
 type CacheSubscription interface {
 	// C returns the read channel for incoming messages.
 	// The channel is closed when Close is called or when the backing context
-	// is cancelled, whichever happens first.
+	// is canceled, whichever happens first.
 	C() <-chan *CacheMessage
 
 	// PUnsubscribe removes the given glob patterns from a pattern subscription.
