@@ -50,9 +50,9 @@ type shardedCacheAdapter struct {
 	dynamicSubs *types.Map[string, cache.CacheSubscription]
 	dynamicMu   *types.Map[string, *sync.Mutex]
 
-	cacheClient cache.CacheClient
-	opts        *ShardedCacheAdapterOptions
-	channel     string
+	cacheClient     cache.CacheClient
+	opts            *ShardedCacheAdapterOptions
+	channel         string
 	responseChannel string
 }
 
@@ -69,7 +69,7 @@ func MakeShardedCacheAdapter() ShardedCacheAdapter {
 	return c
 }
 
-// NewShardedCacheAdapter creates and fully initialises a sharded cache adapter.
+// NewShardedCacheAdapter creates and fully initializes a sharded cache adapter.
 func NewShardedCacheAdapter(nsp socket.Namespace, client cache.CacheClient, opts any) ShardedCacheAdapter {
 	c := MakeShardedCacheAdapter()
 	c.SetCache(client)
@@ -88,7 +88,7 @@ func (s *shardedCacheAdapter) SetOpts(opts any) {
 	}
 }
 
-// Construct initialises the adapter for the given namespace.
+// Construct initializes the adapter for the given namespace.
 func (s *shardedCacheAdapter) Construct(nsp socket.Namespace) {
 	s.ClusterAdapter.Construct(nsp)
 
@@ -273,7 +273,7 @@ func (s *shardedCacheAdapter) DoPublishResponse(requesterUid adapter.ServerId, r
 	return s.cacheClient.SPublish(s.cacheClient.Context(), s.channel+string(requesterUid)+"#", message)
 }
 
-// encode serialises a cluster message using JSON, or MessagePack when binary data is present.
+// encode serializes a cluster message using JSON, or MessagePack when binary data is present.
 func (s *shardedCacheAdapter) encode(message *adapter.ClusterMessage) ([]byte, error) {
 	switch message.Type {
 	case adapter.BROADCAST, adapter.BROADCAST_ACK, adapter.FETCH_SOCKETS_RESPONSE,

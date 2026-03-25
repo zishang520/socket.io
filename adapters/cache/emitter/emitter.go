@@ -17,10 +17,9 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-const (
-	emitterUID       adapter.ServerId = "emitter"
-	defaultNamespace                  = "/"
-)
+const emitterUID adapter.ServerId = "emitter"
+
+const defaultNamespace = "/"
 
 var emitterLog = log.NewLog("socket.io-cache-emitter")
 
@@ -40,7 +39,7 @@ func MakeEmitter() *Emitter {
 	}
 }
 
-// NewEmitter creates and initialises an Emitter with the given client and options.
+// NewEmitter creates and initializes an Emitter with the given client and options.
 // An optional namespace may be supplied; defaults to "/".
 func NewEmitter(client cache.CacheClient, opts *EmitterOptions, nsps ...string) *Emitter {
 	e := MakeEmitter()
@@ -48,7 +47,7 @@ func NewEmitter(client cache.CacheClient, opts *EmitterOptions, nsps ...string) 
 	return e
 }
 
-// Construct initialises the Emitter.
+// Construct initializes the Emitter.
 func (e *Emitter) Construct(client cache.CacheClient, opts *EmitterOptions, nsps ...string) {
 	e.cacheClient = client
 

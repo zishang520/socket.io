@@ -81,7 +81,7 @@ func TestCachePacket_UnmarshalEmptyArray(t *testing.T) {
 }
 
 func TestShouldUseDynamicChannel(t *testing.T) {
-	shortRoom := socket.Room("short")          // len < PrivateRoomIdLength
+	shortRoom := socket.Room("short")               // len < PrivateRoomIdLength
 	longRoom := socket.Room("12345678901234567890") // len == PrivateRoomIdLength
 
 	tests := []struct {

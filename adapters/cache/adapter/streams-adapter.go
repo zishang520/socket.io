@@ -160,7 +160,7 @@ func MakeCacheStreamsAdapter() CacheStreamsAdapter {
 	return a
 }
 
-// NewCacheStreamsAdapter creates and fully initialises a cache streams adapter.
+// NewCacheStreamsAdapter creates and fully initializes a cache streams adapter.
 func NewCacheStreamsAdapter(nsp socket.Namespace, client cache.CacheClient, opts any) CacheStreamsAdapter {
 	a := MakeCacheStreamsAdapter()
 	a.SetCache(client)

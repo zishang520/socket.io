@@ -33,7 +33,7 @@ func MakeShardedBroadcastOperator() *ShardedBroadcastOperator {
 	}
 }
 
-// NewShardedBroadcastOperator creates and initialises a ShardedBroadcastOperator.
+// NewShardedBroadcastOperator creates and initializes a ShardedBroadcastOperator.
 func NewShardedBroadcastOperator(
 	client cache.CacheClient,
 	broadcastOptions *BroadcastOptions,
@@ -46,7 +46,7 @@ func NewShardedBroadcastOperator(
 	return b
 }
 
-// Construct initialises the ShardedBroadcastOperator; nil parameters use safe defaults.
+// Construct initializes the ShardedBroadcastOperator; nil parameters use safe defaults.
 func (b *ShardedBroadcastOperator) Construct(
 	client cache.CacheClient,
 	broadcastOptions *BroadcastOptions,

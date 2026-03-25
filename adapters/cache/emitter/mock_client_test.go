@@ -6,6 +6,7 @@ package emitter
 import (
 	"context"
 	"sync"
+	"testing"
 	"time"
 
 	cache "github.com/zishang520/socket.io/adapters/cache/v3"
@@ -21,7 +22,7 @@ type mockCacheClient struct {
 	types.EventEmitter
 	ctx context.Context
 
-	mu       sync.Mutex
+	mu         sync.Mutex
 	publishes  []publishCall
 	spublishes []publishCall
 }
@@ -59,14 +60,14 @@ func (m *mockCacheClient) lastPublish() publishCall {
 	return m.publishes[len(m.publishes)-1]
 }
 
-// lastSPublish returns the most recent SPublish call or panics if there was none.
-func (m *mockCacheClient) lastSPublish() publishCall {
+// requireSPublish asserts that at least one SPublish call was recorded.
+func (m *mockCacheClient) requireSPublish(t *testing.T) {
+	t.Helper()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.spublishes) == 0 {
-		panic("no SPublish calls recorded")
+		t.Fatal("expected at least one SPublish call, got none")
 	}
-	return m.spublishes[len(m.spublishes)-1]
 }
 
 func (m *mockCacheClient) publishCount() int {
@@ -114,12 +115,12 @@ func (m *mockCacheClient) GetDel(_ context.Context, _ string) (string, error) {
 // noopSub is a no-op CacheSubscription.
 type noopSub struct{}
 
-func (n *noopSub) C() <-chan *cache.CacheMessage                         { return nil }
-func (n *noopSub) PUnsubscribe(_ context.Context, _ ...string) error    { return nil }
-func (n *noopSub) Unsubscribe(_ context.Context, _ ...string) error     { return nil }
-func (n *noopSub) SUnsubscribe(_ context.Context, _ ...string) error    { return nil }
-func (n *noopSub) Close() error                                          { return nil }
+func (n *noopSub) C() <-chan *cache.CacheMessage                     { return nil }
+func (n *noopSub) PUnsubscribe(_ context.Context, _ ...string) error { return nil }
+func (n *noopSub) Unsubscribe(_ context.Context, _ ...string) error  { return nil }
+func (n *noopSub) SUnsubscribe(_ context.Context, _ ...string) error { return nil }
+func (n *noopSub) Close() error                                      { return nil }
 
 // compile-time checks
-var _ cache.CacheClient       = (*mockCacheClient)(nil)
+var _ cache.CacheClient = (*mockCacheClient)(nil)
 var _ cache.CacheSubscription = (*noopSub)(nil)

@@ -41,7 +41,7 @@ func MakeBroadcastOperator() *BroadcastOperator {
 	}
 }
 
-// NewBroadcastOperator creates and initialises a BroadcastOperator.
+// NewBroadcastOperator creates and initializes a BroadcastOperator.
 func NewBroadcastOperator(
 	client cache.CacheClient,
 	broadcastOptions *BroadcastOptions,
@@ -54,7 +54,7 @@ func NewBroadcastOperator(
 	return b
 }
 
-// Construct initialises the BroadcastOperator; nil parameters use safe defaults.
+// Construct initializes the BroadcastOperator; nil parameters use safe defaults.
 func (b *BroadcastOperator) Construct(
 	client cache.CacheClient,
 	broadcastOptions *BroadcastOptions,

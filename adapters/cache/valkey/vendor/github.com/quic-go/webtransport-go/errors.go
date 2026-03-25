@@ -1,0 +1,76 @@
+package webtransport
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/quic-go/quic-go"
+)
+
+// StreamErrorCode is an error code used for stream termination.
+type StreamErrorCode uint32
+
+// SessionErrorCode is an error code for session termination.
+type SessionErrorCode uint32
+
+const (
+	firstErrorCode = 0x52e4a40fa8db
+	lastErrorCode  = 0x52e5ac983162
+)
+
+func webtransportCodeToHTTPCode(n StreamErrorCode) quic.StreamErrorCode {
+	return quic.StreamErrorCode(firstErrorCode) + quic.StreamErrorCode(n) + quic.StreamErrorCode(n/0x1e)
+}
+
+func httpCodeToWebtransportCode(h quic.StreamErrorCode) (StreamErrorCode, error) {
+	if h < firstErrorCode || h > lastErrorCode {
+		return 0, errors.New("error code outside of expected range")
+	}
+	if (h-0x21)%0x1f == 0 {
+		return 0, errors.New("invalid error code")
+	}
+	shifted := h - firstErrorCode
+	return StreamErrorCode(shifted - shifted/0x1f), nil
+}
+
+const (
+	// WTBufferedStreamRejectedErrorCode is the error code of the
+	// WT_BUFFERED_STREAM_REJECTED error.
+	WTBufferedStreamRejectedErrorCode quic.StreamErrorCode = 0x3994bd84
+
+	// WTSessionGoneErrorCode is the error code of the WT_SESSION_GONE error.
+	WTSessionGoneErrorCode quic.StreamErrorCode = 0x170d7b68
+)
+
+// StreamError is the error that is returned from stream operations (Read, Write) when the stream is canceled.
+type StreamError struct {
+	ErrorCode StreamErrorCode
+	Remote    bool
+}
+
+var _ error = &StreamError{}
+
+func (e *StreamError) Error() string {
+	return fmt.Sprintf("stream canceled with error code %d", e.ErrorCode)
+}
+
+func (e *StreamError) Is(target error) bool {
+	t, ok := target.(*StreamError)
+	return ok && t.Remote == e.Remote && t.ErrorCode == e.ErrorCode
+}
+
+// SessionError is a WebTransport connection error.
+type SessionError struct {
+	Remote    bool
+	ErrorCode SessionErrorCode
+	Message   string
+}
+
+var _ error = &SessionError{}
+
+func (e *SessionError) Error() string { return e.Message }
+
+func (e *SessionError) Is(target error) bool {
+	t, ok := target.(*SessionError)
+	return ok && e.ErrorCode == t.ErrorCode && e.Remote == t.Remote
+}

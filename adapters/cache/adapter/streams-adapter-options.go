@@ -79,7 +79,7 @@ func (s *CacheStreamsAdapterOptions) Assign(data CacheStreamsAdapterOptionsInter
 	return s
 }
 
-func (s *CacheStreamsAdapterOptions) SetStreamName(v string) { s.streamName = types.NewSome(v) }
+func (s *CacheStreamsAdapterOptions) SetStreamName(v string)                   { s.streamName = types.NewSome(v) }
 func (s *CacheStreamsAdapterOptions) GetRawStreamName() types.Optional[string] { return s.streamName }
 func (s *CacheStreamsAdapterOptions) StreamName() string {
 	if s.streamName == nil {
@@ -88,7 +88,7 @@ func (s *CacheStreamsAdapterOptions) StreamName() string {
 	return s.streamName.Get()
 }
 
-func (s *CacheStreamsAdapterOptions) SetMaxLen(v int64) { s.maxLen = types.NewSome(v) }
+func (s *CacheStreamsAdapterOptions) SetMaxLen(v int64)                   { s.maxLen = types.NewSome(v) }
 func (s *CacheStreamsAdapterOptions) GetRawMaxLen() types.Optional[int64] { return s.maxLen }
 func (s *CacheStreamsAdapterOptions) MaxLen() int64 {
 	if s.maxLen == nil {
@@ -97,7 +97,7 @@ func (s *CacheStreamsAdapterOptions) MaxLen() int64 {
 	return s.maxLen.Get()
 }
 
-func (s *CacheStreamsAdapterOptions) SetReadCount(v int64) { s.readCount = types.NewSome(v) }
+func (s *CacheStreamsAdapterOptions) SetReadCount(v int64)                   { s.readCount = types.NewSome(v) }
 func (s *CacheStreamsAdapterOptions) GetRawReadCount() types.Optional[int64] { return s.readCount }
 func (s *CacheStreamsAdapterOptions) ReadCount() int64 {
 	if s.readCount == nil {

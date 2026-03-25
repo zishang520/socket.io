@@ -244,7 +244,7 @@ func TestEmitter_Sharded_Emit_UsesSPublish(t *testing.T) {
 	if mock.publishCount() != 0 {
 		t.Error("sharded mode should use SPublish, not Publish")
 	}
-	_ = mock.lastSPublish() // panics if no SPublish call was made
+	mock.requireSPublish(t)
 }
 
 func TestEmitter_Sharded_ServerSideEmit_UsesSPublish(t *testing.T) {
@@ -260,5 +260,5 @@ func TestEmitter_Sharded_ServerSideEmit_UsesSPublish(t *testing.T) {
 	if mock.publishCount() != 0 {
 		t.Error("sharded ServerSideEmit should use SPublish, not Publish")
 	}
-	_ = mock.lastSPublish()
+	mock.requireSPublish(t)
 }

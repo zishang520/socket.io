@@ -102,14 +102,14 @@ func (r *cacheAdapter) SetOpts(opts any) {
 	}
 }
 
-func (r *cacheAdapter) Uid() adapter.ServerId           { return r.uid }
-func (r *cacheAdapter) RequestsTimeout() time.Duration  { return r.requestsTimeout }
+func (r *cacheAdapter) Uid() adapter.ServerId          { return r.uid }
+func (r *cacheAdapter) RequestsTimeout() time.Duration { return r.requestsTimeout }
 func (r *cacheAdapter) PublishOnSpecificResponseChannel() bool {
 	return r.publishOnSpecificResponseChannel
 }
 func (r *cacheAdapter) Parser() cache.Parser { return r.parser }
 
-// Construct initialises the adapter: generates a UID, resolves configuration
+// Construct initializes the adapter: generates a UID, resolves configuration
 // defaults, derives channel names, and starts pub/sub listener goroutines.
 func (r *cacheAdapter) Construct(nsp socket.Namespace) {
 	r.Adapter.Construct(nsp)

@@ -66,7 +66,7 @@ func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 	return o
 }
 
-func (o *EmitterOptions) SetKey(key string) { o.key = types.NewSome(key) }
+func (o *EmitterOptions) SetKey(key string)                 { o.key = types.NewSome(key) }
 func (o *EmitterOptions) GetRawKey() types.Optional[string] { return o.key }
 func (o *EmitterOptions) Key() string {
 	if o.key == nil {
@@ -75,7 +75,7 @@ func (o *EmitterOptions) Key() string {
 	return o.key.Get()
 }
 
-func (o *EmitterOptions) SetParser(parser cache.Parser) { o.parser = types.NewSome(parser) }
+func (o *EmitterOptions) SetParser(parser cache.Parser)              { o.parser = types.NewSome(parser) }
 func (o *EmitterOptions) GetRawParser() types.Optional[cache.Parser] { return o.parser }
 func (o *EmitterOptions) Parser() cache.Parser {
 	if o.parser == nil {
@@ -84,7 +84,7 @@ func (o *EmitterOptions) Parser() cache.Parser {
 	return o.parser.Get()
 }
 
-func (o *EmitterOptions) SetSharded(sharded bool) { o.sharded = types.NewSome(sharded) }
+func (o *EmitterOptions) SetSharded(sharded bool)             { o.sharded = types.NewSome(sharded) }
 func (o *EmitterOptions) GetRawSharded() types.Optional[bool] { return o.sharded }
 func (o *EmitterOptions) Sharded() bool {
 	if o.sharded == nil {
