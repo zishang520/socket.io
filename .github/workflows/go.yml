@@ -87,7 +87,6 @@ jobs:
             sleep 3;
           done
 
-      - name: Build and Test
+      - name: Test
         run: |
-          make build
           make test
