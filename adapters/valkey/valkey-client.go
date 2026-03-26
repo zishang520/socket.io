@@ -208,8 +208,9 @@ func (c *ValkeyClient) PubSubShardNumSub(ctx context.Context, channels ...string
 // maxLen is used with the approximate trimming operator (~) for performance.
 func (c *ValkeyClient) XAdd(ctx context.Context, stream string, maxLen int64, values map[string]any) (string, error) {
 	// Build XADD using the Arbitrary command to support variable field-value pairs.
-	args := make([]string, 0, 6+len(values)*2)
-	args = append(args, "XADD", stream, "MAXLEN", "~", strconv.FormatInt(maxLen, 10), "*")
+	// The fixed header is built first; field-value pairs are appended in the loop so
+	// the capacity calculation never involves a potentially-overflowing multiplication.
+	args := []string{"XADD", stream, "MAXLEN", "~", strconv.FormatInt(maxLen, 10), "*"}
 	for k, v := range values {
 		args = append(args, k, anyToString(v))
 	}
