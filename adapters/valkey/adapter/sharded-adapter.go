@@ -43,8 +43,8 @@ type shardedValkeyAdapter struct {
 
 	// dynamicPubSubs holds per-room dynamic channel subscriptions.
 	// valkey-go handles cluster routing internally, so no per-master pooling is needed.
-	dynamicPubSubs   *types.Map[string, *valkey.ValkeyPubSub]
-	dynamicMutexes   *types.Map[string, *sync.Mutex]
+	dynamicPubSubs *types.Map[string, *valkey.ValkeyPubSub]
+	dynamicMutexes *types.Map[string, *sync.Mutex]
 
 	valkeyClient    *valkey.ValkeyClient
 	opts            *ShardedValkeyAdapterOptions
@@ -55,11 +55,11 @@ type shardedValkeyAdapter struct {
 // MakeShardedValkeyAdapter creates a new uninitialized shardedValkeyAdapter.
 func MakeShardedValkeyAdapter() ShardedValkeyAdapter {
 	c := &shardedValkeyAdapter{
-		ClusterAdapter:  adapter.MakeClusterAdapter(),
-		opts:            DefaultShardedValkeyAdapterOptions(),
-		pubSubClients:   &types.Map[string, *valkey.ValkeyPubSub]{},
-		dynamicPubSubs:  &types.Map[string, *valkey.ValkeyPubSub]{},
-		dynamicMutexes:  &types.Map[string, *sync.Mutex]{},
+		ClusterAdapter: adapter.MakeClusterAdapter(),
+		opts:           DefaultShardedValkeyAdapterOptions(),
+		pubSubClients:  &types.Map[string, *valkey.ValkeyPubSub]{},
+		dynamicPubSubs: &types.Map[string, *valkey.ValkeyPubSub]{},
+		dynamicMutexes: &types.Map[string, *sync.Mutex]{},
 	}
 	c.Prototype(c)
 	return c

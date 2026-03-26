@@ -101,8 +101,8 @@ func (r *valkeyAdapter) SetOpts(opts any) {
 	}
 }
 
-func (r *valkeyAdapter) Uid() adapter.ServerId           { return r.uid }
-func (r *valkeyAdapter) RequestsTimeout() time.Duration  { return r.requestsTimeout }
+func (r *valkeyAdapter) Uid() adapter.ServerId          { return r.uid }
+func (r *valkeyAdapter) RequestsTimeout() time.Duration { return r.requestsTimeout }
 func (r *valkeyAdapter) PublishOnSpecificResponseChannel() bool {
 	return r.publishOnSpecificResponseChannel
 }

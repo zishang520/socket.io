@@ -86,7 +86,7 @@ func (s *ValkeyStreamsAdapterOptions) StreamName() string {
 	return s.streamName.Get()
 }
 
-func (s *ValkeyStreamsAdapterOptions) SetMaxLen(v int64) { s.maxLen = types.NewSome(v) }
+func (s *ValkeyStreamsAdapterOptions) SetMaxLen(v int64)                   { s.maxLen = types.NewSome(v) }
 func (s *ValkeyStreamsAdapterOptions) GetRawMaxLen() types.Optional[int64] { return s.maxLen }
 func (s *ValkeyStreamsAdapterOptions) MaxLen() int64 {
 	if s.maxLen == nil {
@@ -95,7 +95,7 @@ func (s *ValkeyStreamsAdapterOptions) MaxLen() int64 {
 	return s.maxLen.Get()
 }
 
-func (s *ValkeyStreamsAdapterOptions) SetReadCount(v int64) { s.readCount = types.NewSome(v) }
+func (s *ValkeyStreamsAdapterOptions) SetReadCount(v int64)                   { s.readCount = types.NewSome(v) }
 func (s *ValkeyStreamsAdapterOptions) GetRawReadCount() types.Optional[int64] { return s.readCount }
 func (s *ValkeyStreamsAdapterOptions) ReadCount() int64 {
 	if s.readCount == nil {

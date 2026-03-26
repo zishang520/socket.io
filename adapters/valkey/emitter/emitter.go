@@ -14,10 +14,9 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-const (
-	emitterUID       adapter.ServerId = "emitter"
-	defaultNamespace                  = "/"
-)
+const emitterUID adapter.ServerId = "emitter"
+
+const defaultNamespace = "/"
 
 var emitterLog = log.NewLog("socket.io-valkey-emitter")
 

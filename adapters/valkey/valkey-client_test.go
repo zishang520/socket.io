@@ -65,13 +65,13 @@ func TestValkeyPubSub_Close(t *testing.T) {
 	vc := valkey.NewValkeyClient(context.Background(), client)
 
 	pubsub := vc.Subscribe(vc.Context, "test-channel")
-	if err := pubsub.Close(); err != nil {
-		t.Fatalf("expected no error on Close, got %v", err)
+	if closeErr := pubsub.Close(); closeErr != nil {
+		t.Fatalf("expected no error on Close, got %v", closeErr)
 	}
 
 	// Closing again should be idempotent.
-	if err := pubsub.Close(); err != nil {
-		t.Fatalf("expected no error on second Close, got %v", err)
+	if closeErr := pubsub.Close(); closeErr != nil {
+		t.Fatalf("expected no error on second Close, got %v", closeErr)
 	}
 
 	// ReceiveMessage after close should return ErrValkeyPubSubClosed or ctx error.
@@ -99,8 +99,8 @@ func TestValkeyClient_SetGet(t *testing.T) {
 
 	key := "sio:test:setget"
 
-	if err := vc.Set(ctx, key, "hello", 10*time.Second); err != nil {
-		t.Fatalf("Set: %v", err)
+	if setErr := vc.Set(ctx, key, "hello", 10*time.Second); setErr != nil {
+		t.Fatalf("Set: %v", setErr)
 	}
 
 	val, err := vc.GetDel(ctx, key)
