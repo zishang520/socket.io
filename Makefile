@@ -22,6 +22,7 @@ MODULES := parsers/engine \
            servers/socket \
            adapters/adapter \
            adapters/redis \
+           adapters/valkey \
            clients/engine \
            clients/socket
 
