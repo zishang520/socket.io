@@ -12,7 +12,7 @@ require (
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.0 // indirect
+	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/gookit/color v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
