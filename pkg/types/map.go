@@ -9,7 +9,11 @@ import (
 	"sync/atomic"
 )
 
-// Map is like a Go map[any]any but is safe for concurrent use
+// Map is a generic, type-safe concurrent map based on the sync.Map algorithm.
+// Unlike sync.Map, it uses Go generics to eliminate type assertions on every
+// Load/Store and provides additional methods: [Map.Len], [Map.Keys], [Map.Values].
+//
+// Map is safe for concurrent use
 // by multiple goroutines without additional locking or coordination.
 // Loads, stores, and deletes run in amortized constant time.
 //

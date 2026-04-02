@@ -1,9 +1,15 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
+)
+
+var (
+	ErrEmptyURI          = errors.New("URI must not be empty")
+	ErrUnsupportedScheme = errors.New("unsupported URI scheme")
 )
 
 type ParsedUrl struct {
@@ -15,10 +21,24 @@ type ParsedUrl struct {
 }
 
 func Url(uri string, path string) (parsedUrl *ParsedUrl, err error) {
+	if uri == "" {
+		return nil, ErrEmptyURI
+	}
+
 	url, err := url.Parse(uri)
 	if err != nil {
 		return nil, err
 	}
+
+	switch url.Scheme {
+	case "http", "https", "ws", "wss":
+		// valid schemes
+	case "":
+		return nil, fmt.Errorf("%w: %q", ErrUnsupportedScheme, url.Scheme)
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrUnsupportedScheme, url.Scheme)
+	}
+
 	parsedUrl = &ParsedUrl{URL: url}
 	parsedUrl.Hostname = parsedUrl.URL.Hostname()
 	parsedUrl.Port = parsedUrl.URL.Port()

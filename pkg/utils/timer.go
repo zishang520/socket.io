@@ -24,9 +24,10 @@ func (t *Timer) Refresh() *Timer {
 }
 
 func (t *Timer) Unref() {
+	stopCh := t.stopCh
 	runtime.AddCleanup(t, func(timer *time.Timer) {
 		if timer.Stop() {
-			close(t.stopCh)
+			close(stopCh)
 		}
 	}, t.timer)
 }

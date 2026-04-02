@@ -102,3 +102,26 @@ func TestQueue_DoubleClose(t *testing.T) {
 	q.Close()
 	q.Close() // should not panic
 }
+
+func TestQueue_Size(t *testing.T) {
+	q := New()
+	defer q.Close()
+
+	// Block the consumer so pending tasks accumulate
+	blocker := make(chan struct{})
+	defer close(blocker)
+	started := make(chan struct{})
+	q.Enqueue(func() {
+		close(started)
+		<-blocker
+	})
+	<-started // wait for the blocker task to be consumed
+
+	for range 10 {
+		q.Enqueue(func() {})
+	}
+
+	if got := q.Size(); got != 10 {
+		t.Fatalf("expected size 10, got %d", got)
+	}
+}

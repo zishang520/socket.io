@@ -5,6 +5,14 @@
 package types
 
 // Simple byte buffer for marshaling data.
+//
+// This is a custom implementation rather than using bytes.Buffer because it
+// provides additional capabilities required by the socket.io protocol:
+//   - io.Seeker support (Seek method) for random-access reads
+//   - Clone() for deep copying buffers without shared state
+//   - Size() returning the total underlying buffer length
+//   - BufferInterface combining io.ReadWriteSeeker and other interfaces
+//   - BytesBuffer/StringBuffer wrappers with distinct GoString and JSON behavior
 
 import (
 	"errors"

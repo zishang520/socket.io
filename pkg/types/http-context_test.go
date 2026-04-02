@@ -168,4 +168,47 @@ func TestHttpContext(t *testing.T) {
 			t.Errorf("expected final body to be %q, but got %q", expectedBody, body)
 		}
 	})
+
+	t.Run("NilRequest", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected panic for nil request")
+			}
+			if !errors.Is(r.(error), ErrNilRequest) {
+				t.Fatalf("expected ErrNilRequest, got %v", r)
+			}
+		}()
+		NewHttpContext(httptest.NewRecorder(), nil)
+	})
+
+	t.Run("NilResponseWriter", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected panic for nil response writer")
+			}
+			if !errors.Is(r.(error), ErrNilResponseWriter) {
+				t.Fatalf("expected ErrNilResponseWriter, got %v", r)
+			}
+		}()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		NewHttpContext(nil, req)
+	})
+
+	t.Run("InvalidStatusCode", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		ctx := NewHttpContext(rec, req)
+
+		if err := ctx.SetStatusCode(99); !errors.Is(err, ErrInvalidStatusCode) {
+			t.Errorf("expected ErrInvalidStatusCode for 99, got %v", err)
+		}
+		if err := ctx.SetStatusCode(600); !errors.Is(err, ErrInvalidStatusCode) {
+			t.Errorf("expected ErrInvalidStatusCode for 600, got %v", err)
+		}
+		if err := ctx.SetStatusCode(200); err != nil {
+			t.Errorf("expected nil for 200, got %v", err)
+		}
+	})
 }

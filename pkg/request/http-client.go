@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync/atomic"
+
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 
 	"resty.dev/v3"
 )
@@ -87,11 +90,12 @@ func (c *HTTPClient) Request(ctx context.Context, method, url string, options *O
 	c.setQuery(req, options)
 
 	// Set request headers
-	c.setRequestHeaders(req, options)
+	if err := c.setRequestHeaders(req, options); err != nil {
+		return nil, err
+	}
 
 	// Set authentication information
 	c.setAuthentication(req, options)
-
 	c.setCookies(req, options)
 
 	// Send request
@@ -171,6 +175,12 @@ func (c *HTTPClient) setRequestBody(req *resty.Request, options *Options) error 
 		req.SetFormData(options.Form)
 	case options.Multipart != nil:
 		for k, v := range options.Multipart {
+			if v == nil {
+				return fmt.Errorf("multipart field %q has nil value", k)
+			}
+			if v.Reader == nil {
+				return fmt.Errorf("multipart field %q has nil Reader", k)
+			}
 			req.SetMultipartField(k, v.FileName, v.ContentType, v.Reader)
 		}
 	case options.Body != nil:
@@ -184,8 +194,7 @@ func (c *HTTPClient) setRequestBody(req *resty.Request, options *Options) error 
 	return nil
 }
 
-func (c *HTTPClient) setRequestHeaders(req *resty.Request, options *Options) {
-	// Set default User-Agent
+func (c *HTTPClient) setRequestHeaders(req *resty.Request, options *Options) error {
 	// Set default headers first
 	req.SetHeaders(map[string]string{
 		"User-Agent": "engine.io-go/1.0",
@@ -194,8 +203,14 @@ func (c *HTTPClient) setRequestHeaders(req *resty.Request, options *Options) {
 
 	// Then set custom headers, allowing override of defaults
 	if len(options.Headers) > 0 {
+		for name, values := range options.Headers {
+			if slices.ContainsFunc(values, utils.CheckInvalidHeaderChar) {
+				return fmt.Errorf("invalid character in header %q value", name)
+			}
+		}
 		req.SetHeaderMultiValues(options.Headers)
 	}
+	return nil
 }
 
 func (c *HTTPClient) setQuery(req *resty.Request, options *Options) {

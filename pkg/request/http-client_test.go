@@ -262,3 +262,69 @@ func TestHTTPClient_Authentication(t *testing.T) {
 		}
 	})
 }
+
+func TestHTTPClient_InvalidHeaderChar(t *testing.T) {
+	client := NewHTTPClient()
+
+	t.Run("reject header with control character", func(t *testing.T) {
+		_, err := client.Get("http://localhost", &Options{
+			Headers: http.Header{
+				"X-Bad": {string([]byte{0x00})},
+			},
+		})
+		if err == nil {
+			t.Error("expected error for header with NUL character")
+		}
+		if !strings.Contains(err.Error(), "invalid character in header") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("accept valid header", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer ts.Close()
+
+		_, err := client.Get(ts.URL, &Options{
+			Headers: http.Header{
+				"X-Good": {"valid-value"},
+			},
+		})
+		if err != nil {
+			t.Errorf("valid header should not fail: %v", err)
+		}
+	})
+}
+
+func TestHTTPClient_MultipartValidation(t *testing.T) {
+	client := NewHTTPClient()
+
+	t.Run("reject nil multipart value", func(t *testing.T) {
+		_, err := client.Post("http://localhost", &Options{
+			Multipart: map[string]*Multipart{
+				"file": nil,
+			},
+		})
+		if err == nil {
+			t.Error("expected error for nil multipart value")
+		}
+		if !strings.Contains(err.Error(), "nil value") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("reject nil reader in multipart", func(t *testing.T) {
+		_, err := client.Post("http://localhost", &Options{
+			Multipart: map[string]*Multipart{
+				"file": {FileName: "test.txt", ContentType: "text/plain"},
+			},
+		})
+		if err == nil {
+			t.Error("expected error for nil multipart Reader")
+		}
+		if !strings.Contains(err.Error(), "nil Reader") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+}

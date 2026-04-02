@@ -1,9 +1,12 @@
 package types
 
 import (
+	"encoding/json"
 	"errors"
 	"slices"
 	"sync"
+
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // Define custom error types
@@ -320,4 +323,46 @@ func (s *Slice[T]) Len() int {
 	defer s.mu.RUnlock()
 
 	return len(s.elements)
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (s *Slice[T]) MarshalJSON() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return json.Marshal(s.elements)
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (s *Slice[T]) UnmarshalJSON(data []byte) error {
+	var elements []T
+	if err := json.Unmarshal(data, &elements); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.elements = elements
+	return nil
+}
+
+// MarshalMsgpack implements the msgpack.Marshaler interface.
+func (s *Slice[T]) MarshalMsgpack() ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return msgpack.Marshal(s.elements)
+}
+
+// UnmarshalMsgpack implements the msgpack.Unmarshaler interface.
+func (s *Slice[T]) UnmarshalMsgpack(data []byte) error {
+	var elements []T
+	if err := msgpack.Unmarshal(data, &elements); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.elements = elements
+	return nil
 }

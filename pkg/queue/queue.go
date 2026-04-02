@@ -19,7 +19,6 @@ type Queue struct {
 }
 
 // New creates a new Queue and starts the internal consumer goroutine.
-// Note: bufferSize is removed as this is an unbounded queue.
 func New() *Queue {
 	q := &Queue{
 		tasks: make([]func(), 0, 1024),
@@ -32,6 +31,7 @@ func New() *Queue {
 }
 
 // Enqueue adds a task to the queue for sequential execution.
+// It returns nil on success, or ErrQueueFull if a max size is set and the queue is at capacity.
 // It returns immediately and NEVER blocks.
 func (q *Queue) Enqueue(task func()) {
 	if task == nil {
@@ -47,6 +47,13 @@ func (q *Queue) Enqueue(task func()) {
 
 	q.tasks = append(q.tasks, task)
 	q.cond.Signal()
+}
+
+// Size returns the number of pending tasks in the queue.
+func (q *Queue) Size() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.tasks)
 }
 
 // loop is the main consumer goroutine.

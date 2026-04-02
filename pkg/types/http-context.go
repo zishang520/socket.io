@@ -13,6 +13,8 @@ import (
 var (
 	ErrResponseAlreadyWritten = errors.New("response has already been written")
 	ErrInvalidStatusCode      = errors.New("invalid status code")
+	ErrNilRequest             = errors.New("http.Request must not be nil")
+	ErrNilResponseWriter      = errors.New("http.ResponseWriter must not be nil")
 )
 
 type HttpContext struct {
@@ -46,6 +48,13 @@ type HttpContext struct {
 }
 
 func NewHttpContext(w http.ResponseWriter, r *http.Request) *HttpContext {
+	if r == nil {
+		panic(ErrNilRequest)
+	}
+	if w == nil {
+		panic(ErrNilResponseWriter)
+	}
+
 	c := &HttpContext{
 		EventEmitter: NewEventEmitter(),
 
