@@ -6,7 +6,6 @@ import (
 	"io"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
@@ -221,7 +220,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 			if !failed.Load() {
 				transport.Open()
 			}
-		}, 200*time.Millisecond)
+		}, DefaultWebTransportUpgradeDelay)
 	} else {
 		transport.Open()
 	}

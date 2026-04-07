@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
-	"time"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/v3/pkg/events"
@@ -89,6 +88,7 @@ func setupSignalHandling() {
 
 		<-ctx.Done()
 
+		stopNetworkMonitoring()
 		events.Emit(EventBeforeUnload)
 	}()
 }
@@ -116,6 +116,10 @@ func isNetworkOnline() bool {
 	return false
 }
 
+// networkMonitor holds a reference to the network status polling timer,
+// allowing it to be stopped via stopNetworkMonitoring.
+var networkMonitor *utils.Timer
+
 // setupNetworkHandling configures network status monitoring for the Engine.IO client.
 // It periodically checks the network status and emits appropriate events when
 // the network state changes (online/offline).
@@ -124,7 +128,7 @@ func isNetworkOnline() bool {
 // responsiveness and system resource usage.
 func setupNetworkHandling() {
 	var previousState atomic.Bool
-	utils.SetInterval(func() {
+	networkMonitor = utils.SetInterval(func() {
 		if currentState := isNetworkOnline(); currentState != previousState.Load() {
 			previousState.Store(currentState)
 			if currentState {
@@ -133,5 +137,13 @@ func setupNetworkHandling() {
 				events.Emit(EventOffline)
 			}
 		}
-	}, 3000*time.Millisecond)
+	}, DefaultNetworkStatusCheckInterval)
+}
+
+// stopNetworkMonitoring stops the background network status polling goroutine.
+// Call this function during application shutdown to prevent goroutine leaks.
+func stopNetworkMonitoring() {
+	if networkMonitor != nil {
+		utils.ClearInterval(networkMonitor)
+	}
 }

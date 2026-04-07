@@ -148,23 +148,23 @@ func (m *Manager) Construct(uri string, opts ManagerOptionsInterface) {
 	if opts.GetRawReconnectionDelay() != nil {
 		m.SetReconnectionDelay(opts.ReconnectionDelay())
 	} else {
-		m.SetReconnectionDelay(1_000)
+		m.SetReconnectionDelay(DefaultReconnectionDelay)
 	}
 	if opts.GetRawReconnectionDelayMax() != nil {
 		m.SetReconnectionDelayMax(opts.ReconnectionDelayMax())
 	} else {
-		m.SetReconnectionDelayMax(5_000)
+		m.SetReconnectionDelayMax(DefaultReconnectionDelayMax)
 	}
 	if opts.GetRawRandomizationFactor() != nil {
 		m.SetRandomizationFactor(opts.RandomizationFactor())
 	} else {
-		m.SetRandomizationFactor(0.5)
+		m.SetRandomizationFactor(DefaultRandomizationFactor)
 	}
 	m.backoff = utils.NewBackoff(utils.WithMin(m.ReconnectionDelay()), utils.WithMax(m.ReconnectionDelayMax()), utils.WithJitter(m.RandomizationFactor()))
 	if opts.GetRawTimeout() != nil {
 		m.SetTimeout(opts.Timeout())
 	} else {
-		m.SetTimeout(20_000 * time.Millisecond)
+		m.SetTimeout(DefaultTimeout)
 	}
 
 	m._readyState.Store(ReadyStateClosed)
@@ -192,6 +192,8 @@ func (m *Manager) SetReconnection(reconnection bool) {
 		m.skipReconnect.Store(true)
 	}
 }
+
+// Reconnection returns whether automatic reconnection is enabled.
 func (m *Manager) Reconnection() bool {
 	return m._reconnection.Load()
 }
@@ -200,6 +202,8 @@ func (m *Manager) Reconnection() bool {
 func (m *Manager) SetReconnectionAttempts(reconnectionAttempts float64) {
 	m._reconnectionAttempts.Store(reconnectionAttempts)
 }
+
+// ReconnectionAttempts returns the maximum number of reconnection attempts.
 func (m *Manager) ReconnectionAttempts() float64 {
 	return m._reconnectionAttempts.Load()
 }
@@ -211,28 +215,34 @@ func (m *Manager) SetReconnectionDelay(reconnectionDelay float64) {
 		backoff.SetMin(reconnectionDelay)
 	}
 }
+
+// ReconnectionDelay returns the initial reconnection delay in milliseconds.
 func (m *Manager) ReconnectionDelay() float64 {
 	return m._reconnectionDelay.Load()
 }
 
-// Sets the maximum delay between reconnections.
+// SetRandomizationFactor sets the jitter factor applied to reconnection delays.
 func (m *Manager) SetRandomizationFactor(randomizationFactor float64) {
 	m._randomizationFactor.Store(randomizationFactor)
 	if backoff := m.backoff; backoff != nil {
 		backoff.SetJitter(randomizationFactor)
 	}
 }
+
+// RandomizationFactor returns the jitter factor applied to reconnection delays.
 func (m *Manager) RandomizationFactor() float64 {
 	return m._randomizationFactor.Load()
 }
 
-// Sets the randomization factor
+// SetReconnectionDelayMax sets the maximum delay between reconnection attempts.
 func (m *Manager) SetReconnectionDelayMax(reconnectionDelayMax float64) {
 	m._reconnectionDelayMax.Store(reconnectionDelayMax)
 	if backoff := m.backoff; backoff != nil {
 		backoff.SetMax(reconnectionDelayMax)
 	}
 }
+
+// ReconnectionDelayMax returns the maximum reconnection delay in milliseconds.
 func (m *Manager) ReconnectionDelayMax() float64 {
 	return m._reconnectionDelayMax.Load()
 }
@@ -241,6 +251,8 @@ func (m *Manager) ReconnectionDelayMax() float64 {
 func (m *Manager) SetTimeout(timeout time.Duration) {
 	m._timeout.Store(&timeout)
 }
+
+// Timeout returns the connection timeout duration.
 func (m *Manager) Timeout() *time.Duration {
 	return m._timeout.Load()
 }

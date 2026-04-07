@@ -7,7 +7,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-func newTestSessionAwareAdapter() (SessionAwareAdapter, *Server) {
+func newTestSessionAwareAdapter() SessionAwareAdapter {
 	opts := DefaultServerOptions()
 	recovery := DefaultConnectionStateRecovery()
 	recovery.SetMaxDisconnectionDuration(60_000) // 60s for testing
@@ -19,11 +19,11 @@ func newTestSessionAwareAdapter() (SessionAwareAdapter, *Server) {
 	if !ok {
 		panic("expected SessionAwareAdapter")
 	}
-	return sa, server
+	return sa
 }
 
 func TestSessionAwareAdapterPersistAndRestore(t *testing.T) {
-	sa, _ := newTestSessionAwareAdapter()
+	sa := newTestSessionAwareAdapter()
 	defer sa.Close()
 
 	session := &SessionToPersist{
@@ -46,7 +46,7 @@ func TestSessionAwareAdapterPersistAndRestore(t *testing.T) {
 }
 
 func TestSessionAwareAdapterRestoreNonExistent(t *testing.T) {
-	sa, _ := newTestSessionAwareAdapter()
+	sa := newTestSessionAwareAdapter()
 	defer sa.Close()
 
 	restored, err := sa.RestoreSession("nonexistent", "offset")
@@ -89,7 +89,7 @@ func TestSessionAwareAdapterExpiredSession(t *testing.T) {
 }
 
 func TestSessionAwareAdapterClose(t *testing.T) {
-	sa, _ := newTestSessionAwareAdapter()
+	sa := newTestSessionAwareAdapter()
 
 	// Close should not panic
 	sa.Close()

@@ -7,14 +7,14 @@ import (
 )
 
 // newTestAdapter creates a fully initialized adapter via a real server.
-func newTestAdapter() (Adapter, Namespace) {
+func newTestAdapter() Adapter {
 	server := NewServer(nil, nil)
 	nsp := server.Sockets()
-	return nsp.Adapter(), nsp
+	return nsp.Adapter()
 }
 
 func TestAdapterAddAll(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	sid := SocketId("s1")
 	rooms := types.NewSet[Room]("room1", "room2")
@@ -42,7 +42,7 @@ func TestAdapterAddAll(t *testing.T) {
 }
 
 func TestAdapterAddAllMultipleSockets(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	adapter.AddAll("s1", types.NewSet[Room]("room1"))
 	adapter.AddAll("s2", types.NewSet[Room]("room1"))
@@ -57,7 +57,7 @@ func TestAdapterAddAllMultipleSockets(t *testing.T) {
 }
 
 func TestAdapterDel(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	adapter.AddAll("s1", types.NewSet[Room]("room1", "room2"))
 	adapter.Del("s1", "room1")
@@ -77,7 +77,7 @@ func TestAdapterDel(t *testing.T) {
 }
 
 func TestAdapterDelAll(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	adapter.AddAll("s1", types.NewSet[Room]("room1", "room2", "room3"))
 	adapter.DelAll("s1")
@@ -96,7 +96,7 @@ func TestAdapterDelAll(t *testing.T) {
 }
 
 func TestAdapterDelNonExistentSocket(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	// Should not panic
 	adapter.Del("nonexistent", "room1")
@@ -104,7 +104,7 @@ func TestAdapterDelNonExistentSocket(t *testing.T) {
 }
 
 func TestAdapterSocketRoomsNonExistent(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	if rooms := adapter.SocketRooms("nonexistent"); rooms != nil {
 		t.Error("Expected nil for non-existent socket")
@@ -112,7 +112,7 @@ func TestAdapterSocketRoomsNonExistent(t *testing.T) {
 }
 
 func TestAdapterSockets(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	adapter.AddAll("s1", types.NewSet[Room]("room1"))
 	adapter.AddAll("s2", types.NewSet[Room]("room1", "room2"))
@@ -133,7 +133,7 @@ func TestAdapterSockets(t *testing.T) {
 }
 
 func TestAdapterServerCount(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	if count := adapter.ServerCount(); count != 1 {
 		t.Errorf("Expected ServerCount() = 1, got %d", count)
@@ -141,23 +141,23 @@ func TestAdapterServerCount(t *testing.T) {
 }
 
 func TestAdapterRoomEvents(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	var createdRooms []Room
 	var joinedPairs [][2]string
 	var leftPairs [][2]string
 	var deletedRooms []Room
 
-	adapter.On("create-room", func(args ...any) {
+	_ = adapter.On("create-room", func(args ...any) {
 		createdRooms = append(createdRooms, args[0].(Room))
 	})
-	adapter.On("join-room", func(args ...any) {
+	_ = adapter.On("join-room", func(args ...any) {
 		joinedPairs = append(joinedPairs, [2]string{string(args[0].(Room)), string(args[1].(SocketId))})
 	})
-	adapter.On("leave-room", func(args ...any) {
+	_ = adapter.On("leave-room", func(args ...any) {
 		leftPairs = append(leftPairs, [2]string{string(args[0].(Room)), string(args[1].(SocketId))})
 	})
-	adapter.On("delete-room", func(args ...any) {
+	_ = adapter.On("delete-room", func(args ...any) {
 		deletedRooms = append(deletedRooms, args[0].(Room))
 	})
 
@@ -179,7 +179,7 @@ func TestAdapterRoomEvents(t *testing.T) {
 }
 
 func TestAdapterAddAllIdempotent(t *testing.T) {
-	adapter, _ := newTestAdapter()
+	adapter := newTestAdapter()
 
 	adapter.AddAll("s1", types.NewSet[Room]("room1"))
 	adapter.AddAll("s1", types.NewSet[Room]("room1"))
