@@ -19,6 +19,14 @@ import (
 	webtrans "github.com/zishang520/socket.io/v3/pkg/webtransport"
 )
 
+const (
+	// DefaultWSReadBufferSize is the default read buffer size for WebSocket connections.
+	DefaultWSReadBufferSize = 1024
+
+	// DefaultWSWriteBufferSize is the default write buffer size for WebSocket connections.
+	DefaultWSWriteBufferSize = 1024
+)
+
 type server struct {
 	BaseServer
 
@@ -111,8 +119,8 @@ func (s *server) HandleUpgrade(ctx *types.HttpContext) {
 		wsc := &types.WebSocketConn{EventEmitter: types.NewEventEmitter()}
 
 		ws := &websocket.Upgrader{
-			ReadBufferSize:    1024,
-			WriteBufferSize:   1024,
+			ReadBufferSize:    DefaultWSReadBufferSize,
+			WriteBufferSize:   DefaultWSWriteBufferSize,
 			EnableCompression: s.Opts().PerMessageDeflate() != nil,
 			Error: func(_ http.ResponseWriter, _ *http.Request, _ int, reason error) {
 				if websocket.IsUnexpectedCloseError(reason) {

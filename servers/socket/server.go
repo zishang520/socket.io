@@ -23,6 +23,17 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/version"
 )
 
+const (
+	// DefaultConnectTimeout is the default time a client has to send its first namespace connection request.
+	DefaultConnectTimeout = 45_000 * time.Millisecond
+
+	// DefaultMaxDisconnectionDuration is the default maximum time a session can be disconnected before being discarded.
+	DefaultMaxDisconnectionDuration int64 = 2 * 60 * 1000
+
+	// DefaultSessionCleanupInterval is the default interval between two session cleanup sweeps.
+	DefaultSessionCleanupInterval = 60_000 * time.Millisecond
+)
+
 var (
 	dotMapRegex = regexp.MustCompile(`\.map`)
 	server_log  = log.NewLog("socket.io:server")
@@ -130,7 +141,7 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 	if opts.GetRawConnectTimeout() != nil {
 		s.SetConnectTimeout(opts.ConnectTimeout())
 	} else {
-		s.SetConnectTimeout(45_000 * time.Millisecond)
+		s.SetConnectTimeout(DefaultConnectTimeout)
 	}
 	s.SetServeClient(opts.ServeClient())
 	if _parser := opts.Parser(); _parser != nil {
@@ -145,7 +156,7 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 	} else {
 		if connectionStateRecovery := opts.ConnectionStateRecovery(); connectionStateRecovery != nil {
 			if connectionStateRecovery.GetRawMaxDisconnectionDuration() == nil {
-				connectionStateRecovery.SetMaxDisconnectionDuration(2 * 60 * 1000)
+				connectionStateRecovery.SetMaxDisconnectionDuration(DefaultMaxDisconnectionDuration)
 			}
 			if connectionStateRecovery.GetRawSkipMiddlewares() == nil {
 				connectionStateRecovery.SetSkipMiddlewares(true)

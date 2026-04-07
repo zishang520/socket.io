@@ -17,6 +17,10 @@ type (
 		SetSkipMiddlewares(bool)
 		GetRawSkipMiddlewares() types.Optional[bool]
 		SkipMiddlewares() bool
+
+		SetSessionCleanupInterval(time.Duration)
+		GetRawSessionCleanupInterval() types.Optional[time.Duration]
+		SessionCleanupInterval() time.Duration
 	}
 
 	ConnectionStateRecovery struct {
@@ -25,6 +29,9 @@ type (
 
 		// Whether to skip middlewares upon successful connection state recovery.
 		skipMiddlewares types.Optional[bool]
+
+		// The interval between two session cleanup sweeps.
+		sessionCleanupInterval types.Optional[time.Duration]
 	}
 
 	ServerOptionsInterface interface {
@@ -102,6 +109,9 @@ func (c *ConnectionStateRecovery) Assign(data ConnectionStateRecoveryInterface) 
 	if data.GetRawSkipMiddlewares() != nil {
 		c.SetSkipMiddlewares(data.SkipMiddlewares())
 	}
+	if data.GetRawSessionCleanupInterval() != nil {
+		c.SetSessionCleanupInterval(data.SessionCleanupInterval())
+	}
 
 	return c
 }
@@ -168,6 +178,25 @@ func (c *ConnectionStateRecovery) SkipMiddlewares() bool {
 	}
 
 	return c.skipMiddlewares.Get()
+}
+
+// SetSessionCleanupInterval sets the interval between two session cleanup sweeps.
+func (c *ConnectionStateRecovery) SetSessionCleanupInterval(sessionCleanupInterval time.Duration) {
+	c.sessionCleanupInterval = types.NewSome(sessionCleanupInterval)
+}
+
+// GetRawSessionCleanupInterval returns the raw optional value of the session cleanup interval.
+func (c *ConnectionStateRecovery) GetRawSessionCleanupInterval() types.Optional[time.Duration] {
+	return c.sessionCleanupInterval
+}
+
+// SessionCleanupInterval returns the configured session cleanup interval, or 0 if not set.
+func (c *ConnectionStateRecovery) SessionCleanupInterval() time.Duration {
+	if c.sessionCleanupInterval == nil {
+		return 0
+	}
+
+	return c.sessionCleanupInterval.Get()
 }
 
 func (s *ServerOptions) SetServeClient(serveClient bool) {

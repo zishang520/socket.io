@@ -23,6 +23,11 @@ import (
 
 var polling_log = log.NewLog("engine:polling")
 
+const (
+	// DefaultPollingCloseTimeout is the default time to wait for pending writes before closing a polling transport.
+	DefaultPollingCloseTimeout = 30_000 * time.Millisecond
+)
+
 type polling struct {
 	Transport
 
@@ -56,7 +61,7 @@ func NewPolling(ctx *types.HttpContext) Polling {
 func (p *polling) Construct(ctx *types.HttpContext) {
 	p.Transport.Construct(ctx)
 
-	p.closeTimeout = 30 * 1000 * time.Millisecond
+	p.closeTimeout = DefaultPollingCloseTimeout
 	p.writeQueue = queue.New()
 }
 

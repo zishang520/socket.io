@@ -20,6 +20,11 @@ import (
 
 var socket_log = log.NewLog("engine:socket")
 
+const (
+	// DefaultUpgradeCheckInterval is the interval between upgrade readiness checks during transport upgrade.
+	DefaultUpgradeCheckInterval = 100 * time.Millisecond
+)
+
 type socket struct {
 	types.EventEmitter
 
@@ -325,7 +330,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 			s.Emit("upgrading", transport)
 
 			utils.ClearInterval(checkIntervalTimer.Load())
-			checkIntervalTimer.Store(utils.SetInterval(check, 100*time.Millisecond))
+			checkIntervalTimer.Store(utils.SetInterval(check, DefaultUpgradeCheckInterval))
 
 		} else if packet.UPGRADE == data.Type && s.ReadyState() != "closed" {
 			socket_log.Debug("got upgrade packet - upgrading")
