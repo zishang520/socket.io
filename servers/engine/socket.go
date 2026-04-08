@@ -18,7 +18,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-var socket_log = log.NewLog("engine:socket")
+var socketLog = log.NewLog("engine:socket")
 
 const (
 	// DefaultUpgradeCheckInterval is the interval between upgrade readiness checks during transport upgrade.
@@ -105,7 +105,7 @@ func (s *socket) ReadyState() string {
 }
 
 func (s *socket) SetReadyState(state string) {
-	socket_log.Debug("readyState updated from %s to %s", s.ReadyState(), state)
+	socketLog.Debug("readyState updated from %s to %s", s.ReadyState(), state)
 
 	s.readyState.Store(state)
 }
@@ -169,7 +169,9 @@ func (s *socket) onOpen() {
 	})
 
 	if err != nil {
-		socket_log.Debug("json.Marshal err")
+		socketLog.Debug("json.Marshal err: %s", err)
+		s.OnClose("encode error")
+		return
 	}
 	s.sendPacket(
 		packet.OPEN,
@@ -195,17 +197,17 @@ func (s *socket) onOpen() {
 // Called upon transport packet.
 func (s *socket) onPacket(data *packet.Packet) {
 	if data == nil {
-		socket_log.Debug("packet received nil")
+		socketLog.Debug("packet received nil")
 		return
 	}
 
 	if s.ReadyState() != "open" {
-		socket_log.Debug("packet received with closed socket")
+		socketLog.Debug("packet received with closed socket")
 		return
 	}
 
 	// export packet event
-	socket_log.Debug(`received packet %s`, data.Type)
+	socketLog.Debug(`received packet %s`, data.Type)
 	s.Emit("packet", data)
 
 	switch data.Type {
@@ -214,7 +216,7 @@ func (s *socket) onPacket(data *packet.Packet) {
 			s.onError(errors.ErrInvalidHeartbeat)
 			return
 		}
-		socket_log.Debug("got ping")
+		socketLog.Debug("got ping")
 		s.pingTimeoutTimer.Load().Refresh()
 		s.sendPacket(packet.PONG, nil, nil, nil)
 		s.Emit("heartbeat")
@@ -223,7 +225,7 @@ func (s *socket) onPacket(data *packet.Packet) {
 			s.onError(errors.ErrInvalidHeartbeat)
 			return
 		}
-		socket_log.Debug("got pong")
+		socketLog.Debug("got pong")
 		utils.ClearTimeout(s.pingTimeoutTimer.Load())
 		s.pingIntervalTimer.Load().Refresh()
 		s.Emit("heartbeat")
@@ -237,7 +239,7 @@ func (s *socket) onPacket(data *packet.Packet) {
 
 // Called upon transport error.
 func (s *socket) onError(err error) {
-	socket_log.Debug("transport error %v", err)
+	socketLog.Debug("transport error %v", err)
 	s.OnClose("transport error", err)
 }
 
@@ -245,7 +247,7 @@ func (s *socket) onError(err error) {
 // within `this.pingTimeout` or closes connection.
 func (s *socket) schedulePing() {
 	s.pingIntervalTimer.Store(utils.SetTimeout(func() {
-		socket_log.Debug("writing ping packet - expecting pong within %dms", int64(s.server.Opts().PingTimeout()/time.Millisecond))
+		socketLog.Debug("writing ping packet - expecting pong within %dms", int64(s.server.Opts().PingTimeout()/time.Millisecond))
 		s.sendPacket(packet.PING, nil, nil, nil)
 		s.resetPingTimeout()
 	}, s.server.Opts().PingInterval()))
@@ -300,7 +302,7 @@ func (s *socket) setTransport(transport transports.Transport) {
 // Upon transport "drain" event
 func (s *socket) onDrain() {
 	if seqFn, err := s.sentCallbackFn.Shift(); err == nil {
-		socket_log.Debug("executing batch send callback")
+		socketLog.Debug("executing batch send callback")
 		for _, fn := range seqFn {
 			fn(s.Transport())
 		}
@@ -309,7 +311,7 @@ func (s *socket) onDrain() {
 
 // Upgrades socket to the given transport
 func (s *socket) MaybeUpgrade(transport transports.Transport) {
-	socket_log.Debug(`might upgrade socket transport from "%s" to "%s"`, s.Transport().Name(), transport.Name())
+	socketLog.Debug(`might upgrade socket transport from "%s" to "%s"`, s.Transport().Name(), transport.Name())
 
 	s.upgrading.Store(true)
 
@@ -325,7 +327,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 		sb := new(strings.Builder)
 		_, _ = io.Copy(sb, data.Data)
 		if data.Type == packet.PING && sb.String() == "probe" {
-			socket_log.Debug("got probe ping packet, sending pong")
+			socketLog.Debug("got probe ping packet, sending pong")
 			transport.Send([]*packet.Packet{{Type: packet.PONG, Data: strings.NewReader("probe")}})
 			s.Emit("upgrading", transport)
 
@@ -333,7 +335,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 			checkIntervalTimer.Store(utils.SetInterval(check, DefaultUpgradeCheckInterval))
 
 		} else if packet.UPGRADE == data.Type && s.ReadyState() != "closed" {
-			socket_log.Debug("got upgrade packet - upgrading")
+			socketLog.Debug("got upgrade packet - upgrading")
 			cleanup()
 			s.Transport().Discard()
 
@@ -357,7 +359,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 	// we force a polling cycle to ensure a fast upgrade
 	check = func() {
 		if transports.POLLING == s.Transport().Name() && s.Transport().Writable() {
-			socket_log.Debug("writing a noop packet to polling for fast upgrade")
+			socketLog.Debug("writing a noop packet to polling for fast upgrade")
 			s.Transport().Send([]*packet.Packet{{Type: packet.NOOP}})
 		}
 	}
@@ -377,7 +379,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 	}
 
 	onError = func(errs ...any) {
-		socket_log.Debug("client did not complete upgrade - %v", slices.TryGetAny[error](errs, 0))
+		socketLog.Debug("client did not complete upgrade - %v", slices.TryGetAny[error](errs, 0))
 		cleanup()
 		if transport != nil {
 			transport.Close()
@@ -394,7 +396,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 
 	// set transport upgrade timer
 	upgradeTimeoutTimer.Store(utils.SetTimeout(func() {
-		socket_log.Debug("client did not complete upgrade - closing transport")
+		socketLog.Debug("client did not complete upgrade - closing transport")
 		cleanup()
 		if transport != nil {
 			if transport.ReadyState() == "open" {
@@ -421,7 +423,7 @@ func (s *socket) clearTransport() {
 
 	// silence further transport errors and prevent uncaught exceptions
 	_ = s.Transport().On("error", func(...any) {
-		socket_log.Debug("error triggered by discarded transport")
+		socketLog.Debug("error triggered by discarded transport")
 	})
 
 	// ensure transport won't stay open
@@ -485,7 +487,7 @@ func (s *socket) sendPacket(
 	callback SendCallback,
 ) {
 	if readystate := s.ReadyState(); readystate != "closing" && readystate != "closed" {
-		socket_log.Debug(`sending packet "%s" (%p)`, packetType, data)
+		socketLog.Debug(`sending packet "%s" (%p)`, packetType, data)
 
 		if options == nil {
 			options = &packet.Options{}
@@ -524,7 +526,7 @@ func (s *socket) flush() {
 
 	if s.ReadyState() != "closed" && s.Transport().Writable() {
 		if wbuf := s.writeBuffer.AllAndClear(); len(wbuf) > 0 {
-			socket_log.Debug("flushing buffer to transport")
+			socketLog.Debug("flushing buffer to transport")
 			s.Emit("flush", wbuf)
 			s.server.Emit("flush", s, wbuf)
 			if packetsFn := s.packetsFn.AllAndClear(); len(packetsFn) > 0 {
@@ -565,21 +567,21 @@ func (s *socket) Close(discard bool) {
 	s.SetReadyState("closing")
 
 	if length := s.writeBuffer.Len(); length > 0 {
-		socket_log.Debug("there are %d remaining packets in the buffer, waiting for the 'drain' event", length)
+		socketLog.Debug("there are %d remaining packets in the buffer, waiting for the 'drain' event", length)
 		_ = s.Once("drain", func(...any) {
-			socket_log.Debug("all packets have been sent, closing the transport")
+			socketLog.Debug("all packets have been sent, closing the transport")
 			s.closeTransport(discard)
 		})
 		return
 	}
 
-	socket_log.Debug("the buffer is empty, closing the transport right away")
+	socketLog.Debug("the buffer is empty, closing the transport right away")
 	s.closeTransport(discard)
 }
 
 // Closes the underlying transport.
 func (s *socket) closeTransport(discard bool) {
-	socket_log.Debug("closing the transport (discard? %t)", discard)
+	socketLog.Debug("closing the transport (discard? %t)", discard)
 	if discard {
 		s.Transport().Discard()
 	}

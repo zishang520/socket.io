@@ -15,7 +15,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-var ws_log = log.NewLog("engine:ws")
+var wsLog = log.NewLog("engine:ws")
 
 type websocket struct {
 	Transport
@@ -120,7 +120,7 @@ func (w *websocket) message() {
 }
 
 func (w *websocket) onMessage(data types.BufferInterface) {
-	ws_log.Debug(`websocket received "%s"`, data)
+	wsLog.Debug(`websocket received "%s"`, data)
 	w.OnData(data)
 }
 
@@ -154,23 +154,23 @@ func (w *websocket) send(packets []*packet.Packet) {
 				}
 				pm, err := ws.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
-					ws_log.Debug(`Send Error "%s"`, err.Error())
+					wsLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
 				if err := w.socket.WritePreparedMessage(pm); err != nil {
-					ws_log.Debug(`Send Error "%s"`, err.Error())
+					wsLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
-				return
+				continue
 
 			}
 		}
 
 		data, err := w.Parser().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
-			ws_log.Debug(`Send Error "%s"`, err.Error())
+			wsLog.Debug(`Send Error "%s"`, err.Error())
 			w._error(err)
 			return
 		}
@@ -183,7 +183,7 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 			compress = false
 		}
 	}
-	ws_log.Debug(`writing %#v`, data)
+	wsLog.Debug(`writing %#v`, data)
 
 	w.socket.EnableWriteCompression(compress)
 	mt := ws.BinaryMessage
@@ -209,7 +209,7 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 
 // Closes the transport.
 func (w *websocket) DoClose(fn types.Callable) {
-	ws_log.Debug(`closing`)
+	wsLog.Debug(`closing`)
 	w.writeQueue.TryClose()
 	defer func() { _ = w.socket.Close() }()
 	if fn != nil {

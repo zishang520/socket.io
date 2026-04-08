@@ -276,12 +276,12 @@ func (m *Manager) maybeReconnectOnOpen() {
 // Returns:
 //   - *Manager: The manager instance for chaining
 func (m *Manager) Open(fn func(error)) *Manager {
-	manager_log.Debug("readyState %s", m._readyState.Load())
-	if m._readyState.Load() == ReadyStateOpen || m._readyState.Load() == ReadyStateOpening {
+	managerLog.Debug("readyState %s", m._readyState.Load())
+	if state := m._readyState.Load(); state == ReadyStateOpen || state == ReadyStateOpening {
 		return m
 	}
 
-	manager_log.Debug("opening %s", m.uri)
+	managerLog.Debug("opening %s", m.uri)
 	socket := engine.NewSocket(m.uri, m.opts)
 	m.engine.Store(&socket)
 	m._readyState.Store(ReadyStateOpening)
@@ -297,7 +297,7 @@ func (m *Manager) Open(fn func(error)) *Manager {
 
 	onError := func(errs ...any) {
 		err := slices.TryGetAny[error](errs, 0)
-		manager_log.Debug("error")
+		managerLog.Debug("error")
 		m.cleanup()
 		m._readyState.Store(ReadyStateClosed)
 		m.Emit("error", err)
@@ -313,11 +313,11 @@ func (m *Manager) Open(fn func(error)) *Manager {
 	errorSub := on(socket, "error", onError)
 
 	if timeout := m._timeout.Load(); timeout != nil {
-		manager_log.Debug("connect attempt will timeout after %v", timeout)
+		managerLog.Debug("connect attempt will timeout after %v", timeout)
 
 		// set timer
 		timer := utils.SetTimeout(func() {
-			manager_log.Debug("connect attempt timed out after %v", timeout)
+			managerLog.Debug("connect attempt timed out after %v", timeout)
 			openSubDestroy()
 			onError(errors.New("timeout"))
 			socket.Close()
@@ -344,7 +344,7 @@ func (m *Manager) Connect(fn func(error)) *Manager {
 
 // Called upon transport open.
 func (m *Manager) onopen(socket Engine) {
-	manager_log.Debug("open")
+	managerLog.Debug("open")
 
 	// clear old subs
 	m.cleanup()
@@ -384,7 +384,7 @@ func (m *Manager) ondecoded(packets ...any) {
 
 // Called upon socket error.
 func (m *Manager) onerror(errs ...any) {
-	manager_log.Debug("error: %v", errs)
+	managerLog.Debug("error: %v", errs)
 	m.Emit("error", errs...)
 }
 
@@ -417,7 +417,7 @@ func (m *Manager) _destroy(_ *Socket) {
 	close := true
 	m.nsps.Range(func(nsp string, socket *Socket) bool {
 		if socket.Active() {
-			manager_log.Debug("socket %s is still active, skipping close", nsp)
+			managerLog.Debug("socket %s is still active, skipping close", nsp)
 			close = false
 		}
 		return close
@@ -430,7 +430,7 @@ func (m *Manager) _destroy(_ *Socket) {
 
 // Writes a packet.
 func (m *Manager) _packet(packet *Packet) {
-	manager_log.Debug("writing packet %#v", packet)
+	managerLog.Debug("writing packet %#v", packet)
 
 	if socket := m.Engine(); socket != nil {
 		for _, encodedPacket := range m.encoder.Encode(packet.Packet) {
@@ -441,7 +441,7 @@ func (m *Manager) _packet(packet *Packet) {
 
 // Clean up transport subscriptions and packet buffer.
 func (m *Manager) cleanup() {
-	manager_log.Debug("cleanup")
+	managerLog.Debug("cleanup")
 
 	m.subs.Range(func(subDestroy func(), i int) bool {
 		subDestroy()
@@ -453,7 +453,7 @@ func (m *Manager) cleanup() {
 
 // Close the current socket.
 func (m *Manager) _close() {
-	manager_log.Debug("disconnect")
+	managerLog.Debug("disconnect")
 	m.skipReconnect.Store(true)
 	m._reconnecting.Store(false)
 	m.onclose("forced close", nil)
@@ -465,7 +465,7 @@ func (m *Manager) _close() {
 //   - reason: The reason for disconnection
 //   - description: Additional error details if applicable
 func (m *Manager) onclose(reason string, description error) {
-	manager_log.Debug("closed due to %s", reason)
+	managerLog.Debug("closed due to %s", reason)
 
 	m.cleanup()
 	if socket := m.Engine(); socket != nil {
@@ -483,26 +483,25 @@ func (m *Manager) onclose(reason string, description error) {
 // _reconnect attempts to reconnect to the server after a disconnection.
 // It implements exponential backoff with jitter for retry timing.
 func (m *Manager) reconnect() {
-	if m._reconnecting.Load() || m.skipReconnect.Load() {
+	if !m._reconnecting.CompareAndSwap(false, true) || m.skipReconnect.Load() {
 		return
 	}
 
 	if float64(m.backoff.Attempts()) >= m.ReconnectionAttempts() {
-		manager_log.Debug("reconnect failed")
+		managerLog.Debug("reconnect failed")
 		m.backoff.Reset()
 		m.Emit("reconnect_failed")
 		m._reconnecting.Store(false)
 	} else {
 		delay := m.backoff.Duration()
-		manager_log.Debug("will wait %dms before reconnect attempt", delay)
+		managerLog.Debug("will wait %dms before reconnect attempt", delay)
 
-		m._reconnecting.Store(true)
 		timer := utils.SetTimeout(func() {
 			if m.skipReconnect.Load() {
 				return
 			}
 
-			manager_log.Debug("attempting reconnect")
+			managerLog.Debug("attempting reconnect")
 			m.Emit("reconnect_attempt", m.backoff.Attempts())
 
 			// check again for the case socket closed in above events
@@ -512,12 +511,12 @@ func (m *Manager) reconnect() {
 
 			m.Open(func(err error) {
 				if err != nil {
-					manager_log.Debug("reconnect attempt error")
+					managerLog.Debug("reconnect attempt error")
 					m._reconnecting.Store(false)
 					m.reconnect()
 					m.Emit("reconnect_error", err)
 				} else {
-					manager_log.Debug("reconnect success")
+					managerLog.Debug("reconnect success")
 					m.onreconnect()
 				}
 			})

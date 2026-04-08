@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	socket_log                     = log.NewLog("socket.io:socket")
+	socketLog                      = log.NewLog("socket.io:socket")
 	SOCKET_RESERVED_EVENTS         = types.NewSet("connect", "connect_error", "disconnect", "disconnecting", "newListener", "removeListener")
 	RECOVERABLE_DISCONNECT_REASONS = types.NewSet("transport error", "transport close", "forced close", "ping timeout", "server shutting down", "forced server close")
 )
@@ -246,11 +246,17 @@ func (s *Socket) Construct(nsp Namespace, client *Client, auth map[string]any, p
 				s.id = SocketId(client.id)
 			}
 		} else {
-			id, _ := utils.Base64Id().GenerateId()
+			id, err := utils.Base64Id().GenerateId()
+			if err != nil {
+				socketLog.Debug("GenerateId error: %s", err)
+			}
 			s.id = SocketId(id) // don't reuse the Engine.IO id because it's sensitive information
 		}
 		if s.server.Opts().ConnectionStateRecovery() != nil {
-			id, _ := utils.Base64Id().GenerateId()
+			id, err := utils.Base64Id().GenerateId()
+			if err != nil {
+				socketLog.Debug("GenerateId error: %s", err)
+			}
 			s.pid = PrivateSessionId(id)
 		}
 	}
@@ -308,7 +314,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	// access last argument to see if it's an ACK callback
 	if fn, ok := data[data_len-1].(Ack); ok {
 		id := s.nsp.Ids()
-		socket_log.Debug("emitting packet with ack id %d", id)
+		socketLog.Debug("emitting packet with ack id %d", id)
 		packet.Data = data[:data_len-1]
 		s.registerAckCallback(id, fn)
 		packet.Id = &id
@@ -368,7 +374,7 @@ func (s *Socket) registerAckCallback(id uint64, ack Ack) {
 		return
 	}
 	timer := utils.SetTimeout(func() {
-		socket_log.Debug("event with ack id %d has timed out after %d ms", id, *timeout/time.Millisecond)
+		socketLog.Debug("event with ack id %d has timed out after %d ms", id, *timeout/time.Millisecond)
 		s.acks.Delete(id)
 		ack(nil, errors.New("operation has timed out"))
 	}, *timeout)
@@ -436,13 +442,13 @@ func (s *Socket) Join(rooms ...Room) {
 		return
 	}
 
-	socket_log.Debug("join room %s", rooms)
+	socketLog.Debug("join room %s", rooms)
 	s.adapter.AddAll(s.id, types.NewSet(rooms...))
 }
 
 // Leave removes the socket from a room.
 func (s *Socket) Leave(room Room) {
-	socket_log.Debug("leave room %s", room)
+	socketLog.Debug("leave room %s", room)
 	s.adapter.Del(s.id, room)
 }
 
@@ -456,7 +462,7 @@ func (s *Socket) leaveAll() {
 // Socket is added to namespace array before
 // call to join, so adapters can access it.
 func (s *Socket) _onconnect() {
-	socket_log.Debug("socket connected - writing packet")
+	socketLog.Debug("socket connected - writing packet")
 
 	s.connected.Store(true)
 
@@ -481,7 +487,7 @@ func (s *Socket) _onconnect() {
 
 // Called with each packet. Called by `Client`.
 func (s *Socket) _onpacket(packet *parser.Packet) {
-	socket_log.Debug("got packet %v", packet)
+	socketLog.Debug("got packet %v", packet)
 	switch packet.Type {
 	case parser.EVENT:
 		s.onevent(packet)
@@ -501,9 +507,9 @@ func (s *Socket) _onpacket(packet *parser.Packet) {
 // Param:  packet - packet struct
 func (s *Socket) onevent(packet *parser.Packet) {
 	args, _ := packet.Data.([]any)
-	socket_log.Debug("emitting event %v", args)
+	socketLog.Debug("emitting event %v", args)
 	if nil != packet.Id {
-		socket_log.Debug("attaching ack callback to event")
+		socketLog.Debug("attaching ack callback to event")
 		args = append(args, s.ack(*packet.Id))
 	}
 	for _, listener := range s._anyListeners.All() {
@@ -520,7 +526,7 @@ func (s *Socket) ack(id uint64) Ack {
 	return func(args []any, _ error) {
 		// prevent double callbacks
 		sent.Do(func() {
-			socket_log.Debug("sending ack %v", args)
+			socketLog.Debug("sending ack %v", args)
 			s.packet(&parser.Packet{
 				Id:   &id,
 				Type: parser.ACK,
@@ -534,20 +540,20 @@ func (s *Socket) ack(id uint64) Ack {
 func (s *Socket) onack(packet *parser.Packet) {
 	if packet.Id != nil {
 		if ack, ok := s.acks.Load(*packet.Id); ok {
-			socket_log.Debug("calling ack %d with %v", *packet.Id, packet.Data)
+			socketLog.Debug("calling ack %d with %v", *packet.Id, packet.Data)
 			ack(utils.TryCast[[]any](packet.Data), nil)
 			s.acks.Delete(*packet.Id)
 		} else {
-			socket_log.Debug("bad ack %d", *packet.Id)
+			socketLog.Debug("bad ack %d", *packet.Id)
 		}
 	} else {
-		socket_log.Debug("bad ack nil")
+		socketLog.Debug("bad ack nil")
 	}
 }
 
 // Called upon client disconnect packet.
 func (s *Socket) ondisconnect() {
-	socket_log.Debug("got disconnect packet")
+	socketLog.Debug("got disconnect packet")
 	s._onclose("client namespace disconnect")
 }
 
@@ -568,11 +574,11 @@ func (s *Socket) _onclose(args ...any) {
 	if !s.Connected() {
 		return
 	}
-	socket_log.Debug("closing socket - reason %v", slices.TryGet(args, 0))
+	socketLog.Debug("closing socket - reason %v", slices.TryGet(args, 0))
 	s.EmitReserved("disconnecting", args...)
 
 	if s.server.Opts().ConnectionStateRecovery() != nil && RECOVERABLE_DISCONNECT_REASONS.Has(slices.TryGetAny[string](args, 0)) {
-		socket_log.Debug("connection state recovery is enabled for sid %s", s.id)
+		socketLog.Debug("connection state recovery is enabled for sid %s", s.id)
 		s.adapter.PersistSession(&SessionToPersist{
 			Sid:   s.id,
 			Pid:   s.pid,
@@ -645,7 +651,9 @@ func (s *Socket) Disconnect(status bool) *Socket {
 //
 // Param: compress - if `true`, compresses the sending data
 func (s *Socket) Compress(compress bool) *Socket {
-	s.flags.Load().Compress = &compress
+	newFlags := *s.flags.Load()
+	newFlags.Compress = &compress
+	s.flags.Store(&newFlags)
 	return s
 }
 
@@ -658,7 +666,9 @@ func (s *Socket) Compress(compress bool) *Socket {
 //		socket.Volatile().Emit("hello") // the client may or may not receive it
 //	})
 func (s *Socket) Volatile() *Socket {
-	s.flags.Load().Volatile = true
+	newFlags := *s.flags.Load()
+	newFlags.Volatile = true
+	s.flags.Store(&newFlags)
 	return s
 }
 
@@ -701,13 +711,15 @@ func (s *Socket) Local() *BroadcastOperator {
 //		})
 //	})
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
-	s.flags.Load().Timeout = &timeout
+	newFlags := *s.flags.Load()
+	newFlags.Timeout = &timeout
+	s.flags.Store(&newFlags)
 	return s
 }
 
 // Dispatch incoming event to socket listeners.
 func (s *Socket) dispatch(event []any) {
-	socket_log.Debug("dispatching an event %v", event)
+	socketLog.Debug("dispatching an event %v", event)
 	s.run(event, func(err error) {
 		s.Enqueue(func() {
 			if err != nil {
@@ -717,7 +729,7 @@ func (s *Socket) dispatch(event []any) {
 			if s.Connected() {
 				s.EmitUntyped(slices.TryGetAny[string](event, 0), slices.Slice(event, 1)...)
 			} else {
-				socket_log.Debug("ignore packet received after disconnection")
+				socketLog.Debug("ignore packet received after disconnection")
 			}
 		})
 	})

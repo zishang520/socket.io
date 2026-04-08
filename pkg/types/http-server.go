@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	server_log = log.NewLog("engine:server")
-	http3_log  = slog.New(log.NewPrefixSimpleHandler(log.Output, "engine:server"))
+	serverLog = log.NewLog("engine:server")
+	http3Log  = slog.New(log.NewPrefixSimpleHandler(log.Output, "engine:server"))
 )
 
 type HttpServer struct {
@@ -38,7 +38,7 @@ func NewWebServer(defaultHandler http.Handler) *HttpServer {
 }
 
 func (s *HttpServer) httpServer(addr string, handler http.Handler) *http.Server {
-	server := &http.Server{Addr: addr, Handler: handler, ErrorLog: server_log.Logger}
+	server := &http.Server{Addr: addr, Handler: handler, ErrorLog: serverLog.Logger}
 
 	s.servers.Push(server)
 
@@ -47,7 +47,7 @@ func (s *HttpServer) httpServer(addr string, handler http.Handler) *http.Server 
 
 func (s *HttpServer) h3Server(handler http.Handler) *http3.Server {
 	// Start the servers
-	server := &http3.Server{Handler: handler, Logger: http3_log}
+	server := &http3.Server{Handler: handler, Logger: http3Log}
 
 	s.servers.Push(server)
 
@@ -57,7 +57,7 @@ func (s *HttpServer) h3Server(handler http.Handler) *http3.Server {
 func (s *HttpServer) webtransportServer(addr string, handler http.Handler) *webtransport.Server {
 	// Start the servers
 	server := &webtransport.Server{
-		H3: &http3.Server{Addr: addr, Handler: handler, Logger: http3_log},
+		H3: &http3.Server{Addr: addr, Handler: handler, Logger: http3Log},
 		CheckOrigin: func(_ *http.Request) bool {
 			return true
 		},

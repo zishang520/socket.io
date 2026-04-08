@@ -235,7 +235,7 @@ func (t *transport) Send(packets []*packet.Packet) {
 		t._proto_.Write(packets)
 	} else {
 		// this might happen if the transport was silently closed in the beforeunload event handler
-		client_transport_log.Debug("transport is not open, discarding packets")
+		clientTransportLog.Debug("transport is not open, discarding packets")
 	}
 }
 

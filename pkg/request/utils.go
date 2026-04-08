@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	request_log         = log.NewLog("request")
+	requestLog          = log.NewLog("request")
 	cookieNameSanitizer = strings.NewReplacer("\n", "-", "\r", "-")
 )
 
@@ -49,7 +49,7 @@ func sanitizeOrWarn(fieldName string, valid func(byte) bool, v string) string {
 		if valid(v[i]) {
 			continue
 		}
-		request_log.Printf("request: invalid byte %q in %s; dropping invalid bytes", v[i], fieldName)
+		requestLog.Printf("request: invalid byte %q in %s; dropping invalid bytes", v[i], fieldName)
 		ok = false
 		break
 	}

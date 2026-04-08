@@ -109,14 +109,14 @@ func (p *parserv3) EncodePacket(data *packet.Packet, supportsBinary bool, utf8en
 // DecodePacket decodes a packet. Data also available as an ArrayBuffer if requested.
 func (p *parserv3) DecodePacket(data types.BufferInterface, utf8decode ...bool) (*packet.Packet, error) {
 	if data == nil {
-		return ERROR_PACKET, ErrDataNil
+		return newErrorPacket(), ErrDataNil
 	}
 
 	utf8de := len(utf8decode) > 0 && utf8decode[0]
 
 	msgType, err := data.ReadByte()
 	if err != nil {
-		return ERROR_PACKET, err
+		return newErrorPacket(), err
 	}
 
 	switch v := data.(type) {
@@ -125,30 +125,30 @@ func (p *parserv3) DecodePacket(data types.BufferInterface, utf8decode ...bool) 
 			// Decodes a packet encoded in a base64 string.
 			msgType, err = data.ReadByte()
 			if err != nil {
-				return ERROR_PACKET, err
+				return newErrorPacket(), err
 			}
 			packetType, ok := lookupPacketType(msgType)
 			if !ok {
-				return ERROR_PACKET, fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType)
+				return newErrorPacket(), fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType)
 			}
 			decode := types.NewBytesBuffer(nil)
 			if _, err := decode.ReadFrom(base64.NewDecoder(base64.StdEncoding, v)); err != nil {
-				return ERROR_PACKET, err
+				return newErrorPacket(), err
 			}
 			return &packet.Packet{Type: packetType, Data: decode}, nil
 		}
 		packetType, ok := lookupPacketType(msgType)
 		if !ok {
-			return ERROR_PACKET, fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType)
+			return newErrorPacket(), fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType)
 		}
 		decode := types.NewStringBuffer(nil)
 		if utf8de {
 			if _, err := decode.ReadFrom(utils.NewUtf8Decoder(v)); err != nil {
-				return ERROR_PACKET, err
+				return newErrorPacket(), err
 			}
 		} else {
 			if _, err := decode.ReadFrom(v); err != nil {
-				return ERROR_PACKET, err
+				return newErrorPacket(), err
 			}
 		}
 		return &packet.Packet{Type: packetType, Data: decode}, nil
@@ -157,11 +157,11 @@ func (p *parserv3) DecodePacket(data types.BufferInterface, utf8decode ...bool) 
 	// Default case: binary buffer
 	packetType, ok := lookupPacketType(msgType + '0')
 	if !ok {
-		return ERROR_PACKET, fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType+'0')
+		return newErrorPacket(), fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType+'0')
 	}
 	decode := types.NewBytesBuffer(nil)
 	if _, err := io.Copy(decode, data); err != nil {
-		return ERROR_PACKET, err
+		return newErrorPacket(), err
 	}
 	return &packet.Packet{Type: packetType, Data: decode}, nil
 }

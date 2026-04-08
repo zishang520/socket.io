@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	wt_log = log.NewLog("engine:webtransport")
+	wtLog = log.NewLog("engine:webtransport")
 )
 
 type webTransport struct {
@@ -114,7 +114,7 @@ func (w *webTransport) message() {
 }
 
 func (w *webTransport) onMessage(data types.BufferInterface) {
-	wt_log.Debug(`webTransport received "%s"`, data)
+	wtLog.Debug(`webTransport received "%s"`, data)
 	w.OnData(data)
 }
 
@@ -148,23 +148,23 @@ func (w *webTransport) send(packets []*packet.Packet) {
 				}
 				pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
-					wt_log.Debug(`Send Error "%s"`, err.Error())
+					wtLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
 				if err := w.session.WritePreparedMessage(pm); err != nil {
-					wt_log.Debug(`Send Error "%s"`, err.Error())
+					wtLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
-				return
+				continue
 
 			}
 		}
 
 		data, err := w.Parser().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
-			wt_log.Debug(`Send Error "%s"`, err.Error())
+			wtLog.Debug(`Send Error "%s"`, err.Error())
 			w._error(err)
 			return
 		}
@@ -178,7 +178,7 @@ func (w *webTransport) write(data types.BufferInterface, _ bool) {
 	// 		compress = false
 	// 	}
 	// }
-	wt_log.Debug(`writing %#s`, data)
+	wtLog.Debug(`writing %s`, data)
 
 	// w.session.EnableWriteCompression(compress)
 	mt := webtransport.BinaryMessage
@@ -204,7 +204,7 @@ func (w *webTransport) write(data types.BufferInterface, _ bool) {
 
 // Closes the transport.
 func (w *webTransport) DoClose(fn types.Callable) {
-	wt_log.Debug(`closing WebTransport session`)
+	wtLog.Debug(`closing WebTransport session`)
 	w.writeQueue.TryClose()
 	defer func() { _ = w.session.CloseWithError(0, "") }()
 	if fn != nil {

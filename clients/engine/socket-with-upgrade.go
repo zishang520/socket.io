@@ -80,7 +80,7 @@ func (s *socketWithUpgrade) OnOpen() {
 	s.SocketWithoutUpgrade.OnOpen()
 
 	if SocketStateOpen == s.ReadyState() && s.Opts().Upgrade() {
-		client_socket_log.Debug("starting upgrade probes")
+		clientSocketLog.Debug("starting upgrade probes")
 		for _, upgrade := range s._upgrades.Keys() {
 			s._probe(upgrade)
 		}
@@ -99,7 +99,7 @@ func (s *socketWithUpgrade) OnOpen() {
 // Parameters:
 //   - name: The name of the transport to probe (e.g., "websocket")
 func (s *socketWithUpgrade) _probe(name string) {
-	client_socket_log.Debug(`probing transport "%s"`, name)
+	clientSocketLog.Debug(`probing transport "%s"`, name)
 	transport := s.Proto().CreateTransport(name)
 	var (
 		failed  atomic.Bool
@@ -113,7 +113,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 			return
 		}
 
-		client_socket_log.Debug(`probe transport "%s" opened`, name)
+		clientSocketLog.Debug(`probe transport "%s" opened`, name)
 		transport.Send([]*packet.Packet{
 			{
 				Type: packet.PING,
@@ -132,14 +132,14 @@ func (s *socketWithUpgrade) _probe(name string) {
 			_, _ = io.Copy(sb, msg.Data)
 
 			if msg.Type == packet.PONG && sb.String() == "probe" {
-				client_socket_log.Debug(`probe transport "%s" pong`, name)
+				clientSocketLog.Debug(`probe transport "%s" pong`, name)
 				s.SetUpgrading(true)
 				s.Emit("upgrading", transport)
 				if transport == nil {
 					return
 				}
 				s.SetPriorWebsocketSuccess(transports.WEBSOCKET == transport.Name())
-				client_socket_log.Debug(`pausing current transport "%s"`, s.Transport().Name())
+				clientSocketLog.Debug(`pausing current transport "%s"`, s.Transport().Name())
 				s.Transport().Pause(func() {
 					if failed.Load() {
 						return
@@ -147,7 +147,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 					if SocketStateClosed == s.ReadyState() {
 						return
 					}
-					client_socket_log.Debug("changing transport and sending upgrade packet")
+					clientSocketLog.Debug("changing transport and sending upgrade packet")
 
 					cleanup()
 
@@ -162,7 +162,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 					s.Proto().Flush()
 				})
 			} else {
-				client_socket_log.Debug(`probe transport "%s" failed`, name)
+				clientSocketLog.Debug(`probe transport "%s" failed`, name)
 				s.Emit("upgradeError", errors.New("["+transport.Name()+"] probe error"))
 			}
 		})
@@ -180,7 +180,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 	onerror := func(errs ...any) {
 		e := fmt.Errorf("[%s] probe error: %w", transport.Name(), slices.TryGetAny[error](errs, 0))
 		freezeTransport()
-		client_socket_log.Debug(`probe transport "%s" failed because of error: %v`, name, e)
+		clientSocketLog.Debug(`probe transport "%s" failed because of error: %v`, name, e)
 		s.Emit("upgradeError", e)
 	}
 
@@ -194,7 +194,7 @@ func (s *socketWithUpgrade) _probe(name string) {
 
 	onupgrade := func(to ...any) {
 		if to, ok := to[0].(Transport); ok && to != nil && transport != nil && to.Name() != transport.Name() {
-			client_socket_log.Debug(`"%s" works - aborting "%s"`, to.Name(), transport.Name())
+			clientSocketLog.Debug(`"%s" works - aborting "%s"`, to.Name(), transport.Name())
 			freezeTransport()
 		}
 	}

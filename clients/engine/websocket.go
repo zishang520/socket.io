@@ -239,22 +239,22 @@ func (w *websocket) write(packets []*packet.Packet) {
 				}
 				pm, err := ws.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
-					client_websocket_log.Debug(`Send Error "%s"`, err.Error())
+					clientWebsocketLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
 				if err := w.socket.WritePreparedMessage(pm); err != nil {
-					client_websocket_log.Debug(`Send Error "%s"`, err.Error())
+					clientWebsocketLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
-				return
+				continue
 			}
 		}
 
 		data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
-			client_websocket_log.Debug(`Send Error "%s"`, err.Error())
+			clientWebsocketLog.Debug(`Send Error "%s"`, err.Error())
 			w._error(err)
 			return
 		}
@@ -274,7 +274,7 @@ func (w *websocket) doWrite(data types.BufferInterface, compress bool) {
 			compress = false
 		}
 	}
-	client_websocket_log.Debug(`writing %#v`, data)
+	clientWebsocketLog.Debug(`writing %#v`, data)
 
 	w.socket.EnableWriteCompression(compress)
 	mt := ws.BinaryMessage

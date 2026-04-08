@@ -59,10 +59,13 @@ var (
 	}
 )
 
-// Pre-defined error packet for parser errors.
-var ERROR_PACKET = &packet.Packet{
-	Type: packet.ERROR,
-	Data: types.NewStringBufferString(`parser error`),
+// newErrorPacket creates a fresh error packet for parser errors.
+// A new instance is returned each time to avoid sharing mutable state across goroutines.
+func newErrorPacket() *packet.Packet {
+	return &packet.Packet{
+		Type: packet.ERROR,
+		Data: types.NewStringBufferString(`parser error`),
+	}
 }
 
 // Sentinel errors for parser operations.

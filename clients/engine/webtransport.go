@@ -122,7 +122,7 @@ func (w *webTransport) DoOpen() {
 
 	stream, err := session.OpenStreamSync(context.Background())
 	if err != nil {
-		client_webtransport_log.Debug("session is closed")
+		clientWebtransportLog.Debug("session is closed")
 		w.Emit("error", err)
 		return
 	}
@@ -182,7 +182,7 @@ func (w *webTransport) handshake() {
 		if data, err := json.Marshal(map[string]any{
 			"sid": w.Query().Get("sid"),
 		}); err != nil {
-			client_webtransport_log.Debug("JSON Marshal error: %s", err.Error())
+			clientWebtransportLog.Debug("JSON Marshal error: %s", err.Error())
 		} else {
 			packet.Data = types.NewStringBuffer(data)
 		}
@@ -190,7 +190,7 @@ func (w *webTransport) handshake() {
 
 	data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 	if err != nil {
-		client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
+		clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
 		w._error(err)
 		return
 	}
@@ -206,7 +206,7 @@ func (w *webTransport) addEventListeners() {
 		w.OnError("webtransport error", slices.TryGetAny[error](errs, 0), w.session.Session().Context())
 	})
 	_ = w.session.Once("close", func(...any) {
-		client_webtransport_log.Debug(`transport closed gracefully`)
+		clientWebtransportLog.Debug(`transport closed gracefully`)
 		w.OnClose(NewTransportError("webtransport connection closed", nil, w.session.Session().Context()).Err())
 	})
 
@@ -252,22 +252,22 @@ func (w *webTransport) write(packets []*packet.Packet) {
 				}
 				pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
-					client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
+					clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
 				if err := w.session.WritePreparedMessage(pm); err != nil {
-					client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
+					clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
-				return
+				continue
 			}
 		}
 
 		data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
-			client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
+			clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
 			w._error(err)
 			return
 		}
@@ -283,7 +283,7 @@ func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
 	// 		compress = false
 	// 	}
 	// }
-	client_webtransport_log.Debug(`writing %#v`, data)
+	clientWebtransportLog.Debug(`writing %#v`, data)
 
 	// w.session.EnableWriteCompression(compress)
 	mt := webtransport.BinaryMessage

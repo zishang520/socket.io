@@ -741,6 +741,154 @@ data := err.Data
 
 ---
 
+## v3.0.0-rc.13+ Breaking Changes and Behavior Updates
+
+The following changes in v3.0.0-rc.13 and later may affect existing code. These are stability and security fixes that modify public behavior.
+
+### Parser: ERROR_PACKET Removed from Public API
+
+**Likelihood Of Impact: Low (only if directly referencing ERROR_PACKET)**
+
+The shared mutable `ERROR_PACKET` singleton has been removed from the public API to prevent data race conditions. Any code that directly imported or referenced this constant will fail.
+
+```go
+// Before (no longer works)
+import "github.com/zishang520/socket.io/parsers/engine/parser"
+var errPkt = parser.ERROR_PACKET
+
+// After (use alternatives)
+// If you need error packet creation, use the public parser APIs
+// that internally create error packets as needed
+```
+
+**Impact:** This is unlikely to affect most applications since `ERROR_PACKET` was an internal constant. If you were using it directly, you should rely on the public parser API methods instead.
+
+### Socket Packet Encoder: Encode() No Longer Mutates Input
+
+**Likelihood Of Impact: Low**
+
+The `Encode()` method in the Socket.IO packet encoder now creates a copy of the packet before mutation, preventing unintended side effects on the caller's packet object.
+
+```go
+// Before - Encode() modified the input packet's Type field
+import "github.com/zishang520/socket.io/parsers/socket/parser"
+
+pkt := &packet.Packet{Type: parser.EVENT, Data: binaryData}
+encoded := encoder.Encode(pkt)
+// pkt.Type would now be BINARY_EVENT (mutated!)
+
+// After - Input packet is not modified
+pkt := &packet.Packet{Type: parser.EVENT, Data: binaryData}
+encoded := encoder.Encode(pkt)
+// pkt.Type remains EVENT (not mutated)
+```
+
+**Impact:** This is a behavior fix that makes code more predictable. If your code was relying on the side effect of `Encode()` mutating the input packet, you need to update it to handle packets immutably.
+
+### Socket.IO Parser: Attachment Count Limit (1000)
+
+**Likelihood Of Impact: Low**
+
+A new validation has been added to prevent resource exhaustion. Packets with more than 1000 attachments will be rejected with `ErrIllegalAttachments`.
+
+```go
+// Before - No limit on attachments
+decoder.Decode(largePayloadWith5000Attachments) // Processed
+
+// After - Attachments limited to 1000
+decoder.Decode(largePayloadWith5000Attachments) // Returns ErrIllegalAttachments
+```
+
+**Impact:** This only affects applications sending more than 1000 attachments in a single packet. If you encounter this error, split large payloads into multiple packets.
+
+**Workaround:** If you legitimately need more attachments, you can modify the `maxAttachments` constant in `parsers/socket/parser/decoder.go` and rebuild.
+
+### Engine.IO Polling: HTTP Body Size Limit
+
+**Likelihood Of Impact: Medium (only if sending very large payloads via polling)**
+
+The polling transport now enforces `MaxHttpBufferSize` limit on request body reads to prevent unbounded memory consumption (DoS prevention).
+
+```go
+// Before - No limit on body size
+// Large payloads could cause excessive memory usage
+
+// After - Limited by MaxHttpBufferSize (default 100KB)
+// Large payloads exceeding the limit are truncated/rejected
+```
+
+**Impact:** If you're sending payloads larger than `MaxHttpBufferSize` (default 100 KB) via polling transport, they will be truncated or rejected. Use WebSocket/WebTransport for larger messages or increase the limit:
+
+```go
+server := engine.NewServer(nil)
+server.SetMaxHttpBufferSize(10 * 1024 * 1024) // 10 MB
+```
+
+### WebSocket/WebTransport: Send Loop Behavior
+
+**Likelihood Of Impact: Very Low**
+
+Fixed send loop early return bug that was previously dropping remaining packets in queue when an encoded frame was sent successfully.
+
+```go
+// Before - Send loop would return after first packet, dropping queue
+// Packet 1: sent
+// Packet 2, 3, ...: dropped (never sent)
+
+// After - Send loop continues processing all queued packets
+// All packets in queue are sent correctly
+```
+
+**Impact:** This is a bug fix that improves reliability. Previously, only the first queued packet would be sent; now all queued packets are sent as expected. No code changes required, but connections may become more reliable.
+
+### Middleware Thread Safety
+
+**Likelihood Of Impact: Very Low (only if modifying middleware during runtime)**
+
+Engine.IO base server now protects middleware slice with `sync.RWMutex` for concurrent-safe reading and modification.
+
+```go
+// Before - Unsafe concurrent middleware modification
+go server.Use(middleware1) // Racing writes
+go server.Use(middleware2) // Could panic or miss middleware
+
+// After - Thread-safe middleware operations
+go server.Use(middleware1) // Safe
+go server.Use(middleware2) // Safe
+```
+
+**Impact:** This is a thread safety fix. If you were experiencing race conditions from concurrent middleware registration, this resolves them. No code changes required.
+
+### Socket Flags: Concurrent Mutation Safety
+
+**Likelihood Of Impact: Very Low**
+
+Socket flag mutations (Compress, Volatile, Timeout) now use atomic.Pointer with copy-on-write to prevent race conditions.
+
+```go
+// Before - Racing flag mutations could cause data races
+go socket.Compress(true)
+go socket.Volatile()
+// Data race condition possible
+
+// After - All flag mutations are thread-safe
+go socket.Compress(true)
+go socket.Volatile()
+// Safe concurrent mutations
+```
+
+**Impact:** This is a thread safety fix. No code changes required. Previously unsafe concurrent flag mutations are now safe.
+
+### Queue: Goroutine Leak Prevention
+
+**Likelihood Of Impact: Very Low**
+
+The task queue now uses `runtime.SetFinalizer()` to prevent goroutine leaks when queue instances are garbage collected.
+
+**Impact:** This is a resource leak fix. Applications with long-running queues may see reduced goroutine count. No code changes required.
+
+---
+
 ## Additional Notes
 
 | Recommendation | Details |
@@ -749,3 +897,4 @@ data := err.Data
 | **Go Version** | Ensure you're using Go 1.26.0+ or higher |
 | **Staged Rollout** | Consider upgrading non-critical components first |
 | **Client Coordination** | Coordinate with frontend team for client compatibility |
+| **Security Updates** | v3.0.0-rc.13+ includes important DoS prevention and data race fixes |

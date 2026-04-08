@@ -11,7 +11,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-var transport_log = log.NewLog("engine:transport")
+var transportLog = log.NewLog("engine:transport")
 
 type transport struct {
 	types.EventEmitter
@@ -107,7 +107,7 @@ func (t *transport) ReadyState() string {
 }
 
 func (t *transport) SetReadyState(state string) {
-	transport_log.Debug(`readyState updated from %s to %s (%s)`, t.ReadyState(), state, t._proto_.Name())
+	transportLog.Debug(`readyState updated from %s to %s (%s)`, t.ReadyState(), state, t._proto_.Name())
 
 	t._readyState.Store(state)
 }
@@ -171,7 +171,7 @@ func (t *transport) OnError(msg string, desc error) {
 	if t.ListenerCount("error") > 0 {
 		t.Emit("error", errors.NewTransportError(msg, desc))
 	} else {
-		transport_log.Debug("ignored transport error %s (%v)", msg, desc)
+		transportLog.Debug("ignored transport error %s (%v)", msg, desc)
 	}
 }
 

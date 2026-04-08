@@ -17,6 +17,10 @@ var (
 	// parserLog is the logger for the parser package.
 	parserLog = log.NewLog("socket.io:parser")
 
+	// maxAttachments is the maximum number of binary attachments allowed per packet.
+	// This prevents resource exhaustion from malicious clients sending excessively large attachment counts.
+	maxAttachments uint64 = 1000
+
 	// ReservedEvents contains event names that have special meaning in Socket.IO
 	// and cannot be used as custom event names.
 	ReservedEvents = types.NewSet(
@@ -222,6 +226,10 @@ func (d *decoder) parseAttachments(buffer types.BufferInterface, packet *Packet)
 
 	attachmentCount, err := strconv.ParseUint(attachmentStr[:strLen-1], 10, 64)
 	if err != nil {
+		return ErrIllegalAttachments
+	}
+
+	if attachmentCount > maxAttachments {
 		return ErrIllegalAttachments
 	}
 

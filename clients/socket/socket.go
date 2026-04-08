@@ -322,7 +322,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	// event ack callback
 	if ack, withAck := data[data_len-1].(socket.Ack); withAck {
 		id := s.ids.Add(1) - 1
-		socket_log.Debug("emitting packet with ack id %d", id)
+		socketLog.Debug("emitting packet with ack id %d", id)
 
 		packet.Data = data[:data_len-1]
 		s._registerAckCallback(id, ack)
@@ -344,7 +344,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	}
 
 	if flags.Volatile && !isTransportWritable {
-		socket_log.Debug("discard packet as the transport is not currently writable")
+		socketLog.Debug("discard packet as the transport is not currently writable")
 	} else if isConnected {
 		s.notifyOutgoingListeners(packet)
 		s.packet(packet)
@@ -374,12 +374,12 @@ func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack) {
 		s.acks.Delete(id)
 		s.sendBuffer.RemoveAll(func(p *Packet) bool {
 			if p.Id != nil && *p.Id == id {
-				socket_log.Debug("removing packet with ack id %d from the buffer", id)
+				socketLog.Debug("removing packet with ack id %d from the buffer", id)
 				return true
 			}
 			return false
 		})
-		socket_log.Debug("event with ack id %d has timed out after %d ms", id, *timeout)
+		socketLog.Debug("event with ack id %d has timed out after %d ms", id, *timeout)
 		ack(nil, errors.New("operation has timed out"))
 	}, *timeout)
 
@@ -430,14 +430,14 @@ func (s *Socket) _addToQueue(args []any) {
 		}
 		if err != nil {
 			if tryCount := packet.TryCount.Load(); float64(tryCount) > s._opts.Retries() {
-				socket_log.Debug("packet [%d] is discarded after %d tries", packet.Id, tryCount)
+				socketLog.Debug("packet [%d] is discarded after %d tries", packet.Id, tryCount)
 				_, _ = s._queue.Shift()
 				if ack != nil {
 					ack(nil, err)
 				}
 			}
 		} else {
-			socket_log.Debug("packet [%d] was successfully sent", packet.Id)
+			socketLog.Debug("packet [%d] was successfully sent", packet.Id)
 			_, _ = s._queue.Shift()
 			if ack != nil {
 				ack(responseArgs, nil)
@@ -457,7 +457,7 @@ func (s *Socket) _addToQueue(args []any) {
 //
 // force: Whether to resend a packet that has not been acknowledged yet.
 func (s *Socket) _drainQueue(force bool) {
-	socket_log.Debug("draining queue")
+	socketLog.Debug("draining queue")
 	if !s.connected.Load() || s._queue.Len() == 0 {
 		return
 	}
@@ -467,12 +467,12 @@ func (s *Socket) _drainQueue(force bool) {
 	}
 
 	if !force && packet.Pending.Load() {
-		socket_log.Debug("packet [%d] has already been sent and is waiting for an ack", packet.Id)
+		socketLog.Debug("packet [%d] has already been sent and is waiting for an ack", packet.Id)
 		return
 	}
 	packet.Pending.Store(true)
 	packet.TryCount.Add(1)
-	socket_log.Debug("sending packet [%d] (try n°%d)", packet.Id, packet.TryCount.Load())
+	socketLog.Debug("sending packet [%d] (try n°%d)", packet.Id, packet.TryCount.Load())
 	s.flags.Store(packet.Flags)
 	_ = s.Emit(slices.TryGetAny[string](packet.Args, 0), slices.Slice(packet.Args, 1)...)
 }
@@ -487,7 +487,7 @@ func (s *Socket) packet(packet *Packet) {
 
 // onopen is called upon engine `open`.
 func (s *Socket) onopen(...any) {
-	socket_log.Debug("transport is open - connecting")
+	socketLog.Debug("transport is open - connecting")
 	s._sendConnectPacket(s.auth)
 }
 
@@ -524,7 +524,7 @@ func (s *Socket) onerror(errs ...any) {
 // reason: The reason for the close.
 // description: The error description.
 func (s *Socket) onclose(reason string, description error) {
-	socket_log.Debug("close (%s)", reason)
+	socketLog.Debug("close (%s)", reason)
 	s.connected.Store(false)
 	s.id.Store("")
 	s.EventEmitter.Emit("disconnect", reason, description)
@@ -596,10 +596,10 @@ func (s *Socket) onpacket(packet *parser.Packet) {
 // packet: The packet.
 func (s *Socket) onevent(packet *parser.Packet) {
 	args, _ := packet.Data.([]any)
-	socket_log.Debug("emitting event %v", args)
+	socketLog.Debug("emitting event %v", args)
 
 	if nil != packet.Id {
-		socket_log.Debug("attaching ack callback to event")
+		socketLog.Debug("attaching ack callback to event")
 		args = append(args, s.ack(*packet.Id))
 	}
 
@@ -632,7 +632,7 @@ func (s *Socket) ack(id uint64) socket.Ack {
 	return func(args []any, _ error) {
 		// prevent double callbacks
 		sent.Do(func() {
-			socket_log.Debug("sending ack %v", args)
+			socketLog.Debug("sending ack %v", args)
 			s.packet(&Packet{
 				Packet: &parser.Packet{
 					Type: parser.ACK,
@@ -649,16 +649,16 @@ func (s *Socket) ack(id uint64) socket.Ack {
 // packet: The packet.
 func (s *Socket) onack(packet *parser.Packet) {
 	if packet.Id == nil {
-		socket_log.Debug("bad ack nil")
+		socketLog.Debug("bad ack nil")
 		return
 	}
 	ack, ok := s.acks.Load(*packet.Id)
 	if !ok {
-		socket_log.Debug("bad ack %d", *packet.Id)
+		socketLog.Debug("bad ack %d", *packet.Id)
 		return
 	}
 	s.acks.Delete(*packet.Id)
-	socket_log.Debug("calling ack %d with %v", *packet.Id, packet.Data)
+	socketLog.Debug("calling ack %d with %v", *packet.Id, packet.Data)
 	ack(utils.TryCast[[]any](packet.Data), nil)
 }
 
@@ -667,7 +667,7 @@ func (s *Socket) onack(packet *parser.Packet) {
 // id: The connection ID.
 // pid: The private session ID.
 func (s *Socket) onconnect(id string, pid string) {
-	socket_log.Debug("socket connected with id %s", id)
+	socketLog.Debug("socket connected with id %s", id)
 	s.id.Store(id)
 	s.recovered.Store(pid != "" && s._pid.Load() == pid)
 	s._pid.Store(pid) // defined only if connection state recovery is enabled
@@ -697,7 +697,7 @@ func (s *Socket) emitBuffered() {
 
 // ondisconnect is called upon server disconnect.
 func (s *Socket) ondisconnect() {
-	socket_log.Debug("server disconnect (%s)", s.nsp)
+	socketLog.Debug("server disconnect (%s)", s.nsp)
 	s.destroy()
 	s.onclose("io server disconnect", nil)
 }
@@ -733,7 +733,7 @@ func (s *Socket) destroy() {
 //	socket.Disconnect()
 func (s *Socket) Disconnect() *Socket {
 	if s.connected.Load() {
-		socket_log.Debug("performing disconnect (%s)", s.nsp)
+		socketLog.Debug("performing disconnect (%s)", s.nsp)
 		s.packet(&Packet{Packet: &parser.Packet{Type: parser.DISCONNECT}})
 	}
 
@@ -761,7 +761,9 @@ func (s *Socket) Close() *Socket {
 //
 // compress: If `true`, compresses the sending data.
 func (s *Socket) Compress(compress bool) *Socket {
-	s.flags.Load().Compress = &compress
+	newFlags := *s.flags.Load()
+	newFlags.Compress = &compress
+	s.flags.Store(&newFlags)
 	return s
 }
 
@@ -773,7 +775,9 @@ func (s *Socket) Compress(compress bool) *Socket {
 //	socket := io.NewClient("", nil)
 //	socket.Volatile().Emit("hello") // the server may or may not receive it
 func (s *Socket) Volatile() *Socket {
-	s.flags.Load().Volatile = true
+	newFlags := *s.flags.Load()
+	newFlags.Volatile = true
+	s.flags.Store(&newFlags)
 	return s
 }
 
@@ -789,7 +793,9 @@ func (s *Socket) Volatile() *Socket {
 //	  }
 //	})
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
-	s.flags.Load().Timeout = &timeout
+	newFlags := *s.flags.Load()
+	newFlags.Timeout = &timeout
+	s.flags.Store(&newFlags)
 	return s
 }
 
@@ -841,7 +847,7 @@ func (s *Socket) OffAny(listener types.EventListener) *Socket {
 	if listener != nil {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
 		_, _ = s._anyListeners.RangeAndSplice(func(_listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
-			return reflect.ValueOf(listener).Pointer() == listenerPointer, i, 1, nil
+			return reflect.ValueOf(_listener).Pointer() == listenerPointer, i, 1, nil
 		})
 	} else {
 		s._anyListeners.Clear()
@@ -907,7 +913,7 @@ func (s *Socket) OffAnyOutgoing(listener types.EventListener) *Socket {
 	if listener != nil {
 		listenerPointer := reflect.ValueOf(listener).Pointer()
 		_, _ = s._anyOutgoingListeners.RangeAndSplice(func(_listener types.EventListener, i int) (bool, int, int, []types.EventListener) {
-			return reflect.ValueOf(listener).Pointer() == listenerPointer, i, 1, nil
+			return reflect.ValueOf(_listener).Pointer() == listenerPointer, i, 1, nil
 		})
 	} else {
 		s._anyOutgoingListeners.Clear()

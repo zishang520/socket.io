@@ -25,10 +25,10 @@ const (
 
 // Global configuration variables
 var (
-	DEBUG  bool      = false     // Global debug flag
-	Output io.Writer = os.Stderr // Default output writer
-	Prefix string    = ""        // Default prefix for all loggers
-	Flags  int       = 0         // Default flags for all loggers
+	DEBUG  atomic.Bool             // Global debug flag (default false)
+	Output io.Writer   = os.Stderr // Default output writer
+	Prefix string      = ""        // Default prefix for all loggers
+	Flags  int         = 0         // Default flags for all loggers
 )
 
 var defaultLogger atomic.Pointer[Log]
@@ -112,7 +112,7 @@ func (d *Log) Info(message string, args ...any) { d.Infof(message, args...) }
 
 // Debugf prints a formatted message with debug color if debug mode is enabled
 func (d *Log) Debugf(message string, args ...any) {
-	if DEBUG && d.checkNamespace(d.Prefix()) {
+	if DEBUG.Load() && d.checkNamespace(d.Prefix()) {
 		d.printColored(color.Debug, message, args...)
 	}
 }

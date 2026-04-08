@@ -2,7 +2,6 @@ package types
 
 import (
 	"net/http"
-	// "sort"
 	"strings"
 	"sync"
 
@@ -146,13 +145,6 @@ func (mux *ServeMux) Handle(pattern string, handler http.Handler) {
 }
 
 func appendSorted(es []muxEntry, e muxEntry) []muxEntry {
-	// n := len(es)
-	// i := sort.Search(n, func(i int) bool {
-	// 	return len(es[i].pattern) < len(e.pattern)
-	// })
-	// if i == n {
-	// 	return append(es, e)
-	// }
 	i := 0
 	// we now know that i points at where we want to insert
 	es = append(es, muxEntry{}) // try to grow the slice in place, any entry works.

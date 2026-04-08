@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	parent_namespace_log = log.NewLog("socket.io:parent-namespace")
+	parentNamespaceLog = log.NewLog("socket.io:parent-namespace")
 
 	count atomic.Uint64
 )
@@ -75,7 +75,7 @@ func (p *parentNamespace) Emit(ev string, args ...any) error {
 }
 
 func (p *parentNamespace) CreateChild(name string) Namespace {
-	parent_namespace_log.Debug("creating child namespace %s", name)
+	parentNamespaceLog.Debug("creating child namespace %s", name)
 	namespace := NewNamespace(p.Server(), name)
 
 	namespace.Fns().Replace(p.Fns().All())
@@ -87,7 +87,7 @@ func (p *parentNamespace) CreateChild(name string) Namespace {
 	if p.Server().Opts().CleanupEmptyChildNamespaces() {
 		namespace.Cleanup(func() {
 			if namespace.Sockets().Len() == 0 {
-				parent_namespace_log.Debug("closing child namespace %s", name)
+				parentNamespaceLog.Debug("closing child namespace %s", name)
 				namespace.Adapter().Close()
 				p.Server()._nsps.Delete(namespace.Name())
 				p.children.Delete(namespace)

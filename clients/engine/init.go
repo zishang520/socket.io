@@ -20,20 +20,20 @@ import (
 // Logger instances for different components of the Engine.IO client.
 // These loggers provide structured logging with component-specific prefixes.
 var (
-	// client_socket_log handles logging for the socket component
-	client_socket_log = log.NewLog("engine.io-client:socket")
+	// clientSocketLog handles logging for the socket component
+	clientSocketLog = log.NewLog("engine.io-client:socket")
 
-	// client_polling_log handles logging for the polling transport
-	client_polling_log = log.NewLog("engine.io-client:polling")
+	// clientPollingLog handles logging for the polling transport
+	clientPollingLog = log.NewLog("engine.io-client:polling")
 
-	// client_transport_log handles logging for the transport layer
-	client_transport_log = log.NewLog("engine.io-client:transport")
+	// clientTransportLog handles logging for the transport layer
+	clientTransportLog = log.NewLog("engine.io-client:transport")
 
-	// client_websocket_log handles logging for the WebSocket transport
-	client_websocket_log = log.NewLog("engine.io-client:websocket")
+	// clientWebsocketLog handles logging for the WebSocket transport
+	clientWebsocketLog = log.NewLog("engine.io-client:websocket")
 
-	// client_webtransport_log handles logging for the WebTransport transport
-	client_webtransport_log = log.NewLog("engine.io-client:webtransport")
+	// clientWebtransportLog handles logging for the WebTransport transport
+	clientWebtransportLog = log.NewLog("engine.io-client:webtransport")
 )
 
 // Event names for system-level events that can be emitted by the Engine.IO client.

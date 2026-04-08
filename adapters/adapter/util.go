@@ -10,7 +10,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-var adapter_log = log.NewLog("socket.io-adapter")
+var adapterLog = log.NewLog("socket.io-adapter")
 
 // EncodeOptions encodes BroadcastOptions into PacketOptions.
 func EncodeOptions(opts *socket.BroadcastOptions) *PacketOptions {

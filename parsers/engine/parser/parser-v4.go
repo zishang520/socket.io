@@ -115,7 +115,7 @@ func (p *parserv4) encodeEmptyPacket(typeByte byte) (types.BufferInterface, erro
 // The utf8decode parameter is ignored in v4 (kept for interface compatibility).
 func (p *parserv4) DecodePacket(data types.BufferInterface, _ ...bool) (*packet.Packet, error) {
 	if data == nil {
-		return ERROR_PACKET, ErrDataNil
+		return newErrorPacket(), ErrDataNil
 	}
 
 	// Handle string buffer (text data)
@@ -131,7 +131,7 @@ func (p *parserv4) DecodePacket(data types.BufferInterface, _ ...bool) (*packet.
 func (p *parserv4) decodeStringPacket(sb *types.StringBuffer) (*packet.Packet, error) {
 	msgType, err := sb.ReadByte()
 	if err != nil {
-		return ERROR_PACKET, err
+		return newErrorPacket(), err
 	}
 
 	// Handle base64-encoded binary data
@@ -141,12 +141,12 @@ func (p *parserv4) decodeStringPacket(sb *types.StringBuffer) (*packet.Packet, e
 
 	packetType, ok := lookupPacketType(msgType)
 	if !ok {
-		return ERROR_PACKET, fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType)
+		return newErrorPacket(), fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType)
 	}
 
 	stringBuffer := types.NewStringBuffer(nil)
 	if _, err := stringBuffer.ReadFrom(sb); err != nil {
-		return ERROR_PACKET, err
+		return newErrorPacket(), err
 	}
 	return &packet.Packet{Type: packetType, Data: stringBuffer}, nil
 }
@@ -155,7 +155,7 @@ func (p *parserv4) decodeStringPacket(sb *types.StringBuffer) (*packet.Packet, e
 func (p *parserv4) decodeBase64Packet(sb *types.StringBuffer) (*packet.Packet, error) {
 	decode := types.NewBytesBuffer(nil)
 	if _, err := decode.ReadFrom(base64.NewDecoder(base64.StdEncoding, sb)); err != nil {
-		return ERROR_PACKET, err
+		return newErrorPacket(), err
 	}
 	// Base64 packets are always MESSAGE type in v4
 	return &packet.Packet{Type: packet.MESSAGE, Data: decode}, nil
@@ -166,7 +166,7 @@ func (p *parserv4) decodeBase64Packet(sb *types.StringBuffer) (*packet.Packet, e
 func (p *parserv4) decodeBinaryPacket(data types.BufferInterface) (*packet.Packet, error) {
 	decode := types.NewBytesBuffer(nil)
 	if _, err := io.Copy(decode, data); err != nil {
-		return ERROR_PACKET, err
+		return newErrorPacket(), err
 	}
 	return &packet.Packet{Type: packet.MESSAGE, Data: decode}, nil
 }

@@ -20,9 +20,9 @@ import (
 )
 
 var (
-	manager_log = log.NewLog("socket.io-client:manager")
-	socket_log  = log.NewLog("socket.io-client:socket")
-	client_log  = log.NewLog("socket.io-client")
+	managerLog = log.NewLog("socket.io-client:manager")
+	socketLog  = log.NewLog("socket.io-client:socket")
+	clientLog  = log.NewLog("socket.io-client")
 
 	RESERVED_EVENTS = types.NewSet("connect", "connect_error", "disconnect", "disconnecting", "newListener", "removeListener")
 
@@ -63,12 +63,12 @@ func lookup(uri string, opts OptionsInterface) (*Socket, error) {
 
 	var io *Manager
 	if newConnection {
-		client_log.Debug("ignoring socket cache for %s", source)
+		clientLog.Debug("ignoring socket cache for %s", source)
 		io = NewManager(source, opts)
 	} else {
 		manager, ok := cache.LoadOrStore(id, NewManager(source, opts))
 		if !ok {
-			client_log.Debug("new io instance for %s", source)
+			clientLog.Debug("new io instance for %s", source)
 		}
 		io = manager
 	}
