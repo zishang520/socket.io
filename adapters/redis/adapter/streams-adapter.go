@@ -76,7 +76,7 @@ func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, options 
 		default:
 		}
 
-		response, err := sb.Redis.Client.XRead(ctx, &rds.XReadArgs{
+		response, err := sb.Redis.Sub().XRead(ctx, &rds.XReadArgs{
 			Streams: []string{options.StreamName()},
 			ID:      offset,
 			Count:   options.ReadCount(),
@@ -449,7 +449,7 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	}
 
 	// Verify the offset exists in the stream
-	offsets, err := r.redisClient.Client.XRange(r.redisClient.Context, r.opts.StreamName(), offset, offset).Result()
+	offsets, err := r.redisClient.Sub().XRange(r.redisClient.Context, r.opts.StreamName(), offset, offset).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify offset: %w", err)
 	}
@@ -483,7 +483,7 @@ func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offs
 	broadcastTypeStr := strconv.Itoa(int(adapter.BROADCAST))
 
 	for range restoreSessionMaxXRangeCalls {
-		entries, err := r.redisClient.Client.XRangeN(
+		entries, err := r.redisClient.Sub().XRangeN(
 			r.redisClient.Context,
 			r.opts.StreamName(),
 			r.nextOffset(offset),

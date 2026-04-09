@@ -133,8 +133,9 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	s.channel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
 	s.responseChannel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#" + string(s.Uid()) + "#"
 
-	channelPubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, s.channel)
-	responsePubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, s.responseChannel)
+	// Subscribe to static channels using SubClient for read/write separation.
+	channelPubSub := s.redisClient.Sub().SSubscribe(s.redisClient.Context, s.channel)
+	responsePubSub := s.redisClient.Sub().SSubscribe(s.redisClient.Context, s.responseChannel)
 
 	s.pubSubClients.Store(s.channel, channelPubSub)
 	s.pubSubClients.Store(s.responseChannel, responsePubSub)
@@ -177,7 +178,7 @@ func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
 // For non-ClusterClient backends, each channel gets its own Pub/Sub, guarded by
 // a per-channel mutex stored in ncDynamicMutexes.
 func (s *shardedRedisAdapter) subscribeNode(channel string) {
-	clusterClient, isCluster := s.redisClient.Client.(*rds.ClusterClient)
+	clusterClient, isCluster := s.redisClient.Sub().(*rds.ClusterClient)
 	if !isCluster {
 		// Non-cluster path: ensure exactly one SSubscribe per channel.
 		mu, _ := s.ncDynamicMutexes.LoadOrStore(channel, &sync.Mutex{})
@@ -187,7 +188,7 @@ func (s *shardedRedisAdapter) subscribeNode(channel string) {
 		if _, exists := s.ncDynamicPubSubs.Load(channel); exists {
 			return // idempotency guard
 		}
-		pubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, channel)
+		pubSub := s.redisClient.Sub().SSubscribe(s.redisClient.Context, channel)
 		s.ncDynamicPubSubs.Store(channel, pubSub)
 		go s.receiveMessages(pubSub)
 		return
@@ -235,7 +236,7 @@ func (s *shardedRedisAdapter) subscribeNode(channel string) {
 // When the reference count for a master node reaches zero, its shared Pub/Sub
 // connection is closed and the pool entry is deleted.
 func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
-	if _, isCluster := s.redisClient.Client.(*rds.ClusterClient); !isCluster {
+	if _, isCluster := s.redisClient.Sub().(*rds.ClusterClient); !isCluster {
 		// Non-cluster path: unsubscribe under the per-channel mutex.
 		if mu, exists := s.ncDynamicMutexes.Load(channel); exists {
 			mu.Lock()

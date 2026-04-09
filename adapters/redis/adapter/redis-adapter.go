@@ -174,13 +174,13 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	}
 	_ = r.redisClient.On("error", r.friendlyErrorHandler)
 
-	// Subscribe to broadcast channel with pattern matching
-	pubsub := r.redisClient.Client.PSubscribe(r.redisClient.Context, r.channel+"*")
+	// Subscribe to broadcast channel with pattern matching (uses SubClient for read separation)
+	pubsub := r.redisClient.Sub().PSubscribe(r.redisClient.Context, r.channel+"*")
 	r.redisListeners.Store(subKeyPattern, pubsub)
 	go r.handlePatternMessages(pubsub)
 
-	// Subscribe to request/response channels
-	sub := r.redisClient.Client.Subscribe(r.redisClient.Context, r.requestChannel, r.responseChannel, r.specificResponseChannel)
+	// Subscribe to request/response channels (uses SubClient for read separation)
+	sub := r.redisClient.Sub().Subscribe(r.redisClient.Context, r.requestChannel, r.responseChannel, r.specificResponseChannel)
 	r.redisListeners.Store(subKeyChannel, sub)
 	go r.handleChannelMessages(sub)
 }
