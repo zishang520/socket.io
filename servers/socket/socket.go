@@ -246,18 +246,10 @@ func (s *Socket) Construct(nsp Namespace, client *Client, auth map[string]any, p
 				s.id = SocketId(client.id)
 			}
 		} else {
-			id, err := utils.Base64Id().GenerateId()
-			if err != nil {
-				socketLog.Debug("GenerateId error: %s", err)
-			}
-			s.id = SocketId(id) // don't reuse the Engine.IO id because it's sensitive information
+			s.id = SocketId(utils.Base64Id().GenerateId()) // don't reuse the Engine.IO id because it's sensitive information
 		}
 		if s.server.Opts().ConnectionStateRecovery() != nil {
-			id, err := utils.Base64Id().GenerateId()
-			if err != nil {
-				socketLog.Debug("GenerateId error: %s", err)
-			}
-			s.pid = PrivateSessionId(id)
+			s.pid = PrivateSessionId(utils.Base64Id().GenerateId())
 		}
 	}
 	s.handshake = s.buildHandshake(auth)

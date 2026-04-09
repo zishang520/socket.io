@@ -17,11 +17,11 @@ func Base64Id() *base64Id {
 	return bid
 }
 
-func (b *base64Id) GenerateId() (string, error) {
+func (b *base64Id) GenerateId() string {
 	r := make([]byte, 18)
-	if _, err := rand.Read(r); err != nil {
-		return "", err
-	}
+	// Read fills b with cryptographically secure random bytes. It never returns an
+	// error, and always fills b entirely.
+	_, _ = rand.Read(r)
 	binary.BigEndian.PutUint64(r[10:], b.sequenceNumber.Add(1)-1)
-	return base64.RawURLEncoding.EncodeToString(r), nil
+	return base64.RawURLEncoding.EncodeToString(r)
 }

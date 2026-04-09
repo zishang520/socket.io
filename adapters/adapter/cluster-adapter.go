@@ -65,11 +65,7 @@ func (c *clusterAdapter) Uid() ServerId {
 // Construct initializes the clusterAdapter with the given Namespace.
 func (c *clusterAdapter) Construct(nsp socket.Namespace) {
 	c.Adapter.Construct(nsp)
-	uid, err := RandomId()
-	if err != nil {
-		adapterLog.Debug("RandomId error: %s", err)
-	}
-	c.uid = ServerId(uid)
+	c.uid = ServerId(RandomId())
 }
 
 // OnMessage handles incoming messages
@@ -322,10 +318,7 @@ func (c *clusterAdapter) addOffsetIfNecessary(packet *parser.Packet, opts *socke
 func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.BroadcastOptions, clientCountCallback func(uint64), ack socket.Ack) {
 	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
 	if !onlyLocal {
-		requestId, err := RandomId()
-		if err != nil {
-			adapterLog.Debug("RandomId error: %s", err)
-		}
+		requestId := RandomId()
 
 		c.ackRequests.Store(requestId, &ClusterAckRequest{
 			ClientCountCallback: clientCountCallback,
@@ -414,10 +407,7 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 				return
 			}
 
-			requestId, err := RandomId()
-			if err != nil {
-				adapterLog.Debug("RandomId error: %s", err)
-			}
+			requestId := RandomId()
 
 			t := DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
@@ -486,10 +476,7 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 		return nil
 	}
 
-	requestId, err := RandomId()
-	if err != nil {
-		return err
-	}
+	requestId := RandomId()
 
 	timeout := utils.SetTimeout(func() {
 		if storedRequest, ok := c.requests.Load(requestId); ok {

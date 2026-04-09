@@ -49,19 +49,19 @@ func DecodeOptions(opts *PacketOptions) *socket.BroadcastOptions {
 }
 
 // RandomId generates a random hexadecimal string of 8 bytes.
-func RandomId() (string, error) {
+func RandomId() string {
 	r := make([]byte, 8)
-	if _, err := rand.Read(r); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(r), nil
+	// Read fills b with cryptographically secure random bytes. It never returns an
+	// error, and always fills b entirely.
+	_, _ = rand.Read(r)
+	return hex.EncodeToString(r)
 }
 
 // Uid2 generates a random URL-safe base64 string of the given length.
-func Uid2(length int) (string, error) {
+func Uid2(length int) string {
 	r := make([]byte, length)
-	if _, err := rand.Read(r); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(r), nil
+	// Read fills b with cryptographically secure random bytes. It never returns an
+	// error, and always fills b entirely.
+	_, _ = rand.Read(r)
+	return base64.RawURLEncoding.EncodeToString(r)
 }

@@ -276,7 +276,7 @@ func (bs *baseServer) Cleanup() {
 
 // generate a socket id.
 // Overwrite this method to generate your custom socket id
-func (bs *baseServer) GenerateId(*types.HttpContext) (string, error) {
+func (bs *baseServer) GenerateId(*types.HttpContext) string {
 	return utils.Base64Id().GenerateId()
 }
 
@@ -299,20 +299,7 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 		return UNSUPPORTED_PROTOCOL_VERSION, nil
 	}
 
-	id, err := bs.GenerateId(ctx)
-	if err != nil {
-		serverLog.Debug("error while generating an id")
-		bs.Emit("connection_error", &types.ErrorMessage{
-			CodeMessage: BAD_REQUEST,
-			Req:         ctx,
-			Context: map[string]any{
-				"name":  "ID_GENERATION_ERROR",
-				"error": err,
-			},
-		})
-		return BAD_REQUEST, nil
-	}
-
+	id := bs.GenerateId(ctx)
 	serverLog.Debug(`handshaking client "%s" (%s)`, id, transportName)
 
 	transport, err := bs._proto_.CreateTransport(transportName, ctx)

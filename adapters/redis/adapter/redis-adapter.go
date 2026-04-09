@@ -136,8 +136,7 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	r.Adapter.Construct(nsp)
 
 	// Generate unique server ID
-	uid, _ := adapter.Uid2(defaultUidLength)
-	r.uid = adapter.ServerId(uid)
+	r.uid = adapter.ServerId(adapter.Uid2(defaultUidLength))
 
 	// Configure timeout with default fallback
 	if r.opts.GetRawRequestsTimeout() != nil {
@@ -654,33 +653,32 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
 
 	if !onlyLocal {
-		if requestId, err := adapter.Uid2(defaultUidLength); err == nil {
-			if message, err := r.parser.Encode(&Request{
-				Uid:       r.uid,
-				RequestId: requestId,
-				Type:      redis.BROADCAST,
-				Packet:    packet,
-				Opts:      adapter.EncodeOptions(opts),
-			}); err == nil {
-				if err := r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err(); err != nil {
-					r.redisClient.Emit("error", err)
-				}
-
-				r.ackRequests.Store(requestId, &AckRequest{
-					ClientCountCallback: clientCountCallback,
-					Ack:                 ack,
-				})
-
-				// Calculate cleanup timeout
-				timeout := time.Duration(0)
-				if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-					timeout = *opts.Flags.Timeout
-				}
-				// Clean up ackRequests after timeout
-				utils.SetTimeout(func() {
-					r.ackRequests.Delete(requestId)
-				}, timeout)
+		requestId := adapter.Uid2(defaultUidLength)
+		if message, err := r.parser.Encode(&Request{
+			Uid:       r.uid,
+			RequestId: requestId,
+			Type:      redis.BROADCAST,
+			Packet:    packet,
+			Opts:      adapter.EncodeOptions(opts),
+		}); err == nil {
+			if err := r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err(); err != nil {
+				r.redisClient.Emit("error", err)
 			}
+
+			r.ackRequests.Store(requestId, &AckRequest{
+				ClientCountCallback: clientCountCallback,
+				Ack:                 ack,
+			})
+
+			// Calculate cleanup timeout
+			timeout := time.Duration(0)
+			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
+				timeout = *opts.Flags.Timeout
+			}
+			// Clean up ackRequests after timeout
+			utils.SetTimeout(func() {
+				r.ackRequests.Delete(requestId)
+			}, timeout)
 		}
 	}
 	r.Adapter.BroadcastWithAck(packet, opts, clientCountCallback, ack)
@@ -698,11 +696,7 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 			return
 		}
 
-		requestId, err := adapter.Uid2(defaultUidLength)
-		if err != nil {
-			cb(nil, err)
-			return
-		}
+		requestId := adapter.Uid2(defaultUidLength)
 
 		message, err := json.Marshal(&Request{Type: redis.ALL_ROOMS, Uid: r.uid, RequestId: requestId})
 		if err != nil {
@@ -761,11 +755,7 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				return
 			}
 
-			requestId, err := adapter.Uid2(defaultUidLength)
-			if err != nil {
-				cb(nil, err)
-				return
-			}
+			requestId := adapter.Uid2(defaultUidLength)
 
 			message, err := json.Marshal(&Request{Type: redis.REMOTE_FETCH, Uid: r.uid, RequestId: requestId, Opts: adapter.EncodeOptions(opts)})
 			if err != nil {
@@ -894,10 +884,7 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 		return nil
 	}
 
-	requestId, err := adapter.Uid2(defaultUidLength)
-	if err != nil {
-		return fmt.Errorf("failed to generate request ID: %w", err)
-	}
+	requestId := adapter.Uid2(defaultUidLength)
 
 	message, err := json.Marshal(&Request{Uid: r.uid, RequestId: requestId, Type: redis.SERVER_SIDE_EMIT, Data: packet})
 	if err != nil {

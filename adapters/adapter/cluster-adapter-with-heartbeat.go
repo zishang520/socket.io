@@ -182,11 +182,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		return nil
 	}
 
-	requestId, err := RandomId()
-
-	if err != nil {
-		return err
-	}
+	requestId := RandomId()
 
 	timeout := utils.SetTimeout(func() {
 		if storedRequest, ok := a.customRequests.Load(requestId); ok {
@@ -244,7 +240,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 				return
 			}
 
-			requestId, _ := RandomId()
+			requestId := RandomId()
 
 			t := DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
