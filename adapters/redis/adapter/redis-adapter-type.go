@@ -2,6 +2,7 @@
 package adapter
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -51,6 +52,10 @@ type (
 
 		// Responses accumulates generic response data.
 		Responses *types.Slice[any]
+
+		// Once ensures that the Resolve callback and cleanup are executed exactly once,
+		// preventing double invocations from both normal completion and timeout paths.
+		Once sync.Once
 	}
 
 	// RedisAdapter defines the interface for a Redis-based Socket.IO adapter.

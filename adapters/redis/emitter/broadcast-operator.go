@@ -173,7 +173,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 // SocketsJoin makes all matching socket instances join the specified rooms.
 // This sends a REMOTE_JOIN request to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
-	request, err := json.Marshal(&Request{
+	message, err := json.Marshal(&Request{
 		Type: redis.REMOTE_JOIN,
 		Opts: &adapter.PacketOptions{
 			Rooms:  b.rooms.Keys(),
@@ -185,13 +185,13 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 		return err
 	}
 
-	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
+	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, message).Err()
 }
 
 // SocketsLeave makes all matching socket instances leave the specified rooms.
 // This sends a REMOTE_LEAVE request to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
-	request, err := json.Marshal(&Request{
+	message, err := json.Marshal(&Request{
 		Type: redis.REMOTE_LEAVE,
 		Opts: &adapter.PacketOptions{
 			Rooms:  b.rooms.Keys(),
@@ -203,14 +203,14 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 		return err
 	}
 
-	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
+	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, message).Err()
 }
 
 // DisconnectSockets disconnects all matching socket instances.
 // If state is true, the underlying transport connection will be closed.
 // This sends a REMOTE_DISCONNECT request to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) DisconnectSockets(state bool) error {
-	request, err := json.Marshal(&Request{
+	message, err := json.Marshal(&Request{
 		Type: redis.REMOTE_DISCONNECT,
 		Opts: &adapter.PacketOptions{
 			Rooms:  b.rooms.Keys(),
@@ -222,5 +222,5 @@ func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 		return err
 	}
 
-	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, request).Err()
+	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, message).Err()
 }

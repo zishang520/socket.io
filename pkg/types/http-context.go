@@ -116,7 +116,7 @@ func (c *HttpContext) SetStatusCode(code int) error {
 	if code < 100 || code > 599 {
 		return ErrInvalidStatusCode
 	}
-	if c.IsDone() {
+	if c.state.Load() {
 		return ErrResponseAlreadyWritten
 	}
 	c.statusCode.Store(int32(code))
@@ -133,11 +133,14 @@ func (c *HttpContext) Write(data []byte) (int, error) {
 	}
 
 	var writeResult struct {
-		n   int
-		err error
+		n      int
+		err    error
+		called bool
 	}
 
 	c.writeOnce.Do(func() {
+		writeResult.called = true
+
 		if !c.state.CompareAndSwap(false, true) {
 			writeResult.err = ErrResponseAlreadyWritten
 			return
@@ -147,6 +150,10 @@ func (c *HttpContext) Write(data []byte) (int, error) {
 
 		c.closeWithError(nil)
 	})
+
+	if !writeResult.called {
+		return 0, ErrResponseAlreadyWritten
+	}
 
 	return writeResult.n, writeResult.err
 }

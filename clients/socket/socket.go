@@ -735,15 +735,14 @@ func (s *Socket) Disconnect() *Socket {
 	if s.connected.Load() {
 		socketLog.Debug("performing disconnect (%s)", s.nsp)
 		s.packet(&Packet{Packet: &parser.Packet{Type: parser.DISCONNECT}})
+
+		// fire events
+		defer s.onclose("io client disconnect", nil)
 	}
 
 	// remove socket from pool
 	s.destroy()
 
-	if s.connected.Load() {
-		// fire events
-		s.onclose("io client disconnect", nil)
-	}
 	return s
 }
 
