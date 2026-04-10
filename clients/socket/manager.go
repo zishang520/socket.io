@@ -447,6 +447,7 @@ func (m *Manager) cleanup() {
 		subDestroy()
 		return true
 	})
+	m.subs.Clear()
 
 	m.decoder.Destroy()
 }

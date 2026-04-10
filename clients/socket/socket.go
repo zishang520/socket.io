@@ -426,6 +426,7 @@ func (s *Socket) _addToQueue(args []any) {
 	args = append(args, func(responseArgs []any, err error) {
 		if q, queueErr := s._queue.Get(0); queueErr != nil || packet != q {
 			// the packet has already been acknowledged
+			socketLog.Debug("packet [%d] already acknowledged", packet.Id)
 			return
 		}
 		if err != nil {
@@ -673,8 +674,8 @@ func (s *Socket) onconnect(id string, pid string) {
 	s._pid.Store(pid) // defined only if connection state recovery is enabled
 	s.connected.Store(true)
 	s.emitBuffered()
-	s.EventEmitter.Emit("connect")
 	s._drainQueue(true)
+	s.EventEmitter.Emit("connect")
 }
 
 // emitBuffered emits buffered events (received and emitted).

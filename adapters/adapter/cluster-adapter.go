@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
@@ -334,7 +333,7 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 			},
 		})
 
-		timeout := time.Duration(0)
+		timeout := DEFAULT_TIMEOUT
 		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
 			timeout = *opts.Flags.Timeout
 		}

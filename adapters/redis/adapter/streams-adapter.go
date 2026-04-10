@@ -218,7 +218,6 @@ func (r *redisStreamsAdapter) SetOpts(opts any) {
 // This method must be called before using the adapter.
 func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	r.ClusterAdapterWithHeartbeat.Construct(nsp)
-	r.Init()
 }
 
 // DoPublish publishes a cluster message to the Redis stream.

@@ -1,8 +1,6 @@
 package parser
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -202,40 +200,38 @@ func (p *parserv4) EncodePayload(packets []*packet.Packet, _ ...bool) (types.Buf
 	return enPayload, nil
 }
 
-// separatorSplitFunc is a bufio.SplitFunc that splits on SEPARATOR bytes.
-func separatorSplitFunc(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	if atEOF && len(data) == 0 {
-		return 0, nil, nil
-	}
-	if i := bytes.IndexByte(data, SEPARATOR); i >= 0 {
-		return i + 1, data[:i], nil
-	}
-	if atEOF {
-		return len(data), data, nil
-	}
-	return 0, nil, nil
-}
-
 // DecodePayload decodes a payload buffer into multiple packets.
 // Packets are separated by SEPARATOR (0x1E).
 func (p *parserv4) DecodePayload(data types.BufferInterface) ([]*packet.Packet, error) {
-	scanner := bufio.NewScanner(data)
-	scanner.Split(separatorSplitFunc)
-
 	packets := make([]*packet.Packet, 0, 4)
 
-	for scanner.Scan() {
-		scanBytes := scanner.Bytes()
+	for data.Len() > 0 {
+		scanBytes, err := data.ReadBytes(SEPARATOR)
+		if err != nil && err != io.EOF {
+			return packets, err
+		}
+
+		if len(scanBytes) > 0 && scanBytes[len(scanBytes)-1] == SEPARATOR {
+			scanBytes = scanBytes[:len(scanBytes)-1]
+		}
+
 		if len(scanBytes) == 0 {
+			if err == io.EOF {
+				break
+			}
 			continue
 		}
 
-		pkt, err := p.DecodePacket(types.NewStringBuffer(scanBytes))
-		if err != nil {
-			return packets, err
+		pkt, decodeErr := p.DecodePacket(types.NewStringBuffer(scanBytes))
+		if decodeErr != nil {
+			return packets, decodeErr
 		}
 		packets = append(packets, pkt)
+
+		if err == io.EOF {
+			break
+		}
 	}
 
-	return packets, scanner.Err()
+	return packets, nil
 }

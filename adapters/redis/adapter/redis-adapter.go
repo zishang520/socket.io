@@ -671,7 +671,7 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 			})
 
 			// Calculate cleanup timeout
-			timeout := time.Duration(0)
+			timeout := adapter.DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
 				timeout = *opts.Flags.Timeout
 			}
@@ -932,17 +932,20 @@ func (r *redisAdapter) ServerCount() int64 {
 // This should be called when the adapter is no longer needed.
 func (r *redisAdapter) Close() {
 	// Unsubscribe from pattern subscription
-	if psub, ok := r.redisListeners.Load(subKeyPattern); ok {
+	if psub, ok := r.redisListeners.LoadAndDelete(subKeyPattern); ok {
 		if err := psub.PUnsubscribe(r.redisClient.Context, r.channel+"*"); err != nil {
 			r.redisClient.Emit("error", err)
 		}
+		_ = psub.Close()
 	}
 	// Unsubscribe from channel subscriptions
-	if sub, ok := r.redisListeners.Load(subKeyChannel); ok {
+	if sub, ok := r.redisListeners.LoadAndDelete(subKeyChannel); ok {
 		if err := sub.Unsubscribe(r.redisClient.Context, r.requestChannel, r.responseChannel, r.specificResponseChannel); err != nil {
 			r.redisClient.Emit("error", err)
 		}
+		_ = sub.Close()
 	}
 	// Remove error handler
 	r.redisClient.RemoveListener("error", r.friendlyErrorHandler)
+	r.Adapter.Close()
 }

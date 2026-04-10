@@ -155,6 +155,7 @@ func (n *namespace) Construct(server *Server, name string) {
 // in addition to the constructor.
 func (n *namespace) InitAdapter() {
 	n.adapter = n.server.Adapter().New(n)
+	n.adapter.Init()
 }
 
 // Registers a middleware, which is a function that gets executed for every incoming [Socket].

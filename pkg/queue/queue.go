@@ -90,6 +90,11 @@ func (q *Queue) get() (func(), bool) {
 	q.tasks[0] = nil
 	q.tasks = q.tasks[1:]
 
+	if len(q.tasks) == 0 {
+		// Reset cursor when queue logically empties out to reuse backing array space
+		q.tasks = q.tasks[:0]
+	}
+
 	return task, true
 }
 
