@@ -232,9 +232,9 @@ func (w *webTransport) write(packets []*packet.Packet) {
 		w.Emit("drain")
 	}()
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	var writeErr error
 
+	w.mu.Lock()
 	// encodePacket efficient as it uses webTransport framing
 	// no need for encodePayload
 	for _, packet := range packets {
@@ -253,13 +253,13 @@ func (w *webTransport) write(packets []*packet.Packet) {
 				pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
 					clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
-					w._error(err)
-					return
+					writeErr = err
+					break
 				}
 				if err := w.session.WritePreparedMessage(pm); err != nil {
 					clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
-					w._error(err)
-					return
+					writeErr = err
+					break
 				}
 				continue
 			}
@@ -268,16 +268,36 @@ func (w *webTransport) write(packets []*packet.Packet) {
 		data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
 			clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
-			w._error(err)
-			return
+			writeErr = err
+			break
 		}
-		w.doWrite(data, compress)
+		w.doWrite(data, compress, &writeErr)
+		if writeErr != nil {
+			break
+		}
+	}
+	w.mu.Unlock()
+
+	// Report errors outside of the lock to prevent potential deadlocks
+	// from event handlers that may try to write.
+	if writeErr != nil {
+		w._error(writeErr)
 	}
 }
 
 // doWrite performs the actual WebTransport write operation.
 // This method handles message compression and WebTransport message framing.
-func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
+// When called from write() under lock, errors are stored in writeErr instead of
+// calling _error() directly, to prevent deadlocks from event handlers.
+func (w *webTransport) doWrite(data types.BufferInterface, _ bool, writeErr ...*error) {
+	reportErr := func(err error) {
+		if len(writeErr) > 0 && writeErr[0] != nil {
+			*writeErr[0] = err
+		} else {
+			w._error(err)
+		}
+	}
+
 	// if perMessageDeflate := w.Opts().PerMessageDeflate(); perMessageDeflate != nil {
 	// 	if data.Len() < perMessageDeflate.Threshold {
 	// 		compress = false
@@ -292,17 +312,17 @@ func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
 	}
 	write, err := w.session.NextWriter(mt)
 	if err != nil {
-		w._error(err)
+		reportErr(err)
 		return
 	}
 	defer func() {
 		if err := write.Close(); err != nil {
-			w._error(err)
+			reportErr(err)
 			return
 		}
 	}()
 	if _, err := io.Copy(write, data); err != nil {
-		w._error(err)
+		reportErr(err)
 		return
 	}
 }

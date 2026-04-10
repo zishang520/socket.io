@@ -102,7 +102,9 @@ func (q *Queue) get() (func(), bool) {
 func (q *Queue) execute(task func()) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Printf("queue task panic recovered: %v", err)
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
+			log.Printf("queue task panic recovered: %v\n%s", err, buf[:n])
 		}
 	}()
 	task()

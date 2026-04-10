@@ -151,11 +151,11 @@ func (p *polling) OnData(data types.BufferInterface) {
 
 // DoClose gracefully closes the polling transport, sending a close packet if needed.
 func (p *polling) DoClose() {
-	p.writeQueue.TryClose()
-	defer func() { _ = p.client.Close() }()
 	cleanup := func(...any) {
 		clientPollingLog.Debug("writing close packet")
 		p.Write([]*packet.Packet{{Type: packet.CLOSE}})
+		// Close the write queue after the close packet has been enqueued.
+		p.writeQueue.TryClose()
 	}
 	if TransportStateOpen == p.ReadyState() {
 		clientPollingLog.Debug("transport open - closing")
@@ -164,6 +164,7 @@ func (p *polling) DoClose() {
 		clientPollingLog.Debug("transport not open - deferring close")
 		_ = p.Once("open", cleanup)
 	}
+	defer func() { _ = p.client.Close() }()
 }
 
 // Write encodes and sends packets to the server asynchronously.

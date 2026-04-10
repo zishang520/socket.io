@@ -13,9 +13,18 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-// DefaultMaxAttachments is the default maximum number of binary attachments allowed per packet.
-// This prevents resource exhaustion from malicious clients sending excessively large attachment counts.
-const DefaultMaxAttachments uint64 = 10
+const (
+	// DefaultMaxAttachments is the default maximum number of binary attachments allowed per packet.
+	// This prevents resource exhaustion from malicious clients sending excessively large attachment counts.
+	DefaultMaxAttachments uint64 = 10
+	// DefaultMaxNamespaceLength is the default maximum allowed length of a namespace name.
+	// This prevents resource exhaustion from malicious clients sending excessively long namespace names.
+	DefaultMaxNamespaceLength int = 512
+
+	// DefaultMaxPacketIDLength is the default maximum allowed length of a packet ID string.
+	// uint64 max is 18446744073709551615 (20 digits).
+	DefaultMaxPacketIDLength int = 20
+)
 
 var (
 	// parserLog is the logger for the parser package.
@@ -48,6 +57,14 @@ type DecoderOptions struct {
 	// MaxAttachments is the maximum number of binary attachments allowed per packet.
 	// Defaults to DefaultMaxAttachments (10) if not set or set to 0.
 	MaxAttachments uint64
+
+	// MaxNamespaceLength is the maximum allowed length of a namespace name.
+	// Defaults to DefaultMaxNamespaceLength (512) if not set or set to 0.
+	MaxNamespaceLength int
+
+	// MaxPacketIDLength is the maximum allowed length of a packet ID string.
+	// Defaults to DefaultMaxPacketIDLength (20) if not set or set to 0.
+	MaxPacketIDLength int
 }
 
 // decoder implements the Decoder interface for Socket.IO packet decoding.
@@ -59,16 +76,37 @@ type decoder struct {
 
 	// maxAttachments is the per-instance maximum number of binary attachments.
 	maxAttachments uint64
+
+	// maxNamespaceLength is the per-instance maximum namespace name length.
+	maxNamespaceLength int
+
+	// maxPacketIDLength is the per-instance maximum packet ID string length.
+	maxPacketIDLength int
 }
 
 // NewDecoder creates a new Decoder instance.
 // An optional DecoderOptions can be provided to configure the decoder.
 func NewDecoder(opts ...*DecoderOptions) Decoder {
 	maxAttachments := DefaultMaxAttachments
-	if len(opts) > 0 && opts[0] != nil && opts[0].MaxAttachments > 0 {
-		maxAttachments = opts[0].MaxAttachments
+	maxNamespaceLength := DefaultMaxNamespaceLength
+	maxPacketIDLength := DefaultMaxPacketIDLength
+	if len(opts) > 0 && opts[0] != nil {
+		if opts[0].MaxAttachments > 0 {
+			maxAttachments = opts[0].MaxAttachments
+		}
+		if opts[0].MaxNamespaceLength > 0 {
+			maxNamespaceLength = opts[0].MaxNamespaceLength
+		}
+		if opts[0].MaxPacketIDLength > 0 {
+			maxPacketIDLength = opts[0].MaxPacketIDLength
+		}
 	}
-	return &decoder{EventEmitter: types.NewEventEmitter(), maxAttachments: maxAttachments}
+	return &decoder{
+		EventEmitter:       types.NewEventEmitter(),
+		maxAttachments:     maxAttachments,
+		maxNamespaceLength: maxNamespaceLength,
+		maxPacketIDLength:  maxPacketIDLength,
+	}
 }
 
 // Add processes incoming data (string or binary) and emits decoded packets.
@@ -277,6 +315,9 @@ func (d *decoder) parseNamespace(buffer types.BufferInterface, packet *Packet) e
 	nspSuffix, err := buffer.ReadString(',')
 	if err != nil {
 		if err == io.EOF {
+			if len(nspSuffix)+1 > d.maxNamespaceLength {
+				return ErrIllegalNamespace
+			}
 			packet.Nsp = "/" + nspSuffix
 			return nil
 		}
@@ -284,7 +325,11 @@ func (d *decoder) parseNamespace(buffer types.BufferInterface, packet *Packet) e
 	}
 
 	// Remove trailing comma
-	packet.Nsp = "/" + nspSuffix[:len(nspSuffix)-1]
+	nsp := "/" + nspSuffix[:len(nspSuffix)-1]
+	if len(nsp) > d.maxNamespaceLength {
+		return ErrIllegalNamespace
+	}
+	packet.Nsp = nsp
 	return nil
 }
 
@@ -297,6 +342,10 @@ func (d *decoder) parsePacketID(buffer types.BufferInterface, packet *Packet) er
 	var idBuilder strings.Builder
 
 	for {
+		if idBuilder.Len() >= d.maxPacketIDLength {
+			return ErrIllegalID
+		}
+
 		b, err := buffer.ReadByte()
 		if err != nil {
 			if err == io.EOF {

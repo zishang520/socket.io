@@ -173,7 +173,9 @@ func (p *polling) onDataRequest(ctx *types.HttpContext) {
 	var cleanup types.Callable
 
 	onClose := func(...any) {
-		cleanup()
+		if cleanup != nil {
+			cleanup()
+		}
 		p.OnError("data request connection closed prematurely", nil)
 	}
 

@@ -284,7 +284,9 @@ func (a *adapter) apply(opts *BroadcastOptions, callback func(*Socket)) {
 						continue
 					}
 					if socket, ok := a.nsp.Sockets().Load(id); ok {
-						callback(socket)
+						if socket.Connected() {
+							callback(socket)
+						}
 						ids.Add(id)
 					}
 				}
@@ -296,7 +298,9 @@ func (a *adapter) apply(opts *BroadcastOptions, callback func(*Socket)) {
 				return true
 			}
 			if socket, ok := a.nsp.Sockets().Load(id); ok {
-				callback(socket)
+				if socket.Connected() {
+					callback(socket)
+				}
 			}
 			return true
 		})

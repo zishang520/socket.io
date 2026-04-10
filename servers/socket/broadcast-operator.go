@@ -149,12 +149,18 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		})
 	}, timeout)
 
-	expectedServerCount := int64(-1)
+	var expectedServerCount atomic.Int64
+	expectedServerCount.Store(-1)
 	var actualServerCount atomic.Int64
 	var expectedClientCount atomic.Uint64
 
 	checkCompleteness := func() {
-		if !timedOut.Load() && expectedServerCount == actualServerCount.Load() && uint64(responses.Len()) == expectedClientCount.Load() {
+		expected := expectedServerCount.Load()
+		if expected < 0 {
+			// ServerCount not yet known, skip check
+			return
+		}
+		if !timedOut.Load() && expected == actualServerCount.Load() && uint64(responses.Len()) == expectedClientCount.Load() {
 			utils.ClearTimeout(timer)
 			ackOnce.Do(func() {
 				if b.flags.ExpectSingleResponse {
@@ -181,7 +187,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		responses.Push(clientResponse...)
 		checkCompleteness()
 	})
-	expectedServerCount = b.adapter.ServerCount()
+	expectedServerCount.Store(b.adapter.ServerCount())
 	checkCompleteness()
 	return nil
 }

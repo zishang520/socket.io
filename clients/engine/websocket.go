@@ -219,9 +219,9 @@ func (w *websocket) write(packets []*packet.Packet) {
 		w.Emit("drain")
 	}()
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	var writeErr error
 
+	w.mu.Lock()
 	// encodePacket efficient as it uses websocket framing
 	// no need for encodePayload
 	for _, packet := range packets {
@@ -240,13 +240,13 @@ func (w *websocket) write(packets []*packet.Packet) {
 				pm, err := ws.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
 					clientWebsocketLog.Debug(`Send Error "%s"`, err.Error())
-					w._error(err)
-					return
+					writeErr = err
+					break
 				}
 				if err := w.socket.WritePreparedMessage(pm); err != nil {
 					clientWebsocketLog.Debug(`Send Error "%s"`, err.Error())
-					w._error(err)
-					return
+					writeErr = err
+					break
 				}
 				continue
 			}
@@ -255,20 +255,41 @@ func (w *websocket) write(packets []*packet.Packet) {
 		data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
 			clientWebsocketLog.Debug(`Send Error "%s"`, err.Error())
-			w._error(err)
-			return
+			writeErr = err
+			break
 		}
-		w.doWrite(data, compress)
+		w.doWrite(data, compress, &writeErr)
+		if writeErr != nil {
+			break
+		}
+	}
+	w.mu.Unlock()
+
+	// Report errors outside of the lock to prevent potential deadlocks
+	// from event handlers that may try to write.
+	if writeErr != nil {
+		w._error(writeErr)
 	}
 }
 
 // doWrite performs the actual WebSocket write operation.
 // This method handles message compression and WebSocket message framing.
+// When called from write() under lock, errors are stored in writeErr instead of
+// calling _error() directly, to prevent deadlocks from event handlers.
 //
 // Parameters:
 //   - data: The data to be written
 //   - compress: Whether to compress the message
-func (w *websocket) doWrite(data types.BufferInterface, compress bool) {
+//   - writeErr: Optional error pointer to store errors (when called under lock)
+func (w *websocket) doWrite(data types.BufferInterface, compress bool, writeErr ...*error) {
+	reportErr := func(err error) {
+		if len(writeErr) > 0 && writeErr[0] != nil {
+			*writeErr[0] = err
+		} else {
+			w._error(err)
+		}
+	}
+
 	if perMessageDeflate := w.Opts().PerMessageDeflate(); perMessageDeflate != nil {
 		if data.Len() < perMessageDeflate.Threshold {
 			compress = false
@@ -283,17 +304,17 @@ func (w *websocket) doWrite(data types.BufferInterface, compress bool) {
 	}
 	write, err := w.socket.NextWriter(mt)
 	if err != nil {
-		w._error(err)
+		reportErr(err)
 		return
 	}
 	defer func() {
 		if err := write.Close(); err != nil {
-			w._error(err)
+			reportErr(err)
 			return
 		}
 	}()
 	if _, err := io.Copy(write, data); err != nil {
-		w._error(err)
+		reportErr(err)
 		return
 	}
 }

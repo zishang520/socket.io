@@ -589,6 +589,8 @@ func (s *Socket) _cleanup() {
 	s.leaveAll()
 	s.nsp.Remove(s)
 	s.canJoin.Store(false)
+	// Clear pending ack callbacks to prevent memory leaks
+	s.acks.Clear()
 	s.taskQueue.TryClose()
 }
 
