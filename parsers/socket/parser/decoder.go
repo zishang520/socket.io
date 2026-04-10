@@ -13,13 +13,13 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
+// DefaultMaxAttachments is the default maximum number of binary attachments allowed per packet.
+// This prevents resource exhaustion from malicious clients sending excessively large attachment counts.
+const DefaultMaxAttachments uint64 = 10
+
 var (
 	// parserLog is the logger for the parser package.
 	parserLog = log.NewLog("socket.io:parser")
-
-	// maxAttachments is the maximum number of binary attachments allowed per packet.
-	// This prevents resource exhaustion from malicious clients sending excessively large attachment counts.
-	maxAttachments uint64 = 1000
 
 	// ReservedEvents contains event names that have special meaning in Socket.IO
 	// and cannot be used as custom event names.
@@ -40,7 +40,15 @@ var (
 	ErrInvalidPayload                = errors.New("invalid payload")
 	ErrIllegalNamespace              = errors.New("illegal namespace")
 	ErrIllegalID                     = errors.New("illegal id")
+	ErrTooManyAttachments            = errors.New("too many attachments")
 )
+
+// DecoderOptions holds configuration options for the Decoder.
+type DecoderOptions struct {
+	// MaxAttachments is the maximum number of binary attachments allowed per packet.
+	// Defaults to DefaultMaxAttachments (10) if not set or set to 0.
+	MaxAttachments uint64
+}
 
 // decoder implements the Decoder interface for Socket.IO packet decoding.
 type decoder struct {
@@ -48,11 +56,19 @@ type decoder struct {
 
 	// reconstructor manages binary packet reconstruction state.
 	reconstructor atomic.Pointer[binaryReconstructor]
+
+	// maxAttachments is the per-instance maximum number of binary attachments.
+	maxAttachments uint64
 }
 
 // NewDecoder creates a new Decoder instance.
-func NewDecoder() Decoder {
-	return &decoder{EventEmitter: types.NewEventEmitter()}
+// An optional DecoderOptions can be provided to configure the decoder.
+func NewDecoder(opts ...*DecoderOptions) Decoder {
+	maxAttachments := DefaultMaxAttachments
+	if len(opts) > 0 && opts[0] != nil && opts[0].MaxAttachments > 0 {
+		maxAttachments = opts[0].MaxAttachments
+	}
+	return &decoder{EventEmitter: types.NewEventEmitter(), maxAttachments: maxAttachments}
 }
 
 // Add processes incoming data (string or binary) and emits decoded packets.
@@ -229,8 +245,8 @@ func (d *decoder) parseAttachments(buffer types.BufferInterface, packet *Packet)
 		return ErrIllegalAttachments
 	}
 
-	if attachmentCount > maxAttachments {
-		return ErrIllegalAttachments
+	if attachmentCount > d.maxAttachments {
+		return ErrTooManyAttachments
 	}
 
 	packet.Attachments = &attachmentCount

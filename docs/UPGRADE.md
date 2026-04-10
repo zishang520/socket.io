@@ -803,23 +803,27 @@ encoded := encoder.Encode(pkt)
 </details>
 
 <details>
-<summary>Socket.IO Parser: Attachment Count Limit (1000)</summary>
+<summary>Socket.IO Parser: Configurable Attachment Count Limit</summary>
 
 **Likelihood Of Impact: Low**
 
-A new validation has been added to prevent resource exhaustion. Packets with more than 1000 attachments will be rejected with `ErrIllegalAttachments`.
+The attachment limit has been reduced from a hardcoded 1000 to a configurable per-decoder instance default of 10 (aligned with the upstream Node.js implementation). The limit is now controlled via `DecoderOptions` instead of a package-level constant.
 
 ```go
-// Before - No limit on attachments
-decoder.Decode(largePayloadWith5000Attachments) // Processed
+import "github.com/zishang520/socket.io/parsers/socket/v3/parser"
 
-// After - Attachments limited to 1000
-decoder.Decode(largePayloadWith5000Attachments) // Returns ErrIllegalAttachments
+// Default - limited to 10 attachments per packet
+decoder := parser.NewDecoder()
+
+// Custom limit for applications that need more attachments
+decoder := parser.NewDecoder(&parser.DecoderOptions{
+    MaxAttachments: 50,
+})
 ```
 
-**Impact:** This only affects applications sending more than 1000 attachments in a single packet. If you encounter this error, split large payloads into multiple packets.
+Packets exceeding the limit will be rejected with `parser.ErrTooManyAttachments`.
 
-**Workaround:** If you legitimately need more attachments, you can modify the `maxAttachments` constant in `parsers/socket/parser/decoder.go` and rebuild.
+**Impact:** Applications sending more than 10 attachments in a single packet will now be rejected. If you encounter this error, split large payloads into multiple packets or configure a higher limit.
 </details>
 
 <details>
