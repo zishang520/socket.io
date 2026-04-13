@@ -303,16 +303,16 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		Type: parser.EVENT,
 		Data: data,
 	}
+	flags := *s.flags.Swap(&BroadcastFlags{})
+
 	// access last argument to see if it's an ACK callback
 	if fn, ok := data[data_len-1].(Ack); ok {
 		id := s.nsp.Ids()
 		socketLog.Debug("emitting packet with ack id %d", id)
 		packet.Data = data[:data_len-1]
-		s.registerAckCallback(id, fn)
+		s.registerAckCallback(id, fn, flags.Timeout)
 		packet.Id = &id
 	}
-	flags := *s.flags.Load()
-	s.flags.Store(&BroadcastFlags{})
 
 	if s.nsp.Server().Opts().ConnectionStateRecovery() != nil {
 		// this ensures the packet is stored and can be transmitted upon reconnection
@@ -359,8 +359,7 @@ func (s *Socket) EmitWithAck(ev string, args ...any) func(Ack) {
 	}
 }
 
-func (s *Socket) registerAckCallback(id uint64, ack Ack) {
-	timeout := s.flags.Load().Timeout
+func (s *Socket) registerAckCallback(id uint64, ack Ack, timeout *time.Duration) {
 	if timeout == nil {
 		s.acks.Store(id, ack)
 		return
@@ -498,7 +497,11 @@ func (s *Socket) _onpacket(packet *parser.Packet) {
 //
 // Param:  packet - packet struct
 func (s *Socket) onevent(packet *parser.Packet) {
-	args, _ := packet.Data.([]any)
+	args, ok := packet.Data.([]any)
+	if !ok {
+		socketLog.Debug("invalid event packet data format")
+		return
+	}
 	socketLog.Debug("emitting event %v", args)
 	if nil != packet.Id {
 		socketLog.Debug("attaching ack callback to event")
@@ -518,6 +521,10 @@ func (s *Socket) ack(id uint64) Ack {
 	return func(args []any, _ error) {
 		// prevent double callbacks
 		sent.Do(func() {
+			if !s.Connected() {
+				socketLog.Debug("socket disconnected, skipping ack %d", id)
+				return
+			}
 			socketLog.Debug("sending ack %v", args)
 			s.packet(&parser.Packet{
 				Id:   &id,
@@ -645,9 +652,7 @@ func (s *Socket) Disconnect(status bool) *Socket {
 //
 // Param: compress - if `true`, compresses the sending data
 func (s *Socket) Compress(compress bool) *Socket {
-	newFlags := *s.flags.Load()
-	newFlags.Compress = &compress
-	s.flags.Store(&newFlags)
+	s.flags.Load().Compress = &compress
 	return s
 }
 
@@ -660,9 +665,7 @@ func (s *Socket) Compress(compress bool) *Socket {
 //		socket.Volatile().Emit("hello") // the client may or may not receive it
 //	})
 func (s *Socket) Volatile() *Socket {
-	newFlags := *s.flags.Load()
-	newFlags.Volatile = true
-	s.flags.Store(&newFlags)
+	s.flags.Load().Volatile = true
 	return s
 }
 
@@ -705,9 +708,7 @@ func (s *Socket) Local() *BroadcastOperator {
 //		})
 //	})
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
-	newFlags := *s.flags.Load()
-	newFlags.Timeout = &timeout
-	s.flags.Store(&newFlags)
+	s.flags.Load().Timeout = &timeout
 	return s
 }
 
@@ -884,7 +885,6 @@ func (s *Socket) NotifyOutgoingListeners() func(*parser.Packet) {
 }
 
 func (s *Socket) newBroadcastOperator() *BroadcastOperator {
-	flags := *s.flags.Load()
-	s.flags.Store(&BroadcastFlags{})
+	flags := *s.flags.Swap(&BroadcastFlags{})
 	return NewBroadcastOperator(s.adapter, types.NewSet[Room](), types.NewSet(Room(s.id)), &flags)
 }

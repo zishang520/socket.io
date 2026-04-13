@@ -99,10 +99,27 @@ func isServiceValid(svc *altSvc) bool {
 func (t *Transport) tryService(req *http.Request, svc *altSvc) (*http.Response, error) {
 	altReq := req.Clone(req.Context())
 
-	// If endpoint only contains port (e.g., ":443"), use original host
+	// Apply alt-svc endpoint with same-origin validation (RFC 7838):
+	// only port changes are allowed; the hostname must remain the same.
 	if endpoint := svc.endpoint; endpoint != "" {
 		if after, ok := strings.CutPrefix(endpoint, ":"); ok {
+			// Port-only override (e.g., ":443") — safe, keeps original hostname
 			endpoint = net.JoinHostPort(req.URL.Hostname(), after)
+		} else {
+			// Full host:port — validate the hostname matches the original request
+			// to prevent SSRF via malicious Alt-Svc headers.
+			host, _, err := net.SplitHostPort(endpoint)
+			if err != nil {
+				// endpoint might be a bare hostname without port — reject
+				return nil, errors.New("invalid alt-svc endpoint format")
+			}
+			if !strings.EqualFold(host, req.URL.Hostname()) {
+				return nil, errors.New("alt-svc endpoint hostname does not match origin")
+			}
+			// Reject endpoints containing path/query/fragment characters
+			if strings.ContainsAny(endpoint, "/?#") {
+				return nil, errors.New("alt-svc endpoint contains invalid characters")
+			}
 		}
 		altReq.URL.Host = endpoint
 	}
@@ -195,6 +212,13 @@ func parseAltSvc(value string) []*altSvc {
 			switch key {
 			case "ma":
 				if age, err := strconv.ParseInt(value, 10, 64); err == nil {
+					// Clamp to prevent time.Duration overflow (max 1 year)
+					const maxMaxAge int64 = 365 * 24 * 3600
+					if age < 0 {
+						age = 0
+					} else if age > maxMaxAge {
+						age = maxMaxAge
+					}
 					maxAge = age
 				}
 			case "persist":

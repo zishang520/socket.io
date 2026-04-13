@@ -38,6 +38,9 @@ func NewYeast() *Yeast {
 }
 
 func (y *Yeast) Encode(num int64) string {
+	if num < 0 {
+		num = -num
+	}
 	if num == 0 {
 		return alphabet[0]
 	}

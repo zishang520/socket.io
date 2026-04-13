@@ -302,7 +302,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	data := append([]any{ev}, args...)
 	data_len := len(data)
 
-	flags := s.flags.Load()
+	flags := s.flags.Swap(&Flags{})
 
 	if s._opts.Retries() > 0 && !flags.FromQueue && !flags.Volatile {
 		s._addToQueue(data)
@@ -325,7 +325,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		socketLog.Debug("emitting packet with ack id %d", id)
 
 		packet.Data = data[:data_len-1]
-		s._registerAckCallback(id, ack)
+		s._registerAckCallback(id, ack, flags.Timeout)
 		packet.Id = &id
 	}
 
@@ -352,13 +352,10 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		s.sendBuffer.Push(packet)
 	}
 
-	s.flags.Store(&Flags{})
-
 	return nil
 }
 
-func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack) {
-	timeout := s.flags.Load().Timeout
+func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack, timeout *time.Duration) {
 	if timeout == nil {
 		if s._opts.GetRawAckTimeout() != nil {
 			timeout = utils.Ptr(s._opts.AckTimeout())
@@ -761,9 +758,7 @@ func (s *Socket) Close() *Socket {
 //
 // compress: If `true`, compresses the sending data.
 func (s *Socket) Compress(compress bool) *Socket {
-	newFlags := *s.flags.Load()
-	newFlags.Compress = &compress
-	s.flags.Store(&newFlags)
+	s.flags.Load().Compress = &compress
 	return s
 }
 
@@ -775,9 +770,7 @@ func (s *Socket) Compress(compress bool) *Socket {
 //	socket := io.NewClient("", nil)
 //	socket.Volatile().Emit("hello") // the server may or may not receive it
 func (s *Socket) Volatile() *Socket {
-	newFlags := *s.flags.Load()
-	newFlags.Volatile = true
-	s.flags.Store(&newFlags)
+	s.flags.Load().Volatile = true
 	return s
 }
 
@@ -793,9 +786,7 @@ func (s *Socket) Volatile() *Socket {
 //	  }
 //	})
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
-	newFlags := *s.flags.Load()
-	newFlags.Timeout = &timeout
-	s.flags.Store(&newFlags)
+	s.flags.Load().Timeout = &timeout
 	return s
 }
 

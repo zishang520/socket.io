@@ -25,14 +25,13 @@ func (e *encoder) Encode(packet *Packet) []types.BufferInterface {
 	// Check if the packet contains binary data and upgrade packet type if needed
 	if packet.Type == EVENT || packet.Type == ACK {
 		if HasBinary(packet.Data) {
-			// Copy the packet to avoid mutating the caller's original
-			pktCopy := *packet
-			if pktCopy.Type == EVENT {
-				pktCopy.Type = BINARY_EVENT
+			data := *packet
+			if data.Type == EVENT {
+				data.Type = BINARY_EVENT
 			} else {
-				pktCopy.Type = BINARY_ACK
+				data.Type = BINARY_ACK
 			}
-			return e.encodeAsBinary(&pktCopy)
+			return e.encodeAsBinary(&data)
 		}
 	}
 

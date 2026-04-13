@@ -495,14 +495,20 @@ func (s *socketWithoutUpgrade) _onDrain() {
 // It ensures packets are sent within payload size limits and handles transport state.
 func (s *socketWithoutUpgrade) Flush() {
 	s.flushMu.Lock()
-	defer s.flushMu.Unlock()
 
+	shouldEmitFlush := false
 	if SocketStateClosed != s.ReadyState() && s.Transport().Writable() && !s.Upgrading() {
 		if packets := s._getWritablePackets(); len(packets) > 0 {
 			clientSocketLog.Debug("flushing %d packets in socket", len(packets))
 			s.Transport().Send(packets)
-			s.Emit("flush")
+			shouldEmitFlush = true
 		}
+	}
+
+	s.flushMu.Unlock()
+
+	if shouldEmitFlush {
+		s.Emit("flush")
 	}
 }
 

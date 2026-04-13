@@ -147,6 +147,9 @@ func (s *Slice[T]) splice(start, deleteCount int, insert ...T) ([]T, error) {
 		return nil, ErrIndexOutOfBounds
 	}
 
+	if deleteCount < 0 {
+		deleteCount = 0
+	}
 	deleteCount = min(deleteCount, n-start)
 	removed := make([]T, deleteCount)
 	copy(removed, s.elements[start:start+deleteCount])
