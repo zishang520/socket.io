@@ -79,6 +79,7 @@ func (pm *PreparedMessage) frame(key prepareKey) (int, []byte, error) {
 			isServer: key.isServer,
 			writeBuf: make([]byte, defaultWriteBufferSize+maxFrameHeaderSize),
 		}
+		c.writeDeadline.Store(time.Time{})
 		err = c.WriteMessage(pm.messageType, pm.data)
 		frame.data = nc.buf.Bytes()
 	})
