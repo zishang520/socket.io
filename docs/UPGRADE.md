@@ -2,6 +2,7 @@
 
 ## Table of Contents
 
+- [What's New in v3](#whats-new-in-v3)
 - [Upgrading from v1/v2 to v3](#upgrading-from-v1v2-to-v3)
   - [Estimated Upgrade Time](#estimated-upgrade-time-30---60-minutes)
   - [High Impact Changes](#high-impact-changes)
@@ -10,10 +11,12 @@
   - [Updating Dependencies](#updating-dependencies)
   - [Import Path Updates](#import-path-updates)
   - [Breaking Changes](#breaking-changes)
+  - [Quick Start Example](#quick-start-example)
   - [Testing Your Upgrade](#testing-your-upgrade)
   - [Common Issues](#common-issues)
   - [Need Help?](#need-help)
 - [Release Notes](#release-notes)
+  - [v3.0.0](#v300)
   - [v3.0.0-rc.14](#v300-rc14)
   - [v3.0.0-rc.13](#v300-rc13)
   - [v3.0.0-rc.12](#v300-rc12)
@@ -22,6 +25,43 @@
   - [v3.0.0-rc.2](#v300-rc2)
   - [v3.0.0-beta.1](#v300-beta1)
   - [v3.0.0-alpha.0 ~ alpha.4](#v300-alpha0--alpha4)
+
+---
+
+## What's New in v3
+
+Socket.IO for Go **v3.0.0** is a major release that brings the following key improvements:
+
+| Feature | Description |
+|---------|-------------|
+| **Monorepo Consolidation** | All previously separate repositories (`engine.io-go-parser`, `engine.io`, `socket.io-go-parser`, `socket.io-client-go`, `socket.io-go-redis`) have been merged into a single monorepo with 9 versioned submodules |
+| **Unified Version Management** | All modules share a single version definition in `pkg/version`, ensuring consistency across the entire ecosystem |
+| **Protocol Alignment** | Aligned with the Socket.IO v4+ protocol for improved compatibility with the JavaScript ecosystem |
+| **Thread Safety** | Comprehensive concurrency fixes including atomic socket flags, mutex-protected middleware, copy-on-write patterns, and goroutine leak prevention |
+| **Type Safety** | Generic `types.Atomic[T]` replacing `atomic.Value`, `types.Optional[T]` for null safety, strongly typed `Handshake` fields |
+| **New Utility Packages** | `pkg/slices` for safe slice operations, `pkg/queue` for ordered message delivery, `pkg/request` for HTTP client |
+| **Redis Cluster Support** | Sharded broadcast operator, CROSSSLOT error fixes, and dynamic channel subscription management |
+| **DoS Prevention** | HTTP body size limits on polling transport, configurable attachment count limits |
+| **Go 1.26.0** | Minimum Go version requirement updated to Go 1.26.0 |
+
+### Module Architecture
+
+```
+github.com/zishang520/socket.io/
+├── v3                          # Root: shared types, interfaces
+├── parsers/
+│   ├── engine/v3               # Engine.IO protocol parser
+│   └── socket/v3               # Socket.IO protocol parser
+├── servers/
+│   ├── engine/v3               # Engine.IO server
+│   └── socket/v3               # Socket.IO server
+├── clients/
+│   ├── engine/v3               # Engine.IO client
+│   └── socket/v3               # Socket.IO client
+└── adapters/
+    ├── adapter/v3              # Base adapter interface
+    └── redis/v3                # Redis adapter (+ emitter)
+```
 
 ---
 
@@ -635,6 +675,18 @@ import "github.com/zishang520/socket.io/v3/pkg/types"
 var bag *types.ParameterBag = types.NewParameterBag(nil)
 ```
 
+### Transport Upgrade Methods
+
+Transport upgrade methods now return `[]string` instead of `*types.Set[string]`:
+
+```go
+// Before
+upgrades := transport.Upgrades() // *types.Set[string]
+
+// After
+upgrades := transport.Upgrades() // []string
+```
+
 ### HttpContext API Migration
 
 | Before | After |
@@ -683,6 +735,45 @@ opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
 
 ---
 
+## Quick Start Example
+
+Here is a minimal server example after upgrading to v3:
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+
+	server "github.com/zishang520/socket.io/servers/socket/v3"
+)
+
+func main() {
+	io := server.NewServer(nil, nil)
+
+	io.On("connection", func(args ...any) {
+		socket := args[0].(*server.Socket)
+		fmt.Printf("connected: %s\n", socket.Id())
+
+		socket.On("message", func(args ...any) {
+			fmt.Printf("received: %v\n", args)
+			socket.Emit("message", args...)
+		})
+
+		socket.On("disconnect", func(args ...any) {
+			fmt.Printf("disconnected: %s\n", socket.Id())
+		})
+	})
+
+	http.Handle("/socket.io/", io.ServeHandler(nil))
+	fmt.Println("server listening on :3000")
+	http.ListenAndServe(":3000", nil)
+}
+```
+
+---
+
 ## Testing Your Upgrade
 
 After completing the upgrade, thoroughly test your application:
@@ -702,13 +793,32 @@ go test ./...
 
 ### 3. Enable Debug Logging
 
+Set the `DEBUG` environment variable to enable verbose logging:
+
 ```bash
+# Linux / macOS
 DEBUG=socket.io:* go run main.go
+
+# Windows PowerShell
+$env:DEBUG="socket.io:*"; go run main.go
 ```
 
 ### 4. Verify Client Compatibility
 
 Ensure your frontend uses Socket.IO client v4.x or higher.
+
+```bash
+npm install socket.io-client@^4.0.0
+```
+
+### 5. Run Benchmarks (Optional)
+
+The `examples/benchmark` module provides a built-in benchmark test for validating performance:
+
+```bash
+cd examples/benchmark
+go run main.go
+```
 
 ---
 
@@ -744,13 +854,44 @@ data := err.Data
 
 ## Need Help?
 
-- [GitHub Issues](https://github.com/zishang520/socket.io/issues)
-- [Socket.IO Go Repository](https://github.com/zishang520/socket.io)
-- [Socket.IO Protocol Documentation](https://socket.io/docs/v4/)
+- [GitHub Issues](https://github.com/zishang520/socket.io/issues) — for confirmed bugs or feature requests
+- [GitHub Discussions](https://github.com/zishang520/socket.io/discussions/new?category=q-a) — for general questions and help
+- [Go Package Documentation](https://pkg.go.dev/github.com/zishang520/socket.io/v3) — API reference
+- [Socket.IO Protocol Documentation](https://socket.io/docs/v4/) — protocol specification
+- [Socket.IO Go Repository](https://github.com/zishang520/socket.io) — source code and examples
 
 ---
 
 ## Release Notes
+
+### v3.0.0
+
+> Released on 2026-04-13
+
+This is the **first stable release** of Socket.IO for Go v3. It includes all changes from the alpha, beta, and RC phases.
+
+#### Highlights Since v2
+
+- **Monorepo consolidation**: 6 separate repositories merged into one monorepo with 9 versioned Go submodules
+- **Unified versioning**: Single version source at `pkg/version/version.go` shared by all modules
+- **Go 1.26.0 minimum**: Takes advantage of the latest Go features
+- **Protocol alignment**: Compatible with Socket.IO v4+ JavaScript clients
+- **Thread safety overhaul**: Atomic socket flags (copy-on-write), mutex-protected middleware, `sync.OnceValue` for lazy initialization, goroutine leak prevention via `runtime.SetFinalizer`
+- **Type safety improvements**: Generic `types.Atomic[T]`, `types.Optional[T]` for null safety, strongly typed `Handshake` fields (`IncomingHttpHeaders`, `ParsedUrlQuery`)
+- **New packages**: `pkg/slices` (safe slice operations), `pkg/queue` (sequential task queue for message ordering), `pkg/request` (HTTP client)
+- **Redis Cluster support**: Sharded broadcast operator, CROSSSLOT error fixes, dynamic channel subscriptions, pagination for session restoration
+- **Security hardening**: HTTP body size limits on polling (DoS prevention), configurable attachment count limits (default 10), immutable packet encoding
+- **Code quality**: golangci-lint integration, `errcheck` violations resolved, magic numbers replaced with named constants, standardized debug logging
+
+#### Migrating
+
+For a complete migration guide from v1/v2, see [Upgrading from v1/v2 to v3](#upgrading-from-v1v2-to-v3).
+
+#### Full Changelog
+
+See the individual RC/beta/alpha release notes below for detailed per-release changes.
+
+---
 
 ### v3.0.0-rc.14
 
@@ -1355,5 +1496,7 @@ func configExample(config ConnectionStateRecoveryInterface) {
 | **Backup First** | Always backup your codebase before upgrading |
 | **Go Version** | Ensure you're using Go 1.26.0 or higher |
 | **Staged Rollout** | Consider upgrading non-critical components first |
-| **Client Coordination** | Coordinate with frontend team for client compatibility |
-| **Security Updates** | v3.0.0-rc.13+ includes important DoS prevention and data race fixes |
+| **Client Coordination** | Coordinate with frontend team for Socket.IO client v4.x+ compatibility |
+| **Security Updates** | v3.0.0 includes important DoS prevention and data race fixes |
+| **Vendor Directory** | If using `go mod vendor`, run `go mod vendor` after updating dependencies |
+| **IDE Support** | Restart your IDE/language server after updating imports for accurate code completion |
