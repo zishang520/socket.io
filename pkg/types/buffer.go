@@ -270,6 +270,9 @@ func growSlice(b []byte, n int) []byte {
 		panic(ErrTooLarge)
 	}
 	c := len(b) + n // ensure enough space for n elements
+	if c < 0 || c < len(b) {
+		panic(ErrTooLarge)
+	}
 
 	// Prefer doubling capacity when possible, but guard against overflow.
 	if capB := cap(b); capB <= maxInt/2 {
