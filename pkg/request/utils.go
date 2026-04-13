@@ -70,7 +70,7 @@ func validCookieValueByte(b byte) bool {
 }
 
 func RandomString() string {
-	timestampStr := strconv.FormatInt(time.Now().UnixMilli(), 36)[3:]
-	randomBase36 := strconv.FormatUint(rand.Uint64(), 36)[2:5]
+	timestampStr := strconv.FormatInt(time.Now().UnixNano(), 36)[5:]
+	randomBase36 := strconv.FormatUint(rand.Uint64(), 36)[2:8]
 	return timestampStr + randomBase36
 }
