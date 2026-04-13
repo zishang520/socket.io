@@ -266,10 +266,10 @@ func growSlice(b []byte, n int) []byte {
 	//
 	// Instead use the append-make pattern with a nil slice to ensure that
 	// we allocate buffers rounded up to the closest size class.
-	c := len(b) + n // ensure enough space for n elements
 	if n < 0 || len(b) > maxInt-n {
 		panic(ErrTooLarge)
 	}
+	c := len(b) + n // ensure enough space for n elements
 	c = max(c, 2*cap(b))
 	b2 := append([]byte(nil), make([]byte, c)...)
 	i := copy(b2, b)
