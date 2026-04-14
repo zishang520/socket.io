@@ -8,6 +8,10 @@ import (
 	"io"
 )
 
+// MaxPayloadSize is the upper bound (128 MiB) for a single encoded payload.
+// It prevents unbounded allocations from untrusted input.
+const MaxPayloadSize = 128 * 1024 * 1024
+
 type BufferInterface interface {
 	io.ReadWriteSeeker
 	io.ReaderFrom

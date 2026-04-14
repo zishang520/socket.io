@@ -65,7 +65,9 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 	if packet.Data != nil {
 		processedData := preprocessData(packet.Data)
 		if jsonBytes, err := json.Marshal(processedData); err == nil {
-			_, _ = buffer.Write(jsonBytes)
+			if len(jsonBytes) <= types.MaxPayloadSize {
+				_, _ = buffer.Write(jsonBytes)
+			}
 		}
 	}
 
