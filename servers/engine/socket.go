@@ -489,20 +489,27 @@ func (s *socket) sendPacket(
 	if readystate := s.ReadyState(); readystate != "closing" && readystate != "closed" {
 		socketLog.Debug(`sending packet "%s" (%p)`, packetType, data)
 
-		if options == nil {
-			options = &packet.Options{}
+		// Clone options to avoid data races when the same Options pointer
+		// is shared across multiple sockets during broadcast.
+		opts := &packet.Options{}
+		if options != nil {
+			opts.WsPreEncodedFrame = options.WsPreEncodedFrame
+			if options.Compress != nil {
+				compress := *options.Compress
+				opts.Compress = &compress
+			}
 		}
 
-		if options.Compress == nil || *options.Compress {
-			options.Compress = utils.Ptr(true)
+		if opts.Compress == nil || *opts.Compress {
+			opts.Compress = utils.Ptr(true)
 		} else {
-			options.Compress = utils.Ptr(false)
+			opts.Compress = utils.Ptr(false)
 		}
 
 		packet := &packet.Packet{
 			Type:    packetType,
 			Data:    data,
-			Options: options,
+			Options: opts,
 		}
 
 		// exports packetCreate event
