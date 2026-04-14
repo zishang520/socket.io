@@ -21,6 +21,7 @@ MODULES := parsers/engine \
            servers/engine \
            servers/socket \
            adapters/adapter \
+		   adapters/postgres \
            adapters/redis \
            clients/engine \
            clients/socket
