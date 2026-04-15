@@ -277,7 +277,11 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	privateChannel := r.opts.ChannelPrefix() + "#" + nsp.Name() + "#" + string(r.Uid()) + "#"
 
 	// Subscribe to both public and private channels for PUB/SUB messages
-	r.pubsub = r.redisClient.Sub().Subscribe(r.ctx, r.publicChannel, privateChannel)
+	if r.opts.UseShardedPubSub() {
+		r.pubsub = r.redisClient.Sub().SSubscribe(r.ctx, r.publicChannel, privateChannel)
+	} else {
+		r.pubsub = r.redisClient.Sub().Subscribe(r.ctx, r.publicChannel, privateChannel)
+	}
 	go r.handlePubSubMessages()
 }
 
@@ -316,7 +320,12 @@ func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 		if err != nil {
 			return "", fmt.Errorf("failed to encode ephemeral message: %w", err)
 		}
-		if err := r.redisClient.Client.Publish(r.ctx, r.publicChannel, payload).Err(); err != nil {
+		if r.opts.UseShardedPubSub() {
+			err = r.redisClient.Client.SPublish(r.ctx, r.publicChannel, payload).Err()
+		} else {
+			err = r.redisClient.Client.Publish(r.ctx, r.publicChannel, payload).Err()
+		}
+		if err != nil {
 			return "", err
 		}
 		return "", nil
@@ -345,6 +354,9 @@ func (r *redisStreamsAdapter) DoPublishResponse(requesterUid adapter.ServerId, r
 	payload, err := utils.MsgPack().Encode(response)
 	if err != nil {
 		return fmt.Errorf("failed to encode response: %w", err)
+	}
+	if r.opts.UseShardedPubSub() {
+		return r.redisClient.Client.SPublish(r.ctx, responseChannel, payload).Err()
 	}
 	return r.redisClient.Client.Publish(r.ctx, responseChannel, payload).Err()
 }
@@ -386,7 +398,13 @@ func (r *redisStreamsAdapter) encode(message *adapter.ClusterResponse) RawCluste
 // ServerCount returns the number of servers connected to the cluster,
 // determined by the number of PUB/SUB subscribers on the public channel.
 func (r *redisStreamsAdapter) ServerCount() int64 {
-	result, err := r.redisClient.Client.PubSubNumSub(r.ctx, r.publicChannel).Result()
+	var result map[string]int64
+	var err error
+	if r.opts.UseShardedPubSub() {
+		result, err = r.redisClient.Client.PubSubShardNumSub(r.ctx, r.publicChannel).Result()
+	} else {
+		result, err = r.redisClient.Client.PubSubNumSub(r.ctx, r.publicChannel).Result()
+	}
 	if err != nil {
 		redisStreamsLog.Debug("error getting server count: %s", err.Error())
 		return 1
@@ -623,7 +641,8 @@ func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offs
 				if message, err := r.decode(rawMessage); err == nil {
 					if data, ok := message.Data.(*adapter.BroadcastMessage); ok {
 						if r.shouldIncludePacket(session.Rooms, data.Opts) {
-							session.MissedPackets = append(session.MissedPackets, data.Packet)
+							packetData := append(utils.TryCast[[]any](data.Packet.Data), entry.ID)
+							session.MissedPackets = append(session.MissedPackets, packetData)
 						}
 					}
 				}
