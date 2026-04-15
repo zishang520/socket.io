@@ -12,6 +12,9 @@ const (
 	DefaultStreamName       = "socket.io"
 	DefaultStreamMaxLen     = 10_000
 	DefaultStreamReadCount  = 100
+	DefaultStreamCount      = 1
+	DefaultChannelPrefix    = "socket.io"
+	DefaultBlockTimeInMs    = 5_000
 	DefaultSessionKeyPrefix = "sio:session:"
 )
 
@@ -25,6 +28,18 @@ type (
 		GetRawStreamName() types.Optional[string]
 		StreamName() string
 
+		SetStreamCount(int)
+		GetRawStreamCount() types.Optional[int]
+		StreamCount() int
+
+		SetChannelPrefix(string)
+		GetRawChannelPrefix() types.Optional[string]
+		ChannelPrefix() string
+
+		SetUseShardedPubSub(bool)
+		GetRawUseShardedPubSub() types.Optional[bool]
+		UseShardedPubSub() bool
+
 		SetMaxLen(int64)
 		GetRawMaxLen() types.Optional[int64]
 		MaxLen() int64
@@ -33,25 +48,32 @@ type (
 		GetRawReadCount() types.Optional[int64]
 		ReadCount() int64
 
+		SetBlockTimeInMs(int64)
+		GetRawBlockTimeInMs() types.Optional[int64]
+		BlockTimeInMs() int64
+
 		SetSessionKeyPrefix(string)
 		GetRawSessionKeyPrefix() types.Optional[string]
 		SessionKeyPrefix() string
+
+		SetOnlyPlaintext(bool)
+		GetRawOnlyPlaintext() types.Optional[bool]
+		OnlyPlaintext() bool
 	}
 
 	// RedisStreamsAdapterOptions holds configuration for the Redis Streams adapter.
-	//
-	// Fields:
-	//   - streamName: The name of the Redis stream. Default: "socket.io".
-	//   - maxLen: The maximum size of the stream (approximate). Default: 10,000.
-	//   - readCount: The number of elements to fetch per XREAD call. Default: 100.
-	//   - sessionKeyPrefix: The prefix for session keys in Redis. Default: "sio:session:".
 	RedisStreamsAdapterOptions struct {
 		adapter.ClusterAdapterOptions
 
 		streamName       types.Optional[string]
+		streamCount      types.Optional[int]
+		channelPrefix    types.Optional[string]
+		useShardedPubSub types.Optional[bool]
 		maxLen           types.Optional[int64]
 		readCount        types.Optional[int64]
+		blockTimeInMs    types.Optional[int64]
 		sessionKeyPrefix types.Optional[string]
+		onlyPlaintext    types.Optional[bool]
 	}
 )
 
@@ -72,31 +94,40 @@ func (s *RedisStreamsAdapterOptions) Assign(data RedisStreamsAdapterOptionsInter
 	if data.GetRawStreamName() != nil {
 		s.SetStreamName(data.StreamName())
 	}
+	if data.GetRawStreamCount() != nil {
+		s.SetStreamCount(data.StreamCount())
+	}
+	if data.GetRawChannelPrefix() != nil {
+		s.SetChannelPrefix(data.ChannelPrefix())
+	}
+	if data.GetRawUseShardedPubSub() != nil {
+		s.SetUseShardedPubSub(data.UseShardedPubSub())
+	}
 	if data.GetRawMaxLen() != nil {
 		s.SetMaxLen(data.MaxLen())
 	}
 	if data.GetRawReadCount() != nil {
 		s.SetReadCount(data.ReadCount())
 	}
+	if data.GetRawBlockTimeInMs() != nil {
+		s.SetBlockTimeInMs(data.BlockTimeInMs())
+	}
 	if data.GetRawSessionKeyPrefix() != nil {
 		s.SetSessionKeyPrefix(data.SessionKeyPrefix())
+	}
+	if data.GetRawOnlyPlaintext() != nil {
+		s.SetOnlyPlaintext(data.OnlyPlaintext())
 	}
 
 	return s
 }
 
-// SetStreamName sets the Redis stream name.
 func (s *RedisStreamsAdapterOptions) SetStreamName(streamName string) {
 	s.streamName = types.NewSome(streamName)
 }
-
-// GetRawStreamName returns the raw Optional value for streamName.
 func (s *RedisStreamsAdapterOptions) GetRawStreamName() types.Optional[string] {
 	return s.streamName
 }
-
-// StreamName returns the configured stream name.
-// Returns empty string if not set; callers should use DefaultStreamName as fallback.
 func (s *RedisStreamsAdapterOptions) StreamName() string {
 	if s.streamName == nil {
 		return ""
@@ -104,18 +135,51 @@ func (s *RedisStreamsAdapterOptions) StreamName() string {
 	return s.streamName.Get()
 }
 
-// SetMaxLen sets the maximum stream length.
+func (s *RedisStreamsAdapterOptions) SetStreamCount(streamCount int) {
+	s.streamCount = types.NewSome(streamCount)
+}
+func (s *RedisStreamsAdapterOptions) GetRawStreamCount() types.Optional[int] {
+	return s.streamCount
+}
+func (s *RedisStreamsAdapterOptions) StreamCount() int {
+	if s.streamCount == nil {
+		return 0
+	}
+	return s.streamCount.Get()
+}
+
+func (s *RedisStreamsAdapterOptions) SetChannelPrefix(channelPrefix string) {
+	s.channelPrefix = types.NewSome(channelPrefix)
+}
+func (s *RedisStreamsAdapterOptions) GetRawChannelPrefix() types.Optional[string] {
+	return s.channelPrefix
+}
+func (s *RedisStreamsAdapterOptions) ChannelPrefix() string {
+	if s.channelPrefix == nil {
+		return ""
+	}
+	return s.channelPrefix.Get()
+}
+
+func (s *RedisStreamsAdapterOptions) SetUseShardedPubSub(useShardedPubSub bool) {
+	s.useShardedPubSub = types.NewSome(useShardedPubSub)
+}
+func (s *RedisStreamsAdapterOptions) GetRawUseShardedPubSub() types.Optional[bool] {
+	return s.useShardedPubSub
+}
+func (s *RedisStreamsAdapterOptions) UseShardedPubSub() bool {
+	if s.useShardedPubSub == nil {
+		return false
+	}
+	return s.useShardedPubSub.Get()
+}
+
 func (s *RedisStreamsAdapterOptions) SetMaxLen(maxLen int64) {
 	s.maxLen = types.NewSome(maxLen)
 }
-
-// GetRawMaxLen returns the raw Optional value for maxLen.
 func (s *RedisStreamsAdapterOptions) GetRawMaxLen() types.Optional[int64] {
 	return s.maxLen
 }
-
-// MaxLen returns the configured maximum stream length.
-// Returns 0 if not set; callers should use DefaultStreamMaxLen as fallback.
 func (s *RedisStreamsAdapterOptions) MaxLen() int64 {
 	if s.maxLen == nil {
 		return 0
@@ -123,18 +187,12 @@ func (s *RedisStreamsAdapterOptions) MaxLen() int64 {
 	return s.maxLen.Get()
 }
 
-// SetReadCount sets the number of elements to fetch per XREAD call.
 func (s *RedisStreamsAdapterOptions) SetReadCount(readCount int64) {
 	s.readCount = types.NewSome(readCount)
 }
-
-// GetRawReadCount returns the raw Optional value for readCount.
 func (s *RedisStreamsAdapterOptions) GetRawReadCount() types.Optional[int64] {
 	return s.readCount
 }
-
-// ReadCount returns the configured read count.
-// Returns 0 if not set; callers should use DefaultStreamReadCount as fallback.
 func (s *RedisStreamsAdapterOptions) ReadCount() int64 {
 	if s.readCount == nil {
 		return 0
@@ -142,21 +200,41 @@ func (s *RedisStreamsAdapterOptions) ReadCount() int64 {
 	return s.readCount.Get()
 }
 
-// SetSessionKeyPrefix sets the session key prefix.
+func (s *RedisStreamsAdapterOptions) SetBlockTimeInMs(blockTimeInMs int64) {
+	s.blockTimeInMs = types.NewSome(blockTimeInMs)
+}
+func (s *RedisStreamsAdapterOptions) GetRawBlockTimeInMs() types.Optional[int64] {
+	return s.blockTimeInMs
+}
+func (s *RedisStreamsAdapterOptions) BlockTimeInMs() int64 {
+	if s.blockTimeInMs == nil {
+		return 0
+	}
+	return s.blockTimeInMs.Get()
+}
+
 func (s *RedisStreamsAdapterOptions) SetSessionKeyPrefix(sessionKeyPrefix string) {
 	s.sessionKeyPrefix = types.NewSome(sessionKeyPrefix)
 }
-
-// GetRawSessionKeyPrefix returns the raw Optional value for sessionKeyPrefix.
 func (s *RedisStreamsAdapterOptions) GetRawSessionKeyPrefix() types.Optional[string] {
 	return s.sessionKeyPrefix
 }
-
-// SessionKeyPrefix returns the configured session key prefix.
-// Returns empty string if not set; callers should use DefaultSessionKeyPrefix as fallback.
 func (s *RedisStreamsAdapterOptions) SessionKeyPrefix() string {
 	if s.sessionKeyPrefix == nil {
 		return ""
 	}
 	return s.sessionKeyPrefix.Get()
+}
+
+func (s *RedisStreamsAdapterOptions) SetOnlyPlaintext(onlyPlaintext bool) {
+	s.onlyPlaintext = types.NewSome(onlyPlaintext)
+}
+func (s *RedisStreamsAdapterOptions) GetRawOnlyPlaintext() types.Optional[bool] {
+	return s.onlyPlaintext
+}
+func (s *RedisStreamsAdapterOptions) OnlyPlaintext() bool {
+	if s.onlyPlaintext == nil {
+		return false
+	}
+	return s.onlyPlaintext.Get()
 }

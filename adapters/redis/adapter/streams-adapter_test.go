@@ -3,6 +3,7 @@ package adapter
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -218,7 +219,7 @@ func TestShouldIncludePacket(t *testing.T) {
 }
 
 func TestEncode(t *testing.T) {
-	a := &redisStreamsAdapter{}
+	a := &redisStreamsAdapter{opts: DefaultRedisStreamsAdapterOptions()}
 
 	t.Run("encode message without data", func(t *testing.T) {
 		msg := &adapter.ClusterResponse{
@@ -510,4 +511,103 @@ func TestDecode_InvalidBase64(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for invalid base64")
 	}
+}
+
+func TestHashCode(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+	}{
+		{"/", 47},
+		{"/chat", hashCode("/chat")},
+		{"", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := hashCode(tt.input)
+			if result != tt.expected {
+				t.Errorf("hashCode(%q) = %d, want %d", tt.input, result, tt.expected)
+			}
+			// Ensure deterministic
+			if hashCode(tt.input) != result {
+				t.Error("hashCode is not deterministic")
+			}
+		})
+	}
+}
+
+func TestComputeStreamName(t *testing.T) {
+	t.Run("single stream", func(t *testing.T) {
+		opts := DefaultRedisStreamsAdapterOptions()
+		opts.SetStreamName("socket.io")
+		opts.SetStreamCount(1)
+
+		result := computeStreamName("/chat", opts)
+		if result != "socket.io" {
+			t.Errorf("Expected 'socket.io', got %q", result)
+		}
+	})
+
+	t.Run("multiple streams", func(t *testing.T) {
+		opts := DefaultRedisStreamsAdapterOptions()
+		opts.SetStreamName("socket.io")
+		opts.SetStreamCount(4)
+
+		result := computeStreamName("/chat", opts)
+		expected := "socket.io-" + strconv.Itoa(hashCode("/chat")%4)
+		if result != expected {
+			t.Errorf("Expected %q, got %q", expected, result)
+		}
+	})
+}
+
+func TestIsEphemeral(t *testing.T) {
+	t.Run("broadcast without requestId is not ephemeral", func(t *testing.T) {
+		msg := &adapter.ClusterMessage{
+			Type: adapter.BROADCAST,
+			Data: &adapter.BroadcastMessage{},
+		}
+		if isEphemeral(msg) {
+			t.Error("Expected false for broadcast without requestId")
+		}
+	})
+
+	t.Run("broadcast with requestId is ephemeral", func(t *testing.T) {
+		reqID := "req-1"
+		msg := &adapter.ClusterMessage{
+			Type: adapter.BROADCAST,
+			Data: &adapter.BroadcastMessage{RequestId: &reqID},
+		}
+		if !isEphemeral(msg) {
+			t.Error("Expected true for broadcast with requestId")
+		}
+	})
+
+	t.Run("SERVER_SIDE_EMIT is ephemeral", func(t *testing.T) {
+		msg := &adapter.ClusterMessage{
+			Type: adapter.SERVER_SIDE_EMIT,
+		}
+		if !isEphemeral(msg) {
+			t.Error("Expected true for SERVER_SIDE_EMIT")
+		}
+	})
+
+	t.Run("FETCH_SOCKETS is ephemeral", func(t *testing.T) {
+		msg := &adapter.ClusterMessage{
+			Type: adapter.FETCH_SOCKETS,
+		}
+		if !isEphemeral(msg) {
+			t.Error("Expected true for FETCH_SOCKETS")
+		}
+	})
+
+	t.Run("SOCKETS_JOIN is not ephemeral", func(t *testing.T) {
+		msg := &adapter.ClusterMessage{
+			Type: adapter.SOCKETS_JOIN,
+		}
+		if isEphemeral(msg) {
+			t.Error("Expected false for SOCKETS_JOIN")
+		}
+	})
 }

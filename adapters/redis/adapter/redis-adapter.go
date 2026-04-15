@@ -2,6 +2,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,6 +69,9 @@ type (
 		ackRequests          *types.Map[string, *AckRequest]
 		redisListeners       *types.Map[string, *rds.PubSub]
 		friendlyErrorHandler func(...any)
+
+		ctx    context.Context
+		cancel context.CancelFunc
 	}
 )
 
@@ -135,6 +139,8 @@ func (r *redisAdapter) Parser() redis.Parser { return r.parser }
 func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	r.Adapter.Construct(nsp)
 
+	r.ctx, r.cancel = context.WithCancel(r.redisClient.Context)
+
 	// Generate unique server ID
 	r.uid = adapter.ServerId(adapter.Uid2(defaultUidLength))
 
@@ -174,12 +180,12 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	_ = r.redisClient.On("error", r.friendlyErrorHandler)
 
 	// Subscribe to broadcast channel with pattern matching (uses SubClient for read separation)
-	pubsub := r.redisClient.Sub().PSubscribe(r.redisClient.Context, r.channel+"*")
+	pubsub := r.redisClient.Sub().PSubscribe(r.ctx, r.channel+"*")
 	r.redisListeners.Store(subKeyPattern, pubsub)
 	go r.handlePatternMessages(pubsub)
 
 	// Subscribe to request/response channels (uses SubClient for read separation)
-	sub := r.redisClient.Sub().Subscribe(r.redisClient.Context, r.requestChannel, r.responseChannel, r.specificResponseChannel)
+	sub := r.redisClient.Sub().Subscribe(r.ctx, r.requestChannel, r.responseChannel, r.specificResponseChannel)
 	r.redisListeners.Store(subKeyChannel, sub)
 	go r.handleChannelMessages(sub)
 }
@@ -188,9 +194,9 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 func (r *redisAdapter) handlePatternMessages(pubsub *rds.PubSub) {
 	defer func() { _ = pubsub.Close() }()
 	for {
-		msg, err := pubsub.ReceiveMessage(r.redisClient.Context)
+		msg, err := pubsub.ReceiveMessage(r.ctx)
 		if err != nil {
-			if errors.Is(err, rds.ErrClosed) || r.redisClient.Context.Err() != nil {
+			if errors.Is(err, rds.ErrClosed) || r.ctx.Err() != nil {
 				return
 			}
 			r.redisClient.Emit("error", err)
@@ -204,9 +210,9 @@ func (r *redisAdapter) handlePatternMessages(pubsub *rds.PubSub) {
 func (r *redisAdapter) handleChannelMessages(sub *rds.PubSub) {
 	defer func() { _ = sub.Close() }()
 	for {
-		msg, err := sub.ReceiveMessage(r.redisClient.Context)
+		msg, err := sub.ReceiveMessage(r.ctx)
 		if err != nil {
-			if errors.Is(err, rds.ErrClosed) || r.redisClient.Context.Err() != nil {
+			if errors.Is(err, rds.ErrClosed) || r.ctx.Err() != nil {
 				return
 			}
 			r.redisClient.Emit("error", err)
@@ -458,7 +464,7 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 				redisLog.Debug("Error marshaling SERVER_SIDE_EMIT response for RequestId %s: %s", request.RequestId, err.Error())
 				return
 			}
-			if err := r.redisClient.Client.Publish(r.redisClient.Context, r.responseChannel, response).Err(); err != nil {
+			if err := r.redisClient.Client.Publish(r.ctx, r.responseChannel, response).Err(); err != nil {
 				r.redisClient.Emit("error", err)
 			}
 		})
@@ -519,7 +525,7 @@ func (r *redisAdapter) publishResponse(request *Request, response []byte) {
 	channel := b.String()
 
 	redisLog.Debug("publishing response to channel %s", channel)
-	if err := r.redisClient.Client.Publish(r.redisClient.Context, channel, response).Err(); err != nil {
+	if err := r.redisClient.Client.Publish(r.ctx, channel, response).Err(); err != nil {
 		r.redisClient.Emit("error", err)
 	}
 }
@@ -639,7 +645,7 @@ func (r *redisAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOp
 				}
 			}
 			redisLog.Debug("publishing message to channel %s", channel)
-			if err := r.redisClient.Client.Publish(r.redisClient.Context, channel, msg).Err(); err != nil {
+			if err := r.redisClient.Client.Publish(r.ctx, channel, msg).Err(); err != nil {
 				r.redisClient.Emit("error", err)
 			}
 		}
@@ -661,7 +667,7 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 			Packet:    packet,
 			Opts:      adapter.EncodeOptions(opts),
 		}); err == nil {
-			if err := r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err(); err != nil {
+			if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
 				r.redisClient.Emit("error", err)
 			}
 
@@ -730,7 +736,7 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 			Rooms: localRooms,
 		})
 
-		if err := r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err(); err != nil {
+		if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
 			r.redisClient.Emit("error", err)
 		}
 	}
@@ -796,7 +802,7 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				})...),
 			})
 
-			if err := r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err(); err != nil {
+			if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
 				r.redisClient.Emit("error", err)
 			}
 		})
@@ -815,7 +821,7 @@ func (r *redisAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socket.
 		return
 	}
 
-	if err := r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err(); err != nil {
+	if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
 		r.redisClient.Emit("error", err)
 	}
 }
@@ -832,7 +838,7 @@ func (r *redisAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socket.
 		return
 	}
 
-	if err := r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err(); err != nil {
+	if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
 		r.redisClient.Emit("error", err)
 	}
 }
@@ -849,7 +855,7 @@ func (r *redisAdapter) DisconnectSockets(opts *socket.BroadcastOptions, close bo
 		return
 	}
 
-	if err := r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err(); err != nil {
+	if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
 		r.redisClient.Emit("error", err)
 	}
 }
@@ -871,7 +877,7 @@ func (r *redisAdapter) ServerSideEmit(packet []any) error {
 		return fmt.Errorf("failed to marshal ServerSideEmit request: %w", err)
 	}
 
-	return r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err()
+	return r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err()
 }
 
 // serverSideEmitWithAck emits a packet and waits for acknowledgements from other servers.
@@ -912,12 +918,12 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 		Responses: types.NewSlice[any](),
 	})
 
-	return r.redisClient.Client.Publish(r.redisClient.Context, r.requestChannel, message).Err()
+	return r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err()
 }
 
 // ServerCount returns the number of servers subscribed to the request channel.
 func (r *redisAdapter) ServerCount() int64 {
-	result, err := r.redisClient.Client.PubSubNumSub(r.redisClient.Context, r.requestChannel).Result()
+	result, err := r.redisClient.Client.PubSubNumSub(r.ctx, r.requestChannel).Result()
 	if err != nil {
 		r.redisClient.Emit("error", err)
 		return 0
@@ -931,16 +937,18 @@ func (r *redisAdapter) ServerCount() int64 {
 // Close cleans up Redis subscriptions and listeners.
 // This should be called when the adapter is no longer needed.
 func (r *redisAdapter) Close() {
+	defer r.cancel()
+
 	// Unsubscribe from pattern subscription
 	if psub, ok := r.redisListeners.LoadAndDelete(subKeyPattern); ok {
-		if err := psub.PUnsubscribe(r.redisClient.Context, r.channel+"*"); err != nil {
+		if err := psub.PUnsubscribe(r.ctx, r.channel+"*"); err != nil {
 			r.redisClient.Emit("error", err)
 		}
 		_ = psub.Close()
 	}
 	// Unsubscribe from channel subscriptions
 	if sub, ok := r.redisListeners.LoadAndDelete(subKeyChannel); ok {
-		if err := sub.Unsubscribe(r.redisClient.Context, r.requestChannel, r.responseChannel, r.specificResponseChannel); err != nil {
+		if err := sub.Unsubscribe(r.ctx, r.requestChannel, r.responseChannel, r.specificResponseChannel); err != nil {
 			r.redisClient.Emit("error", err)
 		}
 		_ = sub.Close()

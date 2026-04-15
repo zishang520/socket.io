@@ -13,12 +13,16 @@ type (
 	RawClusterMessage map[string]any
 
 	// RedisStreamsAdapter defines the interface for a Redis Streams-based Socket.IO adapter.
-	// It extends ClusterAdapterWithHeartbeat with Redis Streams-specific functionality.
+	// It extends ClusterAdapter with Redis Streams-specific functionality
+	// and PUB/SUB support for ephemeral messages, matching the Node.js implementation.
 	RedisStreamsAdapter interface {
-		adapter.ClusterAdapterWithHeartbeat
+		adapter.ClusterAdapter
 
 		// SetRedis configures the Redis client for the adapter.
 		SetRedis(*redis.RedisClient)
+
+		// SetOpts sets the configuration options for the streams adapter.
+		SetOpts(any)
 
 		// Cleanup registers a cleanup callback to be called when the adapter is closed.
 		Cleanup(func())
