@@ -123,7 +123,7 @@ func (a *postgresAdapter) DoPublish(message *ClusterMessage) (adapter.Offset, er
 	}
 
 	// If JSON payload exceeds threshold, use attachment table
-	if len(payload) >= a.opts.PayloadThreshold() {
+	if len(payload) > a.opts.PayloadThreshold() {
 		return a.publishWithAttachment(message)
 	}
 
