@@ -22,6 +22,12 @@ Install a specific module:
 go get github.com/zishang520/socket.io/servers/socket/v3
 ```
 
+Install the PostgreSQL adapter:
+
+```bash
+go get github.com/zishang520/socket.io/adapters/postgres/v3
+```
+
 ---
 
 ## ❓ Questions & Support
@@ -95,6 +101,7 @@ This project is a monorepo containing the following Go modules:
 |-------|-----------|-------------|
 | [![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/adapter/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/adapter/v3) <br/> [![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/adapters/adapter/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/adapters/adapter/v3) | `github.com/zishang520/socket.io/adapters/adapter/v3` | Base adapter interface for implementing broadcast mechanisms |
 | [![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/redis/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/redis/v3) <br/> [![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/adapters/redis/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/adapters/redis/v3) | `github.com/zishang520/socket.io/adapters/redis/v3` | Redis-based adapter for broadcasting messages across distributed servers |
+| [![Go Reference](https://pkg.go.dev/badge/github.com/zishang520/socket.io/adapters/postgres/v3.svg)](https://pkg.go.dev/github.com/zishang520/socket.io/adapters/postgres/v3) <br/> [![Go Report Card](https://goreportcard.com/badge/github.com/zishang520/socket.io/adapters/postgres/v3)](https://goreportcard.com/report/github.com/zishang520/socket.io/adapters/postgres/v3) | `github.com/zishang520/socket.io/adapters/postgres/v3` | PostgreSQL-based adapter for broadcasting messages across distributed servers using LISTEN/NOTIFY |
 
 ---
 

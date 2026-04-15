@@ -99,22 +99,81 @@ func main() {
 }
 ```
 
-## How it works
+## Configuration Options
 
-This adapter uses PostgreSQL's built-in `LISTEN`/`NOTIFY` mechanism for pub/sub messaging between Socket.IO server instances. When a message payload exceeds the 8000-byte `NOTIFY` limit, the adapter stores the payload in an attachment table and sends only the attachment reference via `NOTIFY`.
+### Adapter Options
 
-### SQL Schema
+```golang
+type PostgresAdapterOptions struct {
+    Key               string        // PostgreSQL channel prefix (default: "socket.io")
+    TableName         string        // Attachment storage table name (default: "socket_io_attachments")
+    PayloadThreshold  int           // Byte threshold for attachment storage (default: 8000)
+    CleanupInterval   int64         // Cleanup interval in milliseconds (default: 30000)
+    HeartbeatInterval time.Duration // Interval between heartbeats (default: 5000ms)
+    HeartbeatTimeout  int64         // Heartbeat response timeout (default: 10000)
+    ErrorHandler      func(error)   // Custom error handler callback
+}
+```
 
-The adapter automatically creates the following table if it doesn't exist:
+### Emitter Options
+
+```golang
+type EmitterOptions struct {
+    Key              string // PostgreSQL channel prefix (default: "socket.io")
+    TableName        string // Attachment storage table name (default: "socket_io_attachments")
+    PayloadThreshold int    // Byte threshold for attachment storage (default: 8000)
+}
+```
+
+## Architecture
+
+The PostgreSQL adapter uses two mechanisms for inter-node communication:
+
+1. **LISTEN/NOTIFY** — Lightweight pub/sub for messages under the payload threshold
+2. **Attachment Table** — Stores large payloads or binary data that exceed the NOTIFY limit
+
+Messages are serialized as JSON for direct NOTIFY, or MessagePack for attachment storage. This ensures compatibility with the Node.js `socket.io-postgres-adapter`, allowing mixed Go/Node.js deployments in the same cluster.
+
+### Database Schema
+
+The adapter automatically creates the attachment table on startup:
 
 ```sql
 CREATE TABLE IF NOT EXISTS socket_io_attachments (
-    id          bigserial UNIQUE,
-    created_at  timestamptz DEFAULT NOW(),
-    payload     bytea
+    id bigserial UNIQUE,
+    created_at timestamptz DEFAULT NOW(),
+    payload bytea
 );
 ```
 
+## Mixed Deployment
+
+This Go adapter is wire-compatible with the Node.js [`socket.io-postgres-adapter`](https://github.com/socketio/socket.io-postgres-adapter) and [`socket.io-postgres-emitter`](https://github.com/socketio/socket.io-postgres-emitter). You can mix Go and Node.js servers in the same cluster, as long as:
+
+- Both use the same channel prefix (default: `socket.io`)
+- Both use the same attachment table name (default: `socket_io_attachments`)
+- Both use the same namespace names
+
+## Testing
+
+Run the test suite with:
+
+```bash
+make test
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Support
+
+If you encounter any issues or have questions, please file them in the [issues section](https://github.com/zishang520/socket.io/issues).
+
 ## License
 
-[MIT](LICENSE)
+This project is licensed under the MIT License - see the LICENSE file for details.

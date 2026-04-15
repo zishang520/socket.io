@@ -75,7 +75,7 @@ This is a **Go monorepo**. Each submodule is organized as an independent Go modu
 | `github.com/zishang520/socket.io/parsers/socket/v3`        | Socket.IO packet parser: handles event-based message encoding/decoding.                                                              |
 | `github.com/zishang520/socket.io/adapters/adapter/v3`      | Adapter interface: plug-and-play broadcast layer for multi-node communication.                                                       |
 | `github.com/zishang520/socket.io/adapters/redis/v3`        | Redis-based adapter: enables pub/sub message broadcasting via Redis.                                                                 |
-| `github.com/zishang520/socket.io/adapters/pgsql/v3`        | PostgreSQL-based adapter (not yet implemented).                                                                                       |
+| `github.com/zishang520/socket.io/adapters/postgres/v3`     | PostgreSQL-based adapter: enables pub/sub message broadcasting via PostgreSQL LISTEN/NOTIFY.                                         |
 
 ## Development Setup
 
