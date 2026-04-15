@@ -58,6 +58,16 @@ define EXECUTE
 	done
 endef
 
+# Macro: VALIDATE_MODULE
+# Check if MODULE is in the MODULES list or is root (.)
+# Usage: $(call VALIDATE_MODULE)
+define VALIDATE_MODULE
+	@if [ "$(MODULE)" != "." ] && [ -z "$(filter $(MODULE),$(MODULES))" ]; then \
+		printf "$(C_RED)[Error] Unknown module: $(MODULE). Must be one of: . $(MODULES)$(C_RESET)\n"; \
+		exit 1; \
+	fi
+endef
+
 # ==============================================================================
 #  TARGETS (The Interfaces)
 # ==============================================================================
@@ -88,39 +98,68 @@ help:
 	@printf "  clean       Clean build cache\n"
 	@printf "  test        Run tests with race detection\n"
 	@printf "  version     Update version file and sync submodules\n"
-	@printf "  release     Create git tags for Root and Modules\n"
+	@printf "  release     Create git tags based on VERSION file\n"
+	@printf "                Without MODULE: tags root + all modules\n"
+	@printf "                With MODULE=path: tags only specified module\n"
 	@printf "\n"
 
 env:
 	@go env
 
 deps:
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+endif
 	$(call EXECUTE,Deps,go mod tidy && go mod vendor)
 
 get:
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+endif
 	$(call EXECUTE,Get,go get ./...)
 
 update:
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+endif
 	$(call EXECUTE,Update,go get -u -v ./...)
 	@$(MAKE) deps
 
 build:
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+endif
 	$(call EXECUTE,Build,go build ./...)
 
 fmt:
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+endif
 	$(call EXECUTE,Fmt,go fmt ./...)
 
 vet: deps
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+endif
 	$(call EXECUTE,Vet,go vet ./...)
 
 lint: deps
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+endif
 	@command -v golangci-lint >/dev/null 2>&1 || { printf "$(C_RED)[Error] golangci-lint is not installed. See https://golangci-lint.run/welcome/install/$(C_RESET)\n"; exit 1; }
 	$(call EXECUTE,Lint,golangci-lint run $(if $(FIX),--fix) ./...)
 
 clean:
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+endif
 	$(call EXECUTE,Clean,go clean -v -r ./...)
 
 test: deps
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+endif
 	@printf "$(C_CYAN)[Test] Cleaning test cache...$(C_RESET)\n"
 	@go clean -testcache
 	$(call EXECUTE,Test,go test -timeout=$(TEST_TIMEOUT) -race -cover -covermode=atomic ./...)
@@ -166,6 +205,14 @@ release:
 	@[ -n "$(CUR_VER)" ] || { printf "$(C_RED)[Error] Could not read version from $(VERSION_FILE)$(C_RESET)\n"; exit 1; }
 
 	$(eval TAG_OPTS := $(if $(filter 1,$(FORCE)),-f,))
+ifdef MODULE
+	$(call VALIDATE_MODULE)
+	@[ -d "$(MODULE)" ] || { printf "$(C_RED)[Error] Module path not found: $(MODULE)$(C_RESET)\n"; exit 1; }
+	@printf "$(C_CYAN)[Release] Tagging module: $(MODULE)/$(CUR_VER) (Force: $(FORCE))$(C_RESET)\n"
+	@git tag $(TAG_OPTS) "$(MODULE)/$(CUR_VER)" || exit 1
+	@git show "$(MODULE)/$(CUR_VER)" >/dev/null 2>&1 || exit 1
+	@printf "$(C_GREEN)[Release] Tag verified: $(MODULE)/$(CUR_VER)$(C_RESET)\n"
+else
 	@printf "$(C_CYAN)[Release] Tagging version: $(CUR_VER) (Force: $(FORCE))$(C_RESET)\n"
 
 	@# Tag Root
@@ -186,3 +233,4 @@ release:
 		[ -d "$$mod" ] && git show "$$mod/$(CUR_VER)" >/dev/null 2>&1 || exit 1; \
 	done
 	@printf "$(C_GREEN)[Release] All tags verified.$(C_RESET)\n"
+endif

@@ -70,6 +70,10 @@ if /I "%~1"=="lint" (
     set "LINT_FIX="
     if /I "%~2"=="--fix" (set "LINT_FIX=--fix" & set "LINT_MODULE=")
     if /I "%~3"=="--fix" set "LINT_FIX=--fix"
+    if not "!LINT_MODULE!"=="" (
+        call :ValidateModule "!LINT_MODULE!"
+        if !ERRORLEVEL! NEQ 0 exit /b 1
+    )
     call :RunBatch "go mod tidy && go mod vendor" "!LINT_MODULE!" "Deps"
     :: Added <nul to prevent golangci-lint from locking VT input mode
     if !ERRORLEVEL! EQU 0 call :RunBatch "golangci-lint run !LINT_FIX! ./... <nul" "!LINT_MODULE!" "Lint"
@@ -97,6 +101,18 @@ exit /b 0
 ::  3. CORE FUNCTIONS (The Engine)
 :: ============================================================================
 
+:: :ValidateModule [ModuleName]
+:: Check if a module name is in the MODULES list or is root (.)
+:ValidateModule
+    set "VM_VALID="
+    if "%~1"=="." set "VM_VALID=1"
+    for %%M in (%MODULES%) do if "%%M"=="%~1" set "VM_VALID=1"
+    if not defined VM_VALID (
+        echo %C_RED%[Error] Unknown module: %~1. Must be one of: . %MODULES%%C_RESET%
+        exit /b 1
+    )
+    exit /b 0
+
 :: :RunBatch [Command] [TargetModule?] [Label]
 :: Logic: If Target is set, run only there. Otherwise run Root + All Modules.
 :RunBatch
@@ -106,7 +122,9 @@ exit /b 0
 
     :: Mode A: Single Target
     if not "%TARGET%"=="" (
-        if not exist "%TARGET%" (
+        call :ValidateModule "%TARGET%"
+        if !ERRORLEVEL! NEQ 0 exit /b 1
+        if not "%TARGET%"=="." if not exist "%TARGET%" (
             echo %C_RED%[Error] Module path not found: %TARGET%%C_RESET%
             exit /b 1
         )
@@ -216,8 +234,12 @@ exit /b 0
 
 :cmd_release
     set "FORCE_FLAG="
-    if /I "%~2"=="--force" set "FORCE_FLAG=-f"
-    if /I "%~2"=="-f"      set "FORCE_FLAG=-f"
+    set "REL_MODULE="
+    if /I "%~2"=="--force" (set "FORCE_FLAG=-f" & set "REL_MODULE=%~3") else (
+        if /I "%~2"=="-f" (set "FORCE_FLAG=-f" & set "REL_MODULE=%~3") else (
+            set "REL_MODULE=%~2" & if /I "%~3"=="--force" set "FORCE_FLAG=-f"
+        )
+    )
 
     :: Extract Version from file using PowerShell (Added ^<nul for safety inside the loop)
     for /F "usebackq tokens=*" %%V in (`powershell -NoProfile -Command "(Select-String 'VERSION =' '%VERSION_FILE%').Line.Split([char]34)[1]" ^<nul`) do set "CURRENT_VER=%%V"
@@ -227,6 +249,28 @@ exit /b 0
         exit /b 1
     )
 
+    if not "%REL_MODULE%"=="" goto :rel_single
+    goto :rel_all
+
+:rel_single
+    set "VALID="
+    for %%M in (%MODULES%) do if "%%M"=="%REL_MODULE%" set "VALID=1"
+    if not defined VALID (
+        echo %C_RED%[Error] Unknown module: %REL_MODULE%. Must be one of: %MODULES%%C_RESET%
+        exit /b 1
+    )
+    if not exist "%REL_MODULE%" (
+        echo %C_RED%[Error] Module path not found: %REL_MODULE%%C_RESET%
+        exit /b 1
+    )
+    echo %C_CYAN%[Release] Tagging module: %REL_MODULE%/%CURRENT_VER% (Force: %FORCE_FLAG%)%C_RESET%
+    git tag %FORCE_FLAG% "%REL_MODULE%/%CURRENT_VER%"
+    if !ERRORLEVEL! NEQ 0 exit /b 1
+    echo %C_GREEN%[Release] Tag created: %REL_MODULE%/%CURRENT_VER%%C_RESET%
+    echo    Don't forget to run: git push origin "%REL_MODULE%/%CURRENT_VER%"
+    exit /b 0
+
+:rel_all
     echo %C_CYAN%[Release] Tagging version: %CURRENT_VER% (Force: %FORCE_FLAG%)%C_RESET%
 
     :: Tag Root
@@ -265,6 +309,9 @@ exit /b 0
     echo.
     echo %C_CYAN%Release Management:%C_RESET%
     echo    version vX.Y.Z      Bump VERSION file and sync %CORE_DEPENDENCY% in all modules
-    echo    release [--force]  Create git tags for root and all modules based on VERSION file
+    echo    release [module] [--force]  Create git tags based on VERSION file
+    echo                                 Without module: tags root + all modules
+    echo                                 With module: tags only specified module
+    echo    Note: module can be '.' for root, or any of: %MODULES%
     echo.
     exit /b 0
