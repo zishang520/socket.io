@@ -100,9 +100,7 @@ type PostgresAdapterBuilder struct {
 // This method implements the socket.AdapterBuilder interface.
 func (pb *PostgresAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	options := DefaultPostgresAdapterOptions()
-	if pb.Opts != nil {
-		options.Assign(pb.Opts)
-	}
+	options.Assign(pb.Opts)
 
 	// Apply defaults
 	if options.GetRawKey() == nil {

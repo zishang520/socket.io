@@ -74,6 +74,11 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 		return
 	}
 
+	if message.Nsp != c.Nsp().Name() {
+		adapterLog.Debug("[%s] ignore message from another namespace (%s)", c.uid, message.Nsp)
+		return
+	}
+
 	adapterLog.Debug("[%s] new event of type %d from %s", c.uid, message.Type, message.Uid)
 
 	switch message.Type {
