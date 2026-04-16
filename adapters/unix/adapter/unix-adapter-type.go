@@ -86,7 +86,7 @@ func (ub *UnixAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 			ub.Unix.Emit("error", err)
 		}
 
-		go ub.startListening(options)
+		go ub.startListening()
 	}
 
 	// Register cleanup callback
@@ -99,7 +99,7 @@ func (ub *UnixAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 
 // startListening continuously reads from the Unix Domain Socket and dispatches messages
 // to the appropriate namespace adapter.
-func (ub *UnixAdapterBuilder) startListening(options *UnixAdapterOptions) {
+func (ub *UnixAdapterBuilder) startListening() {
 	buf := make([]byte, 65536) // 64KB buffer for Unix Domain Socket messages
 
 	for {
@@ -121,12 +121,12 @@ func (ub *UnixAdapterBuilder) startListening(options *UnixAdapterOptions) {
 		copy(data, buf[:n])
 
 		// Dispatch to all namespace adapters — the adapter will filter by channel/nsp
-		ub.dispatchMessage(data, options)
+		ub.dispatchMessage(data)
 	}
 }
 
 // dispatchMessage sends a raw message payload to the correct adapter based on namespace.
-func (ub *UnixAdapterBuilder) dispatchMessage(data []byte, options *UnixAdapterOptions) {
+func (ub *UnixAdapterBuilder) dispatchMessage(data []byte) {
 	// Peek at the message to determine the target namespace
 	// The message is JSON-encoded and contains a "nsp" field
 	var peek struct {

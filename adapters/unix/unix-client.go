@@ -1,43 +1,77 @@
 // Package unix provides a Unix Domain Socket client wrapper for Socket.IO Unix adapter.
 // This package offers a unified interface for Unix Domain Socket operations with event handling
-// support using datagram or stream connections for pub/sub communication.
+// support using connection-oriented stream sockets (SOCK_STREAM) for pub/sub communication.
+//
+// Messages are framed with a 4-byte big-endian length prefix to ensure reliable delivery
+// over the byte-stream transport. Connections to peers are pooled and reused for performance.
 package unix
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-// UnixClient wraps a Unix Domain Socket connection and provides context management
+// maxMessageSize is the maximum allowed message size (10 MB).
+// This prevents malicious or corrupted length headers from causing excessive memory allocation.
+const maxMessageSize = 10 << 20
+
+// peerConn wraps a persistent connection to a peer with its own mutex
+// to ensure atomic framed writes when multiple goroutines send concurrently.
+type peerConn struct {
+	mu   sync.Mutex
+	conn net.Conn
+}
+
+// receivedMessage holds a complete message received from a stream connection.
+type receivedMessage struct {
+	data []byte
+	addr net.Addr
+}
+
+// UnixClient wraps Unix Domain Socket stream connections and provides context management
 // and event emitting capabilities for the Socket.IO Unix adapter.
 //
-// The client uses a datagram-oriented Unix Domain Socket for pub/sub messaging.
-// Messages are sent and received via the Unix socket connection.
+// The client uses connection-oriented Unix Domain Sockets (SOCK_STREAM) for pub/sub messaging.
+// Each message is framed with a 4-byte big-endian length prefix for reliable delivery.
+// Outgoing connections are pooled per peer for performance; incoming connections are
+// accepted in background goroutines and delivered through an internal message queue.
 //
 // The client supports error event emission, which allows higher-level components
 // to handle Unix socket-related errors gracefully.
 type UnixClient struct {
 	types.EventEmitter
 
-	// SocketPath is the path of the Unix Domain Socket used for communication.
+	// SocketPath is the base path of the Unix Domain Socket used for communication.
 	SocketPath string
 
-	// Context is the context used for Unix socket operations.
-	// This context controls the lifecycle of operations.
+	// Context controls the lifecycle of the client.
+	// When canceled, all operations will be terminated.
 	Context context.Context
 
-	// conn is the Unix Domain Socket connection for sending messages.
-	conn net.Conn
-	mu   sync.Mutex
-
-	// listener is the Unix Domain Socket listener for receiving messages.
-	listener net.PacketConn
-	// listenerPath is the unique path for this client's listening socket.
+	mu           sync.Mutex
+	listener     net.Listener
 	listenerPath string
+
+	// Connection pool for outgoing connections to peers.
+	peersMu sync.Mutex
+	peers   map[string]*peerConn
+
+	// Internal message channel for received messages.
+	msgCh chan *receivedMessage
+
+	// Tracking accepted connections for cleanup.
+	activeConns   map[net.Conn]struct{}
+	activeConnsMu sync.Mutex
+
+	// Shutdown control.
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // NewUnixClient creates a new UnixClient with the given context and socket path.
@@ -58,15 +92,22 @@ func NewUnixClient(ctx context.Context, socketPath string) *UnixClient {
 		ctx = context.Background()
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+
 	return &UnixClient{
 		EventEmitter: types.NewEventEmitter(),
 		SocketPath:   socketPath,
 		Context:      ctx,
+		cancel:       cancel,
+		peers:        make(map[string]*peerConn),
+		activeConns:  make(map[net.Conn]struct{}),
+		msgCh:        make(chan *receivedMessage, 256),
 	}
 }
 
-// Listen starts listening for incoming Unix Domain Socket messages on a unique path.
-// The listener path is derived from the main socket path with the given suffix.
+// Listen starts accepting stream connections on the given Unix socket path.
+// Incoming connections are handled in background goroutines, with messages
+// delivered through ReadMessage via an internal queue.
 //
 // Parameters:
 //   - listenerPath: The unique path for this listener's Unix Domain Socket.
@@ -80,49 +121,173 @@ func (c *UnixClient) Listen(listenerPath string) error {
 
 	c.listenerPath = listenerPath
 
-	listener, err := net.ListenPacket("unixgram", listenerPath)
+	listener, err := net.Listen("unix", listenerPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on Unix socket %q: %w", listenerPath, err)
 	}
 
 	c.listener = listener
+
+	c.wg.Add(1)
+	go c.acceptLoop()
+
 	return nil
 }
 
-// ReadMessage reads a message from the listener socket.
+// acceptLoop continuously accepts new stream connections on the listener.
+func (c *UnixClient) acceptLoop() {
+	defer c.wg.Done()
+
+	for {
+		conn, err := c.listener.Accept()
+		if err != nil {
+			select {
+			case <-c.Context.Done():
+				return
+			default:
+				return // listener was closed
+			}
+		}
+
+		c.trackConn(conn)
+		c.wg.Add(1)
+		go c.handleConn(conn)
+	}
+}
+
+// trackConn adds a connection to the active set for cleanup on Close.
+func (c *UnixClient) trackConn(conn net.Conn) {
+	c.activeConnsMu.Lock()
+	c.activeConns[conn] = struct{}{}
+	c.activeConnsMu.Unlock()
+}
+
+// untrackConn removes a connection from the active set.
+func (c *UnixClient) untrackConn(conn net.Conn) {
+	c.activeConnsMu.Lock()
+	delete(c.activeConns, conn)
+	c.activeConnsMu.Unlock()
+}
+
+// handleConn reads length-prefixed messages from an accepted stream connection.
+// Each message is framed as [4-byte big-endian length][payload].
+func (c *UnixClient) handleConn(conn net.Conn) {
+	defer c.wg.Done()
+	defer func() { _ = conn.Close() }()
+	defer c.untrackConn(conn)
+
+	addr := conn.RemoteAddr()
+
+	for {
+		// Read 4-byte length header.
+		var header [4]byte
+		if _, err := io.ReadFull(conn, header[:]); err != nil {
+			return // connection closed or broken
+		}
+
+		msgLen := binary.BigEndian.Uint32(header[:])
+		if msgLen == 0 || msgLen > maxMessageSize {
+			return // invalid or oversized message
+		}
+
+		data := make([]byte, msgLen)
+		if _, err := io.ReadFull(conn, data); err != nil {
+			return // incomplete read
+		}
+
+		select {
+		case c.msgCh <- &receivedMessage{data: data, addr: addr}:
+		case <-c.Context.Done():
+			return
+		}
+	}
+}
+
+// ReadMessage reads the next message from the internal message queue.
 // This method blocks until a message is received or the context is canceled.
 //
 // Returns the received message bytes and the sender address, or an error.
 func (c *UnixClient) ReadMessage(buf []byte) (int, net.Addr, error) {
 	c.mu.Lock()
-	listener := c.listener
+	listening := c.listener != nil
 	c.mu.Unlock()
 
-	if listener == nil {
+	if !listening {
 		return 0, nil, fmt.Errorf("listener not started")
 	}
 
-	return listener.ReadFrom(buf)
+	select {
+	case msg := <-c.msgCh:
+		if msg == nil {
+			return 0, nil, fmt.Errorf("message channel closed")
+		}
+		n := copy(buf, msg.data)
+		return n, msg.addr, nil
+	case <-c.Context.Done():
+		return 0, nil, c.Context.Err()
+	}
 }
 
-// Send sends a message to the specified Unix Domain Socket path.
+// Send sends a length-prefixed message to the specified Unix socket path.
+// Connections are pooled and reused across calls. If a send fails, the stale
+// connection is discarded and the send is retried once with a fresh connection.
 //
 // Parameters:
 //   - targetPath: The path of the target Unix Domain Socket.
 //   - payload: The message payload bytes.
 func (c *UnixClient) Send(targetPath string, payload []byte) error {
-	addr, err := net.ResolveUnixAddr("unixgram", targetPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve Unix address %q: %w", targetPath, err)
+	if c.Context.Err() != nil {
+		return c.Context.Err()
 	}
 
-	conn, err := net.DialUnix("unixgram", nil, addr)
-	if err != nil {
-		return fmt.Errorf("failed to dial Unix socket %q: %w", targetPath, err)
-	}
-	defer conn.Close()
+	pc := c.getOrCreatePeer(targetPath)
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
 
-	if _, err := conn.Write(payload); err != nil {
+	// Try once; on failure the connection is reset, so retry with a fresh connection.
+	if err := c.writeFrame(pc, targetPath, payload); err != nil {
+		if err2 := c.writeFrame(pc, targetPath, payload); err2 != nil {
+			return err2
+		}
+	}
+
+	return nil
+}
+
+// getOrCreatePeer returns the peerConn for the given path, creating one if needed.
+func (c *UnixClient) getOrCreatePeer(targetPath string) *peerConn {
+	c.peersMu.Lock()
+	defer c.peersMu.Unlock()
+
+	if pc, ok := c.peers[targetPath]; ok {
+		return pc
+	}
+
+	pc := &peerConn{}
+	c.peers[targetPath] = pc
+	return pc
+}
+
+// writeFrame connects (if needed) and writes a length-prefixed message to the peer.
+// The frame format is [4-byte big-endian length][payload]. Uses net.Buffers for
+// efficient scatter-gather I/O (writev). On write failure, the connection is closed
+// and set to nil so the next call retries with a fresh connection.
+func (c *UnixClient) writeFrame(pc *peerConn, targetPath string, payload []byte) error {
+	if pc.conn == nil {
+		conn, err := net.Dial("unix", targetPath)
+		if err != nil {
+			return fmt.Errorf("failed to dial Unix socket %q: %w", targetPath, err)
+		}
+		pc.conn = conn
+	}
+
+	var header [4]byte
+	binary.BigEndian.PutUint32(header[:], uint32(len(payload)))
+
+	bufs := net.Buffers{header[:], payload}
+	if _, err := bufs.WriteTo(pc.conn); err != nil {
+		_ = pc.conn.Close()
+		pc.conn = nil
 		return fmt.Errorf("failed to send to Unix socket %q: %w", targetPath, err)
 	}
 
@@ -136,26 +301,51 @@ func (c *UnixClient) ListenerPath() string {
 	return c.listenerPath
 }
 
-// Close closes the Unix Domain Socket connections and cleans up resources.
+// Close releases all resources including the listener, accepted connections,
+// pooled peer connections, and waits for background goroutines to exit.
 func (c *UnixClient) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	var errs []error
 
-	if c.conn != nil {
-		if err := c.conn.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.conn = nil
+	// Cancel context to signal all goroutines.
+	if c.cancel != nil {
+		c.cancel()
 	}
 
+	// Close listener to unblock Accept.
 	if c.listener != nil {
 		if err := c.listener.Close(); err != nil {
 			errs = append(errs, err)
 		}
 		c.listener = nil
 	}
+
+	c.mu.Unlock()
+
+	// Close all accepted connections to unblock ReadFull.
+	c.activeConnsMu.Lock()
+	for conn := range c.activeConns {
+		_ = conn.Close()
+		delete(c.activeConns, conn)
+	}
+	c.activeConnsMu.Unlock()
+
+	// Close all pooled peer connections.
+	c.peersMu.Lock()
+	for path, pc := range c.peers {
+		pc.mu.Lock()
+		if pc.conn != nil {
+			_ = pc.conn.Close()
+			pc.conn = nil
+		}
+		pc.mu.Unlock()
+		delete(c.peers, path)
+	}
+	c.peersMu.Unlock()
+
+	// Wait for all background goroutines to exit.
+	c.wg.Wait()
 
 	if len(errs) > 0 {
 		return fmt.Errorf("errors closing Unix client: %v", errs)
