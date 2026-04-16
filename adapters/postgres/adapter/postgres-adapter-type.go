@@ -13,15 +13,6 @@ import (
 )
 
 type (
-	// Packet is an alias for postgres.PostgresPacket, representing a broadcast packet sent via PostgreSQL.
-	Packet = postgres.PostgresPacket
-
-	// Request is an alias for postgres.PostgresRequest, representing an inter-node request.
-	Request = postgres.PostgresRequest
-
-	// Response is an alias for postgres.PostgresResponse, representing an inter-node response.
-	Response = postgres.PostgresResponse
-
 	// ClusterMessage is an alias for adapter.ClusterMessage.
 	ClusterMessage = adapter.ClusterMessage
 
@@ -55,6 +46,9 @@ type (
 	// BroadcastAck is an alias for adapter.BroadcastAck.
 	BroadcastAck = adapter.BroadcastAck
 
+	// NotificationMessage represents a message received via PostgreSQL LISTEN/NOTIFY.
+	NotificationMessage = postgres.NotificationMessage
+
 	// PostgresAdapter defines the interface for a PostgreSQL-based Socket.IO adapter.
 	// It extends ClusterAdapterWithHeartbeat with PostgreSQL-specific functionality.
 	PostgresAdapter interface {
@@ -71,16 +65,6 @@ type (
 
 		// OnNotification processes a raw notification payload from PostgreSQL LISTEN/NOTIFY.
 		OnNotification(string)
-	}
-
-	// NotificationMessage represents a message received via PostgreSQL LISTEN/NOTIFY.
-	// It can either contain the full payload or a reference to an attachment.
-	NotificationMessage struct {
-		Uid          adapter.ServerId    `json:"uid,omitempty"`
-		Type         adapter.MessageType `json:"type,omitempty"`
-		Data         any                 `json:"data,omitempty"`
-		Nsp          string              `json:"nsp,omitempty"`
-		AttachmentId string              `json:"attachmentId,omitempty"`
 	}
 )
 

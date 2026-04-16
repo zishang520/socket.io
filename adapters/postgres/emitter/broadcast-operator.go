@@ -224,10 +224,10 @@ func (b *BroadcastOperator) publishWithAttachment(channel string, message *adapt
 	}
 
 	// Send notification header with uid, type and attachment reference
-	notification, err := json.Marshal(map[string]any{
-		"uid":          emitterUID,
-		"type":         message.Type,
-		"attachmentId": strconv.FormatInt(id, 10),
+	notification, err := json.Marshal(&NotificationMessage{
+		Uid:          emitterUID,
+		Type:         message.Type,
+		AttachmentId: strconv.FormatInt(id, 10),
 	})
 	if err != nil {
 		return err
