@@ -286,15 +286,15 @@ func TestBroadcastOperator_SocketsJoin_Marshal(t *testing.T) {
 	}
 
 	// Verify structure matches Node.js: {uid, type, data: {opts: {rooms, except}, rooms}}
-	var raw map[string]any
+	var raw NotificationMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("Failed to parse JSON: %v", err)
 	}
-	if raw["uid"] != "emitter" {
-		t.Errorf("Expected uid 'emitter', got %v", raw["uid"])
+	if raw.Uid != "emitter" {
+		t.Errorf("Expected uid 'emitter', got %v", raw.Uid)
 	}
-	if raw["type"].(float64) != float64(adapter.SOCKETS_JOIN) {
-		t.Errorf("Expected type %d, got %v", adapter.SOCKETS_JOIN, raw["type"])
+	if raw.Type != adapter.SOCKETS_JOIN {
+		t.Errorf("Expected type %d, got %v", adapter.SOCKETS_JOIN, raw.Type)
 	}
 }
 

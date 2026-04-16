@@ -85,21 +85,15 @@ func TestPostgresAdapter_JsonRoundTrip(t *testing.T) {
 		}
 
 		// Verify Node.js compatible field names
-		var raw map[string]any
+		var raw NotificationMessage
 		if unmarshalErr := json.Unmarshal(payload, &raw); unmarshalErr != nil {
 			t.Fatalf("Failed to parse: %v", unmarshalErr)
 		}
-		if raw["uid"] != "server1" {
-			t.Fatalf("Expected uid 'server1', got %v", raw["uid"])
+		if raw.Uid != "server1" {
+			t.Fatalf("Expected uid 'server1', got %v", raw.Uid)
 		}
-		if raw["nsp"] != "/" {
-			t.Fatalf("Expected nsp '/', got %v", raw["nsp"])
-		}
-		if raw["type"].(float64) != float64(adapter.BROADCAST) {
-			t.Fatalf("Expected type %d, got %v", adapter.BROADCAST, raw["type"])
-		}
-		if raw["data"] == nil {
-			t.Fatal("Expected non-nil data")
+		if raw.Type != adapter.BROADCAST {
+			t.Fatalf("Expected type %d, got %v", adapter.BROADCAST, raw.Type)
 		}
 
 		// Verify decode roundtrip

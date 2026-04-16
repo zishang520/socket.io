@@ -39,19 +39,6 @@ type (
 		DisconnectSockets(state bool) error
 		ServerSideEmit(args ...any) error
 	}
-
-	// Packet is an alias for postgres.PostgresPacket.
-	// It represents a Socket.IO packet with routing options.
-	Packet = postgres.PostgresPacket
-
-	// Request is an alias for postgres.PostgresRequest.
-	// It represents an inter-server request message.
-	Request = postgres.PostgresRequest
-
-	// Response is an alias for postgres.PostgresResponse.
-	// It represents an inter-server response message.
-	Response = postgres.PostgresResponse
-
 	// ClusterMessage is an alias for adapter.ClusterMessage.
 	// It is used for cluster communication.
 	ClusterMessage = adapter.ClusterMessage
@@ -71,4 +58,7 @@ type (
 	// ServerSideEmitMessage is an alias for adapter.ServerSideEmitMessage.
 	// It is used for server-side emit operations.
 	ServerSideEmitMessage = adapter.ServerSideEmitMessage
+
+	// NotificationMessage represents a message received via PostgreSQL LISTEN/NOTIFY.
+	NotificationMessage = postgres.NotificationMessage
 )

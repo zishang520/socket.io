@@ -162,10 +162,10 @@ func (a *postgresAdapter) publishWithAttachment(message *ClusterMessage) (adapte
 	}
 
 	// Send notification header with uid, type, and attachmentId (matches Node.js format)
-	notification, err := json.Marshal(map[string]any{
-		"uid":          string(a.Uid()),
-		"type":         message.Type,
-		"attachmentId": strconv.FormatInt(id, 10),
+	notification, err := json.Marshal(&NotificationMessage{
+		Uid:          a.Uid(),
+		Type:         message.Type,
+		AttachmentId: strconv.FormatInt(id, 10),
 	})
 	if err != nil {
 		return "", err
