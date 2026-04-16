@@ -13,48 +13,6 @@ import (
 )
 
 type (
-	// Packet is an alias for unix.UnixPacket, representing a broadcast packet sent via Unix Domain Socket.
-	Packet = unix.UnixPacket
-
-	// Request is an alias for unix.UnixRequest, representing an inter-node request.
-	Request = unix.UnixRequest
-
-	// Response is an alias for unix.UnixResponse, representing an inter-node response.
-	Response = unix.UnixResponse
-
-	// ClusterMessage is an alias for adapter.ClusterMessage.
-	ClusterMessage = adapter.ClusterMessage
-
-	// ClusterResponse is an alias for adapter.ClusterResponse.
-	ClusterResponse = adapter.ClusterResponse
-
-	// BroadcastMessage is an alias for adapter.BroadcastMessage.
-	BroadcastMessage = adapter.BroadcastMessage
-
-	// SocketsJoinLeaveMessage is an alias for adapter.SocketsJoinLeaveMessage.
-	SocketsJoinLeaveMessage = adapter.SocketsJoinLeaveMessage
-
-	// DisconnectSocketsMessage is an alias for adapter.DisconnectSocketsMessage.
-	DisconnectSocketsMessage = adapter.DisconnectSocketsMessage
-
-	// FetchSocketsMessage is an alias for adapter.FetchSocketsMessage.
-	FetchSocketsMessage = adapter.FetchSocketsMessage
-
-	// FetchSocketsResponse is an alias for adapter.FetchSocketsResponse.
-	FetchSocketsResponse = adapter.FetchSocketsResponse
-
-	// ServerSideEmitMessage is an alias for adapter.ServerSideEmitMessage.
-	ServerSideEmitMessage = adapter.ServerSideEmitMessage
-
-	// ServerSideEmitResponse is an alias for adapter.ServerSideEmitResponse.
-	ServerSideEmitResponse = adapter.ServerSideEmitResponse
-
-	// BroadcastClientCount is an alias for adapter.BroadcastClientCount.
-	BroadcastClientCount = adapter.BroadcastClientCount
-
-	// BroadcastAck is an alias for adapter.BroadcastAck.
-	BroadcastAck = adapter.BroadcastAck
-
 	// UnixAdapter defines the interface for a Unix Domain Socket-based Socket.IO adapter.
 	// It extends ClusterAdapterWithHeartbeat with Unix socket-specific functionality.
 	UnixAdapter interface {

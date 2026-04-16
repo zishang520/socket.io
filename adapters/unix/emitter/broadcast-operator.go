@@ -30,10 +30,10 @@ var reservedEvents = types.NewSet(
 // It supports room targeting, exclusions, and broadcast flags through method chaining.
 type BroadcastOperator struct {
 	unixClient       *unix.UnixClient        // Unix Domain Socket client for publishing messages
-	broadcastOptions *BroadcastOptions        // Configuration for broadcasting
-	rooms            *types.Set[socket.Room]  // Target rooms for the broadcast
-	exceptRooms      *types.Set[socket.Room]  // Rooms to exclude from the broadcast
-	flags            *socket.BroadcastFlags   // Broadcast flags (compress, volatile, etc.)
+	broadcastOptions *BroadcastOptions       // Configuration for broadcasting
+	rooms            *types.Set[socket.Room] // Target rooms for the broadcast
+	exceptRooms      *types.Set[socket.Room] // Rooms to exclude from the broadcast
+	flags            *socket.BroadcastFlags  // Broadcast flags (compress, volatile, etc.)
 }
 
 // MakeBroadcastOperator creates a new BroadcastOperator with empty room sets and default flags.
