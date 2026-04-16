@@ -90,7 +90,7 @@ func (a *unixAdapter) Construct(nsp socket.Namespace) {
 // Only certain message types may carry binary payloads.
 // This matches the Node.js adapter's binary detection types exactly:
 // BROADCAST, BROADCAST_ACK, SERVER_SIDE_EMIT, SERVER_SIDE_EMIT_RESPONSE.
-func hasBinary(message *ClusterResponse) bool {
+func hasBinary(message *adapter.ClusterResponse) bool {
 	if message.Data == nil {
 		return false
 	}
@@ -108,7 +108,7 @@ func hasBinary(message *ClusterResponse) bool {
 // If the message contains binary data, msgpack encoding is used; otherwise JSON is used.
 // The message is broadcast to all peer listeners found by scanning the socket directory.
 // Returns an empty offset since Unix Domain Sockets do not support ordered offsets.
-func (a *unixAdapter) DoPublish(message *ClusterMessage) (adapter.Offset, error) {
+func (a *unixAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
 	unixLog.Debug("publishing message of type %d", message.Type)
 
 	var payload []byte
@@ -137,7 +137,7 @@ func (a *unixAdapter) DoPublish(message *ClusterMessage) (adapter.Offset, error)
 
 // DoPublishResponse publishes a response message to the cluster.
 // This is used for request-response patterns between nodes.
-func (a *unixAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *ClusterResponse) error {
+func (a *unixAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) error {
 	_, err := a.DoPublish(response)
 	return err
 }
@@ -192,7 +192,7 @@ func (a *unixAdapter) OnRawMessage(payload []byte) {
 		return
 	}
 
-	var message *ClusterResponse
+	var message *adapter.ClusterResponse
 	var err error
 
 	// Auto-detect encoding: JSON starts with '{', msgpack does not
@@ -222,7 +222,7 @@ func (a *unixAdapter) OnRawMessage(payload []byte) {
 
 // decode converts a JSON payload into a typed ClusterResponse.
 // This handles non-binary messages.
-func (a *unixAdapter) decode(payload []byte) (*ClusterResponse, error) {
+func (a *unixAdapter) decode(payload []byte) (*adapter.ClusterResponse, error) {
 	// Parse the outer structure with Data as raw JSON
 	var raw struct {
 		Uid  string              `json:"uid"`
@@ -258,7 +258,7 @@ func (a *unixAdapter) decode(payload []byte) (*ClusterResponse, error) {
 
 // decodeMsgpack converts a msgpack-encoded payload into a typed ClusterResponse.
 // This handles binary messages.
-func (a *unixAdapter) decodeMsgpack(payload []byte) (*ClusterResponse, error) {
+func (a *unixAdapter) decodeMsgpack(payload []byte) (*adapter.ClusterResponse, error) {
 	// Two-pass decode: first get outer fields with Data as raw msgpack
 	var raw struct {
 		Uid  string              `msgpack:"uid,omitempty"`
@@ -325,23 +325,23 @@ func allocateTarget(messageType adapter.MessageType) any {
 	case adapter.INITIAL_HEARTBEAT, adapter.HEARTBEAT, adapter.ADAPTER_CLOSE:
 		return nil
 	case adapter.BROADCAST:
-		return &BroadcastMessage{}
+		return &adapter.BroadcastMessage{}
 	case adapter.SOCKETS_JOIN, adapter.SOCKETS_LEAVE:
-		return &SocketsJoinLeaveMessage{}
+		return &adapter.SocketsJoinLeaveMessage{}
 	case adapter.DISCONNECT_SOCKETS:
-		return &DisconnectSocketsMessage{}
+		return &adapter.DisconnectSocketsMessage{}
 	case adapter.FETCH_SOCKETS:
-		return &FetchSocketsMessage{}
+		return &adapter.FetchSocketsMessage{}
 	case adapter.FETCH_SOCKETS_RESPONSE:
-		return &FetchSocketsResponse{}
+		return &adapter.FetchSocketsResponse{}
 	case adapter.SERVER_SIDE_EMIT:
-		return &ServerSideEmitMessage{}
+		return &adapter.ServerSideEmitMessage{}
 	case adapter.SERVER_SIDE_EMIT_RESPONSE:
-		return &ServerSideEmitResponse{}
+		return &adapter.ServerSideEmitResponse{}
 	case adapter.BROADCAST_CLIENT_COUNT:
-		return &BroadcastClientCount{}
+		return &adapter.BroadcastClientCount{}
 	case adapter.BROADCAST_ACK:
-		return &BroadcastAck{}
+		return &adapter.BroadcastAck{}
 	default:
 		return nil
 	}
