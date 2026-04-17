@@ -1,6 +1,6 @@
 # Socket.IO Unix Domain Socket Adapter
 
-The `@socket.io/unix-adapter` package allows broadcasting packets between multiple Socket.IO servers using Unix Domain Sockets as the message broker.
+The package allows broadcasting packets between multiple Socket.IO servers using Unix Domain Sockets as the message broker.
 
 This adapter is suitable for multi-process deployments on the same machine where low-latency IPC is desired without depending on external services like Redis or PostgreSQL.
 
