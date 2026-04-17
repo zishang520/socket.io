@@ -17,6 +17,6 @@ func (m *msgPack) Encode(value any) ([]byte, error) {
 	return msgpack.Marshal(value)
 }
 
-func (m *msgPack) Decode(dara []byte, value any) error {
-	return msgpack.Unmarshal(dara, value)
+func (m *msgPack) Decode(data []byte, value any) error {
+	return msgpack.Unmarshal(data, value)
 }

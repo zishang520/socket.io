@@ -23,9 +23,20 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/version"
 )
 
+const (
+	// DefaultConnectTimeout is the default time a client has to send its first namespace connection request.
+	DefaultConnectTimeout = 45_000 * time.Millisecond
+
+	// DefaultMaxDisconnectionDuration is the default maximum time a session can be disconnected before being discarded.
+	DefaultMaxDisconnectionDuration int64 = 2 * 60 * 1000
+
+	// DefaultSessionCleanupInterval is the default interval between two session cleanup sweeps.
+	DefaultSessionCleanupInterval = 60_000 * time.Millisecond
+)
+
 var (
 	dotMapRegex = regexp.MustCompile(`\.map`)
-	server_log  = log.NewLog("socket.io:server")
+	serverLog   = log.NewLog("socket.io:server")
 )
 
 type (
@@ -130,7 +141,7 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 	if opts.GetRawConnectTimeout() != nil {
 		s.SetConnectTimeout(opts.ConnectTimeout())
 	} else {
-		s.SetConnectTimeout(45_000 * time.Millisecond)
+		s.SetConnectTimeout(DefaultConnectTimeout)
 	}
 	s.SetServeClient(opts.ServeClient())
 	if _parser := opts.Parser(); _parser != nil {
@@ -145,7 +156,7 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 	} else {
 		if connectionStateRecovery := opts.ConnectionStateRecovery(); connectionStateRecovery != nil {
 			if connectionStateRecovery.GetRawMaxDisconnectionDuration() == nil {
-				connectionStateRecovery.SetMaxDisconnectionDuration(2 * 60 * 1000)
+				connectionStateRecovery.SetMaxDisconnectionDuration(DefaultMaxDisconnectionDuration)
 			}
 			if connectionStateRecovery.GetRawSkipMiddlewares() == nil {
 				connectionStateRecovery.SetSkipMiddlewares(true)
@@ -196,13 +207,13 @@ func (s *Server) _checkNamespace(name string, auth map[string]any, fn func(nsp N
 			}
 			if nsp, ok := s._nsps.Load(name); ok {
 				// the namespace was created in the meantime
-				server_log.Debug("dynamic namespace %s already exists", name)
+				serverLog.Debug("dynamic namespace %s already exists", name)
 				fn(nsp)
 				end = false
 				return
 			}
 			namespace := pnsp.CreateChild(name)
-			server_log.Debug("dynamic namespace %s was created", name)
+			serverLog.Debug("dynamic namespace %s was created", name)
 			fn(namespace)
 			end = false
 		})
@@ -264,14 +275,14 @@ func (s *Server) Attach(srv any, opts *ServerOptions) *Server {
 	case int:
 		_address := fmt.Sprintf(":%d", address)
 		// handle a port as a int
-		server_log.Debug("creating http server and binding to %s", _address)
+		serverLog.Debug("creating http server and binding to %s", _address)
 		server = types.NewWebServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "404 page not found", http.StatusNotFound)
 		}))
 		server.Listen(_address, nil)
 	case string:
 		// handle a port as a string
-		server_log.Debug("creating http server and binding to %s", address)
+		serverLog.Debug("creating http server and binding to %s", address)
 		server = types.NewWebServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "404 page not found", http.StatusNotFound)
 		}))
@@ -315,7 +326,7 @@ func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
 	}
 
 	// initialize engine
-	server_log.Debug("creating http.Handler-based engine with opts %v", opts)
+	serverLog.Debug("creating http.Handler-based engine with opts %v", opts)
 	s.eio = engine.NewServer(opts)
 	// bind to engine events
 	s.Bind(s.eio)
@@ -326,7 +337,7 @@ func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
 // initEngine initializes the engine.io server and attaches it to the HTTP server.
 func (s *Server) initEngine(srv *types.HttpServer, opts ServerOptionsInterface) {
 	// initialize engine
-	server_log.Debug("creating engine.io instance with opts %+v", opts)
+	serverLog.Debug("creating engine.io instance with opts %+v", opts)
 	s.eio = engine.Attach(srv, opts)
 
 	// attach static file serving
@@ -343,7 +354,7 @@ func (s *Server) initEngine(srv *types.HttpServer, opts ServerOptionsInterface) 
 
 // attachServe attaches the static file serving handler.
 func (s *Server) attachServe(srv *types.HttpServer, egs engine.Server, opts ServerOptionsInterface) {
-	server_log.Debug("attaching client serving req handler")
+	serverLog.Debug("attaching client serving req handler")
 	srv.HandleFunc(s._path+"/", func(w http.ResponseWriter, r *http.Request) {
 		if s.clientPathRegex.MatchString(r.URL.Path) {
 			if s._corsMiddleware != nil {
@@ -385,14 +396,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 	if etag := r.Header.Get("If-None-Match"); etag != "" {
 		if expectedEtag == etag || weakEtag == etag {
-			server_log.Debug("serve client %s 304", _type)
+			serverLog.Debug("serve client %s 304", _type)
 			w.WriteHeader(http.StatusNotModified)
 			_, _ = w.Write(nil)
 			return
 		}
 	}
 
-	server_log.Debug("serve client %s", _type)
+	serverLog.Debug("serve client %s", _type)
 	w.Header().Set("Cache-Control", "public, max-age=0")
 	if isMap {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -407,7 +418,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) {
 	_file, err := os.Executable()
 	if err != nil {
-		server_log.Debug("Failed to get run path: %v", err)
+		serverLog.Debug("Failed to get run path: %v", err)
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
@@ -422,7 +433,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	}
 	file, err := os.Open(targetPath)
 	if err != nil {
-		server_log.Debug("File read failed: %v", err)
+		serverLog.Debug("File read failed: %v", err)
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
@@ -440,7 +451,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	case "gzip":
 		gz, err := gzip.NewWriterLevel(w, gzip.DefaultCompression)
 		if err != nil {
-			server_log.Debug("Failed to compress data: %v", err)
+			serverLog.Debug("Failed to compress data: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -451,7 +462,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	case "deflate":
 		fl, err := flate.NewWriter(w, flate.DefaultCompression)
 		if err != nil {
-			server_log.Debug("Failed to compress data: %v", err)
+			serverLog.Debug("Failed to compress data: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -462,7 +473,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	case "zstd":
 		zd, err := zstd.NewWriter(w, zstd.WithEncoderLevel(zstd.SpeedDefault))
 		if err != nil {
-			server_log.Debug("Failed to compress data: %v", err)
+			serverLog.Debug("Failed to compress data: %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
@@ -487,7 +498,7 @@ func (s *Server) Bind(egs engine.BaseServer) *Server {
 // onconnection is called with each incoming transport connection.
 func (s *Server) onconnection(conns ...any) {
 	conn := slices.TryGetAny[engine.Socket](conns, 0)
-	server_log.Debug("incoming connection with id %s", conn.Id())
+	serverLog.Debug("incoming connection with id %s", conn.Id())
 	client := NewClient(s, conn)
 	if conn.Protocol() == 3 {
 		client.connect("/", nil)
@@ -500,7 +511,7 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 	switch n := name.(type) {
 	case ParentNspNameMatchFn:
 		parentNsp := NewParentNamespace(s)
-		server_log.Debug("initializing parent namespace %s", parentNsp.Name())
+		serverLog.Debug("initializing parent namespace %s", parentNsp.Name())
 
 		s.parentNsps.Store(n, parentNsp)
 
@@ -510,7 +521,7 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 		return parentNsp
 	case *regexp.Regexp:
 		parentNsp := NewParentNamespace(s)
-		server_log.Debug("initializing parent namespace %s", parentNsp.Name())
+		serverLog.Debug("initializing parent namespace %s", parentNsp.Name())
 
 		s.parentNsps.Store(ParentNspNameMatchFn(utils.Ptr(func(nsp string, _ map[string]any, next func(error, bool)) {
 			next(nil, n.MatchString(nsp))
@@ -543,7 +554,7 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 	} else {
 		s.parentNamespacesFromRegExp.Range(func(regex *regexp.Regexp, parentNamespace ParentNamespace) bool {
 			if regex.MatchString(n) {
-				server_log.Debug("attaching namespace %s to parent namespace %s", n, regex.String())
+				serverLog.Debug("attaching namespace %s to parent namespace %s", n, regex.String())
 				namespace = parentNamespace.CreateChild(n)
 				return false
 			}
@@ -554,7 +565,7 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 			return namespace
 		}
 
-		server_log.Debug("initializing namespace %s", n)
+		serverLog.Debug("initializing namespace %s", n)
 		namespace = NewNamespace(s, n)
 		s._nsps.Store(n, namespace)
 		if n != "/" {

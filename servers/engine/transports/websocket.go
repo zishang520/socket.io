@@ -10,17 +10,19 @@ import (
 	ws "github.com/gorilla/websocket"
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-var ws_log = log.NewLog("engine:ws")
+var wsLog = log.NewLog("engine:ws")
 
 type websocket struct {
 	Transport
 
-	socket *types.WebSocketConn
-	mu     sync.Mutex
+	socket     *types.WebSocketConn
+	mu         sync.Mutex
+	writeQueue *queue.Queue
 }
 
 // WebSocket transport
@@ -44,6 +46,7 @@ func (w *websocket) Construct(ctx *types.HttpContext) {
 	w.Transport.Construct(ctx)
 
 	w.socket = ctx.Websocket
+	w.writeQueue = queue.New()
 
 	_ = w.socket.On("error", func(errs ...any) {
 		w.OnError("websocket error", slices.TryGetAny[error](errs, 0))
@@ -117,15 +120,14 @@ func (w *websocket) message() {
 }
 
 func (w *websocket) onMessage(data types.BufferInterface) {
-	ws_log.Debug(`websocket received "%s"`, data)
+	wsLog.Debug(`websocket received "%s"`, data)
 	w.OnData(data)
 }
 
 // Writes a packet payload.
 func (w *websocket) Send(packets []*packet.Packet) {
 	w.SetWritable(false)
-	// Needs further investigation
-	go w.send(packets)
+	w.writeQueue.Enqueue(func() { w.send(packets) })
 }
 func (w *websocket) send(packets []*packet.Packet) {
 	defer func() {
@@ -152,23 +154,23 @@ func (w *websocket) send(packets []*packet.Packet) {
 				}
 				pm, err := ws.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
-					ws_log.Debug(`Send Error "%s"`, err.Error())
+					wsLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
 				if err := w.socket.WritePreparedMessage(pm); err != nil {
-					ws_log.Debug(`Send Error "%s"`, err.Error())
+					wsLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
-				return
+				continue
 
 			}
 		}
 
 		data, err := w.Parser().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
-			ws_log.Debug(`Send Error "%s"`, err.Error())
+			wsLog.Debug(`Send Error "%s"`, err.Error())
 			w._error(err)
 			return
 		}
@@ -181,7 +183,7 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 			compress = false
 		}
 	}
-	ws_log.Debug(`writing %#v`, data)
+	wsLog.Debug(`writing %#v`, data)
 
 	w.socket.EnableWriteCompression(compress)
 	mt := ws.BinaryMessage
@@ -207,7 +209,8 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 
 // Closes the transport.
 func (w *websocket) DoClose(fn types.Callable) {
-	ws_log.Debug(`closing`)
+	wsLog.Debug(`closing`)
+	w.writeQueue.TryClose()
 	defer func() { _ = w.socket.Close() }()
 	if fn != nil {
 		fn()

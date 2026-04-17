@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -358,7 +359,7 @@ type Conn struct {
 	writeBuf      []byte        // frame is constructed in this buffer.
 	writePool     BufferPool
 	writeBufSize  int
-	writeDeadline time.Time
+	writeDeadline atomic.Value   // stores time.Time
 	writer        io.WriteCloser // the current writer returned to the application
 	isWriting     bool           // for best-effort concurrent write detection
 
@@ -408,6 +409,7 @@ func NewConn(session *webtransport.Session, stream streamWithDeadline, isServer 
 		writePool:    writeBufferPool,
 		writeBufSize: writeBufferSize,
 	}
+	c.writeDeadline.Store(time.Time{})
 	return c
 }
 
@@ -603,7 +605,7 @@ func (w *messageWriter) flushFrame(final bool, extra []byte) error {
 	}
 	c.isWriting = true
 
-	err := c.write(w.frameType, c.writeDeadline, c.writeBuf[framePos:w.pos], extra)
+	err := c.write(w.frameType, c.writeDeadline.Load().(time.Time), c.writeBuf[framePos:w.pos], extra)
 
 	if !c.isWriting {
 		panic("concurrent write to webtransport connection")
@@ -728,7 +730,7 @@ func (c *Conn) WritePreparedMessage(pm *PreparedMessage) error {
 		panic("concurrent write to webtransport connection")
 	}
 	c.isWriting = true
-	err = c.write(frameType, c.writeDeadline, frameData, nil)
+	err = c.write(frameType, c.writeDeadline.Load().(time.Time), frameData, nil)
 	if !c.isWriting {
 		panic("concurrent write to webtransport connection")
 	}
@@ -768,7 +770,7 @@ func (c *Conn) WriteMessage(messageType int, data []byte) error {
 // all future writes will return an error. A zero value for t means writes will
 // not time out.
 func (c *Conn) SetWriteDeadline(t time.Time) error {
-	c.writeDeadline = t
+	c.writeDeadline.Store(t)
 	return nil
 }
 

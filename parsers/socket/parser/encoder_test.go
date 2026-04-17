@@ -449,12 +449,26 @@ func TestEncodeNestedBinaryData(t *testing.T) {
 		t.Fatalf("Expected 3 buffers (header + 2 binaries), got %d", len(buffers))
 	}
 
-	// Verify binary buffers
-	if !bytes.Equal(buffers[1].Bytes(), []byte{0x01, 0x02}) {
-		t.Errorf("First binary buffer mismatch")
+	// Verify binary buffers (order may vary due to Go's random map iteration)
+	expected1 := []byte{0x01, 0x02}
+	expected2 := []byte{0x03, 0x04}
+	found1, found2 := false, false
+
+	for i := 1; i < len(buffers); i++ {
+		buf := buffers[i].Bytes()
+		if bytes.Equal(buf, expected1) {
+			found1 = true
+		}
+		if bytes.Equal(buf, expected2) {
+			found2 = true
+		}
 	}
-	if !bytes.Equal(buffers[2].Bytes(), []byte{0x03, 0x04}) {
-		t.Errorf("Second binary buffer mismatch")
+
+	if !found1 {
+		t.Errorf("First binary data {0x01, 0x02} not found in buffers")
+	}
+	if !found2 {
+		t.Errorf("Second binary data {0x03, 0x04} not found in buffers")
 	}
 }
 

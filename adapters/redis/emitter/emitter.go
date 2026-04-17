@@ -182,7 +182,7 @@ func (e *Emitter) ServerSideEmit(args ...any) error {
 	}
 
 	// Normal mode: use Request format and PUBLISH
-	request, err := json.Marshal(&Request{
+	message, err := json.Marshal(&Request{
 		Uid:  emitterUID,
 		Type: redis.SERVER_SIDE_EMIT,
 		Data: args,
@@ -191,7 +191,7 @@ func (e *Emitter) ServerSideEmit(args ...any) error {
 		return err
 	}
 
-	return e.redisClient.Client.Publish(e.redisClient.Context, e.broadcastOptions.RequestChannel, request).Err()
+	return e.redisClient.Client.Publish(e.redisClient.Context, e.broadcastOptions.RequestChannel, message).Err()
 }
 
 // newBroadcastOperator creates a new broadcast operator with the emitter's configuration.

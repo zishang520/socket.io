@@ -1,7 +1,10 @@
 package types
 
 import (
+	"encoding/json"
 	"testing"
+
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // Test NewSlice and Push method
@@ -137,5 +140,74 @@ func TestClear(t *testing.T) {
 	s.Clear()
 	if s.Len() != 0 {
 		t.Errorf("clear failed, len %d", s.Len())
+	}
+}
+
+// Test MarshalJSON / UnmarshalJSON
+func TestSlice_JSON(t *testing.T) {
+	s := NewSlice(1, 2, 3)
+
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("MarshalJSON failed: %v", err)
+	}
+
+	if string(data) != "[1,2,3]" {
+		t.Errorf("MarshalJSON = %s, want [1,2,3]", data)
+	}
+
+	s2 := &Slice[int]{}
+	if err := json.Unmarshal(data, s2); err != nil {
+		t.Fatalf("UnmarshalJSON failed: %v", err)
+	}
+
+	if s2.Len() != 3 {
+		t.Errorf("UnmarshalJSON len = %d, want 3", s2.Len())
+	}
+	v, _ := s2.Get(0)
+	if v != 1 {
+		t.Errorf("UnmarshalJSON element[0] = %d, want 1", v)
+	}
+}
+
+// Test MarshalMsgpack / UnmarshalMsgpack
+func TestSlice_Msgpack(t *testing.T) {
+	s := NewSlice("a", "b", "c")
+
+	data, err := msgpack.Marshal(s)
+	if err != nil {
+		t.Fatalf("MarshalMsgpack failed: %v", err)
+	}
+
+	s2 := &Slice[string]{}
+	if err := msgpack.Unmarshal(data, s2); err != nil {
+		t.Fatalf("UnmarshalMsgpack failed: %v", err)
+	}
+
+	if s2.Len() != 3 {
+		t.Errorf("UnmarshalMsgpack len = %d, want 3", s2.Len())
+	}
+	v, _ := s2.Get(1)
+	if v != "b" {
+		t.Errorf("UnmarshalMsgpack element[1] = %q, want \"b\"", v)
+	}
+}
+
+// Test empty Slice serialization
+func TestSlice_EmptyJSON(t *testing.T) {
+	s := NewSlice[int]()
+
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("MarshalJSON empty failed: %v", err)
+	}
+
+	// empty slice should marshal to "[]" or "null"
+	s2 := NewSlice[int]()
+	if err := json.Unmarshal(data, s2); err != nil {
+		t.Fatalf("UnmarshalJSON empty failed: %v", err)
+	}
+	if s2.Len() != 0 {
+		t.Errorf("UnmarshalJSON empty len = %d, want 0", s2.Len())
 	}
 }

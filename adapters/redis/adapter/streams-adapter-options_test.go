@@ -219,3 +219,100 @@ func TestDefaultStreamOptionsConstants(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisStreamsAdapterOptions_StreamCount(t *testing.T) {
+	opts := DefaultRedisStreamsAdapterOptions()
+
+	t.Run("zero by default", func(t *testing.T) {
+		if opts.StreamCount() != 0 {
+			t.Fatalf("Expected 0, got %d", opts.StreamCount())
+		}
+	})
+
+	t.Run("set and get", func(t *testing.T) {
+		opts.SetStreamCount(4)
+		if opts.StreamCount() != 4 {
+			t.Fatalf("Expected 4, got %d", opts.StreamCount())
+		}
+	})
+}
+
+func TestRedisStreamsAdapterOptions_ChannelPrefix(t *testing.T) {
+	opts := DefaultRedisStreamsAdapterOptions()
+
+	t.Run("empty by default", func(t *testing.T) {
+		if opts.ChannelPrefix() != "" {
+			t.Fatalf("Expected empty, got %s", opts.ChannelPrefix())
+		}
+	})
+
+	t.Run("set and get", func(t *testing.T) {
+		opts.SetChannelPrefix("my-prefix")
+		if opts.ChannelPrefix() != "my-prefix" {
+			t.Fatalf("Expected 'my-prefix', got %s", opts.ChannelPrefix())
+		}
+	})
+}
+
+func TestRedisStreamsAdapterOptions_UseShardedPubSub(t *testing.T) {
+	opts := DefaultRedisStreamsAdapterOptions()
+
+	t.Run("false by default", func(t *testing.T) {
+		if opts.UseShardedPubSub() != false {
+			t.Fatal("Expected false by default")
+		}
+	})
+
+	t.Run("set and get", func(t *testing.T) {
+		opts.SetUseShardedPubSub(true)
+		if opts.UseShardedPubSub() != true {
+			t.Fatal("Expected true after set")
+		}
+	})
+}
+
+func TestRedisStreamsAdapterOptions_BlockTimeInMs(t *testing.T) {
+	opts := DefaultRedisStreamsAdapterOptions()
+
+	t.Run("zero by default", func(t *testing.T) {
+		if opts.BlockTimeInMs() != 0 {
+			t.Fatalf("Expected 0, got %v", opts.BlockTimeInMs())
+		}
+	})
+
+	t.Run("set and get", func(t *testing.T) {
+		opts.SetBlockTimeInMs(3000)
+		if opts.BlockTimeInMs() != 3000 {
+			t.Fatalf("Expected 3s, got %v", opts.BlockTimeInMs())
+		}
+	})
+}
+
+func TestRedisStreamsAdapterOptions_OnlyPlaintext(t *testing.T) {
+	opts := DefaultRedisStreamsAdapterOptions()
+
+	t.Run("false by default", func(t *testing.T) {
+		if opts.OnlyPlaintext() != false {
+			t.Fatal("Expected false by default")
+		}
+	})
+
+	t.Run("set and get", func(t *testing.T) {
+		opts.SetOnlyPlaintext(true)
+		if opts.OnlyPlaintext() != true {
+			t.Fatal("Expected true after set")
+		}
+	})
+}
+
+func TestDefaultNewOptionsConstants(t *testing.T) {
+	if DefaultStreamCount != 1 {
+		t.Errorf("Expected DefaultStreamCount=1, got %d", DefaultStreamCount)
+	}
+	if DefaultChannelPrefix != "socket.io" {
+		t.Errorf("Expected DefaultChannelPrefix='socket.io', got %q", DefaultChannelPrefix)
+	}
+	if DefaultBlockTimeInMs != 5000 {
+		t.Errorf("Expected DefaultBlockTimeInMs=5000ms, got %v", DefaultBlockTimeInMs)
+	}
+}

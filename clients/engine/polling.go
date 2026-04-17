@@ -10,6 +10,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/request"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
@@ -32,6 +33,8 @@ type polling struct {
 
 	// _polling indicates if a polling request is currently in progress.
 	_polling atomic.Bool
+
+	writeQueue *queue.Queue
 }
 
 // Name returns the identifier for the polling transport ("polling").
@@ -59,6 +62,7 @@ func NewPolling(socket Socket, opts SocketOptionsInterface) Polling {
 // Construct initializes the Polling transport with the given socket and options.
 func (p *polling) Construct(socket Socket, opts SocketOptionsInterface) {
 	p.Transport.Construct(socket, opts)
+	p.writeQueue = queue.New()
 	p.client = request.NewHTTPClient(
 		request.WithLogger(NewLog("HTTPClient")),
 		request.WithTimeout(p.Opts().RequestTimeout()),
@@ -77,17 +81,17 @@ func (p *polling) DoOpen() {
 func (p *polling) Pause(onPause func()) {
 	p.SetReadyState(TransportStatePausing)
 	pause := func() {
-		client_polling_log.Debug("paused")
+		clientPollingLog.Debug("paused")
 		p.SetReadyState(TransportStatePaused)
 		onPause()
 	}
 	if p._polling.Load() || !p.Writable() {
 		var total atomic.Uint32
 		if p._polling.Load() {
-			client_polling_log.Debug("we are currently polling - waiting to pause")
+			clientPollingLog.Debug("we are currently polling - waiting to pause")
 			total.Add(1)
 			_ = p.Once("pollComplete", func(...any) {
-				client_polling_log.Debug("pre-pause polling complete")
+				clientPollingLog.Debug("pre-pause polling complete")
 				if total.Add(^uint32(0)) == 0 {
 					pause()
 				}
@@ -96,7 +100,7 @@ func (p *polling) Pause(onPause func()) {
 		if !p.Writable() {
 			total.Add(1)
 			_ = p.Once("drain", func(...any) {
-				client_polling_log.Debug("pre-pause writing complete")
+				clientPollingLog.Debug("pre-pause writing complete")
 				if total.Add(^uint32(0)) == 0 {
 					pause()
 				}
@@ -109,11 +113,10 @@ func (p *polling) Pause(onPause func()) {
 
 // _poll starts a new polling cycle and initiates a new polling request.
 func (p *polling) _poll() {
-	client_polling_log.Debug("polling")
+	clientPollingLog.Debug("polling")
 	p._polling.Store(true)
 	p.Emit("poll")
-	// This goroutine is repeatedly invoked after OnData receives data; otherwise, it may cause blocking.
-	go p.doPoll()
+	p.writeQueue.Enqueue(func() { p.doPoll() })
 }
 
 // _onPacket handles incoming packets and updates the transport state accordingly.
@@ -130,7 +133,7 @@ func (p *polling) _onPacket(data *packet.Packet) {
 
 // OnData decodes the payload and handles each packet in the payload.
 func (p *polling) OnData(data types.BufferInterface) {
-	client_polling_log.Debug("polling got data %#v", data)
+	clientPollingLog.Debug("polling got data %#v", data)
 	packets, _ := parser.Parserv4().DecodePayload(data)
 	for _, data := range packets {
 		p._onPacket(data)
@@ -141,32 +144,33 @@ func (p *polling) OnData(data types.BufferInterface) {
 		if TransportStateOpen == readyState {
 			p._poll()
 		} else {
-			client_polling_log.Debug(`ignoring poll - transport state "%s"`, readyState)
+			clientPollingLog.Debug(`ignoring poll - transport state "%s"`, readyState)
 		}
 	}
 }
 
 // DoClose gracefully closes the polling transport, sending a close packet if needed.
 func (p *polling) DoClose() {
-	defer func() { _ = p.client.Close() }()
 	cleanup := func(...any) {
-		client_polling_log.Debug("writing close packet")
+		clientPollingLog.Debug("writing close packet")
 		p.Write([]*packet.Packet{{Type: packet.CLOSE}})
+		// Close the write queue after the close packet has been enqueued.
+		p.writeQueue.TryClose()
 	}
 	if TransportStateOpen == p.ReadyState() {
-		client_polling_log.Debug("transport open - closing")
+		clientPollingLog.Debug("transport open - closing")
 		cleanup()
 	} else {
-		client_polling_log.Debug("transport not open - deferring close")
+		clientPollingLog.Debug("transport not open - deferring close")
 		_ = p.Once("open", cleanup)
 	}
+	defer func() { _ = p.client.Close() }()
 }
 
 // Write encodes and sends packets to the server asynchronously.
 func (p *polling) Write(packets []*packet.Packet) {
 	p.SetWritable(false)
-	// Needs further investigation
-	go p.write(packets)
+	p.writeQueue.Enqueue(func() { p.write(packets) })
 }
 
 // write performs the actual packet writing operation asynchronously.

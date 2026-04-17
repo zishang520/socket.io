@@ -9,7 +9,11 @@ import (
 	"sync/atomic"
 )
 
-// Map is like a Go map[any]any but is safe for concurrent use
+// Map is a generic, type-safe concurrent map based on the sync.Map algorithm.
+// Unlike sync.Map, it uses Go generics to eliminate type assertions on every
+// Load/Store and provides additional methods: [Map.Len], [Map.Keys], [Map.Values].
+//
+// Map is safe for concurrent use
 // by multiple goroutines without additional locking or coordination.
 // Loads, stores, and deletes run in amortized constant time.
 //
@@ -71,6 +75,8 @@ type Map[TKey comparable, TValue any] struct {
 	// map, the dirty map will be promoted to the read map (in the unamended
 	// state) and the next store to the map will make a new dirty copy.
 	misses int
+
+	length atomic.Int64 // Provides an O(1) tracker for map length
 }
 
 // readOnly is an immutable struct stored atomically in the Map.read field.
@@ -177,6 +183,7 @@ func (m *Map[TKey, TValue]) Clear() {
 	clear(m.dirty)
 	// Don't immediately promote the newly-cleared dirty map on the next operation.
 	m.misses = 0
+	m.length.Store(0)
 }
 
 // tryCompareAndSwap compare the entry with the given old value and swaps
@@ -257,6 +264,9 @@ func (m *Map[TKey, TValue]) LoadOrStore(key TKey, value TValue) (actual TValue, 
 	}
 	m.mu.Unlock()
 
+	if !loaded {
+		m.length.Add(1)
+	}
 	return actual, loaded
 }
 
@@ -312,7 +322,11 @@ func (m *Map[TKey, TValue]) LoadAndDelete(key TKey) (value TValue, loaded bool) 
 		m.mu.Unlock()
 	}
 	if ok {
-		return e.delete()
+		value, ok = e.delete()
+		if ok {
+			m.length.Add(-1)
+		}
+		return value, ok
 	}
 	return value, false
 }
@@ -390,6 +404,11 @@ func (m *Map[TKey, TValue]) Swap(key TKey, value TValue) (previous TValue, loade
 		m.dirty[key] = newEntry(value)
 	}
 	m.mu.Unlock()
+
+	if !loaded {
+		m.length.Add(1)
+	}
+
 	return previous, loaded
 }
 
@@ -454,6 +473,7 @@ func (m *Map[TKey, TValue]) CompareAndDelete(key TKey, old TValue) (deleted bool
 			return false
 		}
 		if e.p.CompareAndSwap(p, nil) {
+			m.length.Add(-1)
 			return true
 		}
 	}
@@ -506,11 +526,7 @@ func (m *Map[TKey, TValue]) Range(f func(key TKey, value TValue) bool) {
 }
 
 func (m *Map[TKey, TValue]) Len() (n int) {
-	m.Range(func(_ TKey, _ TValue) bool {
-		n++
-		return true
-	})
-	return n
+	return int(m.length.Load())
 }
 
 func (m *Map[TKey, TValue]) Keys() (keys []TKey) {

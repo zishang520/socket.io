@@ -25,10 +25,10 @@ const (
 
 // Global configuration variables
 var (
-	DEBUG  bool      = false     // Global debug flag
-	Output io.Writer = os.Stderr // Default output writer
-	Prefix string    = ""        // Default prefix for all loggers
-	Flags  int       = 0         // Default flags for all loggers
+	DEBUG  atomic.Bool             // Global debug flag (default false)
+	Output io.Writer   = os.Stderr // Default output writer
+	Prefix string      = ""        // Default prefix for all loggers
+	Flags  int         = 0         // Default flags for all loggers
 )
 
 var defaultLogger atomic.Pointer[Log]
@@ -78,97 +78,81 @@ func (d *Log) checkNamespace(namespace string) bool {
 	return false
 }
 
+// colorSprinter is the interface for types that support formatted color output.
+type colorSprinter interface {
+	Sprintf(format string, a ...any) string
+}
+
+// printColored prints a formatted message using the given color sprinter.
+func (d *Log) printColored(cs colorSprinter, message string, args ...any) {
+	d.Logger.Println(cs.Sprintf(message, args...))
+}
+
 // Printlnf prints a formatted message with color support
 func (d *Log) Printlnf(message string, args ...any) {
 	d.Logger.Println(color.Sprintf(message, args...))
 }
 
 // Println is an alias for Printlnf
-func (d *Log) Println(message string, args ...any) {
-	d.Printlnf(message, args...)
-}
+func (d *Log) Println(message string, args ...any) { d.Printlnf(message, args...) }
 
 // Defaultf prints a formatted message with default color
 func (d *Log) Defaultf(message string, args ...any) {
-	d.Logger.Println(color.Tag("default").Sprintf(message, args...))
+	d.printColored(color.Tag("default"), message, args...)
 }
 
 // Default is an alias for Defaultf
-func (d *Log) Default(message string, args ...any) {
-	d.Defaultf(message, args...)
-}
+func (d *Log) Default(message string, args ...any) { d.Defaultf(message, args...) }
 
 // Infof prints a formatted message with info color
-func (d *Log) Infof(message string, args ...any) {
-	d.Logger.Println(color.Info.Sprintf(message, args...))
-}
+func (d *Log) Infof(message string, args ...any) { d.printColored(color.Info, message, args...) }
 
 // Info is an alias for Infof
-func (d *Log) Info(message string, args ...any) {
-	d.Infof(message, args...)
-}
+func (d *Log) Info(message string, args ...any) { d.Infof(message, args...) }
 
 // Debugf prints a formatted message with debug color if debug mode is enabled
 func (d *Log) Debugf(message string, args ...any) {
-	if DEBUG && d.checkNamespace(d.Prefix()) {
-		d.Logger.Println(color.Debug.Sprintf(message, args...))
+	if DEBUG.Load() && d.checkNamespace(d.Prefix()) {
+		d.printColored(color.Debug, message, args...)
 	}
 }
 
-// Debug is an alias for Debugf that takes a simple message
-func (d *Log) Debug(message string, args ...any) {
-	d.Debugf(message, args...)
-}
+// Debug is an alias for Debugf
+func (d *Log) Debug(message string, args ...any) { d.Debugf(message, args...) }
 
 // Successf prints a formatted message with success color
-func (d *Log) Successf(message string, args ...any) {
-	d.Logger.Println(color.Success.Sprintf(message, args...))
-}
+func (d *Log) Successf(message string, args ...any) { d.printColored(color.Success, message, args...) }
 
 // Success is an alias for Successf
-func (d *Log) Success(message string, args ...any) {
-	d.Successf(message, args...)
-}
+func (d *Log) Success(message string, args ...any) { d.Successf(message, args...) }
 
 // Errorf prints a formatted message with error color
-func (d *Log) Errorf(message string, args ...any) {
-	d.Logger.Println(color.Danger.Sprintf(message, args...))
-}
+func (d *Log) Errorf(message string, args ...any) { d.printColored(color.Danger, message, args...) }
 
 // Error is an alias for Errorf
-func (d *Log) Error(message string, args ...any) {
-	d.Errorf(message, args...)
-}
+func (d *Log) Error(message string, args ...any) { d.Errorf(message, args...) }
 
 // Warningf prints a formatted message with warning color
-func (d *Log) Warningf(message string, args ...any) {
-	d.Logger.Println(color.Warn.Sprintf(message, args...))
-}
+func (d *Log) Warningf(message string, args ...any) { d.printColored(color.Warn, message, args...) }
 
 // Warning is an alias for Warningf
-func (d *Log) Warning(message string, args ...any) {
-	d.Warningf(message, args...)
-}
+func (d *Log) Warning(message string, args ...any) { d.Warningf(message, args...) }
 
 // Secondaryf prints a formatted message with secondary color
 func (d *Log) Secondaryf(message string, args ...any) {
-	d.Logger.Println(color.Secondary.Sprintf(message, args...))
+	d.printColored(color.Secondary, message, args...)
 }
 
 // Secondary is an alias for Secondaryf
-func (d *Log) Secondary(message string, args ...any) {
-	d.Secondaryf(message, args...)
-}
+func (d *Log) Secondary(message string, args ...any) { d.Secondaryf(message, args...) }
 
 // Questionf prints a formatted message with question color
 func (d *Log) Questionf(message string, args ...any) {
-	d.Logger.Println(color.Question.Sprintf(message, args...))
+	d.printColored(color.Question, message, args...)
 }
 
 // Question is an alias for Questionf
-func (d *Log) Question(message string, args ...any) {
-	d.Questionf(message, args...)
-}
+func (d *Log) Question(message string, args ...any) { d.Questionf(message, args...) }
 
 // Fatalf prints a formatted message with error color and exits the program
 func (d *Log) Fatalf(message string, args ...any) {
@@ -176,9 +160,7 @@ func (d *Log) Fatalf(message string, args ...any) {
 }
 
 // Fatal is an alias for Fatalf
-func (d *Log) Fatal(message string, args ...any) {
-	d.Fatalf(message, args...)
-}
+func (d *Log) Fatal(message string, args ...any) { d.Fatalf(message, args...) }
 
 // Prefix returns the current logger prefix
 func (d *Log) Prefix() string {

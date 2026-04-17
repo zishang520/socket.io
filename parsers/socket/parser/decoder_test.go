@@ -239,6 +239,12 @@ func TestDecoderErrorCases(t *testing.T) {
 		t.Errorf("Expected error for illegal attachments, got: %v", err)
 	}
 
+	// Test case: Too many attachments (exceeds default limit of 10)
+	err = d.Add("511-[\"data\"]")
+	if err == nil || err.Error() != "too many attachments" {
+		t.Errorf("Expected error for too many attachments, got: %v", err)
+	}
+
 	// Test case: Invalid JSON payload
 	err = d.Add("2{invalid json}")
 	if err == nil || err.Error() != "invalid payload" {
@@ -547,5 +553,41 @@ func TestDecoderWithIOReader(t *testing.T) {
 	err := d.Add(reader)
 	if err != nil {
 		t.Errorf("Add with bytes.Reader error = %v", err)
+	}
+}
+
+// TestDecoderOptionsMaxAttachments tests custom maxAttachments via DecoderOptions
+func TestDecoderOptionsMaxAttachments(t *testing.T) {
+	// Default decoder should reject 11 attachments
+	d := NewDecoder().(*decoder)
+	err := d.Add("511-[\"hello\"]")
+	if err == nil || err.Error() != "too many attachments" {
+		t.Errorf("Default decoder should reject 11 attachments, got: %v", err)
+	}
+
+	// Decoder with custom limit of 20 should accept 11 attachments
+	d2 := NewDecoder(&DecoderOptions{MaxAttachments: 20}).(*decoder)
+	err = d2.Add("511-[\"hello\"]")
+	if err != nil {
+		t.Errorf("Decoder with MaxAttachments=20 should accept 11 attachments, got: %v", err)
+	}
+
+	// Decoder with custom limit of 5 should reject 6 attachments
+	d3 := NewDecoder(&DecoderOptions{MaxAttachments: 5}).(*decoder)
+	err = d3.Add("56-[\"hello\"]")
+	if err == nil || err.Error() != "too many attachments" {
+		t.Errorf("Decoder with MaxAttachments=5 should reject 6 attachments, got: %v", err)
+	}
+
+	// Decoder with MaxAttachments=0 should use default
+	d4 := NewDecoder(&DecoderOptions{MaxAttachments: 0}).(*decoder)
+	if d4.maxAttachments != DefaultMaxAttachments {
+		t.Errorf("Decoder with MaxAttachments=0 should use default %d, got %d", DefaultMaxAttachments, d4.maxAttachments)
+	}
+
+	// Decoder with nil options should use default
+	d5 := NewDecoder(nil).(*decoder)
+	if d5.maxAttachments != DefaultMaxAttachments {
+		t.Errorf("Decoder with nil opts should use default %d, got %d", DefaultMaxAttachments, d5.maxAttachments)
 	}
 }

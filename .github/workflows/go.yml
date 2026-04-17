@@ -10,10 +10,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  GOPROXY: https://proxy.golang.org,direct
+
 jobs:
   lint:
     name: Lint Modules
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -24,23 +31,21 @@ jobs:
           - "servers/engine"
           - "servers/socket"
           - "adapters/adapter"
+          - "adapters/postgres"
           - "adapters/redis"
           - "adapters/valkey"
           - "clients/engine"
           - "clients/socket"
 
-    env:
-      GOPROXY: https://proxy.golang.org,direct
-
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: "1.26.x"
-          cache: true
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/go.sum"
 
       - name: Run make deps
         run: make deps
@@ -49,28 +54,24 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.10.1
-
           working-directory: ${{ matrix.module }}
-
           args: --timeout=5m --config=${{ github.workspace }}/.golangci.yml
 
   build-and-test:
     name: Build, Test and Analyze
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: lint
-
-    env:
-      GOPROXY: https://proxy.golang.org,direct
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: "1.26.x"
-          cache: true
+          go-version-file: "go.mod"
+          cache-dependency-path: "**/go.sum"
 
       - name: Start Redis with Password and No-Save
         run: |
@@ -88,7 +89,6 @@ jobs:
             sleep 3;
           done
 
-      - name: Build and Test
+      - name: Test
         run: |
-          make build
           make test

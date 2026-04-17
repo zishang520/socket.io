@@ -5,6 +5,14 @@
 package types
 
 // Simple byte buffer for marshaling data.
+//
+// This is a custom implementation rather than using bytes.Buffer because it
+// provides additional capabilities required by the socket.io protocol:
+//   - io.Seeker support (Seek method) for random-access reads
+//   - Clone() for deep copying buffers without shared state
+//   - Size() returning the total underlying buffer length
+//   - BufferInterface combining io.ReadWriteSeeker and other interfaces
+//   - BytesBuffer/StringBuffer wrappers with distinct GoString and JSON behavior
 
 import (
 	"errors"
@@ -258,8 +266,21 @@ func growSlice(b []byte, n int) []byte {
 	//
 	// Instead use the append-make pattern with a nil slice to ensure that
 	// we allocate buffers rounded up to the closest size class.
+	if n < 0 || len(b) > maxInt-n {
+		panic(ErrTooLarge)
+	}
 	c := len(b) + n // ensure enough space for n elements
-	c = max(c, 2*cap(b))
+	if c < 0 || c < len(b) {
+		panic(ErrTooLarge)
+	}
+
+	// Prefer doubling capacity when possible, but guard against overflow.
+	if capB := cap(b); capB <= maxInt/2 {
+		if doubled := 2 * capB; doubled > c {
+			c = doubled
+		}
+	}
+
 	b2 := append([]byte(nil), make([]byte, c)...)
 	i := copy(b2, b)
 	return b2[:i]

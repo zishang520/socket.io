@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	request_log         = log.NewLog("request")
+	requestLog          = log.NewLog("request")
 	cookieNameSanitizer = strings.NewReplacer("\n", "-", "\r", "-")
 )
 
@@ -49,7 +49,7 @@ func sanitizeOrWarn(fieldName string, valid func(byte) bool, v string) string {
 		if valid(v[i]) {
 			continue
 		}
-		request_log.Printf("request: invalid byte %q in %s; dropping invalid bytes", v[i], fieldName)
+		requestLog.Printf("request: invalid byte %q in %s; dropping invalid bytes", v[i], fieldName)
 		ok = false
 		break
 	}
@@ -70,7 +70,7 @@ func validCookieValueByte(b byte) bool {
 }
 
 func RandomString() string {
-	timestampStr := strconv.FormatInt(time.Now().UnixMilli(), 36)[3:]
-	randomBase36 := strconv.FormatUint(rand.Uint64(), 36)[2:5]
+	timestampStr := strconv.FormatInt(time.Now().UnixNano(), 36)[5:]
+	randomBase36 := strconv.FormatUint(rand.Uint64(), 36)[2:8]
 	return timestampStr + randomBase36
 }

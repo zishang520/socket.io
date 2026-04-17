@@ -4,6 +4,7 @@ package engine
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 )
 
 var (
-	server_log = log.NewLog("engine")
+	serverLog = log.NewLog("engine")
 
 	// Protocol errors mappings.
 	UNKNOWN_TRANSPORT            = &types.CodeMessage{Code: 0, Message: `Transport unknown`}
@@ -42,6 +43,7 @@ type baseServer struct {
 	clients      *types.Map[string, Socket]
 	clientsCount atomic.Uint64
 	middlewares  []Middleware
+	middlewareMu sync.RWMutex
 }
 
 func MakeBaseServer() BaseServer {
@@ -174,27 +176,27 @@ func (bs *baseServer) Verify(ctx *types.HttpContext, upgrade bool) (*types.CodeM
 	// transport check
 	transport := ctx.Query().Peek("transport")
 	if !bs.transports.Has(transport) || transport == transports.WEBTRANSPORT {
-		server_log.Debug(`unknown transport "%s"`, transport)
+		serverLog.Debug(`unknown transport "%s"`, transport)
 		return UNKNOWN_TRANSPORT, map[string]any{"transport": transport}
 	}
 
 	// 'Origin' header check
 	if origin := ctx.Headers().Peek("Origin"); utils.CheckInvalidHeaderChar(origin) {
 		ctx.Headers().Remove("Origin")
-		server_log.Debug("origin header invalid")
+		serverLog.Debug("origin header invalid")
 		return BAD_REQUEST, map[string]any{"name": "INVALID_ORIGIN", "origin": origin}
 	}
 
 	// sid check
 	sid := ctx.Query().Peek("sid")
 	if len(sid) > 0 {
-		scoket, ok := bs.clients.Load(sid)
+		socket, ok := bs.clients.Load(sid)
 		if !ok {
-			server_log.Debug(`unknown sid "%s"`, sid)
+			serverLog.Debug(`unknown sid "%s"`, sid)
 			return UNKNOWN_SID, map[string]any{"sid": sid}
 		}
-		if previousTransport := scoket.Transport().Name(); !upgrade && previousTransport != transport {
-			server_log.Debug("bad request: unexpected transport without upgrade")
+		if previousTransport := socket.Transport().Name(); !upgrade && previousTransport != transport {
+			serverLog.Debug("bad request: unexpected transport without upgrade")
 			return BAD_REQUEST, map[string]any{"name": "TRANSPORT_MISMATCH", "transport": transport, "previousTransport": previousTransport}
 		}
 	} else {
@@ -204,7 +206,7 @@ func (bs *baseServer) Verify(ctx *types.HttpContext, upgrade bool) (*types.CodeM
 		}
 
 		if transport == transports.WEBSOCKET && !upgrade {
-			server_log.Debug("invalid transport upgrade")
+			serverLog.Debug("invalid transport upgrade")
 			return BAD_REQUEST, map[string]any{"name": "TRANSPORT_HANDSHAKE_ERROR"}
 		}
 
@@ -220,28 +222,32 @@ func (bs *baseServer) Verify(ctx *types.HttpContext, upgrade bool) (*types.CodeM
 
 // Adds a new middleware.
 func (bs *baseServer) Use(fn Middleware) {
-	// It seems that there is no need to lock? ? ?
+	bs.middlewareMu.Lock()
+	defer bs.middlewareMu.Unlock()
 	bs.middlewares = append(bs.middlewares, fn)
 }
 
-/**
- * Apply the middlewares to the request.
- */
+// Apply the middlewares to the request.
 func (bs *baseServer) ApplyMiddlewares(ctx *types.HttpContext, callback func(error)) {
-	if len(bs.middlewares) == 0 {
-		server_log.Debug("no middleware to apply, skipping")
+	bs.middlewareMu.RLock()
+	middlewares := make([]Middleware, len(bs.middlewares))
+	copy(middlewares, bs.middlewares)
+	bs.middlewareMu.RUnlock()
+
+	if len(middlewares) == 0 {
+		serverLog.Debug("no middleware to apply, skipping")
 		callback(nil)
 		return
 	}
 	var apply func(int)
 	apply = func(i int) {
-		server_log.Debug("applying middleware n°%d", i+1)
-		bs.middlewares[i](ctx, func(err error) {
+		serverLog.Debug("applying middleware n°%d", i+1)
+		middlewares[i](ctx, func(err error) {
 			if err != nil {
 				callback(err)
 				return
 			}
-			if i+1 < len(bs.middlewares) {
+			if i+1 < len(middlewares) {
 				apply(i + 1)
 			} else {
 				callback(nil)
@@ -254,7 +260,7 @@ func (bs *baseServer) ApplyMiddlewares(ctx *types.HttpContext, callback func(err
 
 // Closes all clients.
 func (bs *baseServer) Close() BaseServer {
-	server_log.Debug("closing all open clients")
+	serverLog.Debug("closing all open clients")
 	bs.clients.Range(func(_ string, client Socket) bool {
 		client.Close(true)
 		return true
@@ -270,7 +276,7 @@ func (bs *baseServer) Cleanup() {
 
 // generate a socket id.
 // Overwrite this method to generate your custom socket id
-func (bs *baseServer) GenerateId(*types.HttpContext) (string, error) {
+func (bs *baseServer) GenerateId(*types.HttpContext) string {
 	return utils.Base64Id().GenerateId()
 }
 
@@ -282,7 +288,7 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 	}
 
 	if protocol == 3 && !bs.opts.AllowEIO3() {
-		server_log.Debug("unsupported protocol version")
+		serverLog.Debug("unsupported protocol version")
 		bs.Emit("connection_error", &types.ErrorMessage{
 			CodeMessage: UNSUPPORTED_PROTOCOL_VERSION,
 			Req:         ctx,
@@ -293,25 +299,12 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 		return UNSUPPORTED_PROTOCOL_VERSION, nil
 	}
 
-	id, err := bs.GenerateId(ctx)
-	if err != nil {
-		server_log.Debug("error while generating an id")
-		bs.Emit("connection_error", &types.ErrorMessage{
-			CodeMessage: BAD_REQUEST,
-			Req:         ctx,
-			Context: map[string]any{
-				"name":  "ID_GENERATION_ERROR",
-				"error": err,
-			},
-		})
-		return BAD_REQUEST, nil
-	}
-
-	server_log.Debug(`handshaking client "%s" (%s)`, id, transportName)
+	id := bs.GenerateId(ctx)
+	serverLog.Debug(`handshaking client "%s" (%s)`, id, transportName)
 
 	transport, err := bs._proto_.CreateTransport(transportName, ctx)
 	if err != nil {
-		server_log.Debug(`handshaking client "%s" (%s)`, id, transportName)
+		serverLog.Debug(`handshaking client "%s" (%s)`, id, transportName)
 		bs.Emit("connection_error", &types.ErrorMessage{
 			CodeMessage: BAD_REQUEST,
 			Req:         ctx,

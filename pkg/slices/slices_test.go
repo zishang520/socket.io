@@ -354,6 +354,133 @@ func TestReduce(t *testing.T) {
 	})
 }
 
+// TestContains tests the Contains function.
+func TestContains(t *testing.T) {
+	s := []int{1, 2, 3, 4, 5}
+
+	if !Contains(s, 3) {
+		t.Error("Contains(s, 3) should be true")
+	}
+	if Contains(s, 6) {
+		t.Error("Contains(s, 6) should be false")
+	}
+	if Contains([]int{}, 1) {
+		t.Error("Contains on empty slice should be false")
+	}
+
+	// Test with strings
+	ss := []string{"a", "b", "c"}
+	if !Contains(ss, "b") {
+		t.Error(`Contains(ss, "b") should be true`)
+	}
+	if Contains(ss, "d") {
+		t.Error(`Contains(ss, "d") should be false`)
+	}
+}
+
+// TestFindIndex tests the FindIndex function.
+func TestFindIndex(t *testing.T) {
+	s := []int{10, 20, 30, 40}
+
+	t.Run("found", func(t *testing.T) {
+		idx := FindIndex(s, func(n int) bool { return n == 30 })
+		if idx != 2 {
+			t.Errorf("FindIndex(==30) = %d, want 2", idx)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		idx := FindIndex(s, func(n int) bool { return n == 99 })
+		if idx != -1 {
+			t.Errorf("FindIndex(==99) = %d, want -1", idx)
+		}
+	})
+
+	t.Run("first match", func(t *testing.T) {
+		s := []int{1, 2, 3, 2, 1}
+		idx := FindIndex(s, func(n int) bool { return n == 2 })
+		if idx != 1 {
+			t.Errorf("FindIndex(==2) = %d, want 1 (first match)", idx)
+		}
+	})
+
+	t.Run("empty slice", func(t *testing.T) {
+		idx := FindIndex([]int{}, func(n int) bool { return true })
+		if idx != -1 {
+			t.Errorf("FindIndex on empty slice = %d, want -1", idx)
+		}
+	})
+}
+
+// TestFlatten tests the Flatten function.
+func TestFlatten(t *testing.T) {
+	t.Run("normal", func(t *testing.T) {
+		ss := [][]int{{1, 2}, {3, 4}, {5}}
+		got := Flatten(ss)
+		want := []int{1, 2, 3, 4, 5}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Flatten = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("with empty inner slices", func(t *testing.T) {
+		ss := [][]int{{1}, {}, {2, 3}, {}}
+		got := Flatten(ss)
+		want := []int{1, 2, 3}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Flatten = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("empty outer slice", func(t *testing.T) {
+		got := Flatten([][]int{})
+		if len(got) != 0 {
+			t.Errorf("Flatten on empty should be empty, got %v", got)
+		}
+	})
+
+	t.Run("nil outer slice", func(t *testing.T) {
+		got := Flatten[[]int](nil)
+		if len(got) != 0 {
+			t.Errorf("Flatten on nil should be empty, got %v", got)
+		}
+	})
+}
+
+// TestUnique tests the Unique function.
+func TestUnique(t *testing.T) {
+	t.Run("with duplicates", func(t *testing.T) {
+		got := Unique([]int{1, 2, 3, 2, 1, 4, 3})
+		want := []int{1, 2, 3, 4}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Unique = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("no duplicates", func(t *testing.T) {
+		got := Unique([]int{1, 2, 3})
+		want := []int{1, 2, 3}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Unique = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("empty slice", func(t *testing.T) {
+		got := Unique([]int{})
+		if len(got) != 0 {
+			t.Errorf("Unique on empty should be empty, got %v", got)
+		}
+	})
+
+	t.Run("all same", func(t *testing.T) {
+		got := Unique([]string{"a", "a", "a"})
+		want := []string{"a"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Unique = %v, want %v", got, want)
+		}
+	})
+}
+
 // TestIsEmpty tests the IsEmpty function.
 func TestIsEmpty(t *testing.T) {
 	var nilSlice []int
@@ -493,6 +620,58 @@ func BenchmarkReduce(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		result = Reduce(benchSliceInt, 0, reducer)
+	}
+	_ = result
+}
+
+func BenchmarkContains_Hit(b *testing.B) {
+	var result bool
+	for i := 0; i < b.N; i++ {
+		result = Contains(benchSliceInt, 500)
+	}
+	benchResultBool = result
+}
+
+func BenchmarkContains_Miss(b *testing.B) {
+	var result bool
+	for i := 0; i < b.N; i++ {
+		result = Contains(benchSliceInt, 2000)
+	}
+	benchResultBool = result
+}
+
+func BenchmarkFindIndex(b *testing.B) {
+	predicate := func(n int) bool { return n == 500 }
+	var result int
+	for i := 0; i < b.N; i++ {
+		result = FindIndex(benchSliceInt, predicate)
+	}
+	benchResultInt = result
+}
+
+func BenchmarkFlatten(b *testing.B) {
+	ss := make([][]int, 10)
+	for i := range ss {
+		ss[i] = benchSliceInt
+	}
+	var result []int
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result = Flatten(ss)
+	}
+	_ = result
+}
+
+func BenchmarkUnique(b *testing.B) {
+	// Create a slice with many duplicates
+	s := make([]int, 1000)
+	for i := range s {
+		s[i] = i % 100
+	}
+	var result []int
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result = Unique(s)
 	}
 	_ = result
 }

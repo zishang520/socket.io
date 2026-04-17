@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	namespace_log = log.NewLog("socket.io:namespace")
+	namespaceLog = log.NewLog("socket.io:namespace")
 
 	NAMESPACE_RESERVED_EVENTS = types.NewSet("connect", "connection", "new_namespace")
 )
@@ -155,6 +155,7 @@ func (n *namespace) Construct(server *Server, name string) {
 // in addition to the constructor.
 func (n *namespace) InitAdapter() {
 	n.adapter = n.server.Adapter().New(n)
+	n.adapter.Init()
 }
 
 // Registers a middleware, which is a function that gets executed for every incoming [Socket].
@@ -261,22 +262,21 @@ func (n *namespace) Except(room ...Room) *BroadcastOperator {
 
 // Adds a new client.
 func (n *namespace) Add(client *Client, auth map[string]any, fn func(*Socket)) {
-	namespace_log.Debug("adding socket to nsp %s", n.name)
+	namespaceLog.Debug("adding socket to nsp %s", n.name)
 	socket := n._createSocket(client, auth)
 	if connectionStateRecovery := n.server.Opts().ConnectionStateRecovery(); connectionStateRecovery != nil && connectionStateRecovery.SkipMiddlewares() && socket.Recovered() && client.Conn().ReadyState() == "open" {
 		n._doConnect(socket, fn)
 		return
 	}
 	n.run(socket, func(err *ExtendedError) {
-		// Needs further investigation
-		go func() {
+		socket.Enqueue(func() {
 			if client.conn.ReadyState() != "open" {
-				namespace_log.Debug("next called after client was closed - ignoring socket")
+				namespaceLog.Debug("next called after client was closed - ignoring socket")
 				socket._cleanup()
 				return
 			}
 			if err != nil {
-				namespace_log.Debug("middleware error, sending CONNECT_ERROR packet to the client")
+				namespaceLog.Debug("middleware error, sending CONNECT_ERROR packet to the client")
 				socket._cleanup()
 				if client.conn.Protocol() == 3 {
 					if e := err.Data; e != nil {
@@ -295,7 +295,7 @@ func (n *namespace) Add(client *Client, auth map[string]any, fn func(*Socket)) {
 			}
 
 			n._doConnect(socket, fn)
-		}()
+		})
 	})
 }
 
@@ -321,9 +321,9 @@ func (n *namespace) _createSocket(client *Client, auth map[string]any) *Socket {
 		if hasSessionId && hasOffset && n.server.Opts().ConnectionStateRecovery() != nil {
 			session, err := n.Proto().Adapter().RestoreSession(PrivateSessionId(sessionId), offset)
 			if err != nil {
-				namespace_log.Debug("error while restoring session: %v", err)
+				namespaceLog.Debug("error while restoring session: %v", err)
 			} else if session != nil {
-				namespace_log.Debug("connection state recovered for sid %s", session.Sid)
+				namespaceLog.Debug("connection state recovered for sid %s", session.Sid)
 				return NewSocket(n, client, auth, session)
 			}
 		}
@@ -357,7 +357,7 @@ func (n *namespace) Cleanup(cleanup func()) {
 // Removes a client. Called by each [Socket].
 func (n *namespace) Remove(socket *Socket) {
 	if _, ok := n.sockets.LoadAndDelete(socket.Id()); !ok {
-		namespace_log.Debug("ignoring remove for %s", socket.Id())
+		namespaceLog.Debug("ignoring remove for %s", socket.Id())
 	}
 	if n._cleanup != nil {
 		n._cleanup()

@@ -3,6 +3,7 @@ package transports
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -78,6 +79,14 @@ func (j *jsonp) DoWrite(ctx *types.HttpContext, data types.BufferInterface, opti
 		defer callback(err)
 
 		// Respond with 500 Internal Server Error if encoding fails
+		_ = ctx.SetStatusCode(http.StatusInternalServerError)
+		_, _ = ctx.Write(nil)
+		return
+	}
+	if len(payload) > types.MaxPayloadSize {
+		ctx.Cleanup()
+		defer callback(errors.New("jsonp payload too large"))
+
 		_ = ctx.SetStatusCode(http.StatusInternalServerError)
 		_, _ = ctx.Write(nil)
 		return

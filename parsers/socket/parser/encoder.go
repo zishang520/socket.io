@@ -25,12 +25,13 @@ func (e *encoder) Encode(packet *Packet) []types.BufferInterface {
 	// Check if the packet contains binary data and upgrade packet type if needed
 	if packet.Type == EVENT || packet.Type == ACK {
 		if HasBinary(packet.Data) {
-			if packet.Type == EVENT {
-				packet.Type = BINARY_EVENT
+			data := *packet
+			if data.Type == EVENT {
+				data.Type = BINARY_EVENT
 			} else {
-				packet.Type = BINARY_ACK
+				data.Type = BINARY_ACK
 			}
-			return e.encodeAsBinary(packet)
+			return e.encodeAsBinary(&data)
 		}
 	}
 
@@ -64,7 +65,9 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 	if packet.Data != nil {
 		processedData := preprocessData(packet.Data)
 		if jsonBytes, err := json.Marshal(processedData); err == nil {
-			_, _ = buffer.Write(jsonBytes)
+			if len(jsonBytes) <= types.MaxPayloadSize {
+				_, _ = buffer.Write(jsonBytes)
+			}
 		}
 	}
 

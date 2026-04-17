@@ -7,6 +7,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,6 +78,9 @@ type shardedRedisAdapter struct {
 	opts            *ShardedRedisAdapterOptions
 	channel         string
 	responseChannel string
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // MakeShardedRedisAdapter creates a new uninitialized shardedRedisAdapter.
@@ -130,11 +134,14 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 		s.opts.SetSubscriptionMode(DefaultShardedSubscriptionMode)
 	}
 
+	s.ctx, s.cancel = context.WithCancel(s.redisClient.Context)
+
 	s.channel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
 	s.responseChannel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#" + string(s.Uid()) + "#"
 
-	channelPubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, s.channel)
-	responsePubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, s.responseChannel)
+	// Subscribe to static channels using SubClient for read/write separation.
+	channelPubSub := s.redisClient.Sub().SSubscribe(s.ctx, s.channel)
+	responsePubSub := s.redisClient.Sub().SSubscribe(s.ctx, s.responseChannel)
 
 	s.pubSubClients.Store(s.channel, channelPubSub)
 	s.pubSubClients.Store(s.responseChannel, responsePubSub)
@@ -177,7 +184,7 @@ func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
 // For non-ClusterClient backends, each channel gets its own Pub/Sub, guarded by
 // a per-channel mutex stored in ncDynamicMutexes.
 func (s *shardedRedisAdapter) subscribeNode(channel string) {
-	clusterClient, isCluster := s.redisClient.Client.(*rds.ClusterClient)
+	clusterClient, isCluster := s.redisClient.Sub().(*rds.ClusterClient)
 	if !isCluster {
 		// Non-cluster path: ensure exactly one SSubscribe per channel.
 		mu, _ := s.ncDynamicMutexes.LoadOrStore(channel, &sync.Mutex{})
@@ -187,13 +194,13 @@ func (s *shardedRedisAdapter) subscribeNode(channel string) {
 		if _, exists := s.ncDynamicPubSubs.Load(channel); exists {
 			return // idempotency guard
 		}
-		pubSub := s.redisClient.Client.SSubscribe(s.redisClient.Context, channel)
+		pubSub := s.redisClient.Sub().SSubscribe(s.ctx, channel)
 		s.ncDynamicPubSubs.Store(channel, pubSub)
 		go s.receiveMessages(pubSub)
 		return
 	}
 
-	nodeClient, err := clusterClient.MasterForKey(s.redisClient.Context, channel)
+	nodeClient, err := clusterClient.MasterForKey(s.ctx, channel)
 	if err != nil {
 		s.redisClient.Emit("error", fmt.Errorf("subscribeNode: MasterForKey(%q): %w", channel, err))
 		return
@@ -216,12 +223,12 @@ func (s *shardedRedisAdapter) subscribeNode(channel string) {
 	// chanToAddr check above and acquiring entry.mu.
 	if entry.pubSub == nil {
 		// First goroutine for this master: open one new TCP connection.
-		entry.pubSub = nodeClient.SSubscribe(s.redisClient.Context, channel)
+		entry.pubSub = nodeClient.SSubscribe(s.ctx, channel)
 		go s.receiveMessages(entry.pubSub)
 	} else {
 		// Subsequent goroutines reuse the existing connection by sending an
 		// additional SSUBSCRIBE command on the open socket.
-		if err := entry.pubSub.SSubscribe(s.redisClient.Context, channel); err != nil {
+		if err := entry.pubSub.SSubscribe(s.ctx, channel); err != nil {
 			s.redisClient.Emit("error", fmt.Errorf("subscribeNode: SSubscribe(%q): %w", channel, err))
 			return
 		}
@@ -235,12 +242,12 @@ func (s *shardedRedisAdapter) subscribeNode(channel string) {
 // When the reference count for a master node reaches zero, its shared Pub/Sub
 // connection is closed and the pool entry is deleted.
 func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
-	if _, isCluster := s.redisClient.Client.(*rds.ClusterClient); !isCluster {
+	if _, isCluster := s.redisClient.Sub().(*rds.ClusterClient); !isCluster {
 		// Non-cluster path: unsubscribe under the per-channel mutex.
 		if mu, exists := s.ncDynamicMutexes.Load(channel); exists {
 			mu.Lock()
 			if pubSub, ok := s.ncDynamicPubSubs.LoadAndDelete(channel); ok {
-				if err := pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
+				if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
 					s.redisClient.Emit("error", err)
 				}
 				if err := pubSub.Close(); err != nil {
@@ -267,7 +274,7 @@ func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
 	defer entry.mu.Unlock()
 
 	if entry.pubSub != nil {
-		if err := entry.pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
+		if err := entry.pubSub.SUnsubscribe(s.ctx, channel); err != nil {
 			s.redisClient.Emit("error", err)
 		}
 	}
@@ -285,8 +292,10 @@ func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
 
 // Close unsubscribes from all channels and shuts down every Pub/Sub connection.
 func (s *shardedRedisAdapter) Close() {
+	defer s.cancel()
+
 	s.pubSubClients.Range(func(channel string, pubSub *rds.PubSub) bool {
-		if err := pubSub.SUnsubscribe(s.redisClient.Context, channel); err != nil {
+		if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
 			s.redisClient.Emit("error", err)
 		}
 		if err := pubSub.Close(); err != nil {
@@ -318,6 +327,8 @@ func (s *shardedRedisAdapter) Close() {
 
 	s.ncDynamicPubSubs.Clear()
 	s.ncDynamicMutexes.Clear()
+
+	s.ClusterAdapter.Close()
 }
 
 // receiveMessages continuously reads messages from a Pub/Sub connection and
@@ -325,9 +336,9 @@ func (s *shardedRedisAdapter) Close() {
 // the Pub/Sub is closed.
 func (s *shardedRedisAdapter) receiveMessages(pubSub *rds.PubSub) {
 	for {
-		msg, err := pubSub.ReceiveMessage(s.redisClient.Context)
+		msg, err := pubSub.ReceiveMessage(s.ctx)
 		if err != nil {
-			if s.redisClient.Context.Err() != nil || errors.Is(err, rds.ErrClosed) {
+			if s.ctx.Err() != nil || errors.Is(err, rds.ErrClosed) {
 				return
 			}
 			s.redisClient.Emit("error", err)
@@ -347,7 +358,7 @@ func (s *shardedRedisAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 		return "", fmt.Errorf("failed to encode message: %w", err)
 	}
 
-	return "", s.redisClient.Client.SPublish(s.redisClient.Context, channel, msg).Err()
+	return "", s.redisClient.Client.SPublish(s.ctx, channel, msg).Err()
 }
 
 // computeChannel returns the Redis channel to publish a message on.
@@ -394,7 +405,7 @@ func (s *shardedRedisAdapter) DoPublishResponse(requesterUid adapter.ServerId, r
 		return fmt.Errorf("failed to encode response: %w", err)
 	}
 
-	return s.redisClient.Client.SPublish(s.redisClient.Context, s.channel+string(requesterUid)+"#", message).Err()
+	return s.redisClient.Client.SPublish(s.ctx, s.channel+string(requesterUid)+"#", message).Err()
 }
 
 // encode serializes a cluster message as JSON or MessagePack.
@@ -526,7 +537,7 @@ func (s *shardedRedisAdapter) decodeData(messageType adapter.MessageType, rawDat
 // ServerCount returns the number of servers currently subscribed to this adapter's
 // main channel, as reported by Redis PUBSUBSHARDNUMSUB.
 func (s *shardedRedisAdapter) ServerCount() int64 {
-	result, err := s.redisClient.Client.PubSubShardNumSub(s.redisClient.Context, s.channel).Result()
+	result, err := s.redisClient.Client.PubSubShardNumSub(s.ctx, s.channel).Result()
 	if err != nil {
 		s.redisClient.Emit("error", err)
 		return 0

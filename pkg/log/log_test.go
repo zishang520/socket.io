@@ -123,8 +123,8 @@ func TestDebugWithNamespace(t *testing.T) {
 	Output = &buf
 	defer func() { Output = os.Stderr }()
 
-	DEBUG = true // Enable debug mode for testing
-	defer func() { DEBUG = false }()
+	DEBUG.Store(true) // Enable debug mode for testing
+	defer func() { DEBUG.Store(false) }()
 
 	tests := []struct {
 		name     string
@@ -226,7 +226,7 @@ func TestFormattedMethods(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
-	DEBUG = true
+	DEBUG.Store(true)
 	_ = os.Setenv("DEBUG", "")
 	_log := NewLog("namespace")
 	buf := new(bytes.Buffer)

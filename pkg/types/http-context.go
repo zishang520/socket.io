@@ -13,6 +13,8 @@ import (
 var (
 	ErrResponseAlreadyWritten = errors.New("response has already been written")
 	ErrInvalidStatusCode      = errors.New("invalid status code")
+	ErrNilRequest             = errors.New("http.Request must not be nil")
+	ErrNilResponseWriter      = errors.New("http.ResponseWriter must not be nil")
 )
 
 type HttpContext struct {
@@ -46,6 +48,13 @@ type HttpContext struct {
 }
 
 func NewHttpContext(w http.ResponseWriter, r *http.Request) *HttpContext {
+	if r == nil {
+		panic(ErrNilRequest)
+	}
+	if w == nil {
+		panic(ErrNilResponseWriter)
+	}
+
 	c := &HttpContext{
 		EventEmitter: NewEventEmitter(),
 
@@ -107,7 +116,7 @@ func (c *HttpContext) SetStatusCode(code int) error {
 	if code < 100 || code > 599 {
 		return ErrInvalidStatusCode
 	}
-	if c.IsDone() {
+	if c.state.Load() {
 		return ErrResponseAlreadyWritten
 	}
 	c.statusCode.Store(int32(code))
@@ -124,11 +133,14 @@ func (c *HttpContext) Write(data []byte) (int, error) {
 	}
 
 	var writeResult struct {
-		n   int
-		err error
+		n      int
+		err    error
+		called bool
 	}
 
 	c.writeOnce.Do(func() {
+		writeResult.called = true
+
 		if !c.state.CompareAndSwap(false, true) {
 			writeResult.err = ErrResponseAlreadyWritten
 			return
@@ -138,6 +150,10 @@ func (c *HttpContext) Write(data []byte) (int, error) {
 
 		c.closeWithError(nil)
 	})
+
+	if !writeResult.called {
+		return 0, ErrResponseAlreadyWritten
+	}
 
 	return writeResult.n, writeResult.err
 }

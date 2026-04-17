@@ -68,7 +68,7 @@ type (
 		Cleanup()
 		// generate a socket id.
 		// Overwrite this method to generate your custom socket id
-		GenerateId(*types.HttpContext) (string, error)
+		GenerateId(*types.HttpContext) string
 		// Protected
 		//
 		// Handshakes a new client.

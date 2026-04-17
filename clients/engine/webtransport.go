@@ -15,6 +15,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/request"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -39,6 +40,8 @@ type webTransport struct {
 
 	// mu is a mutex to protect concurrent access to the WebTransport connection
 	mu sync.Mutex
+
+	writeQueue *queue.Queue
 }
 
 // Name returns the identifier for the WebTransport transport.
@@ -77,6 +80,8 @@ func NewWebTransport(socket Socket, opts SocketOptionsInterface) WebTransport {
 // This sets up the WebTransport dialer with appropriate configuration for the connection.
 func (w *webTransport) Construct(socket Socket, opts SocketOptionsInterface) {
 	w.Transport.Construct(socket, opts)
+
+	w.writeQueue = queue.New()
 
 	w.dialer = &wt.Dialer{
 		TLSClientConfig: w.Opts().TLSClientConfig(),
@@ -117,7 +122,7 @@ func (w *webTransport) DoOpen() {
 
 	stream, err := session.OpenStreamSync(context.Background())
 	if err != nil {
-		client_webtransport_log.Debug("session is closed")
+		clientWebtransportLog.Debug("session is closed")
 		w.Emit("error", err)
 		return
 	}
@@ -177,7 +182,7 @@ func (w *webTransport) handshake() {
 		if data, err := json.Marshal(map[string]any{
 			"sid": w.Query().Get("sid"),
 		}); err != nil {
-			client_webtransport_log.Debug("JSON Marshal error: %s", err.Error())
+			clientWebtransportLog.Debug("JSON Marshal error: %s", err.Error())
 		} else {
 			packet.Data = types.NewStringBuffer(data)
 		}
@@ -185,7 +190,7 @@ func (w *webTransport) handshake() {
 
 	data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 	if err != nil {
-		client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
+		clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
 		w._error(err)
 		return
 	}
@@ -201,7 +206,7 @@ func (w *webTransport) addEventListeners() {
 		w.OnError("webtransport error", slices.TryGetAny[error](errs, 0), w.session.Session().Context())
 	})
 	_ = w.session.Once("close", func(...any) {
-		client_webtransport_log.Debug(`transport closed gracefully`)
+		clientWebtransportLog.Debug(`transport closed gracefully`)
 		w.OnClose(NewTransportError("webtransport connection closed", nil, w.session.Session().Context()).Err())
 	})
 
@@ -217,8 +222,7 @@ func (w *webTransport) addEventListeners() {
 func (w *webTransport) Write(packets []*packet.Packet) {
 	w.SetWritable(false)
 
-	// Needs further investigation
-	go w.write(packets)
+	w.writeQueue.Enqueue(func() { w.write(packets) })
 }
 func (w *webTransport) write(packets []*packet.Packet) {
 	// fake drain
@@ -228,9 +232,9 @@ func (w *webTransport) write(packets []*packet.Packet) {
 		w.Emit("drain")
 	}()
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	var writeErr error
 
+	w.mu.Lock()
 	// encodePacket efficient as it uses webTransport framing
 	// no need for encodePayload
 	for _, packet := range packets {
@@ -248,38 +252,58 @@ func (w *webTransport) write(packets []*packet.Packet) {
 				}
 				pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
 				if err != nil {
-					client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
-					w._error(err)
-					return
+					clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
+					writeErr = err
+					break
 				}
 				if err := w.session.WritePreparedMessage(pm); err != nil {
-					client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
-					w._error(err)
-					return
+					clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
+					writeErr = err
+					break
 				}
-				return
+				continue
 			}
 		}
 
 		data, err := parser.Parserv4().EncodePacket(packet, w.SupportsBinary())
 		if err != nil {
-			client_webtransport_log.Debug(`Send Error "%s"`, err.Error())
-			w._error(err)
-			return
+			clientWebtransportLog.Debug(`Send Error "%s"`, err.Error())
+			writeErr = err
+			break
 		}
-		w.doWrite(data, compress)
+		w.doWrite(data, compress, &writeErr)
+		if writeErr != nil {
+			break
+		}
+	}
+	w.mu.Unlock()
+
+	// Report errors outside of the lock to prevent potential deadlocks
+	// from event handlers that may try to write.
+	if writeErr != nil {
+		w._error(writeErr)
 	}
 }
 
 // doWrite performs the actual WebTransport write operation.
 // This method handles message compression and WebTransport message framing.
-func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
+// When called from write() under lock, errors are stored in writeErr instead of
+// calling _error() directly, to prevent deadlocks from event handlers.
+func (w *webTransport) doWrite(data types.BufferInterface, _ bool, writeErr ...*error) {
+	reportErr := func(err error) {
+		if len(writeErr) > 0 && writeErr[0] != nil {
+			*writeErr[0] = err
+		} else {
+			w._error(err)
+		}
+	}
+
 	// if perMessageDeflate := w.Opts().PerMessageDeflate(); perMessageDeflate != nil {
 	// 	if data.Len() < perMessageDeflate.Threshold {
 	// 		compress = false
 	// 	}
 	// }
-	client_webtransport_log.Debug(`writing %#v`, data)
+	clientWebtransportLog.Debug(`writing %#v`, data)
 
 	// w.session.EnableWriteCompression(compress)
 	mt := webtransport.BinaryMessage
@@ -288,17 +312,17 @@ func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
 	}
 	write, err := w.session.NextWriter(mt)
 	if err != nil {
-		w._error(err)
+		reportErr(err)
 		return
 	}
 	defer func() {
 		if err := write.Close(); err != nil {
-			w._error(err)
+			reportErr(err)
 			return
 		}
 	}()
 	if _, err := io.Copy(write, data); err != nil {
-		w._error(err)
+		reportErr(err)
 		return
 	}
 }
@@ -306,6 +330,7 @@ func (w *webTransport) doWrite(data types.BufferInterface, _ bool) {
 // DoClose gracefully closes the WebTransport connection.
 // This method ensures proper cleanup of the WebTransport connection.
 func (w *webTransport) DoClose() {
+	w.writeQueue.TryClose()
 	if w.session != nil {
 		defer func() { _ = w.session.CloseWithError(0, "") }()
 	}

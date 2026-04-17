@@ -37,17 +37,26 @@ func NewYeast() *Yeast {
 	return &Yeast{}
 }
 
-func (y *Yeast) Encode(num int64) (encoded string) {
+func (y *Yeast) Encode(num int64) string {
+	if num < 0 {
+		num = -num
+	}
 	if num == 0 {
 		return alphabet[0]
 	}
 
+	buf := make([]byte, 0, 10)
 	for num > 0 {
-		encoded = alphabet[num%length] + encoded
+		buf = append(buf, alphabet[num%length][0])
 		num /= length
 	}
 
-	return encoded
+	// reverse the slice since digits were collected least-significant first
+	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
+		buf[i], buf[j] = buf[j], buf[i]
+	}
+
+	return string(buf)
 }
 
 func (y *Yeast) Decode(str string) int64 {

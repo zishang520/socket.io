@@ -19,6 +19,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/engine/v3/parser"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
 	"github.com/zishang520/socket.io/v3/pkg/events"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
@@ -72,9 +73,9 @@ type socketWithoutUpgrade struct {
 	upgrading  atomic.Bool          // Upgrade status flag
 
 	// Private fields
-	_pingInterval              int64                       // Interval between ping messages
-	_pingTimeout               int64                       // Timeout for ping responses
-	_maxPayload                int64                       // Maximum payload size allowed
+	_pingInterval              atomic.Int64                // Interval between ping messages
+	_pingTimeout               atomic.Int64                // Timeout for ping responses
+	_maxPayload                atomic.Int64                // Maximum payload size allowed
 	_pingTimeoutTimer          atomic.Pointer[utils.Timer] // Timer for ping timeout
 	_pingTimeoutTime           types.Atomic[float64]       // Timestamp for ping timeout expiration
 	_beforeunloadEventListener types.EventListener         // Event listener for page unload
@@ -91,7 +92,8 @@ type socketWithoutUpgrade struct {
 	priorWebsocketSuccess atomic.Bool // Previous WebSocket connection success flag
 	protocol              int         // Engine.IO protocol version
 
-	flushMu sync.Mutex
+	flushMu   sync.Mutex
+	taskQueue *queue.Queue
 }
 
 // Prototype sets the prototype for method rewriting.
@@ -174,11 +176,12 @@ func MakeSocketWithoutUpgrade() SocketWithoutUpgrade {
 		EventEmitter: types.NewEventEmitter(),
 		writeBuffer:  &types.Slice[*packet.Packet]{},
 
-		_pingInterval: -1,
-		_pingTimeout:  -1,
-		_maxPayload:   -1,
+		taskQueue: queue.New(),
 	}
 
+	s._pingInterval.Store(-1)
+	s._pingTimeout.Store(-1)
+	s._maxPayload.Store(-1)
 	s._pingTimeoutTime.Store(math.Inf(1))
 	s.protocol = parser.Protocol
 	s.Prototype(s)
@@ -209,7 +212,7 @@ func (s *socketWithoutUpgrade) Construct(uri string, opts SocketOptionsInterface
 				opts.SetQuery(parsedURI.Query())
 			}
 		} else {
-			client_socket_log.Error("Invalid URL address: %v", err)
+			clientSocketLog.Error("Invalid URL address: %v", err)
 		}
 	} else if opts.GetRawHost() != nil {
 		if parsedURI, err := url.Parse(opts.Host()); err == nil {
@@ -288,7 +291,7 @@ func (s *socketWithoutUpgrade) Construct(uri string, opts SocketOptionsInterface
 		_ = events.Once(EventBeforeUnload, s._beforeunloadEventListener)
 
 		if s.hostname != "localhost" {
-			client_socket_log.Debug("adding listener for the 'offline' event")
+			clientSocketLog.Debug("adding listener for the 'offline' event")
 			s._offlineEventListener = func(...any) {
 				s._onClose("transport close", errors.New("network connection lost"))
 			}
@@ -308,7 +311,7 @@ func (s *socketWithoutUpgrade) Construct(uri string, opts SocketOptionsInterface
 // CreateTransport initializes a new transport instance with the specified name.
 // It sets up the necessary query parameters and configuration for the transport.
 func (s *socketWithoutUpgrade) CreateTransport(name string) Transport {
-	client_socket_log.Debug(`creating transport "%s"`, name)
+	clientSocketLog.Debug(`creating transport "%s"`, name)
 
 	query := url.Values{}
 
@@ -341,7 +344,7 @@ func (s *socketWithoutUpgrade) CreateTransport(name string) Transport {
 		}
 	}
 
-	client_socket_log.Debug(`options "%v"`, opts)
+	clientSocketLog.Debug(`options "%v"`, opts)
 
 	return s._transportsByName[name].New(s._proto_, opts)
 }
@@ -351,14 +354,12 @@ func (s *socketWithoutUpgrade) CreateTransport(name string) Transport {
 func (s *socketWithoutUpgrade) _open() {
 	if s.transports.Len() == 0 {
 		// Emit error on next tick so it can be listened to
-		// Needs further investigation
-		go s.Emit("error", errors.New("no transports available"))
+		s.taskQueue.Enqueue(func() { s.Emit("error", errors.New("no transports available")) })
 		return
 	}
 	transportName, err := s.transports.Get(0)
 	if err != nil {
-		// Needs further investigation
-		go s.Emit("error", err)
+		s.taskQueue.Enqueue(func() { s.Emit("error", err) })
 		return
 	}
 	if s.opts.RememberUpgrade() && s.PriorWebsocketSuccess() && s.transports.FindIndex(func(s string) bool {
@@ -377,10 +378,10 @@ func (s *socketWithoutUpgrade) _open() {
 // SetTransport configures the current transport and sets up event listeners.
 // It ensures proper cleanup of any existing transport before setting up the new one.
 func (s *socketWithoutUpgrade) SetTransport(transport Transport) {
-	client_socket_log.Debug("setting transport %s", transport.Name())
+	clientSocketLog.Debug("setting transport %s", transport.Name())
 
 	if oldTransport := s.Transport(); oldTransport != nil {
-		client_socket_log.Debug("clearing existing transport %s", oldTransport.Name())
+		clientSocketLog.Debug("clearing existing transport %s", oldTransport.Name())
 		oldTransport.Clear()
 	}
 
@@ -399,7 +400,7 @@ func (s *socketWithoutUpgrade) SetTransport(transport Transport) {
 // OnOpen is called when the connection is successfully established.
 // It updates the connection state and triggers necessary initialization.
 func (s *socketWithoutUpgrade) OnOpen() {
-	client_socket_log.Debug("socket open")
+	clientSocketLog.Debug("socket open")
 	s.readyState.Store(SocketStateOpen)
 	s.SetPriorWebsocketSuccess(transports.WEBSOCKET == s.Transport().Name())
 	s.Emit("open")
@@ -410,7 +411,7 @@ func (s *socketWithoutUpgrade) OnOpen() {
 // It processes different packet types and triggers appropriate events.
 func (s *socketWithoutUpgrade) _onPacket(data *packet.Packet) {
 	if readyState := s.ReadyState(); data != nil && (SocketStateOpening == readyState || SocketStateOpen == readyState || SocketStateClosing == readyState) {
-		client_socket_log.Debug(`socket receive: type "%s", data "%v"`, data.Type, data.Data)
+		clientSocketLog.Debug(`socket receive: type "%s", data "%v"`, data.Type, data.Data)
 
 		s.Emit("packet", data)
 
@@ -445,7 +446,7 @@ func (s *socketWithoutUpgrade) _onPacket(data *packet.Packet) {
 			s.Emit("message", data.Data)
 		}
 	} else {
-		client_socket_log.Debug(`packet received with socket readyState "%s"`, readyState)
+		clientSocketLog.Debug(`packet received with socket readyState "%s"`, readyState)
 	}
 }
 
@@ -455,9 +456,9 @@ func (s *socketWithoutUpgrade) OnHandshake(data *HandshakeData) {
 	s.Emit("handshake", data)
 	s.id.Store(data.Sid)
 	s.Transport().Query().Set("sid", data.Sid)
-	s._pingInterval = data.PingInterval
-	s._pingTimeout = data.PingTimeout
-	s._maxPayload = data.MaxPayload
+	s._pingInterval.Store(data.PingInterval)
+	s._pingTimeout.Store(data.PingTimeout)
+	s._maxPayload.Store(data.MaxPayload)
 	s._proto_.OnOpen()
 	// In case open handler closes socket
 	if SocketStateClosed == s.ReadyState() {
@@ -470,7 +471,7 @@ func (s *socketWithoutUpgrade) OnHandshake(data *HandshakeData) {
 // It handles timer cleanup and sets up new timeout periods based on server configuration.
 func (s *socketWithoutUpgrade) _resetPingTimeout() {
 	utils.ClearTimeout(s._pingTimeoutTimer.Load())
-	delay := s._pingInterval + s._pingTimeout
+	delay := s._pingInterval.Load() + s._pingTimeout.Load()
 	s._pingTimeoutTime.Store(float64(time.Now().UnixMilli() + delay))
 	s._pingTimeoutTimer.Store(utils.SetTimeout(func() {
 		s._onClose("ping timeout", nil)
@@ -494,21 +495,28 @@ func (s *socketWithoutUpgrade) _onDrain() {
 // It ensures packets are sent within payload size limits and handles transport state.
 func (s *socketWithoutUpgrade) Flush() {
 	s.flushMu.Lock()
-	defer s.flushMu.Unlock()
 
+	shouldEmitFlush := false
 	if SocketStateClosed != s.ReadyState() && s.Transport().Writable() && !s.Upgrading() {
 		if packets := s._getWritablePackets(); len(packets) > 0 {
-			client_socket_log.Debug("flushing %d packets in socket", len(packets))
+			clientSocketLog.Debug("flushing %d packets in socket", len(packets))
 			s.Transport().Send(packets)
-			s.Emit("flush")
+			shouldEmitFlush = true
 		}
+	}
+
+	s.flushMu.Unlock()
+
+	if shouldEmitFlush {
+		s.Emit("flush")
 	}
 }
 
 // _getWritablePackets prepares packets for sending while respecting payload size limits.
 // It handles packet encoding and size calculation for different transport types.
 func (s *socketWithoutUpgrade) _getWritablePackets() (res []*packet.Packet) {
-	if s._maxPayload == 0 || s.Transport().Name() != transports.POLLING || s.writeBuffer.Len() <= 1 {
+	maxPayload := s._maxPayload.Load()
+	if maxPayload == 0 || s.Transport().Name() != transports.POLLING || s.writeBuffer.Len() <= 1 {
 		return s.writeBuffer.AllAndClear()
 	}
 
@@ -527,8 +535,8 @@ func (s *socketWithoutUpgrade) _getWritablePackets() (res []*packet.Packet) {
 				payloadSize += int64(math.Ceil(float64(snapshot.Len()) * BASE64_OVERHEAD))
 				packet.Data = snapshot
 			}
-			if i > 0 && payloadSize > s._maxPayload {
-				client_socket_log.Debug("only send %d out of %d packets", i, payloadSize)
+			if i > 0 && payloadSize > maxPayload {
+				clientSocketLog.Debug("only send %d out of %d packets", i, payloadSize)
 				return true, 0, i, nil
 			}
 			payloadSize += 2 // separator + packet type
@@ -538,7 +546,7 @@ func (s *socketWithoutUpgrade) _getWritablePackets() (res []*packet.Packet) {
 		return datas
 	}
 
-	client_socket_log.Debug("payload size is %d (max: %d)", payloadSize, s._maxPayload)
+	clientSocketLog.Debug("payload size is %d (max: %d)", payloadSize, maxPayload)
 	return s.writeBuffer.AllAndClear()
 }
 
@@ -550,11 +558,10 @@ func (s *socketWithoutUpgrade) HasPingExpired() bool {
 	}
 	hasExpired := float64(time.Now().UnixMilli()) > s._pingTimeoutTime.Load()
 	if hasExpired {
-		client_socket_log.Debug("throttled timer detected, scheduling connection close")
+		clientSocketLog.Debug("throttled timer detected, scheduling connection close")
 		s._pingTimeoutTime.Store(0)
 
-		// Needs further investigation
-		go s._onClose("ping timeout", nil)
+		s.taskQueue.Enqueue(func() { s._onClose("ping timeout", nil) })
 	}
 
 	return hasExpired
@@ -601,7 +608,7 @@ func (s *socketWithoutUpgrade) _sendPacket(_type packet.Type, data io.Reader, op
 func (s *socketWithoutUpgrade) Close() SocketWithoutUpgrade {
 	close := func() {
 		s._onClose("forced close", nil)
-		client_socket_log.Debug("socket closing - telling transport to close")
+		clientSocketLog.Debug("socket closing - telling transport to close")
 		s.Transport().Close()
 	}
 
@@ -641,11 +648,11 @@ func (s *socketWithoutUpgrade) Close() SocketWithoutUpgrade {
 // _onError handles transport errors and connection failures.
 // It manages transport fallback and error reporting.
 func (s *socketWithoutUpgrade) _onError(err error) {
-	client_socket_log.Debug("socket error %v", err)
+	clientSocketLog.Debug("socket error %v", err)
 	s.SetPriorWebsocketSuccess(false)
 
 	if s.opts.TryAllTransports() && s.transports.Len() > 1 && s.ReadyState() == SocketStateOpening {
-		client_socket_log.Debug("trying next transport")
+		clientSocketLog.Debug("trying next transport")
 		_, _ = s.transports.Shift()
 		s._open()
 		return
@@ -659,7 +666,7 @@ func (s *socketWithoutUpgrade) _onError(err error) {
 // It performs cleanup operations and notifies listeners of the closure.
 func (s *socketWithoutUpgrade) _onClose(reason string, description error) {
 	if readyState := s.ReadyState(); SocketStateOpening == readyState || SocketStateOpen == readyState || SocketStateClosing == readyState {
-		client_socket_log.Debug(`socket close with reason: "%s"`, reason)
+		clientSocketLog.Debug(`socket close with reason: "%s"`, reason)
 
 		// clear timers
 		utils.ClearTimeout(s._pingTimeoutTimer.Load())
@@ -695,5 +702,7 @@ func (s *socketWithoutUpgrade) _onClose(reason string, description error) {
 		// clean buffers after, so users can still
 		// grab the buffers on `close` event
 		s.writeBuffer.Clear()
+
+		s.taskQueue.TryClose()
 	}
 }

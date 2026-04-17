@@ -3,6 +3,7 @@ package socket
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -131,6 +132,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	var timedOut atomic.Bool
 	responses := types.NewSlice[any]()
 	var timeout time.Duration
+	var ackOnce sync.Once
 
 	if time := b.flags.Timeout; time != nil {
 		timeout = *time
@@ -138,26 +140,36 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 	timer := utils.SetTimeout(func() {
 		timedOut.Store(true)
-		if b.flags.ExpectSingleResponse {
-			ack(nil, errors.New("operation has timed out"))
-		} else {
-			ack(responses.All(), errors.New("operation has timed out"))
-		}
+		ackOnce.Do(func() {
+			if b.flags.ExpectSingleResponse {
+				ack(nil, errors.New("operation has timed out"))
+			} else {
+				ack(responses.All(), errors.New("operation has timed out"))
+			}
+		})
 	}, timeout)
 
-	expectedServerCount := int64(-1)
+	var expectedServerCount atomic.Int64
+	expectedServerCount.Store(-1)
 	var actualServerCount atomic.Int64
 	var expectedClientCount atomic.Uint64
 
 	checkCompleteness := func() {
-		if !timedOut.Load() && expectedServerCount == actualServerCount.Load() && uint64(responses.Len()) == expectedClientCount.Load() {
+		expected := expectedServerCount.Load()
+		if expected < 0 {
+			// ServerCount not yet known, skip check
+			return
+		}
+		if !timedOut.Load() && expected == actualServerCount.Load() && uint64(responses.Len()) == expectedClientCount.Load() {
 			utils.ClearTimeout(timer)
-			if b.flags.ExpectSingleResponse {
-				data, _ := responses.Get(0)
-				ack(utils.TryCast[[]any](data), nil)
-			} else {
-				ack(responses.All(), nil)
-			}
+			ackOnce.Do(func() {
+				if b.flags.ExpectSingleResponse {
+					data, _ := responses.Get(0)
+					ack(utils.TryCast[[]any](data), nil)
+				} else {
+					ack(responses.All(), nil)
+				}
+			})
 		}
 	}
 
@@ -175,7 +187,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		responses.Push(clientResponse...)
 		checkCompleteness()
 	})
-	expectedServerCount = b.adapter.ServerCount()
+	expectedServerCount.Store(b.adapter.ServerCount())
 	checkCompleteness()
 	return nil
 }

@@ -9,6 +9,8 @@ import (
 )
 
 type (
+	// SessionAwareAdapterBuilder is a builder for creating session-aware Adapter instances
+	// that support connection state recovery.
 	SessionAwareAdapterBuilder struct {
 	}
 
@@ -17,11 +19,13 @@ type (
 
 		maxDisconnectionDuration int64
 
-		sessions *types.Map[PrivateSessionId, *SessionWithTimestamp]
-		packets  *types.Slice[*PersistedPacket]
+		sessions     *types.Map[PrivateSessionId, *SessionWithTimestamp]
+		packets      *types.Slice[*PersistedPacket]
+		cleanupTimer *utils.Timer
 	}
 )
 
+// New creates a new SessionAwareAdapter for the given Namespace.
 func (*SessionAwareAdapterBuilder) New(nsp Namespace) Adapter {
 	return NewSessionAwareAdapter(nsp)
 }
@@ -49,13 +53,18 @@ func NewSessionAwareAdapter(nsp Namespace) SessionAwareAdapter {
 
 func (s *sessionAwareAdapter) Construct(nsp Namespace) {
 	s.Adapter.Construct(nsp)
+
+	cleanupInterval := DefaultSessionCleanupInterval
 	if connectionStateRecovery := nsp.Server().Opts().ConnectionStateRecovery(); connectionStateRecovery != nil {
 		s.maxDisconnectionDuration = connectionStateRecovery.MaxDisconnectionDuration()
+		if connectionStateRecovery.GetRawSessionCleanupInterval() != nil {
+			cleanupInterval = connectionStateRecovery.SessionCleanupInterval()
+		}
 	} else {
-		s.maxDisconnectionDuration = 2 * 60 * 1000
+		s.maxDisconnectionDuration = DefaultMaxDisconnectionDuration
 	}
 
-	timer := utils.SetInterval(func() {
+	s.cleanupTimer = utils.SetInterval(func() {
 		threshold := time.Now().UnixMilli() - s.maxDisconnectionDuration
 		s.sessions.Range(func(sessionId PrivateSessionId, session *SessionWithTimestamp) bool {
 			if session.DisconnectedAt < threshold {
@@ -66,9 +75,15 @@ func (s *sessionAwareAdapter) Construct(nsp Namespace) {
 		_, _ = s.packets.RangeAndSplice(func(packet *PersistedPacket, i int) (bool, int, int, []*PersistedPacket) {
 			return packet.EmittedAt < threshold, 0, i + 1, nil
 		}, true)
-	}, 60*1000*time.Millisecond)
+	}, cleanupInterval)
 	// prevents the timer from keeping the process alive
-	timer.Unref()
+	s.cleanupTimer.Unref()
+}
+
+// Close stops the session cleanup timer and releases resources.
+func (s *sessionAwareAdapter) Close() {
+	utils.ClearInterval(s.cleanupTimer)
+	s.Adapter.Close()
 }
 
 func (s *sessionAwareAdapter) PersistSession(session *SessionToPersist) {

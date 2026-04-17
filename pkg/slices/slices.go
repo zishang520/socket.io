@@ -1,6 +1,8 @@
 // Package slices provides utilities for safe slice operations with generics
 package slices
 
+import "slices"
+
 // Get safely retrieves an element from a slice with bounds checking
 // Returns the element and true if successful, zero value and false otherwise
 func Get[S ~[]E, E any](s S, idx int) (E, bool) {
@@ -130,12 +132,56 @@ func Reduce[T, R any](vals []T, initial R, reducer func(R, T) R) R {
 	return result
 }
 
+// Contains reports whether the slice contains the given value.
+func Contains[S ~[]E, E comparable](s S, val E) bool {
+	return slices.Contains(s, val)
+}
+
+// FindIndex returns the index of the first element satisfying the predicate,
+// or -1 if no such element is found.
+func FindIndex[S ~[]E, E any](s S, predicate func(E) bool) int {
+	for i, v := range s {
+		if predicate(v) {
+			return i
+		}
+	}
+	return -1
+}
+
+// Flatten concatenates a slice of slices into a single slice.
+func Flatten[S ~[]E, E any](ss []S) S {
+	var total int
+	for _, s := range ss {
+		total += len(s)
+	}
+	result := make(S, 0, total)
+	for _, s := range ss {
+		result = append(result, s...)
+	}
+	return result
+}
+
+// Unique returns a new slice with duplicate elements removed, preserving order.
+func Unique[S ~[]E, E comparable](s S) S {
+	seen := make(map[E]struct{}, len(s))
+	result := make(S, 0, len(s))
+	for _, v := range s {
+		if _, ok := seen[v]; !ok {
+			seen[v] = struct{}{}
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
 // IsEmpty checks if slice is nil or empty
 func IsEmpty[S ~[]E, E any](s S) bool {
 	return len(s) == 0
 }
 
-// IsValidIndex checks if index is valid for the slice
+// IsValidIndex checks if index is valid for the slice.
+//
+//go:inline
 func IsValidIndex[S ~[]E, E any](s S, idx int) bool {
-	return idx >= 0 && idx < len(s)
+	return uint(idx) < uint(len(s))
 }

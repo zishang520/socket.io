@@ -137,10 +137,10 @@ func reconstructSlice(data []any, buffers []types.BufferInterface) ([]any, error
 func reconstructMap(data map[string]any, buffers []types.BufferInterface) (any, error) {
 	// Check if this map is a placeholder
 	if placeholder, err := parsePlaceholder(data); err == nil && placeholder.Placeholder {
-		if placeholder.Num >= 0 && placeholder.Num < int64(len(buffers)) {
-			return buffers[placeholder.Num], nil
+		if placeholder.Num < 0 || placeholder.Num >= int64(len(buffers)) {
+			return nil, ErrIllegalAttachments
 		}
-		return nil, ErrIllegalAttachments
+		return buffers[placeholder.Num], nil
 	}
 
 	// Not a placeholder, reconstruct nested data
@@ -166,6 +166,11 @@ func parsePlaceholder(data map[string]any) (*Placeholder, error) {
 	num, err := extractField[float64](data, "num")
 	if err != nil {
 		return nil, err
+	}
+
+	// Validate that num is a non-negative integer value
+	if num < 0 || num != float64(int64(num)) {
+		return nil, fmt.Errorf("invalid placeholder num: %v", num)
 	}
 
 	return &Placeholder{
