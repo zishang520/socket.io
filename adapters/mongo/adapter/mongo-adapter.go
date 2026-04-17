@@ -25,10 +25,10 @@ var mongoLog = log.NewLog("socket.io-mongo")
 type mongoAdapter struct {
 	adapter.ClusterAdapterWithHeartbeat
 
-	mongoClient      *mongo.MongoClient
-	opts             *MongoAdapterOptions
+	mongoClient       *mongo.MongoClient
+	opts              *MongoAdapterOptions
 	addCreatedAtField bool
-	cleanupFunc      types.Callable // Cleanup callback for resource management
+	cleanupFunc       types.Callable // Cleanup callback for resource management
 }
 
 // MakeMongoAdapter creates a new uninitialized mongoAdapter.
@@ -122,10 +122,10 @@ func (a *mongoAdapter) DoPublishResponse(requesterUid adapter.ServerId, response
 
 // OnEvent processes a change stream document from MongoDB.
 // It decodes the BSON data based on message type and routes it to OnMessage.
-func (a *mongoAdapter) OnEvent(document *changeStreamDocument) {
+func (a *mongoAdapter) OnEvent(document *mongo.AdapterEvent) {
 	// The change stream pipeline already filters by operationType=insert,
 	// but we still check uid to filter out our own messages.
-	if string(document.Uid) == string(a.Uid()) {
+	if document.Uid == a.Uid() {
 		return
 	}
 
@@ -133,7 +133,7 @@ func (a *mongoAdapter) OnEvent(document *changeStreamDocument) {
 
 	// Build ClusterMessage with decoded data
 	message := &ClusterMessage{
-		Uid:  adapter.ServerId(document.Uid),
+		Uid:  document.Uid,
 		Nsp:  document.Nsp,
 		Type: document.Type,
 	}

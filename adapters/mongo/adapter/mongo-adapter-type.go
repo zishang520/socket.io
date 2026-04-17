@@ -10,7 +10,6 @@ import (
 	"github.com/zishang520/socket.io/adapters/mongo/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
-	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 type (
@@ -47,23 +46,6 @@ type (
 	// BroadcastAck is an alias for adapter.BroadcastAck.
 	BroadcastAck = adapter.BroadcastAck
 
-	// changeStreamEvent represents the structure of a MongoDB Change Stream event.
-	changeStreamEvent struct {
-		OperationType string              `bson:"operationType"`
-		FullDocument  *changeStreamDocument `bson:"fullDocument"`
-	}
-
-	// changeStreamDocument represents the full document in a change stream event.
-	// The Data field is kept as bson.RawValue for two-pass decoding based on message type.
-	changeStreamDocument struct {
-		ID        bson.ObjectID       `bson:"_id"`
-		Uid       string              `bson:"uid,omitempty"`
-		Nsp       string              `bson:"nsp,omitempty"`
-		Type      adapter.MessageType `bson:"type,omitempty"`
-		Data      bson.RawValue       `bson:"data,omitempty"`
-		CreatedAt any                 `bson:"createdAt,omitempty"`
-	}
-
 	// MongoAdapter defines the interface for a MongoDB-based Socket.IO adapter.
 	// It extends ClusterAdapterWithHeartbeat with MongoDB-specific functionality.
 	MongoAdapter interface {
@@ -76,7 +58,7 @@ type (
 		Cleanup(func())
 
 		// OnEvent processes a change stream document from MongoDB.
-		OnEvent(document *changeStreamDocument)
+		OnEvent(document *mongo.AdapterEvent)
 	}
 )
 
@@ -114,7 +96,7 @@ func (mb *MongoAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	// Start listening if not already
 	if mb.listening.CompareAndSwap(false, true) {
 		mb.isClosed.Store(false)
-		go mb.startChangeStream(options)
+		go mb.startChangeStream()
 	}
 
 	// Register cleanup callback
@@ -137,9 +119,9 @@ func (mb *MongoAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 
 // startChangeStream opens a MongoDB Change Stream and dispatches events
 // to the appropriate namespace adapter.
-func (mb *MongoAdapterBuilder) startChangeStream(options *MongoAdapterOptions) {
+func (mb *MongoAdapterBuilder) startChangeStream() {
 	for !mb.isClosed.Load() {
-		mb.watchChangeStream(options)
+		mb.watchChangeStream()
 
 		if mb.isClosed.Load() {
 			return
@@ -153,7 +135,7 @@ func (mb *MongoAdapterBuilder) startChangeStream(options *MongoAdapterOptions) {
 
 // watchChangeStream opens and processes a single Change Stream session.
 // Returns when the stream is closed or encounters a non-recoverable error.
-func (mb *MongoAdapterBuilder) watchChangeStream(options *MongoAdapterOptions) {
+func (mb *MongoAdapterBuilder) watchChangeStream() {
 	mongoLog.Debug("opening change stream")
 
 	cs, err := mb.Mongo.Collection.Watch(mb.Mongo.Context, buildChangeStreamPipeline())
@@ -162,14 +144,17 @@ func (mb *MongoAdapterBuilder) watchChangeStream(options *MongoAdapterOptions) {
 		mb.Mongo.Emit("error", err)
 		return
 	}
-	defer cs.Close(mb.Mongo.Context)
+	defer func() { _ = cs.Close(mb.Mongo.Context) }()
 
 	for cs.Next(mb.Mongo.Context) {
 		if mb.isClosed.Load() {
 			return
 		}
 
-		var event changeStreamEvent
+		var event struct {
+			OperationType string              `bson:"operationType"`
+			FullDocument  *mongo.AdapterEvent `bson:"fullDocument"`
+		}
 		if err := cs.Decode(&event); err != nil {
 			mongoLog.Debug("failed to decode change stream event: %s", err.Error())
 			continue

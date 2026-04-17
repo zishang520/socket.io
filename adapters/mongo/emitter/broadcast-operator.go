@@ -26,11 +26,11 @@ var reservedEvents = types.NewSet(
 // BroadcastOperator provides a fluent API for broadcasting events to Socket.IO clients via MongoDB.
 // It supports room targeting, exclusions, and broadcast flags through method chaining.
 type BroadcastOperator struct {
-	mongoClient      *mongo.MongoClient       // MongoDB client for publishing messages
-	broadcastOptions *BroadcastOptions        // Configuration for broadcasting
-	rooms            *types.Set[socket.Room]  // Target rooms for the broadcast
-	exceptRooms      *types.Set[socket.Room]  // Rooms to exclude from the broadcast
-	flags            *socket.BroadcastFlags   // Broadcast flags (compress, volatile, etc.)
+	mongoClient      *mongo.MongoClient      // MongoDB client for publishing messages
+	broadcastOptions *BroadcastOptions       // Configuration for broadcasting
+	rooms            *types.Set[socket.Room] // Target rooms for the broadcast
+	exceptRooms      *types.Set[socket.Room] // Rooms to exclude from the broadcast
+	flags            *socket.BroadcastFlags  // Broadcast flags (compress, volatile, etc.)
 }
 
 // MakeBroadcastOperator creates a new BroadcastOperator with empty room sets and default flags.
@@ -160,23 +160,28 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 // publish inserts a ClusterMessage document into the MongoDB collection.
 // This matches the Node.js emitter's _publish() method behavior exactly.
 func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
-	doc := bson.D{
-		{Key: "uid", Value: string(emitterUID)},
-		{Key: "nsp", Value: b.broadcastOptions.Nsp},
-		{Key: "type", Value: message.Type},
+	event := &mongo.AdapterEvent{
+		Uid:  emitterUID,
+		Nsp:  b.broadcastOptions.Nsp,
+		Type: message.Type,
 	}
 
 	if message.Data != nil {
-		doc = append(doc, bson.E{Key: "data", Value: message.Data})
+		// Encode data to bson.RawValue
+		dataBytes, err := bson.Marshal(message.Data)
+		if err != nil {
+			return err
+		}
+		event.Data = bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: dataBytes}
 	}
 
 	if b.broadcastOptions.AddCreatedAtField {
-		doc = append(doc, bson.E{Key: "createdAt", Value: time.Now()})
+		event.CreatedAt = bson.DateTime(time.Now().UnixMilli())
 	}
 
 	emitterLog.Debug("publishing message to collection")
 
-	_, err := b.mongoClient.Collection.InsertOne(b.mongoClient.Context, doc)
+	_, err := b.mongoClient.Collection.InsertOne(b.mongoClient.Context, event)
 	return err
 }
 
