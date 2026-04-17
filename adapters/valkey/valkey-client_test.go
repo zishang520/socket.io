@@ -13,7 +13,7 @@ import (
 
 // newMiniValkeyClient starts an in-memory Redis server (miniredis) and returns
 // a ValkeyClient connected to it. The server is cleaned up when the test ends.
-func newMiniValkeyClient(t *testing.T) (*valkey.ValkeyClient, *miniredis.Miniredis) {
+func newMiniValkeyClient(t *testing.T) *valkey.ValkeyClient {
 	t.Helper()
 	s := miniredis.RunT(t)
 	client, err := vk.NewClient(vk.ClientOption{
@@ -24,13 +24,13 @@ func newMiniValkeyClient(t *testing.T) (*valkey.ValkeyClient, *miniredis.Minired
 		t.Fatalf("failed to connect to miniredis: %v", err)
 	}
 	t.Cleanup(func() { client.Close() })
-	return valkey.NewValkeyClient(context.Background(), client), s
+	return valkey.NewValkeyClient(context.Background(), client)
 }
 
 // --- Constructor tests ---
 
 func TestNewValkeyClient(t *testing.T) {
-	vc, _ := newMiniValkeyClient(t)
+	vc := newMiniValkeyClient(t)
 	if vc == nil {
 		t.Fatal("expected non-nil ValkeyClient")
 	}
@@ -152,14 +152,14 @@ func TestValkeyClient_Sub(t *testing.T) {
 	})
 
 	t.Run("falls back to Client when SubClient is nil", func(t *testing.T) {
-		vc, _ := newMiniValkeyClient(t)
+		vc := newMiniValkeyClient(t)
 		if vc.Sub() != vc.Client {
 			t.Fatal("Sub() should fall back to Client when SubClient is nil")
 		}
 	})
 
 	t.Run("backward compatibility with NewValkeyClient", func(t *testing.T) {
-		vc, _ := newMiniValkeyClient(t)
+		vc := newMiniValkeyClient(t)
 		if vc.SubClient != nil {
 			t.Fatal("SubClient should be nil when using NewValkeyClient")
 		}
@@ -172,7 +172,7 @@ func TestValkeyClient_Sub(t *testing.T) {
 // --- Pub/Sub lifecycle tests ---
 
 func TestValkeyPubSub_Close(t *testing.T) {
-	vc, _ := newMiniValkeyClient(t)
+	vc := newMiniValkeyClient(t)
 
 	pubsub := vc.Subscribe(vc.Context, "test-channel")
 	if closeErr := pubsub.Close(); closeErr != nil {
@@ -192,7 +192,7 @@ func TestValkeyPubSub_Close(t *testing.T) {
 }
 
 func TestValkeyClient_PubSub(t *testing.T) {
-	vc, _ := newMiniValkeyClient(t)
+	vc := newMiniValkeyClient(t)
 	ctx := vc.Context
 
 	channel := "sio:test:pubsub"
@@ -227,7 +227,7 @@ func TestValkeyClient_PubSub(t *testing.T) {
 // --- Unsubscribe tests (the bug the maintainer flagged) ---
 
 func TestValkeyPubSub_Unsubscribe_PerChannel(t *testing.T) {
-	vc, _ := newMiniValkeyClient(t)
+	vc := newMiniValkeyClient(t)
 	ctx := vc.Context
 
 	ch1 := "sio:test:unsub:ch1"
@@ -262,7 +262,7 @@ func TestValkeyPubSub_Unsubscribe_PerChannel(t *testing.T) {
 }
 
 func TestValkeyPubSub_Unsubscribe_NoMessagesOnUnsubbed(t *testing.T) {
-	vc, _ := newMiniValkeyClient(t)
+	vc := newMiniValkeyClient(t)
 	ctx := vc.Context
 
 	ch1 := "sio:test:unsub2:ch1"
@@ -302,7 +302,7 @@ func TestValkeyPubSub_Unsubscribe_NoMessagesOnUnsubbed(t *testing.T) {
 }
 
 func TestValkeyPubSub_PSubscribe_And_PUnsubscribe(t *testing.T) {
-	vc, _ := newMiniValkeyClient(t)
+	vc := newMiniValkeyClient(t)
 	ctx := vc.Context
 
 	pubsub := vc.PSubscribe(ctx, "sio:test:punsub:*")
@@ -329,14 +329,16 @@ func TestValkeyPubSub_PSubscribe_And_PUnsubscribe(t *testing.T) {
 	}
 
 	// PUnsubscribe should issue the command without error.
-	if err := pubsub.PUnsubscribe(ctx, "sio:test:punsub:*"); err != nil {
+	err = pubsub.PUnsubscribe(ctx, "sio:test:punsub:*")
+	if err != nil {
 		t.Fatalf("PUnsubscribe: %v", err)
 	}
 
 	time.Sleep(100 * time.Millisecond)
 
 	// After PUnsubscribe, publishing should not deliver messages.
-	if err := vc.Publish(ctx, "sio:test:punsub:bar", []byte("should-not-arrive")); err != nil {
+	err = vc.Publish(ctx, "sio:test:punsub:bar", []byte("should-not-arrive"))
+	if err != nil {
 		t.Fatalf("Publish after PUnsubscribe: %v", err)
 	}
 
@@ -407,7 +409,7 @@ func TestValkeyPubSub_WithSubClient(t *testing.T) {
 // --- Key-value tests ---
 
 func TestValkeyClient_SetGetDel(t *testing.T) {
-	vc, _ := newMiniValkeyClient(t)
+	vc := newMiniValkeyClient(t)
 	ctx := vc.Context
 
 	key := "sio:test:setget"
@@ -434,7 +436,7 @@ func TestValkeyClient_SetGetDel(t *testing.T) {
 }
 
 func TestValkeyClient_XAddXRange(t *testing.T) {
-	vc, _ := newMiniValkeyClient(t)
+	vc := newMiniValkeyClient(t)
 	ctx := vc.Context
 	stream := "sio:test:stream"
 
