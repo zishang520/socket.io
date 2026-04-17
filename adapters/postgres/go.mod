@@ -3,7 +3,7 @@ module github.com/zishang520/socket.io/adapters/postgres/v3
 go 1.26.0
 
 require (
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.9.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.1
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.1
