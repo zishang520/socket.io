@@ -27,12 +27,19 @@ type ValkeyMessage struct {
 	Payload string
 }
 
-// ValkeyPubSub wraps a valkey-go Pub/Sub subscription into a channel-based interface
-// that mirrors the go-redis *PubSub API used by the adapter and emitter.
+// ValkeyPubSub wraps a valkey-go dedicated client Pub/Sub subscription into a
+// channel-based interface that mirrors the go-redis *PubSub API.
+//
+// Unlike the previous implementation which used Client.Receive (owning the
+// connection and only supporting context cancellation), this uses
+// Client.Dedicate + SetPubSubHooks, giving a persistent dedicated connection
+// where SUBSCRIBE/UNSUBSCRIBE commands can be issued independently.
 type ValkeyPubSub struct {
-	cancel context.CancelFunc
-	ch     chan *ValkeyMessage
-	once   sync.Once
+	dc      vk.DedicatedClient
+	release func()
+	cancel  context.CancelFunc
+	ch      chan *ValkeyMessage
+	once    sync.Once
 }
 
 // ReceiveMessage blocks until a message is available or the context is done.
@@ -48,42 +55,70 @@ func (p *ValkeyPubSub) ReceiveMessage(ctx context.Context) (*ValkeyMessage, erro
 	}
 }
 
-// Close cancels the underlying subscription goroutine.
+// Close releases the dedicated connection and stops message delivery.
 func (p *ValkeyPubSub) Close() error {
 	p.once.Do(func() {
 		p.cancel()
+		p.release()
 	})
 	return nil
 }
 
-// Unsubscribe cancels this Pub/Sub subscription.
-func (p *ValkeyPubSub) Unsubscribe(_ context.Context, _ ...string) error {
-	return p.Close()
+// Unsubscribe issues an UNSUBSCRIBE command for the given channels on the
+// dedicated connection, without tearing down the subscription stream.
+func (p *ValkeyPubSub) Unsubscribe(ctx context.Context, channels ...string) error {
+	return p.dc.Do(ctx, p.dc.B().Unsubscribe().Channel(channels...).Build()).Error()
 }
 
-// PUnsubscribe cancels this pattern Pub/Sub subscription.
-func (p *ValkeyPubSub) PUnsubscribe(_ context.Context, _ ...string) error {
-	return p.Close()
+// PUnsubscribe issues a PUNSUBSCRIBE command for the given patterns on the
+// dedicated connection, without tearing down the subscription stream.
+func (p *ValkeyPubSub) PUnsubscribe(ctx context.Context, patterns ...string) error {
+	return p.dc.Do(ctx, p.dc.B().Punsubscribe().Pattern(patterns...).Build()).Error()
 }
 
-// SUnsubscribe cancels this sharded Pub/Sub subscription.
-func (p *ValkeyPubSub) SUnsubscribe(_ context.Context, _ ...string) error {
-	return p.Close()
+// SUnsubscribe issues a SUNSUBSCRIBE command for the given channels on the
+// dedicated connection, without tearing down the subscription stream.
+func (p *ValkeyPubSub) SUnsubscribe(ctx context.Context, channels ...string) error {
+	return p.dc.Do(ctx, p.dc.B().Sunsubscribe().Channel(channels...).Build()).Error()
 }
 
 // ValkeyClient wraps a valkey-go client and provides context management
 // and event emitting capabilities for the Socket.IO Valkey adapter.
+//
+// The client supports read/write separation: Client is used for write operations
+// (PUBLISH, XADD, SET, etc.) and SubClient is used for read/subscribe operations
+// (SUBSCRIBE, XREAD, XRANGE, etc.). If SubClient is nil, Client is used for both.
 type ValkeyClient struct {
 	types.EventEmitter
 
-	// Client is the underlying Valkey client.
+	// Client is the underlying Valkey client used for write operations
+	// (PUBLISH, XADD, SET, etc.) and metadata queries (PUBSUB NUMSUB).
 	Client vk.Client
+
+	// SubClient is an optional separate Valkey client used for read/subscribe
+	// operations (SUBSCRIBE, PSUBSCRIBE, SSUBSCRIBE, XREAD, XRANGE, etc.).
+	// When nil, Client is used for all operations.
+	//
+	// Using a separate client for subscriptions prevents blocking read operations
+	// from starving the write connection pool, and allows routing reads to
+	// Valkey replicas for improved scalability.
+	SubClient vk.Client
 
 	// Context is the context used for Valkey operations.
 	Context context.Context
 }
 
+// Sub returns the Valkey client to use for read/subscribe operations.
+// If SubClient is set, it is returned; otherwise Client is used as the fallback.
+func (c *ValkeyClient) Sub() vk.Client {
+	if c.SubClient != nil {
+		return c.SubClient
+	}
+	return c.Client
+}
+
 // NewValkeyClient creates a new ValkeyClient with the given context and valkey-go client.
+// The same client is used for both read and write operations.
 //
 // Parameters:
 //   - ctx: The context that controls the lifecycle of Valkey operations.
@@ -105,66 +140,94 @@ func NewValkeyClient(ctx context.Context, client vk.Client) *ValkeyClient {
 	}
 }
 
-// Subscribe creates a channel-subscription on one or more Valkey channels.
-// The returned ValkeyPubSub delivers messages via ReceiveMessage.
-func (c *ValkeyClient) Subscribe(ctx context.Context, channels ...string) *ValkeyPubSub {
+// NewValkeyClientWithSub creates a new ValkeyClient with separate clients for read/write separation.
+//
+// Parameters:
+//   - ctx: The context that controls the lifecycle of Valkey operations.
+//   - client: The Valkey client for write operations (PUBLISH, XADD, SET, etc.)
+//     and metadata queries (PUBSUB NUMSUB).
+//   - subClient: The Valkey client for read/subscribe operations (SUBSCRIBE, XREAD, etc.).
+//
+// Example:
+//
+//	pubClient, _ := valkey.NewClient(valkey.ClientOption{InitAddress: []string{"master:6379"}})
+//	subClient, _ := valkey.NewClient(valkey.ClientOption{InitAddress: []string{"replica:6380"}})
+//	valkeyClient := NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+func NewValkeyClientWithSub(ctx context.Context, client, subClient vk.Client) *ValkeyClient {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &ValkeyClient{
+		EventEmitter: types.NewEventEmitter(),
+		Client:       client,
+		SubClient:    subClient,
+		Context:      ctx,
+	}
+}
+
+// newPubSub creates a ValkeyPubSub backed by a dedicated connection with
+// SetPubSubHooks. The transform function converts incoming valkey-go messages
+// to ValkeyMessages. The caller must send a subscribe command (SUBSCRIBE,
+// PSUBSCRIBE, or SSUBSCRIBE) on the returned ValkeyPubSub's dc after this
+// returns; the hooks are already installed and waiting for messages.
+func (c *ValkeyClient) newPubSub(ctx context.Context, transform func(vk.PubSubMessage) *ValkeyMessage) *ValkeyPubSub {
 	subCtx, cancel := context.WithCancel(ctx)
-	p := &ValkeyPubSub{cancel: cancel, ch: make(chan *ValkeyMessage, 64)}
+	dc, release := c.Sub().Dedicate()
+
+	p := &ValkeyPubSub{
+		dc:      dc,
+		release: release,
+		cancel:  cancel,
+		ch:      make(chan *ValkeyMessage, 64),
+	}
+
+	wait := dc.SetPubSubHooks(vk.PubSubHooks{
+		OnMessage: func(msg vk.PubSubMessage) {
+			select {
+			case p.ch <- transform(msg):
+			case <-subCtx.Done():
+			}
+		},
+	})
 
 	go func() {
 		defer close(p.ch)
-		_ = c.Client.Receive(subCtx,
-			c.Client.B().Subscribe().Channel(channels...).Build(),
-			func(msg vk.PubSubMessage) {
-				select {
-				case p.ch <- &ValkeyMessage{Channel: msg.Channel, Payload: msg.Message}:
-				case <-subCtx.Done():
-				}
-			})
+		select {
+		case <-wait:
+		case <-subCtx.Done():
+		}
 	}()
 
+	return p
+}
+
+// Subscribe creates a channel-subscription on one or more Valkey channels.
+// The returned ValkeyPubSub delivers messages via ReceiveMessage.
+func (c *ValkeyClient) Subscribe(ctx context.Context, channels ...string) *ValkeyPubSub {
+	p := c.newPubSub(ctx, func(msg vk.PubSubMessage) *ValkeyMessage {
+		return &ValkeyMessage{Channel: msg.Channel, Payload: msg.Message}
+	})
+	p.dc.Do(ctx, p.dc.B().Subscribe().Channel(channels...).Build())
 	return p
 }
 
 // PSubscribe creates a pattern-subscription on one or more Valkey patterns.
 // The returned ValkeyPubSub delivers messages with Pattern and Channel set.
 func (c *ValkeyClient) PSubscribe(ctx context.Context, patterns ...string) *ValkeyPubSub {
-	subCtx, cancel := context.WithCancel(ctx)
-	p := &ValkeyPubSub{cancel: cancel, ch: make(chan *ValkeyMessage, 64)}
-
-	go func() {
-		defer close(p.ch)
-		_ = c.Client.Receive(subCtx,
-			c.Client.B().Psubscribe().Pattern(patterns...).Build(),
-			func(msg vk.PubSubMessage) {
-				select {
-				case p.ch <- &ValkeyMessage{Pattern: msg.Pattern, Channel: msg.Channel, Payload: msg.Message}:
-				case <-subCtx.Done():
-				}
-			})
-	}()
-
+	p := c.newPubSub(ctx, func(msg vk.PubSubMessage) *ValkeyMessage {
+		return &ValkeyMessage{Pattern: msg.Pattern, Channel: msg.Channel, Payload: msg.Message}
+	})
+	p.dc.Do(ctx, p.dc.B().Psubscribe().Pattern(patterns...).Build())
 	return p
 }
 
 // SSubscribe creates a sharded Pub/Sub subscription on one or more channels (SSUBSCRIBE).
 // The returned ValkeyPubSub delivers messages via ReceiveMessage.
 func (c *ValkeyClient) SSubscribe(ctx context.Context, channels ...string) *ValkeyPubSub {
-	subCtx, cancel := context.WithCancel(ctx)
-	p := &ValkeyPubSub{cancel: cancel, ch: make(chan *ValkeyMessage, 64)}
-
-	go func() {
-		defer close(p.ch)
-		_ = c.Client.Receive(subCtx,
-			c.Client.B().Ssubscribe().Channel(channels...).Build(),
-			func(msg vk.PubSubMessage) {
-				select {
-				case p.ch <- &ValkeyMessage{Channel: msg.Channel, Payload: msg.Message}:
-				case <-subCtx.Done():
-				}
-			})
-	}()
-
+	p := c.newPubSub(ctx, func(msg vk.PubSubMessage) *ValkeyMessage {
+		return &ValkeyMessage{Channel: msg.Channel, Payload: msg.Message}
+	})
+	p.dc.Do(ctx, p.dc.B().Ssubscribe().Channel(channels...).Build())
 	return p
 }
 
@@ -223,6 +286,7 @@ func (c *ValkeyClient) XAdd(ctx context.Context, stream string, maxLen int64, va
 
 // XRead reads messages from one or more Valkey streams, blocking up to the given duration.
 // Returns entries from the first stream that has data, or nil if the timeout is reached.
+// Uses the read client (SubClient if set) for read/write separation.
 func (c *ValkeyClient) XRead(ctx context.Context, streams []string, id string, count int64, block time.Duration) ([]vk.XRangeEntry, error) {
 	keys := streams
 	ids := make([]string, len(streams))
@@ -230,8 +294,9 @@ func (c *ValkeyClient) XRead(ctx context.Context, streams []string, id string, c
 		ids[i] = id
 	}
 
-	result, err := c.Client.Do(ctx,
-		c.Client.B().Xread().Count(count).Block(block.Milliseconds()).Streams().Key(keys...).Id(ids...).Build(),
+	sub := c.Sub()
+	result, err := sub.Do(ctx,
+		sub.B().Xread().Count(count).Block(block.Milliseconds()).Streams().Key(keys...).Id(ids...).Build(),
 	).AsXRead()
 	if err != nil {
 		if vk.IsValkeyNil(err) {
@@ -246,16 +311,20 @@ func (c *ValkeyClient) XRead(ctx context.Context, streams []string, id string, c
 }
 
 // XRange reads a range of entries from a Valkey stream.
+// Uses the read client (SubClient if set) for read/write separation.
 func (c *ValkeyClient) XRange(ctx context.Context, stream, start, stop string) ([]vk.XRangeEntry, error) {
-	return c.Client.Do(ctx,
-		c.Client.B().Xrange().Key(stream).Start(start).End(stop).Build(),
+	sub := c.Sub()
+	return sub.Do(ctx,
+		sub.B().Xrange().Key(stream).Start(start).End(stop).Build(),
 	).AsXRange()
 }
 
 // XRangeN reads a limited range of entries from a Valkey stream.
+// Uses the read client (SubClient if set) for read/write separation.
 func (c *ValkeyClient) XRangeN(ctx context.Context, stream, start, stop string, count int64) ([]vk.XRangeEntry, error) {
-	return c.Client.Do(ctx,
-		c.Client.B().Xrange().Key(stream).Start(start).End(stop).Count(count).Build(),
+	sub := c.Sub()
+	return sub.Do(ctx,
+		sub.B().Xrange().Key(stream).Start(start).End(stop).Count(count).Build(),
 	).AsXRange()
 }
 
@@ -267,9 +336,11 @@ func (c *ValkeyClient) Set(ctx context.Context, key, value string, expiry time.D
 }
 
 // GetDel atomically gets and deletes a key. Returns ("", nil) if the key does not exist.
+// Uses the read client (SubClient if set) for read/write separation.
 func (c *ValkeyClient) GetDel(ctx context.Context, key string) (string, error) {
-	val, err := c.Client.Do(ctx,
-		c.Client.B().Getdel().Key(key).Build(),
+	sub := c.Sub()
+	val, err := sub.Do(ctx,
+		sub.B().Getdel().Key(key).Build(),
 	).ToString()
 	if err != nil {
 		if vk.IsValkeyNil(err) {

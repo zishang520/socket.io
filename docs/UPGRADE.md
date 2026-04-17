@@ -546,6 +546,15 @@ valkeyClient := valkey.NewValkeyClient(context.Background(), client)
 server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
 ```
 
+**Read/write separation** (recommended for production):
+
+```go
+pubClient, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"master:6379"}})
+subClient, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"replica:6380"}})
+valkeyClient := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
+```
+
 ### Engine.IO Client
 
 | v1 Import | v3 Import |

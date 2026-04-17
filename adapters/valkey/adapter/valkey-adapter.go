@@ -854,15 +854,18 @@ func (r *valkeyAdapter) ServerCount() int64 {
 
 // Close cleans up Valkey subscriptions and listeners.
 func (r *valkeyAdapter) Close() {
-	if psub, ok := r.valkeyListeners.Load(subKeyPattern); ok {
+	if psub, ok := r.valkeyListeners.LoadAndDelete(subKeyPattern); ok {
 		if err := psub.PUnsubscribe(r.valkeyClient.Context, r.channel+"*"); err != nil {
 			r.valkeyClient.Emit("error", err)
 		}
+		_ = psub.Close()
 	}
-	if sub, ok := r.valkeyListeners.Load(subKeyChannel); ok {
+	if sub, ok := r.valkeyListeners.LoadAndDelete(subKeyChannel); ok {
 		if err := sub.Unsubscribe(r.valkeyClient.Context, r.requestChannel, r.responseChannel, r.specificResponseChannel); err != nil {
 			r.valkeyClient.Emit("error", err)
 		}
+		_ = sub.Close()
 	}
 	r.valkeyClient.RemoveListener("error", r.friendlyErrorHandler)
+	r.Adapter.Close()
 }

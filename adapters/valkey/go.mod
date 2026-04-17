@@ -3,6 +3,7 @@ module github.com/zishang520/socket.io/adapters/valkey/v3
 go 1.26.0
 
 require (
+	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/valkey-io/valkey-go v1.0.60
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.0-rc.13
@@ -22,6 +23,7 @@ require (
 	github.com/quic-go/webtransport-go v0.10.0 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.0-rc.13 // indirect
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.0-rc.13 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
