@@ -112,8 +112,7 @@ func (r *valkeyAdapter) Parser() valkey.Parser { return r.parser }
 func (r *valkeyAdapter) Construct(nsp socket.Namespace) {
 	r.Adapter.Construct(nsp)
 
-	uid, _ := adapter.Uid2(defaultUidLength)
-	r.uid = adapter.ServerId(uid)
+	r.uid = adapter.ServerId(adapter.Uid2(defaultUidLength))
 
 	if r.opts.GetRawRequestsTimeout() != nil {
 		r.requestsTimeout = r.opts.RequestsTimeout()
@@ -583,31 +582,30 @@ func (r *valkeyAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Bro
 	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
 
 	if !onlyLocal {
-		if requestId, err := adapter.Uid2(defaultUidLength); err == nil {
-			if request, err := r.parser.Encode(&Request{
-				Uid:       r.uid,
-				RequestId: requestId,
-				Type:      valkey.BROADCAST,
-				Packet:    packet,
-				Opts:      adapter.EncodeOptions(opts),
-			}); err == nil {
-				if err := r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request); err != nil {
-					r.valkeyClient.Emit("error", err)
-				}
-
-				r.ackRequests.Store(requestId, &AckRequest{
-					ClientCountCallback: clientCountCallback,
-					Ack:                 ack,
-				})
-
-				timeout := time.Duration(0)
-				if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-					timeout = *opts.Flags.Timeout
-				}
-				utils.SetTimeout(func() {
-					r.ackRequests.Delete(requestId)
-				}, timeout)
+		requestId := adapter.Uid2(defaultUidLength)
+		if request, err := r.parser.Encode(&Request{
+			Uid:       r.uid,
+			RequestId: requestId,
+			Type:      valkey.BROADCAST,
+			Packet:    packet,
+			Opts:      adapter.EncodeOptions(opts),
+		}); err == nil {
+			if err := r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request); err != nil {
+				r.valkeyClient.Emit("error", err)
 			}
+
+			r.ackRequests.Store(requestId, &AckRequest{
+				ClientCountCallback: clientCountCallback,
+				Ack:                 ack,
+			})
+
+			timeout := time.Duration(0)
+			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
+				timeout = *opts.Flags.Timeout
+			}
+			utils.SetTimeout(func() {
+				r.ackRequests.Delete(requestId)
+			}, timeout)
 		}
 	}
 	r.Adapter.BroadcastWithAck(packet, opts, clientCountCallback, ack)
@@ -624,11 +622,7 @@ func (r *valkeyAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 			return
 		}
 
-		requestId, err := adapter.Uid2(defaultUidLength)
-		if err != nil {
-			cb(nil, err)
-			return
-		}
+		requestId := adapter.Uid2(defaultUidLength)
 
 		request, err := json.Marshal(&Request{Type: valkey.ALL_ROOMS, Uid: r.uid, RequestId: requestId})
 		if err != nil {
@@ -683,11 +677,7 @@ func (r *valkeyAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]
 				return
 			}
 
-			requestId, err := adapter.Uid2(defaultUidLength)
-			if err != nil {
-				cb(nil, err)
-				return
-			}
+			requestId := adapter.Uid2(defaultUidLength)
 
 			request, err := json.Marshal(&Request{Type: valkey.REMOTE_FETCH, Uid: r.uid, RequestId: requestId, Opts: adapter.EncodeOptions(opts)})
 			if err != nil {
@@ -807,10 +797,7 @@ func (r *valkeyAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) erro
 		return nil
 	}
 
-	requestId, err := adapter.Uid2(defaultUidLength)
-	if err != nil {
-		return fmt.Errorf("failed to generate request ID: %w", err)
-	}
+	requestId := adapter.Uid2(defaultUidLength)
 
 	request, err := json.Marshal(&Request{Uid: r.uid, RequestId: requestId, Type: valkey.SERVER_SIDE_EMIT, Data: packet})
 	if err != nil {
