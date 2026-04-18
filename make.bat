@@ -18,9 +18,19 @@ set "C_RED=%ESC%[31m"
 :: Configuration
 set "GOPROXY=https://proxy.golang.org,direct"
 :: MODULES must stay in sync with Makefile (root) MODULES.
-set "MODULES=parsers/engine parsers/socket servers/engine servers/socket"
-set "MODULES=%MODULES% adapters/adapter adapters/mongo adapters/postgres adapters/redis"
-set "MODULES=%MODULES% adapters/unix adapters/valkey clients/engine clients/socket"
+set MODULES=
+set MODULES=%MODULES% parsers/engine
+set MODULES=%MODULES% parsers/socket
+set MODULES=%MODULES% servers/engine
+set MODULES=%MODULES% servers/socket
+set MODULES=%MODULES% adapters/adapter
+set MODULES=%MODULES% adapters/mongo
+set MODULES=%MODULES% adapters/postgres
+set MODULES=%MODULES% adapters/redis
+set MODULES=%MODULES% adapters/unix
+set MODULES=%MODULES% adapters/valkey
+set MODULES=%MODULES% clients/engine
+set MODULES=%MODULES% clients/socket
 set "TEST_TIMEOUT=60s"
 set "VERSION_FILE=pkg\version\version.go"
 set "CORE_DEPENDENCY=github.com/zishang520/socket.io"
