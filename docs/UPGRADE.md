@@ -119,6 +119,7 @@ All package imports across your entire codebase must be systematically updated. 
 - Engine.IO Server (`servers/engine/v3`)
 - Socket.IO Server (`servers/socket/v3`)
 - Redis Adapter (`adapters/redis/v3`)
+- Valkey Adapter (`adapters/valkey/v3`) — new in v3
 - Engine.IO Client (`clients/engine/v3`)
 - Socket.IO Client (`clients/socket/v3`)
 - Common Types and Utils (`v3/pkg`)
@@ -556,6 +557,52 @@ Update all Socket.IO import paths throughout your application using the followin
 | `adapter.StaticSubscriptionMode` | `redis.StaticSubscriptionMode` |
 | `adapter.DynamicSubscriptionMode` | `redis.DynamicSubscriptionMode` |
 | `adapter.DynamicPrivateSubscriptionMode` | `redis.DynamicPrivateSubscriptionMode` |
+
+### Valkey Adapter (new in v3)
+
+The Valkey adapter is a new, independent module introduced in v3. It mirrors the `adapters/redis` module but uses the [`valkey-go`](https://github.com/valkey-io/valkey-go) client.
+
+```bash
+go get github.com/zishang520/socket.io/adapters/valkey/v3@latest
+```
+
+| Package | Import Path |
+|---------|-------------|
+| Root types & client | `github.com/zishang520/socket.io/adapters/valkey/v3` |
+| Classic / Sharded / Streams adapters | `github.com/zishang520/socket.io/adapters/valkey/v3/adapter` |
+| Emitter | `github.com/zishang520/socket.io/adapters/valkey/v3/emitter` |
+
+**Example `go.mod`:**
+
+```go
+require (
+    github.com/zishang520/socket.io/adapters/valkey/v3 v3.x.y
+)
+```
+
+**Usage:**
+
+```go
+import (
+    "context"
+    vk "github.com/valkey-io/valkey-go"
+    valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
+    vkadapter "github.com/zishang520/socket.io/adapters/valkey/v3/adapter"
+)
+
+client, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"localhost:6379"}})
+valkeyClient := valkey.NewValkeyClient(context.Background(), client)
+server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
+```
+
+**Read/write separation** (recommended for production):
+
+```go
+pubClient, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"master:6379"}})
+subClient, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"replica:6380"}})
+valkeyClient := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
+```
 
 ### Engine.IO Client
 

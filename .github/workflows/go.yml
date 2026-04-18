@@ -33,6 +33,7 @@ jobs:
           - "adapters/adapter"
           - "adapters/postgres"
           - "adapters/redis"
+          - "adapters/valkey"
           - "clients/engine"
           - "clients/socket"
 
