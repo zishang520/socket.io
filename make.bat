@@ -17,7 +17,7 @@ set "C_RED=%ESC%[31m"
 
 :: Configuration
 set "GOPROXY=https://proxy.golang.org,direct"
-set "MODULES=parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/postgres adapters/redis adapters/unix adapters/valkey clients/engine clients/socket"
+set "MODULES=parsers/engine parsers/socket servers/engine servers/socket adapters/adapter adapters/mongo adapters/postgres adapters/redis adapters/unix adapters/valkey clients/engine clients/socket"
 set "TEST_TIMEOUT=60s"
 set "VERSION_FILE=pkg\version\version.go"
 set "CORE_DEPENDENCY=github.com/zishang520/socket.io"
