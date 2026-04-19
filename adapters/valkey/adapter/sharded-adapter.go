@@ -6,6 +6,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,6 +51,9 @@ type shardedValkeyAdapter struct {
 	opts            *ShardedValkeyAdapterOptions
 	channel         string
 	responseChannel string
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // MakeShardedValkeyAdapter creates a new uninitialized shardedValkeyAdapter.
@@ -95,11 +99,13 @@ func (s *shardedValkeyAdapter) Construct(nsp socket.Namespace) {
 		s.opts.SetSubscriptionMode(DefaultShardedSubscriptionMode)
 	}
 
+	s.ctx, s.cancel = context.WithCancel(s.valkeyClient.Context)
+
 	s.channel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
 	s.responseChannel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#" + string(s.Uid()) + "#"
 
-	channelPubSub := s.valkeyClient.SSubscribe(s.valkeyClient.Context, s.channel)
-	responsePubSub := s.valkeyClient.SSubscribe(s.valkeyClient.Context, s.responseChannel)
+	channelPubSub := s.valkeyClient.SSubscribe(s.ctx, s.channel)
+	responsePubSub := s.valkeyClient.SSubscribe(s.ctx, s.responseChannel)
 
 	s.pubSubClients.Store(s.channel, channelPubSub)
 	s.pubSubClients.Store(s.responseChannel, responsePubSub)
@@ -140,7 +146,7 @@ func (s *shardedValkeyAdapter) subscribeChannel(channel string) {
 	if _, exists := s.dynamicPubSubs.Load(channel); exists {
 		return
 	}
-	pubSub := s.valkeyClient.SSubscribe(s.valkeyClient.Context, channel)
+	pubSub := s.valkeyClient.SSubscribe(s.ctx, channel)
 	s.dynamicPubSubs.Store(channel, pubSub)
 	go s.receiveMessages(pubSub)
 }
@@ -150,7 +156,7 @@ func (s *shardedValkeyAdapter) unsubscribeChannel(channel string) {
 	if mu, exists := s.dynamicMutexes.Load(channel); exists {
 		mu.Lock()
 		if pubSub, ok := s.dynamicPubSubs.LoadAndDelete(channel); ok {
-			if err := pubSub.SUnsubscribe(s.valkeyClient.Context, channel); err != nil {
+			if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
 				s.valkeyClient.Emit("error", err)
 			}
 			if err := pubSub.Close(); err != nil {
@@ -164,8 +170,10 @@ func (s *shardedValkeyAdapter) unsubscribeChannel(channel string) {
 
 // Close unsubscribes from all channels and shuts down every Pub/Sub connection.
 func (s *shardedValkeyAdapter) Close() {
+	defer s.cancel()
+
 	s.pubSubClients.Range(func(channel string, pubSub *valkey.ValkeyPubSub) bool {
-		if err := pubSub.SUnsubscribe(s.valkeyClient.Context, channel); err != nil {
+		if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
 			s.valkeyClient.Emit("error", err)
 		}
 		if err := pubSub.Close(); err != nil {
@@ -183,14 +191,16 @@ func (s *shardedValkeyAdapter) Close() {
 
 	s.dynamicPubSubs.Clear()
 	s.dynamicMutexes.Clear()
+
+	s.ClusterAdapter.Close()
 }
 
 // receiveMessages continuously reads from a ValkeyPubSub and dispatches to onRawMessage.
 func (s *shardedValkeyAdapter) receiveMessages(pubSub *valkey.ValkeyPubSub) {
 	for {
-		msg, err := pubSub.ReceiveMessage(s.valkeyClient.Context)
+		msg, err := pubSub.ReceiveMessage(s.ctx)
 		if err != nil {
-			if s.valkeyClient.Context.Err() != nil || errors.Is(err, valkey.ErrValkeyPubSubClosed) {
+			if s.ctx.Err() != nil || errors.Is(err, valkey.ErrValkeyPubSubClosed) {
 				return
 			}
 			s.valkeyClient.Emit("error", err)
@@ -210,7 +220,7 @@ func (s *shardedValkeyAdapter) DoPublish(message *adapter.ClusterMessage) (adapt
 		return "", fmt.Errorf("failed to encode message: %w", err)
 	}
 
-	return "", s.valkeyClient.SPublish(s.valkeyClient.Context, channel, msg)
+	return "", s.valkeyClient.SPublish(s.ctx, channel, msg)
 }
 
 func (s *shardedValkeyAdapter) computeChannel(message *adapter.ClusterMessage) string {
@@ -252,7 +262,7 @@ func (s *shardedValkeyAdapter) DoPublishResponse(requesterUid adapter.ServerId, 
 		return fmt.Errorf("failed to encode response: %w", err)
 	}
 
-	return s.valkeyClient.SPublish(s.valkeyClient.Context, s.channel+string(requesterUid)+"#", message)
+	return s.valkeyClient.SPublish(s.ctx, s.channel+string(requesterUid)+"#", message)
 }
 
 // encode serializes a cluster message using JSON or MessagePack.
@@ -374,7 +384,7 @@ func (s *shardedValkeyAdapter) decodeData(messageType adapter.MessageType, rawDa
 
 // ServerCount returns the number of servers subscribed to this adapter's main channel.
 func (s *shardedValkeyAdapter) ServerCount() int64 {
-	result, err := s.valkeyClient.PubSubShardNumSub(s.valkeyClient.Context, s.channel)
+	result, err := s.valkeyClient.PubSubShardNumSub(s.ctx, s.channel)
 	if err != nil {
 		s.valkeyClient.Emit("error", err)
 		return 0

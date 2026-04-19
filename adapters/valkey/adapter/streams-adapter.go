@@ -33,10 +33,37 @@ var (
 const (
 	restoreSessionMaxXRangeCalls = 100
 	restoreSessionPageSize       = 1000
-	xReadBlockTimeout            = 5000 * time.Millisecond
-	defaultHeartbeatInterval     = 5_000
-	defaultHeartbeatTimeout      = 10_000
 )
+
+// hashCode computes a hash code for the given string, matching the Node.js implementation.
+// This is used to deterministically map namespaces to streams when streamCount > 1.
+func hashCode(str string) int {
+	hash := 0
+	for _, chr := range str {
+		hash = hash*31 + int(chr)
+		hash &= 0x7FFFFFFF
+	}
+	return hash
+}
+
+// computeStreamName determines which stream a namespace should use.
+func computeStreamName(namespaceName string, opts ValkeyStreamsAdapterOptionsInterface) string {
+	if opts.StreamCount() <= 1 {
+		return opts.StreamName()
+	}
+	i := hashCode(namespaceName) % opts.StreamCount()
+	return opts.StreamName() + "-" + strconv.Itoa(i)
+}
+
+// isEphemeral determines whether a message should be sent via PUB/SUB instead of Streams.
+func isEphemeral(message *adapter.ClusterMessage) bool {
+	if message.Type == adapter.BROADCAST {
+		if data, ok := message.Data.(*adapter.BroadcastMessage); ok {
+			return data.RequestId != nil
+		}
+	}
+	return message.Type == adapter.SERVER_SIDE_EMIT || message.Type == adapter.FETCH_SOCKETS
+}
 
 // ValkeyStreamsAdapterBuilder creates Valkey Streams adapters for Socket.IO namespaces.
 type ValkeyStreamsAdapterBuilder struct {
@@ -50,18 +77,17 @@ type ValkeyStreamsAdapterBuilder struct {
 	cancelFunc          types.Atomic[context.CancelFunc]
 }
 
-func (sb *ValkeyStreamsAdapterBuilder) startPolling(ctx context.Context, options ValkeyStreamsAdapterOptionsInterface) {
+func (sb *ValkeyStreamsAdapterBuilder) startPolling(ctx context.Context, streamName string, options ValkeyStreamsAdapterOptionsInterface) {
 	offset := "$"
 
 	for {
 		select {
 		case <-ctx.Done():
-			sb.polling.Store(false)
 			return
 		default:
 		}
 
-		entries, err := sb.Valkey.XRead(ctx, []string{options.StreamName()}, offset, options.ReadCount(), xReadBlockTimeout)
+		entries, err := sb.Valkey.XRead(ctx, []string{streamName}, offset, options.ReadCount(), time.Duration(options.BlockTimeInMs())*time.Millisecond)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				continue
@@ -95,20 +121,29 @@ func (sb *ValkeyStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter 
 	if options.GetRawStreamName() == nil {
 		options.SetStreamName(DefaultStreamName)
 	}
+	if options.GetRawStreamCount() == nil {
+		options.SetStreamCount(DefaultStreamCount)
+	}
+	if options.GetRawChannelPrefix() == nil {
+		options.SetChannelPrefix(DefaultStreamChannelPrefix)
+	}
 	if options.GetRawMaxLen() == nil {
 		options.SetMaxLen(DefaultStreamMaxLen)
 	}
 	if options.GetRawReadCount() == nil {
 		options.SetReadCount(DefaultStreamReadCount)
 	}
+	if options.GetRawBlockTimeInMs() == nil {
+		options.SetBlockTimeInMs(DefaultBlockTimeInMs)
+	}
 	if options.GetRawSessionKeyPrefix() == nil {
 		options.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
 	}
 	if options.GetRawHeartbeatInterval() == nil {
-		options.SetHeartbeatInterval(defaultHeartbeatInterval)
+		options.SetHeartbeatInterval(5_000)
 	}
 	if options.GetRawHeartbeatTimeout() == nil {
-		options.SetHeartbeatTimeout(defaultHeartbeatTimeout)
+		options.SetHeartbeatTimeout(10_000)
 	}
 
 	adapterInstance := NewValkeyStreamsAdapter(nsp, sb.Valkey, options)
@@ -117,12 +152,21 @@ func (sb *ValkeyStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter 
 	if sb.polling.CompareAndSwap(false, true) {
 		ctx, cancelFunc := context.WithCancel(sb.Valkey.Context)
 		sb.cancelFunc.Store(cancelFunc)
-		go sb.startPolling(ctx, options)
+
+		if options.StreamCount() <= 1 {
+			go sb.startPolling(ctx, options.StreamName(), options)
+		} else {
+			for i := range options.StreamCount() {
+				streamName := options.StreamName() + "-" + strconv.Itoa(i)
+				go sb.startPolling(ctx, streamName, options)
+			}
+		}
 	}
 
 	adapterInstance.Cleanup(func() {
 		sb.namespaceToAdapters.Delete(nsp.Name())
 		if sb.namespaceToAdapters.Len() == 0 {
+			sb.polling.Store(false)
 			if cancelFunc := sb.cancelFunc.Load(); cancelFunc != nil {
 				cancelFunc()
 				sb.cancelFunc.Store(nil)
@@ -134,18 +178,25 @@ func (sb *ValkeyStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter 
 }
 
 type valkeyStreamsAdapter struct {
-	adapter.ClusterAdapterWithHeartbeat
+	adapter.ClusterAdapter
 
 	valkeyClient *valkey.ValkeyClient
 	opts         *ValkeyStreamsAdapterOptions
 	cleanupFunc  types.Callable
+
+	streamName    string               // The specific stream for this namespace
+	publicChannel string               // PUB/SUB channel for ephemeral messages
+	pubsub        *valkey.ValkeyPubSub // PUB/SUB subscription for this adapter
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // MakeValkeyStreamsAdapter creates a new uninitialized valkeyStreamsAdapter.
 func MakeValkeyStreamsAdapter() ValkeyStreamsAdapter {
 	a := &valkeyStreamsAdapter{
-		ClusterAdapterWithHeartbeat: adapter.MakeClusterAdapterWithHeartbeat(),
-		opts:                        DefaultValkeyStreamsAdapterOptions(),
+		ClusterAdapter: adapter.MakeClusterAdapter(),
+		opts:           DefaultValkeyStreamsAdapterOptions(),
 	}
 	a.Prototype(a)
 	return a
@@ -163,25 +214,83 @@ func NewValkeyStreamsAdapter(nsp socket.Namespace, client *valkey.ValkeyClient, 
 func (r *valkeyStreamsAdapter) SetValkey(client *valkey.ValkeyClient) { r.valkeyClient = client }
 
 func (r *valkeyStreamsAdapter) SetOpts(opts any) {
-	r.ClusterAdapterWithHeartbeat.SetOpts(opts)
 	if options, ok := opts.(ValkeyStreamsAdapterOptionsInterface); ok {
 		r.opts.Assign(options)
 	}
 }
 
 func (r *valkeyStreamsAdapter) Construct(nsp socket.Namespace) {
-	r.ClusterAdapterWithHeartbeat.Construct(nsp)
-	r.Init()
+	r.ClusterAdapter.Construct(nsp)
+
+	r.ctx, r.cancel = context.WithCancel(r.valkeyClient.Context)
+
+	// Each namespace is routed to a specific stream to ensure ordering
+	r.streamName = computeStreamName(nsp.Name(), r.opts)
+
+	// Set up PUB/SUB channels matching Node.js format: prefix#nsp# and prefix#nsp#uid#
+	r.publicChannel = r.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
+	privateChannel := r.opts.ChannelPrefix() + "#" + nsp.Name() + "#" + string(r.Uid()) + "#"
+
+	// Subscribe to both public and private channels for PUB/SUB messages
+	if r.opts.UseShardedPubSub() {
+		r.pubsub = r.valkeyClient.SSubscribe(r.ctx, r.publicChannel, privateChannel)
+	} else {
+		r.pubsub = r.valkeyClient.Subscribe(r.ctx, r.publicChannel, privateChannel)
+	}
+	go r.handlePubSubMessages()
 }
 
-// DoPublish publishes a cluster message to the Valkey stream.
+// handlePubSubMessages listens for PUB/SUB messages (ephemeral messages and responses).
+func (r *valkeyStreamsAdapter) handlePubSubMessages() {
+	defer func() { _ = r.pubsub.Close() }()
+	for {
+		msg, err := r.pubsub.ReceiveMessage(r.ctx)
+		if err != nil {
+			if errors.Is(err, valkey.ErrValkeyPubSubClosed) || r.ctx.Err() != nil {
+				return
+			}
+			valkeyStreamsLog.Debug("error receiving PUB/SUB message: %s", err.Error())
+			continue
+		}
+
+		var message adapter.ClusterMessage
+		if err := utils.MsgPack().Decode([]byte(msg.Payload), &message); err != nil {
+			valkeyStreamsLog.Debug("invalid PUB/SUB message format: %s", err.Error())
+			continue
+		}
+
+		r.OnMessage(&message, "")
+	}
+}
+
+// DoPublish publishes a cluster message.
+// Ephemeral messages (fetchSockets, serverSideEmit, broadcastWithAck) go via PUB/SUB.
+// Durable messages (broadcast, socketsJoin, etc.) go via Valkey Streams.
 func (r *valkeyStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
 	valkeyStreamsLog.Debug("publishing message: %+v", message)
 
+	if isEphemeral(message) {
+		// Ephemeral messages are sent via Valkey PUB/SUB
+		payload, err := utils.MsgPack().Encode(message)
+		if err != nil {
+			return "", fmt.Errorf("failed to encode ephemeral message: %w", err)
+		}
+		if r.opts.UseShardedPubSub() {
+			err = r.valkeyClient.SPublish(r.ctx, r.publicChannel, payload)
+		} else {
+			err = r.valkeyClient.Publish(r.ctx, r.publicChannel, payload)
+		}
+		if err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+
+	// Durable messages are sent via Valkey Streams
 	encoded := r.encode(message)
 	entryID, err := r.valkeyClient.XAdd(
 		r.valkeyClient.Context,
-		r.opts.StreamName(),
+		r.streamName,
 		r.opts.MaxLen(),
 		encoded,
 	)
@@ -191,13 +300,20 @@ func (r *valkeyStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapt
 	return adapter.Offset(entryID), nil
 }
 
-// DoPublishResponse publishes a response message to the Valkey stream.
-func (r *valkeyStreamsAdapter) DoPublishResponse(_ adapter.ServerId, response *adapter.ClusterResponse) error {
-	_, err := r.DoPublish(response)
-	return err
+// DoPublishResponse publishes a response message via PUB/SUB to the requester's private channel.
+func (r *valkeyStreamsAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) error {
+	responseChannel := r.opts.ChannelPrefix() + "#" + r.Nsp().Name() + "#" + string(requesterUid) + "#"
+	payload, err := utils.MsgPack().Encode(response)
+	if err != nil {
+		return fmt.Errorf("failed to encode response: %w", err)
+	}
+	if r.opts.UseShardedPubSub() {
+		return r.valkeyClient.SPublish(r.ctx, responseChannel, payload)
+	}
+	return r.valkeyClient.Publish(r.ctx, responseChannel, payload)
 }
 
-func (valkeyStreamsAdapter) encode(message *adapter.ClusterResponse) map[string]any {
+func (r *valkeyStreamsAdapter) encode(message *adapter.ClusterResponse) map[string]any {
 	rawMessage := map[string]any{
 		"uid":  string(message.Uid),
 		"nsp":  message.Nsp,
@@ -214,7 +330,7 @@ func (valkeyStreamsAdapter) encode(message *adapter.ClusterResponse) map[string]
 		message.Type == adapter.SERVER_SIDE_EMIT_RESPONSE ||
 		message.Type == adapter.BROADCAST_ACK
 
-	if mayContainBinary && parser.HasBinary(message.Data) {
+	if !r.opts.OnlyPlaintext() && mayContainBinary && parser.HasBinary(message.Data) {
 		if data, err := utils.MsgPack().Encode(message.Data); err == nil {
 			rawMessage["data"] = base64.StdEncoding.EncodeToString(data)
 		}
@@ -227,13 +343,40 @@ func (valkeyStreamsAdapter) encode(message *adapter.ClusterResponse) map[string]
 	return rawMessage
 }
 
+// ServerCount returns the number of servers connected to the cluster,
+// determined by the number of PUB/SUB subscribers on the public channel.
+func (r *valkeyStreamsAdapter) ServerCount() int64 {
+	var result map[string]int64
+	var err error
+	if r.opts.UseShardedPubSub() {
+		result, err = r.valkeyClient.PubSubShardNumSub(r.ctx, r.publicChannel)
+	} else {
+		result, err = r.valkeyClient.PubSubNumSub(r.ctx, r.publicChannel)
+	}
+	if err != nil {
+		valkeyStreamsLog.Debug("error getting server count: %s", err.Error())
+		return 1
+	}
+	if count, ok := result[r.publicChannel]; ok {
+		return count
+	}
+	return 1
+}
+
 func (r *valkeyStreamsAdapter) Cleanup(cleanup func()) { r.cleanupFunc = cleanup }
 
 func (r *valkeyStreamsAdapter) Close() {
-	defer r.ClusterAdapterWithHeartbeat.Close()
+	defer r.cancel()
+
+	if r.pubsub != nil {
+		_ = r.pubsub.Close()
+	}
+
 	if r.cleanupFunc != nil {
 		r.cleanupFunc()
 	}
+
+	r.ClusterAdapter.Close()
 }
 
 // OnRawMessage processes a raw message from the Valkey stream.
@@ -366,7 +509,7 @@ func (r *valkeyStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offse
 		return nil, errors.New("session not found")
 	}
 
-	offsets, err := r.valkeyClient.XRange(r.valkeyClient.Context, r.opts.StreamName(), offset, offset)
+	offsets, err := r.valkeyClient.XRange(r.valkeyClient.Context, r.streamName, offset, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify offset: %w", err)
 	}
@@ -396,7 +539,7 @@ func (r *valkeyStreamsAdapter) collectMissedPackets(session *socket.Session, off
 	for range restoreSessionMaxXRangeCalls {
 		entries, err := r.valkeyClient.XRangeN(
 			r.valkeyClient.Context,
-			r.opts.StreamName(),
+			r.streamName,
 			r.nextOffset(offset),
 			"+",
 			restoreSessionPageSize,
@@ -413,7 +556,8 @@ func (r *valkeyStreamsAdapter) collectMissedPackets(session *socket.Session, off
 				if message, err := r.decode(rawMessage); err == nil {
 					if data, ok := message.Data.(*adapter.BroadcastMessage); ok {
 						if r.shouldIncludePacket(session.Rooms, data.Opts) {
-							session.MissedPackets = append(session.MissedPackets, data.Packet)
+							packetData := append(utils.TryCast[[]any](data.Packet.Data), entry.ID)
+							session.MissedPackets = append(session.MissedPackets, packetData)
 						}
 					}
 				}

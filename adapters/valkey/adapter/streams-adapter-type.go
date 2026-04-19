@@ -12,9 +12,10 @@ type (
 
 	// ValkeyStreamsAdapter defines the interface for a Valkey Streams-based Socket.IO adapter.
 	ValkeyStreamsAdapter interface {
-		adapter.ClusterAdapterWithHeartbeat
+		adapter.ClusterAdapter
 
 		SetValkey(*valkey.ValkeyClient)
+		SetOpts(any)
 		Cleanup(func())
 		OnRawMessage(RawClusterMessage, string) error
 	}

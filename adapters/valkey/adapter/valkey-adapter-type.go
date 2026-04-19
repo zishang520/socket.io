@@ -2,6 +2,7 @@
 package adapter
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +36,10 @@ type (
 		Rooms     *types.Set[socket.Room]
 		Sockets   *types.Slice[*adapter.SocketResponse]
 		Responses *types.Slice[any]
+
+		// Once ensures that the Resolve callback and cleanup are executed exactly once,
+		// preventing double invocations from both normal completion and timeout paths.
+		Once sync.Once
 	}
 
 	// ValkeyAdapter defines the interface for a Valkey-based Socket.IO adapter.

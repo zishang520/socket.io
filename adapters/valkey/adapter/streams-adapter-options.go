@@ -7,10 +7,13 @@ import (
 )
 
 const (
-	DefaultStreamName       = "socket.io"
-	DefaultStreamMaxLen     = 10_000
-	DefaultStreamReadCount  = 100
-	DefaultSessionKeyPrefix = "sio:session:"
+	DefaultStreamName          = "socket.io"
+	DefaultStreamMaxLen        = 10_000
+	DefaultStreamReadCount     = 100
+	DefaultStreamCount         = 1
+	DefaultStreamChannelPrefix = "socket.io"
+	DefaultBlockTimeInMs       = 5_000
+	DefaultSessionKeyPrefix    = "sio:session:"
 )
 
 type (
@@ -22,6 +25,18 @@ type (
 		GetRawStreamName() types.Optional[string]
 		StreamName() string
 
+		SetStreamCount(int)
+		GetRawStreamCount() types.Optional[int]
+		StreamCount() int
+
+		SetChannelPrefix(string)
+		GetRawChannelPrefix() types.Optional[string]
+		ChannelPrefix() string
+
+		SetUseShardedPubSub(bool)
+		GetRawUseShardedPubSub() types.Optional[bool]
+		UseShardedPubSub() bool
+
 		SetMaxLen(int64)
 		GetRawMaxLen() types.Optional[int64]
 		MaxLen() int64
@@ -30,9 +45,17 @@ type (
 		GetRawReadCount() types.Optional[int64]
 		ReadCount() int64
 
+		SetBlockTimeInMs(int64)
+		GetRawBlockTimeInMs() types.Optional[int64]
+		BlockTimeInMs() int64
+
 		SetSessionKeyPrefix(string)
 		GetRawSessionKeyPrefix() types.Optional[string]
 		SessionKeyPrefix() string
+
+		SetOnlyPlaintext(bool)
+		GetRawOnlyPlaintext() types.Optional[bool]
+		OnlyPlaintext() bool
 	}
 
 	// ValkeyStreamsAdapterOptions holds configuration for the Valkey Streams adapter.
@@ -40,9 +63,14 @@ type (
 		adapter.ClusterAdapterOptions
 
 		streamName       types.Optional[string]
+		streamCount      types.Optional[int]
+		channelPrefix    types.Optional[string]
+		useShardedPubSub types.Optional[bool]
 		maxLen           types.Optional[int64]
 		readCount        types.Optional[int64]
+		blockTimeInMs    types.Optional[int64]
 		sessionKeyPrefix types.Optional[string]
+		onlyPlaintext    types.Optional[bool]
 	}
 )
 
@@ -62,14 +90,29 @@ func (s *ValkeyStreamsAdapterOptions) Assign(data ValkeyStreamsAdapterOptionsInt
 	if data.GetRawStreamName() != nil {
 		s.SetStreamName(data.StreamName())
 	}
+	if data.GetRawStreamCount() != nil {
+		s.SetStreamCount(data.StreamCount())
+	}
+	if data.GetRawChannelPrefix() != nil {
+		s.SetChannelPrefix(data.ChannelPrefix())
+	}
+	if data.GetRawUseShardedPubSub() != nil {
+		s.SetUseShardedPubSub(data.UseShardedPubSub())
+	}
 	if data.GetRawMaxLen() != nil {
 		s.SetMaxLen(data.MaxLen())
 	}
 	if data.GetRawReadCount() != nil {
 		s.SetReadCount(data.ReadCount())
 	}
+	if data.GetRawBlockTimeInMs() != nil {
+		s.SetBlockTimeInMs(data.BlockTimeInMs())
+	}
 	if data.GetRawSessionKeyPrefix() != nil {
 		s.SetSessionKeyPrefix(data.SessionKeyPrefix())
+	}
+	if data.GetRawOnlyPlaintext() != nil {
+		s.SetOnlyPlaintext(data.OnlyPlaintext())
 	}
 
 	return s
@@ -84,6 +127,43 @@ func (s *ValkeyStreamsAdapterOptions) StreamName() string {
 		return ""
 	}
 	return s.streamName.Get()
+}
+
+func (s *ValkeyStreamsAdapterOptions) SetStreamCount(v int) { s.streamCount = types.NewSome(v) }
+func (s *ValkeyStreamsAdapterOptions) GetRawStreamCount() types.Optional[int] {
+	return s.streamCount
+}
+func (s *ValkeyStreamsAdapterOptions) StreamCount() int {
+	if s.streamCount == nil {
+		return 0
+	}
+	return s.streamCount.Get()
+}
+
+func (s *ValkeyStreamsAdapterOptions) SetChannelPrefix(v string) {
+	s.channelPrefix = types.NewSome(v)
+}
+func (s *ValkeyStreamsAdapterOptions) GetRawChannelPrefix() types.Optional[string] {
+	return s.channelPrefix
+}
+func (s *ValkeyStreamsAdapterOptions) ChannelPrefix() string {
+	if s.channelPrefix == nil {
+		return ""
+	}
+	return s.channelPrefix.Get()
+}
+
+func (s *ValkeyStreamsAdapterOptions) SetUseShardedPubSub(v bool) {
+	s.useShardedPubSub = types.NewSome(v)
+}
+func (s *ValkeyStreamsAdapterOptions) GetRawUseShardedPubSub() types.Optional[bool] {
+	return s.useShardedPubSub
+}
+func (s *ValkeyStreamsAdapterOptions) UseShardedPubSub() bool {
+	if s.useShardedPubSub == nil {
+		return false
+	}
+	return s.useShardedPubSub.Get()
 }
 
 func (s *ValkeyStreamsAdapterOptions) SetMaxLen(v int64)                   { s.maxLen = types.NewSome(v) }
@@ -104,6 +184,19 @@ func (s *ValkeyStreamsAdapterOptions) ReadCount() int64 {
 	return s.readCount.Get()
 }
 
+func (s *ValkeyStreamsAdapterOptions) SetBlockTimeInMs(v int64) {
+	s.blockTimeInMs = types.NewSome(v)
+}
+func (s *ValkeyStreamsAdapterOptions) GetRawBlockTimeInMs() types.Optional[int64] {
+	return s.blockTimeInMs
+}
+func (s *ValkeyStreamsAdapterOptions) BlockTimeInMs() int64 {
+	if s.blockTimeInMs == nil {
+		return 0
+	}
+	return s.blockTimeInMs.Get()
+}
+
 func (s *ValkeyStreamsAdapterOptions) SetSessionKeyPrefix(v string) {
 	s.sessionKeyPrefix = types.NewSome(v)
 }
@@ -115,4 +208,17 @@ func (s *ValkeyStreamsAdapterOptions) SessionKeyPrefix() string {
 		return ""
 	}
 	return s.sessionKeyPrefix.Get()
+}
+
+func (s *ValkeyStreamsAdapterOptions) SetOnlyPlaintext(v bool) {
+	s.onlyPlaintext = types.NewSome(v)
+}
+func (s *ValkeyStreamsAdapterOptions) GetRawOnlyPlaintext() types.Optional[bool] {
+	return s.onlyPlaintext
+}
+func (s *ValkeyStreamsAdapterOptions) OnlyPlaintext() bool {
+	if s.onlyPlaintext == nil {
+		return false
+	}
+	return s.onlyPlaintext.Get()
 }

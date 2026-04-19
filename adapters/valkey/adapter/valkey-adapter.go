@@ -2,6 +2,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,6 +60,9 @@ type (
 		ackRequests          *types.Map[string, *AckRequest]
 		valkeyListeners      *types.Map[string, *valkey.ValkeyPubSub]
 		friendlyErrorHandler func(...any)
+
+		ctx    context.Context
+		cancel context.CancelFunc
 	}
 )
 
@@ -112,6 +116,8 @@ func (r *valkeyAdapter) Parser() valkey.Parser { return r.parser }
 func (r *valkeyAdapter) Construct(nsp socket.Namespace) {
 	r.Adapter.Construct(nsp)
 
+	r.ctx, r.cancel = context.WithCancel(r.valkeyClient.Context)
+
 	r.uid = adapter.ServerId(adapter.Uid2(defaultUidLength))
 
 	if r.opts.GetRawRequestsTimeout() != nil {
@@ -145,11 +151,11 @@ func (r *valkeyAdapter) Construct(nsp socket.Namespace) {
 	}
 	_ = r.valkeyClient.On("error", r.friendlyErrorHandler)
 
-	pubsub := r.valkeyClient.PSubscribe(r.valkeyClient.Context, r.channel+"*")
+	pubsub := r.valkeyClient.PSubscribe(r.ctx, r.channel+"*")
 	r.valkeyListeners.Store(subKeyPattern, pubsub)
 	go r.handlePatternMessages(pubsub)
 
-	sub := r.valkeyClient.Subscribe(r.valkeyClient.Context, r.requestChannel, r.responseChannel, r.specificResponseChannel)
+	sub := r.valkeyClient.Subscribe(r.ctx, r.requestChannel, r.responseChannel, r.specificResponseChannel)
 	r.valkeyListeners.Store(subKeyChannel, sub)
 	go r.handleChannelMessages(sub)
 }
@@ -157,9 +163,9 @@ func (r *valkeyAdapter) Construct(nsp socket.Namespace) {
 func (r *valkeyAdapter) handlePatternMessages(pubsub *valkey.ValkeyPubSub) {
 	defer func() { _ = pubsub.Close() }()
 	for {
-		msg, err := pubsub.ReceiveMessage(r.valkeyClient.Context)
+		msg, err := pubsub.ReceiveMessage(r.ctx)
 		if err != nil {
-			if errors.Is(err, valkey.ErrValkeyPubSubClosed) || r.valkeyClient.Context.Err() != nil {
+			if errors.Is(err, valkey.ErrValkeyPubSubClosed) || r.ctx.Err() != nil {
 				return
 			}
 			r.valkeyClient.Emit("error", err)
@@ -172,9 +178,9 @@ func (r *valkeyAdapter) handlePatternMessages(pubsub *valkey.ValkeyPubSub) {
 func (r *valkeyAdapter) handleChannelMessages(sub *valkey.ValkeyPubSub) {
 	defer func() { _ = sub.Close() }()
 	for {
-		msg, err := sub.ReceiveMessage(r.valkeyClient.Context)
+		msg, err := sub.ReceiveMessage(r.ctx)
 		if err != nil {
-			if errors.Is(err, valkey.ErrValkeyPubSubClosed) || r.valkeyClient.Context.Err() != nil {
+			if errors.Is(err, valkey.ErrValkeyPubSubClosed) || r.ctx.Err() != nil {
 				return
 			}
 			r.valkeyClient.Emit("error", err)
@@ -402,7 +408,7 @@ func (r *valkeyAdapter) handleServerSideEmitRequest(request *Request) {
 				valkeyLog.Debug("Error marshaling SERVER_SIDE_EMIT response: %s", err.Error())
 				return
 			}
-			if err := r.valkeyClient.Publish(r.valkeyClient.Context, r.responseChannel, response); err != nil {
+			if err := r.valkeyClient.Publish(r.ctx, r.responseChannel, response); err != nil {
 				r.valkeyClient.Emit("error", err)
 			}
 		})
@@ -459,7 +465,7 @@ func (r *valkeyAdapter) publishResponse(request *Request, response []byte) {
 	channel := b.String()
 
 	valkeyLog.Debug("publishing response to channel %s", channel)
-	if err := r.valkeyClient.Publish(r.valkeyClient.Context, channel, response); err != nil {
+	if err := r.valkeyClient.Publish(r.ctx, channel, response); err != nil {
 		r.valkeyClient.Emit("error", err)
 	}
 }
@@ -500,48 +506,54 @@ func (r *valkeyAdapter) onResponse(_ string, msg []byte) {
 func (r *valkeyAdapter) processResponse(request *ValkeyRequest, response *Response, requestId string) {
 	switch request.Type {
 	case valkey.SOCKETS, valkey.REMOTE_FETCH:
-		request.MsgCount.Add(1)
 		if len(response.Sockets) > 0 {
 			request.Sockets.Push(response.Sockets...)
 		}
-		if request.MsgCount.Load() == request.NumSub {
-			utils.ClearTimeout(request.Timeout.Load())
-			if request.Resolve != nil {
-				request.Resolve(types.NewSlice(slices.Map(request.Sockets.All(), func(client *adapter.SocketResponse) any {
-					return socket.SocketDetails(adapter.NewRemoteSocket(client))
-				})...))
-			}
-			r.requests.Delete(requestId)
+		if request.MsgCount.Add(1) == request.NumSub {
+			request.Once.Do(func() {
+				utils.ClearTimeout(request.Timeout.Load())
+				if request.Resolve != nil {
+					request.Resolve(types.NewSlice(slices.Map(request.Sockets.All(), func(client *adapter.SocketResponse) any {
+						return socket.SocketDetails(adapter.NewRemoteSocket(client))
+					})...))
+				}
+				r.requests.Delete(requestId)
+			})
 		}
 	case valkey.ALL_ROOMS:
-		request.MsgCount.Add(1)
 		if len(response.Rooms) > 0 {
 			request.Rooms.Add(response.Rooms...)
 		}
-		if request.MsgCount.Load() == request.NumSub {
-			utils.ClearTimeout(request.Timeout.Load())
-			if request.Resolve != nil {
-				request.Resolve(types.NewSlice(slices.Map(request.Rooms.Keys(), func(room socket.Room) any {
-					return room
-				})...))
-			}
-			r.requests.Delete(requestId)
+		if request.MsgCount.Add(1) == request.NumSub {
+			request.Once.Do(func() {
+				utils.ClearTimeout(request.Timeout.Load())
+				if request.Resolve != nil {
+					request.Resolve(types.NewSlice(slices.Map(request.Rooms.Keys(), func(room socket.Room) any {
+						return room
+					})...))
+				}
+				r.requests.Delete(requestId)
+			})
 		}
 	case valkey.REMOTE_JOIN, valkey.REMOTE_LEAVE, valkey.REMOTE_DISCONNECT:
-		utils.ClearTimeout(request.Timeout.Load())
-		if request.Resolve != nil {
-			request.Resolve(nil)
-		}
-		r.requests.Delete(requestId)
+		request.Once.Do(func() {
+			utils.ClearTimeout(request.Timeout.Load())
+			if request.Resolve != nil {
+				request.Resolve(nil)
+			}
+			r.requests.Delete(requestId)
+		})
 	case valkey.SERVER_SIDE_EMIT:
 		request.Responses.Push(response.Data)
 		valkeyLog.Debug("serverSideEmit: got %d responses out of %d", request.Responses.Len(), request.NumSub)
 		if int64(request.Responses.Len()) == request.NumSub {
-			utils.ClearTimeout(request.Timeout.Load())
-			if request.Resolve != nil {
-				request.Resolve(request.Responses)
-			}
-			r.requests.Delete(requestId)
+			request.Once.Do(func() {
+				utils.ClearTimeout(request.Timeout.Load())
+				if request.Resolve != nil {
+					request.Resolve(request.Responses)
+				}
+				r.requests.Delete(requestId)
+			})
 		}
 	default:
 		valkeyLog.Debug("ignoring unknown request type: %d", request.Type)
@@ -568,7 +580,7 @@ func (r *valkeyAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastO
 				}
 			}
 			valkeyLog.Debug("publishing message to channel %s", channel)
-			if err := r.valkeyClient.Publish(r.valkeyClient.Context, channel, msg); err != nil {
+			if err := r.valkeyClient.Publish(r.ctx, channel, msg); err != nil {
 				r.valkeyClient.Emit("error", err)
 			}
 		}
@@ -590,7 +602,7 @@ func (r *valkeyAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Bro
 			Packet:    packet,
 			Opts:      adapter.EncodeOptions(opts),
 		}); err == nil {
-			if err := r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request); err != nil {
+			if err := r.valkeyClient.Publish(r.ctx, r.requestChannel, request); err != nil {
 				r.valkeyClient.Emit("error", err)
 			}
 
@@ -599,7 +611,7 @@ func (r *valkeyAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Bro
 				Ack:                 ack,
 			})
 
-			timeout := time.Duration(0)
+			timeout := adapter.DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
 				timeout = *opts.Flags.Timeout
 			}
@@ -631,9 +643,11 @@ func (r *valkeyAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 		}
 
 		timeout := utils.SetTimeout(func() {
-			if _, ok := r.requests.Load(requestId); ok {
-				cb(nil, errors.New("timeout reached while waiting for allRooms response"))
-				r.requests.Delete(requestId)
+			if request, ok := r.requests.Load(requestId); ok {
+				request.Once.Do(func() {
+					cb(nil, errors.New("timeout reached while waiting for allRooms response"))
+					r.requests.Delete(requestId)
+				})
 			}
 		}, r.requestsTimeout)
 
@@ -654,7 +668,7 @@ func (r *valkeyAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 			Rooms: localRooms,
 		})
 
-		if err := r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request); err != nil {
+		if err := r.valkeyClient.Publish(r.ctx, r.requestChannel, request); err != nil {
 			r.valkeyClient.Emit("error", err)
 		}
 	}
@@ -686,9 +700,11 @@ func (r *valkeyAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]
 			}
 
 			timeout := utils.SetTimeout(func() {
-				if _, ok := r.requests.Load(requestId); ok {
-					cb(nil, errors.New("timeout reached while waiting for fetchSockets response"))
-					r.requests.Delete(requestId)
+				if request, ok := r.requests.Load(requestId); ok {
+					request.Once.Do(func() {
+						cb(nil, errors.New("timeout reached while waiting for fetchSockets response"))
+						r.requests.Delete(requestId)
+					})
 				}
 			}, r.requestsTimeout)
 
@@ -716,7 +732,7 @@ func (r *valkeyAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]
 				})...),
 			})
 
-			if err := r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request); err != nil {
+			if err := r.valkeyClient.Publish(r.ctx, r.requestChannel, request); err != nil {
 				r.valkeyClient.Emit("error", err)
 			}
 		})
@@ -734,7 +750,7 @@ func (r *valkeyAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socket
 		valkeyLog.Debug("Error marshaling AddSockets request: %s", err.Error())
 		return
 	}
-	if err := r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request); err != nil {
+	if err := r.valkeyClient.Publish(r.ctx, r.requestChannel, request); err != nil {
 		r.valkeyClient.Emit("error", err)
 	}
 }
@@ -750,7 +766,7 @@ func (r *valkeyAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socket
 		valkeyLog.Debug("Error marshaling DelSockets request: %s", err.Error())
 		return
 	}
-	if err := r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request); err != nil {
+	if err := r.valkeyClient.Publish(r.ctx, r.requestChannel, request); err != nil {
 		r.valkeyClient.Emit("error", err)
 	}
 }
@@ -766,7 +782,7 @@ func (r *valkeyAdapter) DisconnectSockets(opts *socket.BroadcastOptions, close b
 		valkeyLog.Debug("Error marshaling DisconnectSockets request: %s", err.Error())
 		return
 	}
-	if err := r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request); err != nil {
+	if err := r.valkeyClient.Publish(r.ctx, r.requestChannel, request); err != nil {
 		r.valkeyClient.Emit("error", err)
 	}
 }
@@ -786,7 +802,7 @@ func (r *valkeyAdapter) ServerSideEmit(packet []any) error {
 		return fmt.Errorf("failed to marshal ServerSideEmit request: %w", err)
 	}
 
-	return r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request)
+	return r.valkeyClient.Publish(r.ctx, r.requestChannel, request)
 }
 
 func (r *valkeyAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error {
@@ -806,8 +822,10 @@ func (r *valkeyAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) erro
 
 	timeout := utils.SetTimeout(func() {
 		if storedRequest, ok := r.requests.Load(requestId); ok {
-			ack(storedRequest.Responses.All(), fmt.Errorf("timeout reached: only %d responses received out of %d", storedRequest.Responses.Len(), storedRequest.NumSub))
-			r.requests.Delete(requestId)
+			storedRequest.Once.Do(func() {
+				ack(storedRequest.Responses.All(), fmt.Errorf("timeout reached: only %d responses received out of %d", storedRequest.Responses.Len(), storedRequest.NumSub))
+				r.requests.Delete(requestId)
+			})
 		}
 	}, r.requestsTimeout)
 
@@ -823,12 +841,12 @@ func (r *valkeyAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) erro
 		Responses: types.NewSlice[any](),
 	})
 
-	return r.valkeyClient.Publish(r.valkeyClient.Context, r.requestChannel, request)
+	return r.valkeyClient.Publish(r.ctx, r.requestChannel, request)
 }
 
 // ServerCount returns the number of servers subscribed to the request channel.
 func (r *valkeyAdapter) ServerCount() int64 {
-	result, err := r.valkeyClient.PubSubNumSub(r.valkeyClient.Context, r.requestChannel)
+	result, err := r.valkeyClient.PubSubNumSub(r.ctx, r.requestChannel)
 	if err != nil {
 		r.valkeyClient.Emit("error", err)
 		return 0
@@ -841,14 +859,16 @@ func (r *valkeyAdapter) ServerCount() int64 {
 
 // Close cleans up Valkey subscriptions and listeners.
 func (r *valkeyAdapter) Close() {
+	defer r.cancel()
+
 	if psub, ok := r.valkeyListeners.LoadAndDelete(subKeyPattern); ok {
-		if err := psub.PUnsubscribe(r.valkeyClient.Context, r.channel+"*"); err != nil {
+		if err := psub.PUnsubscribe(r.ctx, r.channel+"*"); err != nil {
 			r.valkeyClient.Emit("error", err)
 		}
 		_ = psub.Close()
 	}
 	if sub, ok := r.valkeyListeners.LoadAndDelete(subKeyChannel); ok {
-		if err := sub.Unsubscribe(r.valkeyClient.Context, r.requestChannel, r.responseChannel, r.specificResponseChannel); err != nil {
+		if err := sub.Unsubscribe(r.ctx, r.requestChannel, r.responseChannel, r.specificResponseChannel); err != nil {
 			r.valkeyClient.Emit("error", err)
 		}
 		_ = sub.Close()
