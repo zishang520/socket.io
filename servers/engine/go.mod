@@ -7,8 +7,8 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.18.5
 	github.com/quic-go/webtransport-go v0.10.0
-	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.1
-	github.com/zishang520/socket.io/v3 v3.0.1
+	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.2
+	github.com/zishang520/socket.io/v3 v3.0.2
 )
 
 require (

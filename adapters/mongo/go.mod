@@ -3,10 +3,10 @@ module github.com/zishang520/socket.io/adapters/mongo/v3
 go 1.26.0
 
 require (
-	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.1
-	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.1
-	github.com/zishang520/socket.io/servers/socket/v3 v3.0.1
-	github.com/zishang520/socket.io/v3 v3.0.1
+	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.2
+	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.2
+	github.com/zishang520/socket.io/servers/socket/v3 v3.0.2
+	github.com/zishang520/socket.io/v3 v3.0.2
 	go.mongodb.org/mongo-driver/v2 v2.5.1
 )
 
@@ -26,8 +26,8 @@ require (
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
-	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.1 // indirect
-	github.com/zishang520/socket.io/servers/engine/v3 v3.0.1 // indirect
+	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.2 // indirect
+	github.com/zishang520/socket.io/servers/engine/v3 v3.0.2 // indirect
 	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
