@@ -229,7 +229,7 @@ func TestSanitizeOrWarn(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := sanitizeOrWarn(tt.fieldName, validCookieValueByte, tt.input)
+			result := sanitize(validCookieValueByte, tt.input)
 			if result != tt.expected {
 				t.Errorf("sanitizeOrWarn(%q, validCookieValueByte, %q) = %q, want %q",
 					tt.fieldName, tt.input, result, tt.expected)

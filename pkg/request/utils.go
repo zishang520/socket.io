@@ -5,12 +5,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/zishang520/socket.io/v3/pkg/log"
 )
 
 var (
-	requestLog          = log.NewLog("request")
 	cookieNameSanitizer = strings.NewReplacer("\n", "-", "\r", "-")
 )
 
@@ -33,7 +30,7 @@ func SanitizeCookieName(n string) string {
 // thus we produce a quoted cookie-value if v contains commas or spaces.
 // See https://golang.org/issue/7243 for the discussion.
 func SanitizeCookieValue(v string, quoted bool) string {
-	v = sanitizeOrWarn("Cookie.Value", validCookieValueByte, v)
+	v = sanitize(validCookieValueByte, v)
 	if len(v) == 0 {
 		return v
 	}
@@ -43,13 +40,12 @@ func SanitizeCookieValue(v string, quoted bool) string {
 	return v
 }
 
-func sanitizeOrWarn(fieldName string, valid func(byte) bool, v string) string {
+func sanitize(valid func(byte) bool, v string) string {
 	ok := true
 	for i := 0; i < len(v); i++ {
 		if valid(v[i]) {
 			continue
 		}
-		requestLog.Printf("request: invalid byte %q in %s; dropping invalid bytes", v[i], fieldName)
 		ok = false
 		break
 	}

@@ -14,8 +14,8 @@ type (
 
 		mu    sync.RWMutex
 		m     map[string]muxEntry
-		es    []muxEntry // slice of entries sorted from longest to shortest.
-		hosts bool       // whether any patterns contain hostnames
+		es    []muxEntry
+		hosts bool // whether any patterns contain hostnames
 	}
 
 	muxEntry struct {
@@ -41,8 +41,6 @@ func (mux *ServeMux) match(path string) (h http.Handler, pattern string) {
 		return v.h, v.pattern
 	}
 
-	// Check for longest valid match.  mux.es contains all patterns
-	// that end in / sorted from longest to shortest.
 	for _, e := range mux.es {
 		if strings.HasPrefix(path, e.pattern) {
 			return e.h, e.pattern

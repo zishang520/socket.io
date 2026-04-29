@@ -27,3 +27,15 @@ func (s *Some[T]) Get() T {
 	}
 	return s.value
 }
+
+// None represents an absent optional value.
+type None[T any] struct{}
+
+// NewNone returns an Optional that holds no value.
+func NewNone[T any]() Optional[T] {
+	return &None[T]{}
+}
+
+func (n *None[T]) IsPresent() bool { return false }
+func (n *None[T]) IsEmpty() bool   { return true }
+func (n *None[T]) Get() T          { var zero T; return zero }

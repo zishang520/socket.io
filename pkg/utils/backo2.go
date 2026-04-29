@@ -95,6 +95,11 @@ func (b *Backoff) Duration() int64 {
 	factor := loadFloat(&b.factor)
 	jitter := loadFloat(&b.jitter)
 
+	// Guard against a concurrent SetMin/SetMax race where min > max.
+	if minVal > maxVal {
+		minVal, maxVal = maxVal, minVal
+	}
+
 	// Calculate exponential backoff
 	duration := minVal * math.Pow(factor, float64(attempt))
 	duration = clamp(duration, minVal, maxVal)

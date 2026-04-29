@@ -130,9 +130,18 @@ func (s *server) HandleUpgrade(ctx *types.HttpContext) {
 				}
 			},
 			CheckOrigin: func(*http.Request) bool {
-				// Verified in *server.Verify()
 				return true
 			},
+		}
+
+		if cors := s.Opts().Cors(); cors != nil && cors.Origin != nil {
+			ws.CheckOrigin = func(r *http.Request) bool {
+				origin := r.Header.Get("Origin")
+				if origin == "" {
+					return true
+				}
+				return cors.IsOriginAllowed(origin, cors.Origin)
+			}
 		}
 
 		// delegate to ws
@@ -220,6 +229,16 @@ func (s *server) OnWebTransportSession(ctx *types.HttpContext, wt *webtransport.
 		if err := allowRequest(ctx); err != nil {
 			s.emitAbortRequest(ctx, FORBIDDEN, map[string]any{"message": err.Error()})
 			return
+		}
+	}
+
+	if cors := s.Opts().Cors(); cors != nil && cors.Origin != nil {
+		wt.CheckOrigin = func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			return cors.IsOriginAllowed(origin, cors.Origin)
 		}
 	}
 

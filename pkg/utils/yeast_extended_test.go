@@ -19,7 +19,10 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	values := []int64{0, 1, 63, 64, 100, 1000, 123456, 9999999}
 	for _, v := range values {
 		encoded := y.Encode(v)
-		decoded := y.Decode(encoded)
+		decoded, err := y.Decode(encoded)
+		if err != nil {
+			t.Fatalf("Decode(%q) returned error: %v", encoded, err)
+		}
 		if decoded != v {
 			t.Errorf("Round trip failed for %d: encoded=%q, decoded=%d", v, encoded, decoded)
 		}
@@ -28,9 +31,9 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 
 func TestDecodeEmptyString(t *testing.T) {
 	y := NewYeast()
-	got := y.Decode("")
-	if got != 0 {
-		t.Errorf("Decode(\"\") = %d, want 0", got)
+	_, err := y.Decode("")
+	if err == nil {
+		t.Errorf("Decode(\"\") should return an error for empty string")
 	}
 }
 

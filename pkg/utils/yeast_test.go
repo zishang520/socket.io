@@ -46,7 +46,10 @@ func TestDecode(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		result := y.Decode(test.str)
+		result, err := y.Decode(test.str)
+		if err != nil {
+			t.Fatalf("Decode(%s) returned error: %v", test.str, err)
+		}
 		if result != test.expected {
 			t.Errorf("Decode(%s) = %d; expected %d", test.str, result, test.expected)
 		}

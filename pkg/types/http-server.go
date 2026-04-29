@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -78,7 +79,9 @@ func (s *HttpServer) Close(fn func(error)) (err error) {
 	s.servers.Range(func(server any, _ int) bool {
 		switch srv := server.(type) {
 		case *http.Server:
-			serverErr = srv.Shutdown(context.Background())
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			serverErr = srv.Shutdown(shutdownCtx)
+			cancel()
 		case *http3.Server:
 			serverErr = srv.Close()
 		case *webtransport.Server:

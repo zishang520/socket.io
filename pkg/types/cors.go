@@ -37,15 +37,18 @@ type (
 	}
 )
 
-func (c *cors) isOriginAllowed(origin string, allowedOrigin any) bool {
+func (c *Cors) IsOriginAllowed(origin string, allowedOrigin any) bool {
 	switch v := allowedOrigin.(type) {
 	case []any:
 		for _, value := range v {
-			if c.isOriginAllowed(origin, value) {
+			if c.IsOriginAllowed(origin, value) {
 				return true
 			}
 		}
 	case string:
+		if v == "*" {
+			return true
+		}
 		return origin == v
 	case *regexp.Regexp:
 		return v.MatchString(origin)
@@ -58,8 +61,17 @@ func (c *cors) isOriginAllowed(origin string, allowedOrigin any) bool {
 func (c *cors) configureOrigin() *cors {
 	requestOrigin := c.ctx.Headers().Peek("Origin")
 	if o, ok := c.options.Origin.(string); ok {
-		if o == "*" {
-			// allow any origin
+		if o == "*" && c.options.Credentials && requestOrigin != "" {
+			// Credentials + wildcard origin: must reflect the specific origin
+			// per the CORS specification (Access-Control-Allow-Origin: * is
+			// incompatible with Access-Control-Allow-Credentials: true).
+			c.headers = append(c.headers, &Kv{
+				Key:   "Access-Control-Allow-Origin",
+				Value: requestOrigin,
+			})
+			c.varys = append(c.varys, "Origin")
+		} else if o == "*" {
+			// allow any origin (no credentials)
 			c.headers = append(c.headers, &Kv{
 				Key:   "Access-Control-Allow-Origin",
 				Value: "*",
@@ -74,7 +86,7 @@ func (c *cors) configureOrigin() *cors {
 		}
 	} else {
 		// reflect origin
-		if c.isOriginAllowed(requestOrigin, c.options.Origin) {
+		if c.options.IsOriginAllowed(requestOrigin, c.options.Origin) {
 			c.headers = append(c.headers, &Kv{
 				Key:   "Access-Control-Allow-Origin",
 				Value: requestOrigin,

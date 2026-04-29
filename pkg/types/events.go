@@ -2,13 +2,18 @@ package types
 
 import (
 	"reflect"
+	"runtime/debug"
 	"sync"
+
+	"github.com/zishang520/socket.io/v3/pkg/log"
 )
 
 const (
 	// Version current version number
 	EventVersion = "0.0.3"
 )
+
+var eventsLog = log.NewLog("engine:events")
 
 type (
 	// EventName is just a type of string, it's the event name
@@ -97,12 +102,11 @@ func (e *emmiter) AddListener(evt EventName, listeners ...EventListener) error {
 		return nil
 	}
 
-	events := make([]*eventEntry, len(listeners))
-	for i, event := range listeners {
-		if event == nil {
-			continue
+	var events []*eventEntry
+	for _, event := range listeners {
+		if event != nil {
+			events = append(events, &eventEntry{fn: event, ptr: reflect.ValueOf(event).Pointer()})
 		}
-		events[i] = &eventEntry{fn: event, ptr: reflect.ValueOf(event).Pointer()}
 	}
 
 	return e.addListeners(evt, events)
@@ -125,7 +129,15 @@ func (e *emmiter) Emit(evt EventName, data ...any) {
 
 	for _, event := range evtEntry.All() {
 		if event != nil {
-			event.fn(data...)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// Prevent a panicking listener from crashing the emitter.
+						eventsLog.Errorf("event listener panic recovered: %v\n%s", r, debug.Stack())
+					}
+				}()
+				event.fn(data...)
+			}()
 		}
 	}
 }
@@ -178,13 +190,12 @@ func (e *emmiter) Once(evt EventName, listeners ...EventListener) error {
 		return nil
 	}
 
-	events := make([]*eventEntry, len(listeners))
-	for i, event := range listeners {
-		if event == nil {
-			continue
+	var events []*eventEntry
+	for _, event := range listeners {
+		if event != nil {
+			oneTime := &oneTimeListener{fired: &sync.Once{}, evt: evt, emitter: e, fn: event}
+			events = append(events, &eventEntry{fn: oneTime.execute, ptr: reflect.ValueOf(event).Pointer()})
 		}
-		oneTime := &oneTimeListener{fired: &sync.Once{}, evt: evt, emitter: e, fn: event}
-		events[i] = &eventEntry{fn: oneTime.execute, ptr: reflect.ValueOf(event).Pointer()}
 	}
 	return e.addListeners(evt, events)
 }

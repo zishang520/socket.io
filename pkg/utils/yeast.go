@@ -1,19 +1,20 @@
 package utils
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 )
 
 var (
-	alphabet = [64]string{
-		"0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-		"A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
-		"K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
-		"U", "V", "W", "X", "Y", "Z", "a", "b", "c", "d",
-		"e", "f", "g", "h", "i", "j", "k", "l", "m", "n",
-		"o", "p", "q", "r", "s", "t", "u", "v", "w", "x",
-		"y", "z", "-", "_",
+	alphabet = [64]byte{
+		'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+		'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+		'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+		'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd',
+		'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+		'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
+		'y', 'z', '-', '_',
 	}
 	mapCharToIndex = map[byte]int64{
 		'0': 0, '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
@@ -42,12 +43,12 @@ func (y *Yeast) Encode(num int64) string {
 		num = -num
 	}
 	if num == 0 {
-		return alphabet[0]
+		return "0"
 	}
 
 	buf := make([]byte, 0, 10)
 	for num > 0 {
-		buf = append(buf, alphabet[num%length][0])
+		buf = append(buf, alphabet[num%length])
 		num /= length
 	}
 
@@ -59,12 +60,19 @@ func (y *Yeast) Encode(num int64) string {
 	return string(buf)
 }
 
-func (y *Yeast) Decode(str string) int64 {
+func (y *Yeast) Decode(str string) (int64, error) {
+	if len(str) == 0 {
+		return 0, fmt.Errorf("yeast: empty string")
+	}
 	var decoded int64
 	for i := 0; i < len(str); i++ {
-		decoded = decoded*length + mapCharToIndex[str[i]]
+		idx, ok := mapCharToIndex[str[i]]
+		if !ok {
+			return 0, fmt.Errorf("yeast: invalid character %q at position %d", str[i], i)
+		}
+		decoded = decoded*length + idx
 	}
-	return decoded
+	return decoded, nil
 }
 
 func (y *Yeast) Yeast() string {

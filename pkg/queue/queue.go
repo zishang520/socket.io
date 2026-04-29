@@ -3,10 +3,14 @@
 package queue
 
 import (
-	"log"
 	"runtime"
+	"runtime/debug"
 	"sync"
+
+	"github.com/zishang520/socket.io/v3/pkg/log"
 )
+
+var queueLog = log.NewLog("engine:events")
 
 // Queue serializes function execution through a single goroutine.
 // It uses an unbounded slice backed by a condition variable to ensure
@@ -33,7 +37,6 @@ func New() *Queue {
 }
 
 // Enqueue adds a task to the queue for sequential execution.
-// It returns nil on success, or ErrQueueFull if a max size is set and the queue is at capacity.
 // It returns immediately and NEVER blocks.
 func (q *Queue) Enqueue(task func()) {
 	if task == nil {
@@ -101,10 +104,8 @@ func (q *Queue) get() (func(), bool) {
 // execute runs the task with built-in panic recovery.
 func (q *Queue) execute(task func()) {
 	defer func() {
-		if err := recover(); err != nil {
-			buf := make([]byte, 4096)
-			n := runtime.Stack(buf, false)
-			log.Printf("queue task panic recovered: %v\n%s", err, buf[:n])
+		if r := recover(); r != nil {
+			queueLog.Errorf("queue task panic recovered: %v\n%s", r, debug.Stack())
 		}
 	}()
 	task()
