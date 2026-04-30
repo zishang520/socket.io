@@ -36,7 +36,7 @@ func TestCorsWildcardOrigin(t *testing.T) {
 }
 
 func TestCorsFixedOrigin(t *testing.T) {
-	ctx := createTestContext("GET", "http://example.com")
+	ctx := createTestContext("GET", "http://allowed.com")
 
 	options := &Cors{
 		Origin:            "http://allowed.com",
@@ -79,10 +79,11 @@ func TestCorsNotAllowedOrigin(t *testing.T) {
 
 	CorsMiddleware(options, ctx, func(err error) {})
 
-	// When Origin is a string (not "*"), it sets that fixed origin regardless of request origin
+	// When request origin doesn't match, ACAO header is omitted entirely
+	// so the browser blocks the request without leaking the allowed origin.
 	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
-	if origin != "http://allowed.com" {
-		t.Errorf("Expected origin 'http://allowed.com' (fixed), got %q", origin)
+	if origin != "" {
+		t.Errorf("Expected empty ACAO header for non-matching origin, got %q", origin)
 	}
 }
 
@@ -380,5 +381,254 @@ func TestParseVary(t *testing.T) {
 		if result.Len() != len(tt.expected) {
 			t.Errorf("parseVary(%q) expected %d items, got %d", tt.input, len(tt.expected), result.Len())
 		}
+	}
+}
+
+// --- New tests for enhanced IsOriginAllowed and configureOrigin ---
+
+func TestIsOriginAllowed_StringSlice(t *testing.T) {
+	c := &Cors{}
+	allowed := []string{"http://a.com", "http://b.com"}
+	if !c.IsOriginAllowed("http://b.com", allowed) {
+		t.Error("Expected http://b.com to be allowed")
+	}
+	if c.IsOriginAllowed("http://c.com", allowed) {
+		t.Error("Expected http://c.com to be rejected")
+	}
+}
+
+func TestIsOriginAllowed_StringSliceCaseInsensitive(t *testing.T) {
+	c := &Cors{}
+	allowed := []string{"http://Example.COM"}
+	if !c.IsOriginAllowed("http://example.com", allowed) {
+		t.Error("Expected case-insensitive match to succeed")
+	}
+}
+
+func TestIsOriginAllowed_FuncCallback(t *testing.T) {
+	c := &Cors{}
+	fn := func(origin string) bool {
+		return origin == "http://dynamic.com"
+	}
+	if !c.IsOriginAllowed("http://dynamic.com", fn) {
+		t.Error("Expected func callback to allow http://dynamic.com")
+	}
+	if c.IsOriginAllowed("http://other.com", fn) {
+		t.Error("Expected func callback to reject http://other.com")
+	}
+}
+
+func TestIsOriginAllowed_StringCaseInsensitive(t *testing.T) {
+	c := &Cors{}
+	if !c.IsOriginAllowed("HTTP://EXAMPLE.COM", "http://example.com") {
+		t.Error("Expected case-insensitive string match")
+	}
+}
+
+func TestIsOriginAllowed_UnsupportedType(t *testing.T) {
+	c := &Cors{}
+	if c.IsOriginAllowed("http://x.com", 42) {
+		t.Error("Expected unsupported type to return false")
+	}
+}
+
+func TestIsOriginAllowed_BoolFalse(t *testing.T) {
+	c := &Cors{}
+	if c.IsOriginAllowed("http://any.com", false) {
+		t.Error("Expected bool false to reject")
+	}
+}
+
+func TestIsOriginAllowed_NestedAnySlice(t *testing.T) {
+	c := &Cors{}
+	allowed := []any{
+		"http://a.com",
+		regexp.MustCompile(`^http://.*\.example\.com$`),
+		func(origin string) bool { return origin == "http://dynamic.com" },
+	}
+	if !c.IsOriginAllowed("http://a.com", allowed) {
+		t.Error("Expected string in []any to match")
+	}
+	if !c.IsOriginAllowed("http://sub.example.com", allowed) {
+		t.Error("Expected regexp in []any to match")
+	}
+	if !c.IsOriginAllowed("http://dynamic.com", allowed) {
+		t.Error("Expected func in []any to match")
+	}
+	if c.IsOriginAllowed("http://evil.com", allowed) {
+		t.Error("Expected non-matching origin to be rejected")
+	}
+}
+
+func TestCorsEmptyOriginHeader(t *testing.T) {
+	ctx := createTestContext("GET", "")
+
+	options := &Cors{
+		Origin:  "http://allowed.com",
+		Methods: "GET",
+	}
+
+	CorsMiddleware(options, ctx, func(err error) {})
+
+	// No Origin header → CORS does not apply, ACAO should be absent.
+	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
+	if origin != "" {
+		t.Errorf("Expected no ACAO header for empty Origin, got %q", origin)
+	}
+}
+
+func TestCorsFixedOriginCaseInsensitive(t *testing.T) {
+	ctx := createTestContext("GET", "HTTP://ALLOWED.COM")
+
+	options := &Cors{
+		Origin:  "http://allowed.com",
+		Methods: "GET",
+	}
+
+	CorsMiddleware(options, ctx, func(err error) {})
+
+	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
+	if origin != "http://allowed.com" {
+		t.Errorf("Expected case-insensitive fixed origin match, got %q", origin)
+	}
+}
+
+func TestCorsFixedOriginMismatchOmitsHeader(t *testing.T) {
+	ctx := createTestContext("GET", "http://evil.com")
+
+	options := &Cors{
+		Origin:  "http://allowed.com",
+		Methods: "GET",
+	}
+
+	CorsMiddleware(options, ctx, func(err error) {})
+
+	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
+	if origin != "" {
+		t.Errorf("Expected ACAO to be omitted for mismatched origin, got %q", origin)
+	}
+}
+
+func TestCorsReflectOriginNotAllowedOmitsHeader(t *testing.T) {
+	ctx := createTestContext("GET", "http://evil.com")
+
+	options := &Cors{
+		Origin:  regexp.MustCompile(`^http://good\.com$`),
+		Methods: "GET",
+	}
+
+	CorsMiddleware(options, ctx, func(err error) {})
+
+	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
+	if origin != "" {
+		t.Errorf("Expected ACAO to be omitted for non-allowed origin, got %q", origin)
+	}
+}
+
+func TestCorsWildcardWithCredentialsReflectsOrigin(t *testing.T) {
+	ctx := createTestContext("GET", "http://specific.com")
+
+	options := &Cors{
+		Origin:      "*",
+		Credentials: true,
+		Methods:     "GET",
+	}
+
+	CorsMiddleware(options, ctx, func(err error) {})
+
+	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
+	if origin != "http://specific.com" {
+		t.Errorf("Expected reflected origin with wildcard+credentials, got %q", origin)
+	}
+	creds := ctx.ResponseHeaders().Peek("Access-Control-Allow-Credentials")
+	if creds != "true" {
+		t.Errorf("Expected credentials 'true', got %q", creds)
+	}
+}
+
+func TestCorsPreflightNoExposeHeaders(t *testing.T) {
+	ctx := createTestContext("OPTIONS", "http://example.com")
+
+	options := &Cors{
+		Origin:               "*",
+		Methods:              "GET",
+		ExposedHeaders:       "X-Custom",
+		PreflightContinue:    false,
+		OptionsSuccessStatus: 204,
+	}
+
+	CorsMiddleware(options, ctx, func(err error) {})
+
+	exposed := ctx.ResponseHeaders().Peek("Access-Control-Expose-Headers")
+	if exposed != "" {
+		t.Errorf("Expected no Expose-Headers in preflight, got %q", exposed)
+	}
+}
+
+func TestCorsActualResponseHasExposeHeaders(t *testing.T) {
+	ctx := createTestContext("GET", "http://example.com")
+
+	options := &Cors{
+		Origin:         "*",
+		Methods:        "GET",
+		ExposedHeaders: "X-Custom",
+	}
+
+	CorsMiddleware(options, ctx, func(err error) {})
+
+	exposed := ctx.ResponseHeaders().Peek("Access-Control-Expose-Headers")
+	if exposed != "X-Custom" {
+		t.Errorf("Expected Expose-Headers in actual response, got %q", exposed)
+	}
+}
+
+func TestCorsStringSliceOriginMiddleware(t *testing.T) {
+	ctx := createTestContext("GET", "http://b.com")
+
+	options := &Cors{
+		Origin:  []string{"http://a.com", "http://b.com"},
+		Methods: "GET",
+	}
+
+	CorsMiddleware(options, ctx, func(err error) {})
+
+	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
+	if origin != "http://b.com" {
+		t.Errorf("Expected reflected origin from []string, got %q", origin)
+	}
+}
+
+func TestCorsFuncOriginMiddleware(t *testing.T) {
+	ctx := createTestContext("GET", "http://dynamic.com")
+
+	options := &Cors{
+		Origin: func(origin string) bool {
+			return origin == "http://dynamic.com"
+		},
+		Methods: "GET",
+	}
+
+	CorsMiddleware(options, ctx, func(err error) {})
+
+	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
+	if origin != "http://dynamic.com" {
+		t.Errorf("Expected reflected origin from func, got %q", origin)
+	}
+}
+
+func TestMiddlewareWrapperDefaults(t *testing.T) {
+	mw := MiddlewareWrapper(&Cors{})
+
+	ctx := createTestContext("GET", "http://example.com")
+	called := false
+	mw(ctx, func(err error) { called = true })
+
+	if !called {
+		t.Error("Expected next to be called")
+	}
+	// Origin defaults to "*"
+	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
+	if origin != "*" {
+		t.Errorf("Expected default wildcard origin, got %q", origin)
 	}
 }

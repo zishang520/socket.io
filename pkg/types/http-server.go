@@ -59,9 +59,6 @@ func (s *HttpServer) webtransportServer(addr string, handler http.Handler) *webt
 	// Start the servers
 	server := &webtransport.Server{
 		H3: &http3.Server{Addr: addr, Handler: handler, Logger: http3Log},
-		CheckOrigin: func(_ *http.Request) bool {
-			return true
-		},
 	}
 
 	// Configure the H3 server for WebTransport (required for v0.10.0+)

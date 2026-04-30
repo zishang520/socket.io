@@ -8,7 +8,7 @@ import (
 
 type (
 	Cors struct {
-		// Supported types: string, []any, *regexp.Regexp, bool
+		// Supported types: string, []string, []any, *regexp.Regexp, bool, func(string) bool
 		Origin any
 		// Supported types: string, []string
 		Methods any
@@ -45,11 +45,19 @@ func (c *Cors) IsOriginAllowed(origin string, allowedOrigin any) bool {
 				return true
 			}
 		}
+	case []string:
+		for _, value := range v {
+			if strings.EqualFold(origin, value) {
+				return true
+			}
+		}
+	case func(string) bool:
+		return v(origin)
 	case string:
 		if v == "*" {
 			return true
 		}
-		return origin == v
+		return strings.EqualFold(origin, v)
 	case *regexp.Regexp:
 		return v.MatchString(origin)
 	case bool:
@@ -60,8 +68,14 @@ func (c *Cors) IsOriginAllowed(origin string, allowedOrigin any) bool {
 
 func (c *cors) configureOrigin() *cors {
 	requestOrigin := c.ctx.Headers().Peek("Origin")
+	// Requests without an Origin header (same-origin or non-browser clients)
+	// are not subject to CORS; skip origin configuration entirely.
+	if requestOrigin == "" {
+		c.varys = append(c.varys, "Origin")
+		return c
+	}
 	if o, ok := c.options.Origin.(string); ok {
-		if o == "*" && c.options.Credentials && requestOrigin != "" {
+		if o == "*" && c.options.Credentials {
 			// Credentials + wildcard origin: must reflect the specific origin
 			// per the CORS specification (Access-Control-Allow-Origin: * is
 			// incompatible with Access-Control-Allow-Credentials: true).
@@ -77,24 +91,24 @@ func (c *cors) configureOrigin() *cors {
 				Value: "*",
 			})
 		} else {
-			// fixed origin
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Allow-Origin",
-				Value: o,
-			})
+			// fixed origin — only reflect if request origin matches;
+			// if not, omit Access-Control-Allow-Origin entirely so the
+			// browser blocks the request without leaking the allowed origin.
+			if strings.EqualFold(requestOrigin, o) {
+				c.headers = append(c.headers, &Kv{
+					Key:   "Access-Control-Allow-Origin",
+					Value: o,
+				})
+			}
 			c.varys = append(c.varys, "Origin")
 		}
 	} else {
-		// reflect origin
+		// reflect origin — only set the header when the origin is allowed;
+		// omitting it causes the browser to block the cross-origin request.
 		if c.options.IsOriginAllowed(requestOrigin, c.options.Origin) {
 			c.headers = append(c.headers, &Kv{
 				Key:   "Access-Control-Allow-Origin",
 				Value: requestOrigin,
-			})
-		} else {
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Allow-Origin",
-				Value: "false",
 			})
 		}
 		c.varys = append(c.varys, "Origin")
@@ -246,8 +260,9 @@ func CorsMiddleware(options *Cors, ctx *HttpContext, next func(error)) {
 	method := c.ctx.Method()
 
 	if http.MethodOptions == method {
-		// preflight
-		c.configureOrigin().configureCredentials().configureMethods().configureAllowedHeaders().configureMaxAge().configureExposedHeaders().applyHeaders()
+		// preflight — Expose-Headers is only meaningful for actual responses,
+		// so it is intentionally omitted here.
+		c.configureOrigin().configureCredentials().configureMethods().configureAllowedHeaders().configureMaxAge().applyHeaders()
 		if options.PreflightContinue {
 			next(nil)
 		} else {
@@ -289,10 +304,6 @@ func MiddlewareWrapper(options *Cors) func(*HttpContext, func(error)) {
 	}
 
 	return func(ctx *HttpContext, next func(error)) {
-		if options.Origin == nil {
-			next(nil)
-		} else {
-			CorsMiddleware(options, ctx, next)
-		}
+		CorsMiddleware(options, ctx, next)
 	}
 }
