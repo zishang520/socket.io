@@ -439,6 +439,14 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	}
 	defer func() { _ = file.Close() }()
 
+	// Get file size for Content-Length in uncompressed responses
+	fi, statErr := file.Stat()
+	if statErr != nil {
+		serverLog.Debug("File stat failed: %v", statErr)
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
 	encoding := utils.Contains(r.Header.Get("Accept-Encoding"), []string{"gzip", "deflate", "br", "zstd"})
 
 	switch encoding {
@@ -482,6 +490,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(zd, file)
 	default:
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, file)
 	}

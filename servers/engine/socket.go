@@ -217,7 +217,9 @@ func (s *socket) onPacket(data *packet.Packet) {
 			return
 		}
 		socketLog.Debug("got ping")
-		s.pingTimeoutTimer.Load().Refresh()
+		if timer := s.pingTimeoutTimer.Load(); timer != nil {
+			timer.Refresh()
+		}
 		s.sendPacket(packet.PONG, nil, nil, nil)
 		s.Emit("heartbeat")
 	case packet.PONG:
@@ -227,7 +229,9 @@ func (s *socket) onPacket(data *packet.Packet) {
 		}
 		socketLog.Debug("got pong")
 		utils.ClearTimeout(s.pingTimeoutTimer.Load())
-		s.pingIntervalTimer.Load().Refresh()
+		if timer := s.pingIntervalTimer.Load(); timer != nil {
+			timer.Refresh()
+		}
 		s.Emit("heartbeat")
 	case packet.ERROR:
 		s.OnClose("parse error")

@@ -122,11 +122,11 @@ func (bs *baseServer) Construct(opt any) {
 			if len(cookie.Name) == 0 {
 				cookie.Name = "io"
 			}
-			if len(cookie.Path) == 0 {
-				cookie.Path = "/"
-			}
 			if len(cookie.Path) > 0 {
 				cookie.HttpOnly = true
+			}
+			if len(cookie.Path) == 0 {
+				cookie.Path = "/"
 			}
 			if cookie.SameSite == http.SameSiteDefaultMode {
 				cookie.SameSite = http.SameSiteLaxMode
@@ -168,7 +168,11 @@ func (bs *baseServer) Upgrades(transport string) []string {
 	if !bs.opts.AllowUpgrades() {
 		return nil
 	}
-	return bs._transportsByName[transport].UpgradesTo()
+	ctor, ok := bs._transportsByName[transport]
+	if !ok {
+		return nil
+	}
+	return ctor.UpgradesTo()
 }
 
 // Verifies a request.
@@ -190,6 +194,11 @@ func (bs *baseServer) Verify(ctx *types.HttpContext, upgrade bool) (*types.CodeM
 	// sid check
 	sid := ctx.Query().Peek("sid")
 	if len(sid) > 0 {
+		// Validate SID format to prevent abuse (e.g. excessively long values)
+		if !utils.IsValidSid(sid) {
+			serverLog.Debug(`invalid sid format "%s"`, sid)
+			return BAD_REQUEST, map[string]any{"name": "INVALID_SID", "sid": sid}
+		}
 		socket, ok := bs.clients.Load(sid)
 		if !ok {
 			serverLog.Debug(`unknown sid "%s"`, sid)
