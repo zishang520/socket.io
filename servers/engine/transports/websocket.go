@@ -152,12 +152,24 @@ func (w *websocket) send(packets []*packet.Packet) {
 				if _, ok := packet.Options.WsPreEncodedFrame.(*types.StringBuffer); ok {
 					mt = ws.TextMessage
 				}
-				pm, err := ws.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
+				build := func() (any, error) {
+					return ws.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
+				}
+				var (
+					v   any
+					err error
+				)
+				if cache := packet.Options.PreparedFrame; cache != nil {
+					v, err = cache.Do(WEBSOCKET, build)
+				} else {
+					v, err = build()
+				}
 				if err != nil {
 					wsLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
+				pm := v.(*ws.PreparedMessage)
 				if err := w.socket.WritePreparedMessage(pm); err != nil {
 					wsLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)

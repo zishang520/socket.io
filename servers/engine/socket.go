@@ -494,6 +494,7 @@ func (s *socket) sendPacket(
 		opts := &packet.Options{}
 		if options != nil {
 			opts.WsPreEncodedFrame = options.WsPreEncodedFrame
+			opts.PreparedFrame = options.PreparedFrame
 			if options.Compress != nil {
 				compress := *options.Compress
 				opts.Compress = &compress
