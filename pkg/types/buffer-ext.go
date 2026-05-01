@@ -58,6 +58,26 @@ func (b *Buffer) Clone() *Buffer {
 	return clone
 }
 
+// View returns a Buffer that shares the underlying byte slice with b
+// but has independent read state (off / lastRead). It is intended for
+// hot paths like broadcast send, where the same encoded payload is
+// consumed by many recipients concurrently.
+//
+// Callers MUST treat the returned view (and b itself, while any view
+// is in flight) as read-only with respect to the underlying bytes —
+// any write/grow/truncate on either side will race. Reads through
+// independent views are safe because each view has its own off.
+func (b *Buffer) View() *Buffer {
+	if b == nil {
+		return nil
+	}
+	return &Buffer{
+		buf:      b.buf,
+		off:      b.off,
+		lastRead: b.lastRead,
+	}
+}
+
 // Size returns the original length of the underlying byte slice.
 // Size is the number of bytes available for reading via ReadAt.
 // The returned value is always the same and is not affected by calls
@@ -102,6 +122,15 @@ func (b *BytesBuffer) Clone() BufferInterface {
 	return &BytesBuffer{b.Buffer.Clone()}
 }
 
+// View returns a BytesBuffer that shares b's underlying bytes; see
+// (*Buffer).View for the read-only contract.
+func (b *BytesBuffer) View() BufferInterface {
+	if b == nil || b.Buffer == nil {
+		return nil
+	}
+	return &BytesBuffer{b.Buffer.View()}
+}
+
 func (b *BytesBuffer) GoString() string {
 	if b == nil || b.Buffer == nil {
 		// Special case, useful in debugging.
@@ -134,6 +163,15 @@ func (sb *StringBuffer) Clone() BufferInterface {
 		return nil
 	}
 	return &StringBuffer{sb.Buffer.Clone()}
+}
+
+// View returns a StringBuffer that shares sb's underlying bytes; see
+// (*Buffer).View for the read-only contract.
+func (sb *StringBuffer) View() BufferInterface {
+	if sb == nil || sb.Buffer == nil {
+		return nil
+	}
+	return &StringBuffer{sb.Buffer.View()}
 }
 
 func (sb *StringBuffer) GoString() string {
