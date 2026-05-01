@@ -1,4 +1,4 @@
-module github.com/zishang520/socket.io/servers/socket/v3
+module github.com/tomi77/socket.io/servers/socket/v3
 
 go 1.26.0
 
