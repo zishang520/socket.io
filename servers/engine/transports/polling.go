@@ -247,6 +247,10 @@ func (p *polling) OnClose() {
 			},
 		})
 	}
+	// Always tear down the write queue, even on ungraceful disconnects
+	// where DoClose never runs. See the matching override on websocket
+	// for the full rationale.
+	p.writeQueue.TryClose()
 	p.Transport.OnClose()
 }
 

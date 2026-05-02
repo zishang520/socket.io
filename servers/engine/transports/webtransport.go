@@ -214,6 +214,15 @@ func (w *webTransport) write(data types.BufferInterface, _ bool) {
 	}
 }
 
+// OnClose tears down the write queue regardless of how the transport
+// reaches the "closed" state. See the matching override on websocket
+// for why the base path leaks the queue.loop goroutine on ungraceful
+// disconnects.
+func (w *webTransport) OnClose() {
+	w.writeQueue.TryClose()
+	w.Transport.OnClose()
+}
+
 // Closes the transport.
 func (w *webTransport) DoClose(fn types.Callable) {
 	wtLog.Debug(`closing WebTransport session`)
