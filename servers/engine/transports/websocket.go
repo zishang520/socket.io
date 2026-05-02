@@ -207,6 +207,19 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 	}
 }
 
+// OnClose tears down the write queue regardless of how the transport
+// reaches the "closed" state. The base Transport.Close() path runs
+// DoClose (which closes the queue), but any close that originates as
+// an error / unexpected peer drop goes straight through OnClose with
+// the state already flipped to "closed" — at which point a follow-up
+// Transport.Close() returns early and DoClose never fires. Without
+// this override the per-socket queue.loop goroutine waits on its
+// sync.Cond forever, leaking once per ungraceful disconnect.
+func (w *websocket) OnClose() {
+	w.writeQueue.TryClose()
+	w.Transport.OnClose()
+}
+
 // Closes the transport.
 func (w *websocket) DoClose(fn types.Callable) {
 	wsLog.Debug(`closing`)
