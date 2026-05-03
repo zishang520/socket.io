@@ -247,6 +247,7 @@ func (p *polling) OnClose() {
 			},
 		})
 	}
+	p.writeQueue.TryClose()
 	p.Transport.OnClose()
 }
 

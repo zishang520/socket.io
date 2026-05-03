@@ -202,6 +202,12 @@ func (w *webTransport) write(data types.BufferInterface, _ bool) {
 	}
 }
 
+// Called upon transport close.
+func (w *webTransport) OnClose() {
+	w.writeQueue.TryClose()
+	w.Transport.OnClose()
+}
+
 // Closes the transport.
 func (w *webTransport) DoClose(fn types.Callable) {
 	wtLog.Debug(`closing WebTransport session`)

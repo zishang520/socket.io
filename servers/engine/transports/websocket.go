@@ -207,6 +207,12 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 	}
 }
 
+// Called upon transport close.
+func (w *websocket) OnClose() {
+	w.writeQueue.TryClose()
+	w.Transport.OnClose()
+}
+
 // Closes the transport.
 func (w *websocket) DoClose(fn types.Callable) {
 	wsLog.Debug(`closing`)
