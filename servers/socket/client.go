@@ -164,6 +164,14 @@ func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 	c.WriteToEngine(c.encoder.Encode(packet), opts)
 }
 
+// bufferViewer is implemented by buffers that can produce a cheap,
+// shared-bytes view of themselves with independent read state. The
+// adapter's broadcast path uses it to avoid a per-recipient byte-copy
+// of the encoded payload.
+type bufferViewer interface {
+	View() types.BufferInterface
+}
+
 // WriteToEngine writes encoded packets to the Engine.IO transport.
 func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *WriteOptions) {
 	c.mu.Lock()
@@ -174,8 +182,21 @@ func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *Wri
 		return
 	}
 
+	// Broadcast fast path: when WsPreEncodedFrame is set the adapter has
+	// already pre-encoded a payload that is shared across every recipient,
+	// so the underlying bytes are read-only. Hand each recipient a cheap
+	// View instead of a deep Clone — the bytes stay shared but the read
+	// state stays independent. Falls back to Clone for buffers that don't
+	// implement the optional View method, and for unicast emits.
+	broadcast := opts.WsPreEncodedFrame != nil
 	for _, encodedPacket := range encodedPackets {
-		c.conn.Write(encodedPacket.Clone(), &opts.Options, nil)
+		var data types.BufferInterface
+		if v, ok := encodedPacket.(bufferViewer); ok && broadcast {
+			data = v.View()
+		} else {
+			data = encodedPacket.Clone()
+		}
+		c.conn.Write(data, &opts.Options, nil)
 	}
 }
 

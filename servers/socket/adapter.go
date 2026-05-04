@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	enginepacket "github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
@@ -207,6 +208,12 @@ func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []typ
 			_, _ = data.Write(p.Bytes())
 			// see https://github.com/websockets/ws/issues/617#issuecomment-283002469
 			packetOpts.WsPreEncodedFrame = data
+			// One cache per broadcast: each recipient transport builds
+			// its prepared frame at most once and reuses it for the
+			// rest of the recipients. Safe for unicast too: a single
+			// recipient just fills the cache without paying any extra
+			// cost.
+			packetOpts.PreparedFrame = &enginepacket.PreparedFrame{}
 		}
 	}
 

@@ -146,12 +146,24 @@ func (w *webTransport) send(packets []*packet.Packet) {
 				if _, ok := packet.Options.WsPreEncodedFrame.(*types.StringBuffer); ok {
 					mt = webtransport.TextMessage
 				}
-				pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
+				build := func() (any, error) {
+					return webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
+				}
+				var (
+					v   any
+					err error
+				)
+				if cache := packet.Options.PreparedFrame; cache != nil {
+					v, err = cache.Do(WEBTRANSPORT, build)
+				} else {
+					v, err = build()
+				}
 				if err != nil {
 					wtLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
 					return
 				}
+				pm := v.(*webtransport.PreparedMessage)
 				if err := w.session.WritePreparedMessage(pm); err != nil {
 					wtLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)

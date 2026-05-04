@@ -3,6 +3,7 @@ package packet
 
 import (
 	"io"
+	"sync"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
@@ -31,6 +32,12 @@ type Options struct {
 	Compress *bool `json:"compress,omitempty" msgpack:"compress,omitempty"`
 	// WsPreEncodedFrame contains a pre-encoded WebSocket frame.
 	WsPreEncodedFrame types.BufferInterface `json:"wsPreEncodedFrame,omitempty" msgpack:"wsPreEncodedFrame,omitempty"`
+	// PreparedFrame, when non-nil, is shared across all recipients of a
+	// broadcast and lets transports build their per-broadcast prepared
+	// frame (e.g. ws.NewPreparedMessage) once instead of once per
+	// recipient. The same cache may be used by multiple transport
+	// types; entries are keyed by transport name.
+	PreparedFrame *PreparedFrame `json:"-" msgpack:"-"`
 }
 
 // NewOptions creates a new Options with the given compress flag.
@@ -63,6 +70,44 @@ func NewWithOptions(packetType Type, data io.Reader, options *Options) *Packet {
 		Data:    data,
 		Options: options,
 	}
+}
+
+// PreparedFrame is a transport-keyed, build-once cache that lets a
+// broadcast amortize the cost of preparing its WebSocket frame across
+// every recipient. Allocate one instance per broadcast and pass it via
+// Options.PreparedFrame; the zero value is ready to use and safe for
+// concurrent use.
+type PreparedFrame struct {
+	mu      sync.Mutex
+	entries map[string]*preparedEntry
+}
+
+type preparedEntry struct {
+	once sync.Once
+	val  any
+	err  error
+}
+
+// Do returns the cached value for key, invoking build at most once per
+// key even when called concurrently. If p is nil, build is invoked on
+// every call (no caching).
+func (p *PreparedFrame) Do(key string, build func() (any, error)) (any, error) {
+	if p == nil {
+		return build()
+	}
+	p.mu.Lock()
+	if p.entries == nil {
+		p.entries = make(map[string]*preparedEntry)
+	}
+	e, ok := p.entries[key]
+	if !ok {
+		e = &preparedEntry{}
+		p.entries[key] = e
+	}
+	p.mu.Unlock()
+
+	e.once.Do(func() { e.val, e.err = build() })
+	return e.val, e.err
 }
 
 // Packet types for Engine.IO protocol.
