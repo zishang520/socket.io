@@ -270,7 +270,7 @@ func (p *polling) send(packets []*packet.Packet) {
 
 	// Compress unless every packet explicitly opted out. A nil Options
 	// or nil Compress is treated as the documented default (true), which
-	// preserves behaviour after dropping the per-send Options clone in
+	// preserves behavior after dropping the per-send Options clone in
 	// engine.io's sendPacket.
 	compress := false
 	for _, packetData := range packets {
