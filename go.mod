@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/andybalholm/brotli v1.2.1
-	github.com/gookit/color v1.6.0
+	github.com/gookit/color v1.6.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.18.5
 	github.com/quic-go/quic-go v0.59.0
