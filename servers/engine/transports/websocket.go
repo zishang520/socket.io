@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	ws "github.com/gorilla/websocket"
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
@@ -82,12 +83,30 @@ func (w *websocket) _error(err error) {
 
 // Receiving Messages
 func (w *websocket) message() {
+	// Dead-connection safety net: if no data arrives within this window the
+	// underlying TCP connection is gone and engine.io's heartbeat failed to
+	// detect it (e.g. transport created before the ping timer was wired up).
+	// Active connections reset the deadline on every successful read, so the
+	// net effect is: close after 90 s of total silence.
+	const readDeadline = 90 * time.Second
+	_ = w.socket.SetReadDeadline(time.Now().Add(readDeadline))
+
+	// Guarantee cleanup on any exit path — covers errors that _error()
+	// routes as "error" (not "close") on the socket and any future paths
+	// that return without calling _error at all.
+	defer func() {
+		if !w.writeQueue.IsShuttingDown() {
+			w.socket.Emit("close")
+		}
+	}()
+
 	for {
 		mt, message, err := w.socket.NextReader()
 		if err != nil {
 			w._error(err)
 			return
 		}
+		_ = w.socket.SetReadDeadline(time.Now().Add(readDeadline))
 
 		switch mt {
 		case ws.BinaryMessage:
@@ -205,6 +224,19 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 		w._error(err)
 		return
 	}
+}
+
+// OnClose tears down the write queue regardless of how the transport
+// reaches the "closed" state. The base Transport.Close() path runs
+// DoClose (which closes the queue), but any close that originates as
+// an error / unexpected peer drop goes straight through OnClose with
+// the state already flipped to "closed" — at which point a follow-up
+// Transport.Close() returns early and DoClose never fires. Without
+// this override the per-socket queue.loop goroutine waits on its
+// sync.Cond forever, leaking once per ungraceful disconnect.
+func (w *websocket) OnClose() {
+	w.writeQueue.TryClose()
+	w.Transport.OnClose()
 }
 
 // Closes the transport.

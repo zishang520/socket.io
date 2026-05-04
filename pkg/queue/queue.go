@@ -121,6 +121,13 @@ func (q *Queue) Close() {
 	<-q.done
 }
 
+// IsShuttingDown reports whether TryClose or Close has been called.
+func (q *Queue) IsShuttingDown() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.shuttingDown
+}
+
 // TryClose shuts down the Queue without waiting for completion.
 func (q *Queue) TryClose() {
 	q.mu.Lock()
