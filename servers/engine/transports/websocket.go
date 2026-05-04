@@ -66,17 +66,6 @@ func (w *websocket) Construct(ctx *types.HttpContext) {
 	// This goroutine is invoked only once.
 	go w.message()
 
-	// Leak watchdog: if the transport reaches "closed" state but the write
-	// queue was never shut down (TryClose never called), log the anomaly.
-	// Fires once 90 s after construction, then exits — cost is one timer
-	// entry for the lifetime of a normal connection.
-	go func() {
-		time.Sleep(90 * time.Second)
-		if w.ReadyState() == "closed" && !w.writeQueue.IsShuttingDown() {
-			wsLog.Warning("ws transport leak: closed state but queue still running (queue.active=%d)", queue.ActiveGoroutines())
-		}
-	}()
-
 	w.SetWritable(true)
 	w.SetPerMessageDeflate(nil)
 }
@@ -101,12 +90,31 @@ func (w *websocket) _error(err error) {
 
 // Receiving Messages
 func (w *websocket) message() {
+	// Dead-connection safety net: if no data arrives within this window the
+	// underlying TCP connection is gone and engine.io's heartbeat failed to
+	// detect it (e.g. transport created before the ping timer was wired up).
+	// Active connections reset the deadline on every successful read, so the
+	// net effect is: close after 90 s of total silence.
+	const readDeadline = 90 * time.Second
+	_ = w.socket.SetReadDeadline(time.Now().Add(readDeadline))
+
+	// Guarantee cleanup on any exit path — covers errors that _error()
+	// routes as "error" (not "close") on the socket and any future paths
+	// that return without calling _error at all.
+	defer func() {
+		if !w.writeQueue.IsShuttingDown() {
+			wsLog.Warning("ws message loop exited without close signal — forcing close (queue.active=%d)", queue.ActiveGoroutines())
+			w.socket.Emit("close")
+		}
+	}()
+
 	for {
 		mt, message, err := w.socket.NextReader()
 		if err != nil {
 			w._error(err)
 			return
 		}
+		_ = w.socket.SetReadDeadline(time.Now().Add(readDeadline))
 
 		switch mt {
 		case ws.BinaryMessage:
