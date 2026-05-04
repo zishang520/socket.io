@@ -133,6 +133,11 @@ type (
 		_anyOutgoingListeners *types.Slice[types.EventListener]
 
 		canJoin atomic.Bool
+		// joinMu serializes Join (AddAll) against _cleanup (DelAll).
+		// Join holds a read lock for the duration of adapter.AddAll so that
+		// _cleanup's write lock waits for any in-flight AddAll to finish before
+		// leaveAll/DelAll runs — preventing orphaned rooms[room] entries.
+		joinMu sync.RWMutex
 
 		taskQueue *queue.Queue
 	}
@@ -429,10 +434,11 @@ func (s *Socket) packet(packet *parser.Packet, opts *BroadcastFlags) {
 
 // Join adds the socket to one or more rooms.
 func (s *Socket) Join(rooms ...Room) {
+	s.joinMu.RLock()
+	defer s.joinMu.RUnlock()
 	if !s.canJoin.Load() {
 		return
 	}
-
 	socketLog.Debug("join room %s", rooms)
 	s.adapter.AddAll(s.id, types.NewSet(rooms...))
 }
@@ -593,9 +599,16 @@ func (s *Socket) _onclose(args ...any) {
 
 // Makes the socket leave all the rooms it was part of and prevents it from joining any other room
 func (s *Socket) _cleanup() {
+	// Acquire the write lock to wait for any in-flight Join/AddAll to complete,
+	// then set canJoin=false so no new Joins can start after we release.
+	// leaveAll/DelAll then runs without risk of a concurrent AddAll adding rooms
+	// back into adapter.rooms after they've been removed — which would orphan them.
+	s.joinMu.Lock()
+	s.canJoin.Store(false)
+	s.joinMu.Unlock()
+
 	s.leaveAll()
 	s.nsp.Remove(s)
-	s.canJoin.Store(false)
 	// Clear pending ack callbacks to prevent memory leaks
 	s.acks.Clear()
 	s.taskQueue.TryClose()
