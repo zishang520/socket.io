@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	ws "github.com/gorilla/websocket"
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
@@ -82,12 +83,30 @@ func (w *websocket) _error(err error) {
 
 // Receiving Messages
 func (w *websocket) message() {
+	// Dead-connection safety net: if no data arrives within this window the
+	// underlying TCP connection is gone and engine.io's heartbeat failed to
+	// detect it (e.g. transport created before the ping timer was wired up).
+	// Active connections reset the deadline on every successful read, so the
+	// net effect is: close after 90 s of total silence.
+	const readDeadline = 90 * time.Second
+	_ = w.socket.SetReadDeadline(time.Now().Add(readDeadline))
+
+	// Guarantee cleanup on any exit path — covers errors that _error()
+	// routes as "error" (not "close") on the socket and any future paths
+	// that return without calling _error at all.
+	defer func() {
+		if !w.writeQueue.IsShuttingDown() {
+			w.socket.Emit("close")
+		}
+	}()
+
 	for {
 		mt, message, err := w.socket.NextReader()
 		if err != nil {
 			w._error(err)
 			return
 		}
+		_ = w.socket.SetReadDeadline(time.Now().Add(readDeadline))
 
 		switch mt {
 		case ws.BinaryMessage:
