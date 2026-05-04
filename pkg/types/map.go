@@ -238,6 +238,9 @@ func (m *Map[TKey, TValue]) LoadOrStore(key TKey, value TValue) (actual TValue, 
 		var stored bool
 		actual, loaded, stored = e.tryLoadOrStore(value)
 		if stored {
+			if !loaded {
+				m.length.Add(1)
+			}
 			return actual, loaded
 		}
 	}
@@ -371,6 +374,7 @@ func (m *Map[TKey, TValue]) Swap(key TKey, value TValue) (previous TValue, loade
 	if e, ok := read.m[key]; ok {
 		if v, ok := e.trySwap(&value); ok {
 			if v == nil {
+				m.length.Add(1)
 				return previous, false
 			}
 			return *v, true
