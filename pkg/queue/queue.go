@@ -3,9 +3,21 @@
 package queue
 
 import (
+	"expvar"
 	"log"
 	"runtime"
 	"sync"
+	"sync/atomic"
+)
+
+var (
+	// Exported so callers (e.g. the pubsub observability package) can read them
+	// via expvar.Get("engine.io.queue.created") etc.
+	queueCreatedTotal   = expvar.NewInt("engine.io.queue.created")
+	queueTryClosedTotal = expvar.NewInt("engine.io.queue.tryclosed")
+
+	// Running count of queues whose loop goroutine is still alive.
+	queueActiveGoroutines atomic.Int64
 )
 
 // Queue serializes function execution through a single goroutine.
@@ -27,9 +39,19 @@ func New() *Queue {
 	}
 	q.cond = sync.NewCond(&q.mu)
 
+	queueCreatedTotal.Add(1)
+	queueActiveGoroutines.Add(1)
+
 	go q.loop()
 	runtime.SetFinalizer(q, func(q *Queue) { q.TryClose() })
 	return q
+}
+
+// IsShuttingDown reports whether TryClose or Close has been called.
+func (q *Queue) IsShuttingDown() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.shuttingDown
 }
 
 // Enqueue adds a task to the queue for sequential execution.
@@ -60,7 +82,10 @@ func (q *Queue) Size() int {
 
 // loop is the main consumer goroutine.
 func (q *Queue) loop() {
-	defer close(q.done)
+	defer func() {
+		close(q.done)
+		queueActiveGoroutines.Add(-1)
+	}()
 
 	for {
 		task, ok := q.get()
@@ -114,9 +139,14 @@ func (q *Queue) execute(task func()) {
 // It waits for all previously enqueued tasks to complete before returning.
 func (q *Queue) Close() {
 	q.mu.Lock()
+	alreadyShutting := q.shuttingDown
 	q.shuttingDown = true
 	q.cond.Broadcast()
 	q.mu.Unlock()
+
+	if !alreadyShutting {
+		queueTryClosedTotal.Add(1)
+	}
 
 	<-q.done
 }
@@ -124,7 +154,16 @@ func (q *Queue) Close() {
 // TryClose shuts down the Queue without waiting for completion.
 func (q *Queue) TryClose() {
 	q.mu.Lock()
+	alreadyShutting := q.shuttingDown
 	q.shuttingDown = true
 	q.cond.Broadcast()
 	q.mu.Unlock()
+
+	if !alreadyShutting {
+		queueTryClosedTotal.Add(1)
+	}
 }
+
+// ActiveGoroutines returns the number of queue loop goroutines currently running.
+// Exported for use by the pubsub observability package.
+func ActiveGoroutines() int64 { return queueActiveGoroutines.Load() }

@@ -4,6 +4,7 @@ package transports
 import (
 	"compress/flate"
 	"compress/gzip"
+	"expvar"
 	"io"
 	"net/http"
 	"strconv"
@@ -22,6 +23,11 @@ import (
 )
 
 var pollingLog = log.NewLog("engine:polling")
+
+var (
+	pollingCreatedTotal  = expvar.NewInt("engine.io.transport.polling.created")
+	pollingOnClosedTotal = expvar.NewInt("engine.io.transport.polling.onclosed")
+)
 
 var (
 	gzipWriterPool = sync.Pool{
@@ -89,6 +95,7 @@ func (p *polling) Construct(ctx *types.HttpContext) {
 
 	p.closeTimeout = DefaultPollingCloseTimeout
 	p.writeQueue = queue.New()
+	pollingCreatedTotal.Add(1)
 }
 
 func (p *polling) Name() string {
@@ -239,6 +246,7 @@ func (p *polling) OnData(data types.BufferInterface) {
 
 // Overrides onClose.
 func (p *polling) OnClose() {
+	pollingOnClosedTotal.Add(1)
 	if p.Writable() {
 		// close pending poll request
 		p.Send([]*packet.Packet{

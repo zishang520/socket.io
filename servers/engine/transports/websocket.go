@@ -3,9 +3,11 @@ package transports
 
 import (
 	"errors"
+	"expvar"
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	ws "github.com/gorilla/websocket"
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
@@ -16,6 +18,11 @@ import (
 )
 
 var wsLog = log.NewLog("engine:ws")
+
+var (
+	wsCreatedTotal  = expvar.NewInt("engine.io.transport.ws.created")
+	wsOnClosedTotal = expvar.NewInt("engine.io.transport.ws.onclosed")
+)
 
 type websocket struct {
 	Transport
@@ -47,6 +54,7 @@ func (w *websocket) Construct(ctx *types.HttpContext) {
 
 	w.socket = ctx.Websocket
 	w.writeQueue = queue.New()
+	wsCreatedTotal.Add(1)
 
 	_ = w.socket.On("error", func(errs ...any) {
 		w.OnError("websocket error", slices.TryGetAny[error](errs, 0))
@@ -57,6 +65,17 @@ func (w *websocket) Construct(ctx *types.HttpContext) {
 
 	// This goroutine is invoked only once.
 	go w.message()
+
+	// Leak watchdog: if the transport reaches "closed" state but the write
+	// queue was never shut down (TryClose never called), log the anomaly.
+	// Fires once 90 s after construction, then exits — cost is one timer
+	// entry for the lifetime of a normal connection.
+	go func() {
+		time.Sleep(90 * time.Second)
+		if w.ReadyState() == "closed" && !w.writeQueue.IsShuttingDown() {
+			wsLog.Warning("ws transport leak: closed state but queue still running (queue.active=%d)", queue.ActiveGoroutines())
+		}
+	}()
 
 	w.SetWritable(true)
 	w.SetPerMessageDeflate(nil)
@@ -228,6 +247,7 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 // this override the per-socket queue.loop goroutine waits on its
 // sync.Cond forever, leaking once per ungraceful disconnect.
 func (w *websocket) OnClose() {
+	wsOnClosedTotal.Add(1)
 	w.writeQueue.TryClose()
 	w.Transport.OnClose()
 }

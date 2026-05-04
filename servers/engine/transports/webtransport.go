@@ -3,6 +3,7 @@ package transports
 
 import (
 	"errors"
+	"expvar"
 	"io"
 	"net"
 	"sync"
@@ -16,7 +17,9 @@ import (
 )
 
 var (
-	wtLog = log.NewLog("engine:webtransport")
+	wtLog               = log.NewLog("engine:webtransport")
+	wtCreatedTotal      = expvar.NewInt("engine.io.transport.wt.created")
+	wtOnClosedTotal     = expvar.NewInt("engine.io.transport.wt.onclosed")
 )
 
 type webTransport struct {
@@ -49,6 +52,7 @@ func (w *webTransport) Construct(ctx *types.HttpContext) {
 
 	w.session = ctx.WebTransport
 	w.writeQueue = queue.New()
+	wtCreatedTotal.Add(1)
 
 	_ = w.session.On("error", func(errs ...any) {
 		w.OnError("webtransport error", slices.TryGetAny[error](errs, 0))
@@ -219,6 +223,7 @@ func (w *webTransport) write(data types.BufferInterface, _ bool) {
 // for why the base path leaks the queue.loop goroutine on ungraceful
 // disconnects.
 func (w *webTransport) OnClose() {
+	wtOnClosedTotal.Add(1)
 	w.writeQueue.TryClose()
 	w.Transport.OnClose()
 }
