@@ -70,7 +70,7 @@ func (t *Timer) Stop() {
 	// In Go 1.23+, time.Timer.Stop() drains the C channel when returning false
 	// (timer had already expired). Without the unconditional signal below, the
 	// goroutine inside timer.fn would be permanently blocked: it can no longer
-	// receive from the now-empty C, and stopCh was never signalled.
+	// receive from the now-empty C, and stopCh was never signaled.
 	// The buffered channel (cap 1) ensures the signal is queued even if the
 	// goroutine hasn't reached its select yet.
 	t.timer.Stop()
