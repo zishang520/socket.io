@@ -36,7 +36,7 @@ func SetTimeout(fn func(), sleep time.Duration) *Timer {
 	timer := &Timer{
 		timer:  time.NewTimer(sleep),
 		sleep:  sleep,
-		stopCh: make(chan struct{}),
+		stopCh: make(chan struct{}, 1),
 	}
 	timer.fn = func() {
 		defer func() {
@@ -66,13 +66,17 @@ func ClearTimeout(timer *Timer) {
 }
 
 func (t *Timer) Stop() {
-	if t.timer.Stop() {
-		// Use non-blocking send to avoid goroutine leak if no reader
-		select {
-		case t.stopCh <- struct{}{}:
-		default:
-			// Channel is full or no reader, timer already stopped
-		}
+	// Always stop the underlying timer regardless of whether it already fired.
+	// In Go 1.23+, time.Timer.Stop() drains the C channel when returning false
+	// (timer had already expired). Without the unconditional signal below, the
+	// goroutine inside timer.fn would be permanently blocked: it can no longer
+	// receive from the now-empty C, and stopCh was never signaled.
+	// The buffered channel (cap 1) ensures the signal is queued even if the
+	// goroutine hasn't reached its select yet.
+	t.timer.Stop()
+	select {
+	case t.stopCh <- struct{}{}:
+	default:
 	}
 }
 
@@ -80,7 +84,7 @@ func SetInterval(fn func(), sleep time.Duration) *Timer {
 	timer := &Timer{
 		timer:  time.NewTimer(sleep),
 		sleep:  sleep,
-		stopCh: make(chan struct{}),
+		stopCh: make(chan struct{}, 1),
 	}
 	timer.fn = func() {
 		defer func() {
