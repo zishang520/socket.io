@@ -12,30 +12,39 @@ import (
 // It prevents unbounded allocations from untrusted input.
 const MaxPayloadSize = 128 * 1024 * 1024
 
-type BufferInterface interface {
-	io.ReadWriteSeeker
-	io.ReaderFrom
+// ReadableBuffer is the read-only subset of BufferInterface.
+// View() returns a ReadableBuffer so the compiler prevents callers from
+// accidentally calling write/mutate methods on a buffer whose underlying
+// bytes are shared with the original.
+type ReadableBuffer interface {
+	io.Reader
+	io.Seeker
 	io.WriterTo
 	io.ByteScanner
-	io.ByteWriter
 	io.RuneScanner
-	io.StringWriter
-	WriteRune(rune) (int, error)
 	Bytes() []byte
-	AvailableBuffer() []byte
 	fmt.Stringer
 	Peek(int) ([]byte, error)
-	fmt.GoStringer
 	Len() int
 	Size() int64
 	Cap() int
 	Available() int
-	Truncate(int)
-	Reset()
-	Grow(int)
 	Next(int) []byte
 	ReadBytes(byte) ([]byte, error)
 	ReadString(byte) (string, error)
+}
+
+type BufferInterface interface {
+	ReadableBuffer
+	io.Writer
+	io.ReaderFrom
+	io.ByteWriter
+	io.StringWriter
+	WriteRune(rune) (int, error)
+	AvailableBuffer() []byte
+	Truncate(int)
+	Reset()
+	Grow(int)
 	Clone() BufferInterface
 }
 
@@ -67,7 +76,7 @@ func (b *Buffer) Clone() *Buffer {
 // is in flight) as read-only with respect to the underlying bytes —
 // any write/grow/truncate on either side will race. Reads through
 // independent views are safe because each view has its own off.
-func (b *Buffer) View() *Buffer {
+func (b *Buffer) View() ReadableBuffer {
 	if b == nil {
 		return nil
 	}
@@ -124,11 +133,11 @@ func (b *BytesBuffer) Clone() BufferInterface {
 
 // View returns a BytesBuffer that shares b's underlying bytes; see
 // (*Buffer).View for the read-only contract.
-func (b *BytesBuffer) View() BufferInterface {
+func (b *BytesBuffer) View() ReadableBuffer {
 	if b == nil || b.Buffer == nil {
 		return nil
 	}
-	return &BytesBuffer{b.Buffer.View()}
+	return &BytesBuffer{b.Buffer.View().(*Buffer)}
 }
 
 func (b *BytesBuffer) GoString() string {
@@ -167,11 +176,11 @@ func (sb *StringBuffer) Clone() BufferInterface {
 
 // View returns a StringBuffer that shares sb's underlying bytes; see
 // (*Buffer).View for the read-only contract.
-func (sb *StringBuffer) View() BufferInterface {
+func (sb *StringBuffer) View() ReadableBuffer {
 	if sb == nil || sb.Buffer == nil {
 		return nil
 	}
-	return &StringBuffer{sb.Buffer.View()}
+	return &StringBuffer{sb.Buffer.View().(*Buffer)}
 }
 
 func (sb *StringBuffer) GoString() string {

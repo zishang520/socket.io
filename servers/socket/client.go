@@ -1,6 +1,7 @@
 package socket
 
 import (
+	"io"
 	"net/url"
 	"sync"
 	"sync/atomic"
@@ -169,7 +170,7 @@ func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 // adapter's broadcast path uses it to avoid a per-recipient byte-copy
 // of the encoded payload.
 type bufferViewer interface {
-	View() types.BufferInterface
+	View() types.ReadableBuffer
 }
 
 // WriteToEngine writes encoded packets to the Engine.IO transport.
@@ -188,9 +189,14 @@ func (c *Client) WriteToEngine(encodedPackets []types.BufferInterface, opts *Wri
 	// View instead of a deep Clone — the bytes stay shared but the read
 	// state stays independent. Falls back to Clone for buffers that don't
 	// implement the optional View method, and for unicast emits.
+	//
+	// View() returns ReadableBuffer (not BufferInterface) so the compiler
+	// prevents write/mutate calls on the shared bytes. Both ReadableBuffer
+	// and BufferInterface satisfy io.Reader, which is all engine.Socket.Write
+	// requires.
 	broadcast := opts.WsPreEncodedFrame != nil
 	for _, encodedPacket := range encodedPackets {
-		var data types.BufferInterface
+		var data io.Reader
 		if v, ok := encodedPacket.(bufferViewer); ok && broadcast {
 			data = v.View()
 		} else {

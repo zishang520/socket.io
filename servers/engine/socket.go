@@ -489,12 +489,15 @@ func (s *socket) sendPacket(
 	if readystate := s.ReadyState(); readystate != "closing" && readystate != "closed" {
 		socketLog.Debug(`sending packet "%s" (%p)`, packetType, data)
 
-		// Pass options through without cloning. Options is read-only
-		// downstream (transports only inspect Compress / WsPreEncodedFrame /
-		// PreparedFrame), and the previous defensive clone-and-normalize
-		// dance was the largest per-recipient allocation in the broadcast
-		// hot path. Each transport handles a nil Compress as the documented
-		// default (compress = true) on its own.
+		// Pass options through without cloning — including nil.
+		// Nil-safety is enforced at each transport:
+		//   websocket/webtransport send(): `if packet.Options != nil` guards
+		//     every access to Compress, WsPreEncodedFrame, and PreparedFrame.
+		//   polling send(): `opt == nil || opt.Compress == nil || *opt.Compress`
+		//     short-circuits correctly when Options or Compress is nil.
+		// The previous defensive clone-and-normalize (which always produced a
+		// non-nil Options with a non-nil Compress) was the largest per-recipient
+		// allocation in the broadcast hot path and is no longer necessary.
 		packet := &packet.Packet{
 			Type:    packetType,
 			Data:    data,
