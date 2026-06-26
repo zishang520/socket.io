@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/quic-go/quic-go v0.60.0
-	github.com/quic-go/webtransport-go v0.10.0
+	github.com/quic-go/webtransport-go v0.11.0
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.4
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.4
 	github.com/zishang520/socket.io/v3 v3.0.4
@@ -24,7 +24,7 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	resty.dev/v3 v3.0.0-rc.1 // indirect
+	resty.dev/v3 v3.0.0-rc.2 // indirect
 )
 
 replace (
