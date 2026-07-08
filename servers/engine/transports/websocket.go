@@ -18,6 +18,12 @@ import (
 
 var wsLog = log.NewLog("engine:ws")
 
+var newWebSocketPreparedMessage = ws.NewPreparedMessage
+
+type webSocketPreparedFrame interface {
+	PreparedWebSocketFrame(func(types.BufferInterface) (any, error)) (any, error)
+}
+
 type websocket struct {
 	Transport
 
@@ -164,11 +170,7 @@ func (w *websocket) send(packets []*packet.Packet) {
 			}
 
 			if w.PerMessageDeflate() == nil && packet.Options.WsPreEncodedFrame != nil {
-				mt := ws.BinaryMessage
-				if _, ok := packet.Options.WsPreEncodedFrame.(*types.StringBuffer); ok {
-					mt = ws.TextMessage
-				}
-				pm, err := ws.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
+				pm, err := websocketPreparedMessage(packet)
 				if err != nil {
 					wsLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
@@ -193,6 +195,42 @@ func (w *websocket) send(packets []*packet.Packet) {
 		w.write(data, compress)
 	}
 }
+
+func websocketPreparedMessage(packet *packet.Packet) (*ws.PreparedMessage, error) {
+	frame := packet.Options.WsPreEncodedFrame
+	messageType := ws.BinaryMessage
+	if isStringBuffer(frame) || isStringBuffer(packet.Data) {
+		messageType = ws.TextMessage
+	}
+
+	build := func(data types.BufferInterface) (any, error) {
+		return newWebSocketPreparedMessage(messageType, data.Bytes())
+	}
+
+	if cached, ok := frame.(webSocketPreparedFrame); ok {
+		prepared, err := cached.PreparedWebSocketFrame(build)
+		if err != nil {
+			return nil, err
+		}
+		pm, ok := prepared.(*ws.PreparedMessage)
+		if !ok {
+			return nil, errors.New("websocket prepared frame cache returned unexpected type")
+		}
+		return pm, nil
+	}
+
+	pm, err := build(frame)
+	if err != nil {
+		return nil, err
+	}
+	return pm.(*ws.PreparedMessage), nil
+}
+
+func isStringBuffer(data any) bool {
+	_, ok := data.(*types.StringBuffer)
+	return ok
+}
+
 func (w *websocket) write(data types.BufferInterface, compress bool) {
 	if w.PerMessageDeflate() != nil {
 		if data.Len() < w.PerMessageDeflate().Threshold {

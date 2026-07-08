@@ -20,6 +20,12 @@ var (
 	wtLog = log.NewLog("engine:webtransport")
 )
 
+var newWebTransportPreparedMessage = webtransport.NewPreparedMessage
+
+type webTransportPreparedFrame interface {
+	PreparedWebTransportFrame(func(types.BufferInterface) (any, error)) (any, error)
+}
+
 type webTransport struct {
 	Transport
 
@@ -158,11 +164,7 @@ func (w *webTransport) send(packets []*packet.Packet) {
 			}
 
 			if w.PerMessageDeflate() == nil && packet.Options.WsPreEncodedFrame != nil {
-				mt := webtransport.BinaryMessage
-				if _, ok := packet.Options.WsPreEncodedFrame.(*types.StringBuffer); ok {
-					mt = webtransport.TextMessage
-				}
-				pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
+				pm, err := webTransportPreparedMessage(packet)
 				if err != nil {
 					wtLog.Debug(`Send Error "%s"`, err.Error())
 					w._error(err)
@@ -186,6 +188,36 @@ func (w *webTransport) send(packets []*packet.Packet) {
 		}
 		w.write(data, compress)
 	}
+}
+
+func webTransportPreparedMessage(packet *packet.Packet) (*webtransport.PreparedMessage, error) {
+	frame := packet.Options.WsPreEncodedFrame
+	messageType := webtransport.BinaryMessage
+	if isStringBuffer(frame) || isStringBuffer(packet.Data) {
+		messageType = webtransport.TextMessage
+	}
+
+	build := func(data types.BufferInterface) (any, error) {
+		return newWebTransportPreparedMessage(messageType, data.Bytes())
+	}
+
+	if cached, ok := frame.(webTransportPreparedFrame); ok {
+		prepared, err := cached.PreparedWebTransportFrame(build)
+		if err != nil {
+			return nil, err
+		}
+		pm, ok := prepared.(*webtransport.PreparedMessage)
+		if !ok {
+			return nil, errors.New("webtransport prepared frame cache returned unexpected type")
+		}
+		return pm, nil
+	}
+
+	pm, err := build(frame)
+	if err != nil {
+		return nil, err
+	}
+	return pm.(*webtransport.PreparedMessage), nil
 }
 
 func (w *webTransport) write(data types.BufferInterface, _ bool) {
