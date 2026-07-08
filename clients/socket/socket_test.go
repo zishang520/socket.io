@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	client "github.com/zishang520/socket.io/clients/socket/v3"
@@ -272,6 +273,11 @@ func ExampleSocket_auth() {
 
 	// Create server with authentication middleware
 	io := server.NewServer(httpServer, config)
+	done := make(chan struct{})
+	var doneOnce sync.Once
+	signalDone := func() {
+		doneOnce.Do(func() { close(done) })
+	}
 
 	// Add authentication middleware
 	io.Use(func(socket *server.Socket, next func(*server.ExtendedError)) {
@@ -310,10 +316,10 @@ func ExampleSocket_auth() {
 
 		_ = socket.On("disconnect", func(args ...any) {
 			fmt.Printf("Client disconnected\n")
+			signalDone()
 		})
 	})
 
-	done := make(chan struct{})
 	addr := allocatePort()
 
 	httpServer.Listen(addr, func() {
@@ -338,8 +344,7 @@ func ExampleSocket_auth() {
 					fmt.Printf("Server reply: %s\n", msg)
 				}
 			}
-			defer socket.Close()
-			close(done)
+			socket.Close()
 		})
 
 		_ = socket.On("connect_error", func(args ...any) {
@@ -347,7 +352,7 @@ func ExampleSocket_auth() {
 				fmt.Printf("Connection error: %v\n", args[0])
 			}
 			defer socket.Close()
-			close(done)
+			signalDone()
 		})
 	})
 
