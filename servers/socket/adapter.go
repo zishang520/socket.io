@@ -206,7 +206,7 @@ func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []typ
 			data := types.NewStringBufferString("4")
 			_, _ = data.Write(p.Bytes())
 			// see https://github.com/websockets/ws/issues/617#issuecomment-283002469
-			packetOpts.WsPreEncodedFrame = data
+			packetOpts.WsPreEncodedFrame = newBroadcastFrame(data)
 		}
 	}
 

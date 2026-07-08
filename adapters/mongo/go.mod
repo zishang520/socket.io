@@ -7,7 +7,7 @@ require (
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.4
 	github.com/zishang520/socket.io/servers/socket/v3 v3.0.4
 	github.com/zishang520/socket.io/v3 v3.0.4
-	go.mongodb.org/mongo-driver/v2 v2.6.0
+	go.mongodb.org/mongo-driver/v2 v2.7.0
 )
 
 require (
@@ -18,7 +18,7 @@ require (
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.60.0 // indirect
-	github.com/quic-go/webtransport-go v0.10.0 // indirect
+	github.com/quic-go/webtransport-go v0.11.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect

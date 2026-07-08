@@ -3,14 +3,14 @@ module github.com/zishang520/socket.io/v3
 go 1.26.0
 
 require (
-	github.com/andybalholm/brotli v1.2.1
+	github.com/andybalholm/brotli v1.2.2
 	github.com/gookit/color v1.6.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/klauspost/compress v1.18.6
+	github.com/klauspost/compress v1.19.0
 	github.com/quic-go/quic-go v0.60.0
 	github.com/quic-go/webtransport-go v0.11.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	resty.dev/v3 v3.0.0-rc.1
+	resty.dev/v3 v3.0.0-rc.2
 )
 
 require (
