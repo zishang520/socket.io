@@ -328,9 +328,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 		if !ok {
 			return
 		}
-		sb := new(strings.Builder)
-		_, _ = io.Copy(sb, data.Data)
-		if data.Type == packet.PING && sb.String() == "probe" {
+		if isProbePingPacket(data) {
 			socketLog.Debug("got probe ping packet, sending pong")
 			transport.Send([]*packet.Packet{{Type: packet.PONG, Data: strings.NewReader("probe")}})
 			s.Emit("upgrading", transport)
@@ -414,6 +412,24 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 	_ = transport.Once("error", onError)
 
 	_ = s.Once("close", onClose)
+}
+
+func isProbePingPacket(data *packet.Packet) bool {
+	if data == nil || data.Type != packet.PING || data.Data == nil {
+		return false
+	}
+
+	var probe [5]byte
+	if _, err := io.ReadFull(data.Data, probe[:]); err != nil {
+		return false
+	}
+	if probe != [5]byte{'p', 'r', 'o', 'b', 'e'} {
+		return false
+	}
+
+	var extra [1]byte
+	n, err := data.Data.Read(extra[:])
+	return n == 0 && err == io.EOF
 }
 
 // Clears listeners and timers associated with current transport.
