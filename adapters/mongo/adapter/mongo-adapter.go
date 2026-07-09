@@ -85,11 +85,12 @@ func (a *mongoAdapter) Construct(nsp socket.Namespace) {
 func (a *mongoAdapter) DoPublish(message *ClusterMessage) (adapter.Offset, error) {
 	mongoLog.Debug("publishing message of type %d", message.Type)
 
-	doc := bson.D{
-		{Key: "uid", Value: string(message.Uid)},
-		{Key: "nsp", Value: message.Nsp},
-		{Key: "type", Value: message.Type},
-	}
+	doc := make(bson.D, 0, 5)
+	doc = append(doc,
+		bson.E{Key: "uid", Value: string(message.Uid)},
+		bson.E{Key: "nsp", Value: message.Nsp},
+		bson.E{Key: "type", Value: message.Type},
+	)
 
 	if message.Data != nil {
 		doc = append(doc, bson.E{Key: "data", Value: message.Data})
