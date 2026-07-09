@@ -134,7 +134,9 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	}
 
 	// Construct the packet data
-	data := append([]any{ev}, args...)
+	data := make([]any, len(args)+1)
+	data[0] = ev
+	copy(data[1:], args)
 
 	packet := &parser.Packet{
 		Type: parser.EVENT,

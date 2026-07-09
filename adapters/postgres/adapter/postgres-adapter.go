@@ -262,7 +262,7 @@ func (a *postgresAdapter) decode(payload []byte) (*ClusterResponse, error) {
 	}
 
 	// Return early if no data
-	if len(raw.Data) == 0 || string(raw.Data) == "null" {
+	if len(raw.Data) == 0 || isJSONNull(raw.Data) {
 		return message, nil
 	}
 
@@ -274,6 +274,10 @@ func (a *postgresAdapter) decode(payload []byte) (*ClusterResponse, error) {
 	message.Data = data
 
 	return message, nil
+}
+
+func isJSONNull(data json.RawMessage) bool {
+	return len(data) == 4 && data[0] == 'n' && data[1] == 'u' && data[2] == 'l' && data[3] == 'l'
 }
 
 // decodeMsgpack converts a msgpack-encoded attachment payload into a typed ClusterResponse.

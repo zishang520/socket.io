@@ -135,6 +135,21 @@ func TestPostgresAdapter_JsonRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("heartbeat with null data", func(t *testing.T) {
+		payload := []byte(`{"uid":"server1","nsp":"/","type":2,"data":null}`)
+
+		decoded, err := pa.decode(payload)
+		if err != nil {
+			t.Fatalf("decode failed: %v", err)
+		}
+		if decoded.Uid != "server1" {
+			t.Fatalf("Expected uid 'server1', got %s", decoded.Uid)
+		}
+		if decoded.Data != nil {
+			t.Fatal("Expected nil data for null data field")
+		}
+	})
+
 	t.Run("decode invalid JSON", func(t *testing.T) {
 		_, err := pa.decode([]byte(`{invalid}`))
 		if err == nil {
