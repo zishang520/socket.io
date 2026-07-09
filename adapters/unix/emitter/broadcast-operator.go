@@ -134,7 +134,9 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	}
 
 	// Construct the packet data
-	data := append([]any{ev}, args...)
+	data := make([]any, len(args)+1)
+	data[0] = ev
+	copy(data[1:], args)
 
 	packet := &parser.Packet{
 		Type: parser.EVENT,
@@ -209,6 +211,7 @@ func (b *BroadcastOperator) broadcast(payload []byte) error {
 
 	dir := filepath.Dir(socketPath)
 	base := filepath.Base(socketPath)
+	prefix := base + "."
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -223,7 +226,7 @@ func (b *BroadcastOperator) broadcast(payload []byte) error {
 
 		name := entry.Name()
 		// Match peer listener sockets: "{base}.{uid}"
-		if !strings.HasPrefix(name, base+".") {
+		if !strings.HasPrefix(name, prefix) {
 			continue
 		}
 

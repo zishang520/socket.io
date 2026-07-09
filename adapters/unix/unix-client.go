@@ -8,9 +8,7 @@ package unix
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 
@@ -26,6 +24,7 @@ const maxMessageSize = 10 << 20
 type peerConn struct {
 	mu   sync.Mutex
 	conn net.Conn
+	mode unixSocketMode
 }
 
 // receivedMessage holds a complete message received from a stream connection.
@@ -57,6 +56,7 @@ type UnixClient struct {
 	mu           sync.Mutex
 	listener     net.Listener
 	listenerPath string
+	listenerMode unixSocketMode
 
 	// Connection pool for outgoing connections to peers.
 	peersMu sync.Mutex
@@ -121,12 +121,13 @@ func (c *UnixClient) Listen(listenerPath string) error {
 
 	c.listenerPath = listenerPath
 
-	listener, err := net.Listen("unix", listenerPath)
+	listener, mode, err := listenUnix(listenerPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on Unix socket %q: %w", listenerPath, err)
 	}
 
 	c.listener = listener
+	c.listenerMode = mode
 
 	c.wg.Add(1)
 	go c.acceptLoop()
@@ -149,9 +150,13 @@ func (c *UnixClient) acceptLoop() {
 			}
 		}
 
+		c.mu.Lock()
+		mode := c.listenerMode
+		c.mu.Unlock()
+
 		c.trackConn(conn)
 		c.wg.Add(1)
-		go c.handleConn(conn)
+		go c.handleConn(conn, mode)
 	}
 }
 
@@ -171,7 +176,7 @@ func (c *UnixClient) untrackConn(conn net.Conn) {
 
 // handleConn reads length-prefixed messages from an accepted stream connection.
 // Each message is framed as [4-byte big-endian length][payload].
-func (c *UnixClient) handleConn(conn net.Conn) {
+func (c *UnixClient) handleConn(conn net.Conn, mode unixSocketMode) {
 	defer c.wg.Done()
 	defer func() { _ = conn.Close() }()
 	defer c.untrackConn(conn)
@@ -179,20 +184,9 @@ func (c *UnixClient) handleConn(conn net.Conn) {
 	addr := conn.RemoteAddr()
 
 	for {
-		// Read 4-byte length header.
-		var header [4]byte
-		if _, err := io.ReadFull(conn, header[:]); err != nil {
-			return // connection closed or broken
-		}
-
-		msgLen := binary.BigEndian.Uint32(header[:])
-		if msgLen == 0 || msgLen > maxMessageSize {
-			return // invalid or oversized message
-		}
-
-		data := make([]byte, msgLen)
-		if _, err := io.ReadFull(conn, data); err != nil {
-			return // incomplete read
+		data, err := readUnixMessage(conn, mode)
+		if err != nil {
+			return
 		}
 
 		select {
@@ -274,18 +268,15 @@ func (c *UnixClient) getOrCreatePeer(targetPath string) *peerConn {
 // and set to nil so the next call retries with a fresh connection.
 func (c *UnixClient) writeFrame(pc *peerConn, targetPath string, payload []byte) error {
 	if pc.conn == nil {
-		conn, err := net.Dial("unix", targetPath)
+		conn, mode, err := dialUnix(targetPath)
 		if err != nil {
 			return fmt.Errorf("failed to dial Unix socket %q: %w", targetPath, err)
 		}
 		pc.conn = conn
+		pc.mode = mode
 	}
 
-	var header [4]byte
-	binary.BigEndian.PutUint32(header[:], uint32(len(payload)))
-
-	bufs := net.Buffers{header[:], payload}
-	if _, err := bufs.WriteTo(pc.conn); err != nil {
+	if err := writeUnixMessage(pc.conn, payload, pc.mode); err != nil {
 		_ = pc.conn.Close()
 		pc.conn = nil
 		return fmt.Errorf("failed to send to Unix socket %q: %w", targetPath, err)

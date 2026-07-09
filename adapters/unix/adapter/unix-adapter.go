@@ -148,6 +148,7 @@ func (a *unixAdapter) broadcast(payload []byte) error {
 	socketPath := a.unixClient.SocketPath
 	dir := filepath.Dir(socketPath)
 	base := filepath.Base(socketPath)
+	prefix := base + "."
 	selfPath := a.unixClient.ListenerPath()
 
 	entries, err := os.ReadDir(dir)
@@ -163,7 +164,7 @@ func (a *unixAdapter) broadcast(payload []byte) error {
 
 		name := entry.Name()
 		// Match peer listener sockets: "{base}.{uid}"
-		if !strings.HasPrefix(name, base+".") {
+		if !strings.HasPrefix(name, prefix) {
 			continue
 		}
 
@@ -242,7 +243,7 @@ func (a *unixAdapter) decode(payload []byte) (*adapter.ClusterResponse, error) {
 	}
 
 	// Return early if no data
-	if len(raw.Data) == 0 || string(raw.Data) == "null" {
+	if len(raw.Data) == 0 || isJSONNull(raw.Data) {
 		return message, nil
 	}
 
@@ -254,6 +255,10 @@ func (a *unixAdapter) decode(payload []byte) (*adapter.ClusterResponse, error) {
 	message.Data = data
 
 	return message, nil
+}
+
+func isJSONNull(data json.RawMessage) bool {
+	return len(data) == 4 && data[0] == 'n' && data[1] == 'u' && data[2] == 'l' && data[3] == 'l'
 }
 
 // decodeMsgpack converts a msgpack-encoded payload into a typed ClusterResponse.
