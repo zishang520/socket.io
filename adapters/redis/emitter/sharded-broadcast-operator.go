@@ -116,7 +116,9 @@ func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
 	}
 
 	// Construct the packet data
-	data := append([]any{ev}, args...)
+	data := make([]any, len(args)+1)
+	data[0] = ev
+	copy(data[1:], args)
 
 	packet := &parser.Packet{
 		Type: parser.EVENT,
@@ -157,10 +159,10 @@ func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
 // computeChannel computes the channel to publish to.
 func (b *ShardedBroadcastOperator) computeChannel() string {
 	// In dynamic subscription mode, if there's only one room, use a room-specific channel
-	if b.rooms != nil && b.rooms.Len() == 1 {
-		keys := b.rooms.Keys()
-		if redis.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, keys[0]) {
-			return b.broadcastOptions.BroadcastChannel + string(keys[0]) + "#"
+	if b.rooms != nil {
+		rooms := b.rooms.Keys()
+		if len(rooms) == 1 && redis.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, rooms[0]) {
+			return b.broadcastOptions.BroadcastChannel + string(rooms[0]) + "#"
 		}
 	}
 	return b.broadcastOptions.BroadcastChannel

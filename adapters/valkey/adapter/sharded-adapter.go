@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -244,13 +243,7 @@ func (s *shardedValkeyAdapter) computeChannel(message *adapter.ClusterMessage) s
 }
 
 func (s *shardedValkeyAdapter) dynamicChannel(room socket.Room) string {
-	roomStr := string(room)
-	var b strings.Builder
-	b.Grow(len(s.channel) + len(roomStr) + 1)
-	b.WriteString(s.channel)
-	b.WriteString(roomStr)
-	b.WriteByte('#')
-	return b.String()
+	return s.channel + string(room) + "#"
 }
 
 // DoPublishResponse publishes a response to the requester's per-server channel.

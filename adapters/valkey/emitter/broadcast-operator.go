@@ -117,7 +117,9 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		return errors.New("broadcastOptions.Parser is not set")
 	}
 
-	data := append([]any{ev}, args...)
+	data := make([]any, len(args)+1)
+	data[0] = ev
+	copy(data[1:], args)
 
 	packet := &parser.Packet{
 		Type: parser.EVENT,
@@ -141,10 +143,10 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	}
 
 	channel := b.broadcastOptions.BroadcastChannel
-	if b.rooms != nil && b.rooms.Len() == 1 {
-		keys := b.rooms.Keys()
-		if valkey.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, keys[0]) {
-			channel += string(keys[0]) + "#"
+	if b.rooms != nil {
+		rooms := b.rooms.Keys()
+		if len(rooms) == 1 && valkey.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, rooms[0]) {
+			channel += string(rooms[0]) + "#"
 		}
 	}
 

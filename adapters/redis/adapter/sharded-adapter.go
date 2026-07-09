@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -384,16 +383,8 @@ func (s *shardedRedisAdapter) computeChannel(message *adapter.ClusterMessage) st
 	return s.channel
 }
 
-// dynamicChannel returns the per-room channel name.
-// strings.Builder with a pre-sized Grow avoids intermediate allocations.
 func (s *shardedRedisAdapter) dynamicChannel(room socket.Room) string {
-	roomStr := string(room)
-	var b strings.Builder
-	b.Grow(len(s.channel) + len(roomStr) + 1)
-	b.WriteString(s.channel)
-	b.WriteString(roomStr)
-	b.WriteByte('#')
-	return b.String()
+	return s.channel + string(room) + "#"
 }
 
 // DoPublishResponse publishes a response directly to the requester's per-server channel.

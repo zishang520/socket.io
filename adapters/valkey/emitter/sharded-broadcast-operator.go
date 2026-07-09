@@ -107,7 +107,9 @@ func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
 		return errors.New("broadcastOptions.Parser is not set")
 	}
 
-	data := append([]any{ev}, args...)
+	data := make([]any, len(args)+1)
+	data[0] = ev
+	copy(data[1:], args)
 
 	packet := &parser.Packet{
 		Type: parser.EVENT,
@@ -144,10 +146,10 @@ func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
 }
 
 func (b *ShardedBroadcastOperator) computeChannel() string {
-	if b.rooms != nil && b.rooms.Len() == 1 {
-		keys := b.rooms.Keys()
-		if valkey.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, keys[0]) {
-			return b.broadcastOptions.BroadcastChannel + string(keys[0]) + "#"
+	if b.rooms != nil {
+		rooms := b.rooms.Keys()
+		if len(rooms) == 1 && valkey.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, rooms[0]) {
+			return b.broadcastOptions.BroadcastChannel + string(rooms[0]) + "#"
 		}
 	}
 	return b.broadcastOptions.BroadcastChannel
