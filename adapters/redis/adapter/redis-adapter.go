@@ -510,19 +510,11 @@ func (r *redisAdapter) handleBroadcastRequest(request *Request) {
 	)
 }
 
-// publishResponse publishes a response via an async goroutine to avoid head-of-line blocking on the event loop.
 func (r *redisAdapter) publishResponse(request *Request, response []byte) {
-	// Use strings.Builder with pre-allocated capacity to avoid slice growth and heap allocation.
-	var b strings.Builder
+	channel := r.responseChannel
 	if r.publishOnSpecificResponseChannel {
-		b.Grow(len(r.responseChannel) + len(request.Uid) + 1)
-		b.WriteString(r.responseChannel)
-		b.WriteString(string(request.Uid))
-		b.WriteByte('#')
-	} else {
-		b.WriteString(r.responseChannel)
+		channel = r.responseChannel + string(request.Uid) + "#"
 	}
-	channel := b.String()
 
 	redisLog.Debug("publishing response to channel %s", channel)
 	if err := r.redisClient.Client.Publish(r.ctx, channel, response).Err(); err != nil {
@@ -638,10 +630,10 @@ func (r *redisAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOp
 		if err == nil {
 			channel := r.channel
 			// Optimize channel routing for single-room broadcasts
-			if opts.Rooms != nil && opts.Rooms.Len() == 1 {
-				for _, room := range opts.Rooms.Keys() {
-					channel += string(room) + "#"
-					break
+			if opts != nil && opts.Rooms != nil {
+				rooms := opts.Rooms.Keys()
+				if len(rooms) == 1 {
+					channel = channel + string(rooms[0]) + "#"
 				}
 			}
 			redisLog.Debug("publishing message to channel %s", channel)

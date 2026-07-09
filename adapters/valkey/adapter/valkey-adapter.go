@@ -453,16 +453,10 @@ func (r *valkeyAdapter) handleBroadcastRequest(request *Request) {
 }
 
 func (r *valkeyAdapter) publishResponse(request *Request, response []byte) {
-	var b strings.Builder
+	channel := r.responseChannel
 	if r.publishOnSpecificResponseChannel {
-		b.Grow(len(r.responseChannel) + len(request.Uid) + 1)
-		b.WriteString(r.responseChannel)
-		b.WriteString(string(request.Uid))
-		b.WriteByte('#')
-	} else {
-		b.WriteString(r.responseChannel)
+		channel = r.responseChannel + string(request.Uid) + "#"
 	}
-	channel := b.String()
 
 	valkeyLog.Debug("publishing response to channel %s", channel)
 	if err := r.valkeyClient.Publish(r.ctx, channel, response); err != nil {
@@ -573,10 +567,10 @@ func (r *valkeyAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastO
 		})
 		if err == nil {
 			channel := r.channel
-			if opts.Rooms != nil && opts.Rooms.Len() == 1 {
-				for _, room := range opts.Rooms.Keys() {
-					channel += string(room) + "#"
-					break
+			if opts != nil && opts.Rooms != nil {
+				rooms := opts.Rooms.Keys()
+				if len(rooms) == 1 {
+					channel = channel + string(rooms[0]) + "#"
 				}
 			}
 			valkeyLog.Debug("publishing message to channel %s", channel)

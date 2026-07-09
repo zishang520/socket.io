@@ -184,7 +184,7 @@ func (p *parserv4) EncodePayload(packets []*packet.Packet, _ ...bool) (types.Buf
 			}
 		}
 
-		if _, err := io.Copy(enPayload, buf); err != nil {
+		if _, err := enPayload.Write(buf.Bytes()); err != nil {
 			return nil, err
 		}
 	}

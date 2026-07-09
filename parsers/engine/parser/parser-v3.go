@@ -264,7 +264,7 @@ func (p *parserv3) encodeOneBinaryPacket(pkt *packet.Packet) (types.BufferInterf
 	if err := binaryPacket.WriteByte(0xFF); err != nil {
 		return nil, err
 	}
-	if _, err := binaryPacket.ReadFrom(buf); err != nil {
+	if _, err := binaryPacket.Write(buf.Bytes()); err != nil {
 		return nil, err
 	}
 	return binaryPacket, nil
@@ -289,7 +289,7 @@ func (p *parserv3) encodePayloadAsBinary(packets []*packet.Packet) (types.Buffer
 		if err != nil {
 			return nil, err
 		}
-		if _, err := enPayload.ReadFrom(buf); err != nil {
+		if _, err := enPayload.Write(buf.Bytes()); err != nil {
 			return nil, err
 		}
 	}
