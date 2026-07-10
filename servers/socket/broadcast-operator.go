@@ -15,6 +15,20 @@ import (
 
 var broadcast_log = log.NewLog("socket.io:broadcast-operator")
 
+func eventPayload(ev string, args []any) []any {
+	data := make([]any, len(args)+1)
+	data[0] = ev
+	copy(data[1:], args)
+	return data
+}
+
+func appendAck(args []any, ack Ack) []any {
+	data := make([]any, len(args)+1)
+	copy(data, args)
+	data[len(args)] = ack
+	return data
+}
+
 // BroadcastOperator is used to broadcast events to multiple clients.
 type BroadcastOperator struct {
 	adapter     Adapter
@@ -110,7 +124,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 	// set up packet object
-	data := append([]any{ev}, args...)
+	data := eventPayload(ev, args)
 	data_len := len(data)
 
 	packet := &parser.Packet{
@@ -215,7 +229,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 // EmitWithAck broadcasts an event and waits for acknowledgements from all clients.
 func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(Ack) {
 	return func(ack Ack) {
-		_ = b.Emit(ev, append(args, ack)...)
+		_ = b.Emit(ev, appendAck(args, ack)...)
 	}
 }
 
@@ -227,7 +241,7 @@ func (b *BroadcastOperator) FetchSockets() func(func([]*RemoteSocket, error)) {
 			Except: b.exceptRooms,
 			Flags:  b.flags,
 		})(func(sockets []SocketDetails, err error) {
-			remoteSockets := []*RemoteSocket{}
+			remoteSockets := make([]*RemoteSocket, 0, len(sockets))
 			for _, socket := range sockets {
 				if s, ok := socket.(*RemoteSocket); ok {
 					remoteSockets = append(remoteSockets, s)

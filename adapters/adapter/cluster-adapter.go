@@ -8,7 +8,6 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
-	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -160,14 +159,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					Type: FETCH_SOCKETS_RESPONSE,
 					Data: &FetchSocketsResponse{
 						RequestId: data.RequestId,
-						Sockets: slices.Map(localSockets, func(client socket.SocketDetails) *SocketResponse {
-							return &SocketResponse{
-								Id:        client.Id(),
-								Handshake: client.Handshake(),
-								Rooms:     client.Rooms().Keys(),
-								Data:      client.Data(),
-							}
-						}),
+						Sockets:   socketDetailsToResponses(localSockets),
 					},
 				})
 			},
@@ -243,9 +235,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
 
 		if request, ok := c.requests.Load(data.RequestId); ok {
-			request.Responses.Push(slices.Map(data.Sockets, func(client *SocketResponse) any {
-				return socket.SocketDetails(NewRemoteSocket(client))
-			})...)
+			request.Responses.Push(socketResponsesToDetailsAny(data.Sockets)...)
 
 			if request.Current.Add(1) == request.Expected {
 				request.Once.Do(func() {
@@ -430,18 +420,14 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 			c.requests.Store(requestId, &ClusterRequest{
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
-					callback(slices.Map(data.All(), func(i any) socket.SocketDetails {
-						return utils.TryCast[socket.SocketDetails](i)
-					}), nil)
+					callback(anySliceToSocketDetails(data.All()), nil)
 				},
 				Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 					t.Store(timeout)
 				}),
-				Current:  &atomic.Int64{},
-				Expected: expectedResponseCount,
-				Responses: types.NewSlice(slices.Map(localSockets, func(client socket.SocketDetails) any {
-					return client
-				})...),
+				Current:   &atomic.Int64{},
+				Expected:  expectedResponseCount,
+				Responses: types.NewSlice(socketDetailsToAny(localSockets)...),
 			})
 
 			c.Publish(&ClusterMessage{

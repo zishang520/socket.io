@@ -28,9 +28,9 @@ func benchMap(b *testing.B, bench bench) {
 			b.ReportAllocs()
 			b.ResetTimer()
 
-			var i int64
+			var i atomic.Int64
 			b.RunParallel(func(pb *testing.PB) {
-				id := int(atomic.AddInt64(&i, 1) - 1)
+				id := int(i.Add(1) - 1)
 				bench.perG(b, pb, id*b.N, m)
 			})
 		})

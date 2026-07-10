@@ -520,11 +520,8 @@ func (s *socket) sendPacket(
 			}
 		}
 
-		if opts.Compress == nil || *opts.Compress {
-			opts.Compress = utils.Ptr(true)
-		} else {
-			opts.Compress = utils.Ptr(false)
-		}
+		compress := opts.Compress == nil || *opts.Compress
+		opts.Compress = &compress
 
 		packet := &packet.Packet{
 			Type:    packetType,

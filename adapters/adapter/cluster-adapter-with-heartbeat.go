@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/servers/socket/v3"
-	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -259,17 +258,13 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 			a.customRequests.Store(requestId, &CustomClusterRequest{
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
-					cb(slices.Map(data.All(), func(i any) socket.SocketDetails {
-						return utils.TryCast[socket.SocketDetails](i)
-					}), nil)
+					cb(anySliceToSocketDetails(data.All()), nil)
 				},
 				Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 					t.Store(timeout)
 				}),
 				MissingUids: types.NewSet(a.nodesMap.Keys()...),
-				Responses: types.NewSlice(slices.Map(localSockets, func(client socket.SocketDetails) any {
-					return client
-				})...),
+				Responses:   types.NewSlice(socketDetailsToAny(localSockets)...),
 			})
 
 			a.Publish(&ClusterMessage{
@@ -293,9 +288,7 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 		}
 		adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
 		if request, ok := a.customRequests.Load(data.RequestId); ok {
-			request.Responses.Push(slices.Map(data.Sockets, func(client *SocketResponse) any {
-				return socket.SocketDetails(NewRemoteSocket(client))
-			})...)
+			request.Responses.Push(socketResponsesToDetailsAny(data.Sockets)...)
 
 			request.MissingUids.Delete(response.Uid)
 			if request.MissingUids.Len() == 0 {

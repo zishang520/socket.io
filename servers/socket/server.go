@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -273,7 +274,7 @@ func (s *Server) Attach(srv any, opts *ServerOptions) *Server {
 	var server *types.HttpServer
 	switch address := srv.(type) {
 	case int:
-		_address := fmt.Sprintf(":%d", address)
+		_address := ":" + strconv.Itoa(address)
 		// handle a port as a int
 		serverLog.Debug("creating http server and binding to %s", _address)
 		server = types.NewWebServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -532,9 +533,8 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 		parentNsp := NewParentNamespace(s)
 		serverLog.Debug("initializing parent namespace %s", parentNsp.Name())
 
-		s.parentNsps.Store(ParentNspNameMatchFn(utils.Ptr(func(nsp string, _ map[string]any, next func(error, bool)) {
-			next(nil, n.MatchString(nsp))
-		})), parentNsp)
+		matchFn := func(nsp string, _ map[string]any, next func(error, bool)) { next(nil, n.MatchString(nsp)) }
+		s.parentNsps.Store(ParentNspNameMatchFn(&matchFn), parentNsp)
 		s.parentNamespacesFromRegExp.Store(n, parentNsp)
 
 		if fn != nil {

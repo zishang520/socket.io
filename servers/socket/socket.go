@@ -302,7 +302,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	if SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
-	data := append([]any{ev}, args...)
+	data := eventPayload(ev, args)
 	data_len := len(data)
 	packet := &parser.Packet{
 		Type: parser.EVENT,

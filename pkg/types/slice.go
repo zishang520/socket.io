@@ -214,8 +214,8 @@ func (s *Slice[T]) Range(f func(T, int) bool, reverse ...bool) {
 	defer s.mu.RUnlock()
 
 	if len(reverse) > 0 && reverse[0] {
-		for i := len(s.elements) - 1; i >= 0; i-- {
-			if !f(s.elements[i], i) {
+		for i, v := range slices.Backward(s.elements) {
+			if !f(v, i) {
 				break
 			}
 		}
@@ -235,8 +235,8 @@ func (s *Slice[T]) RangeAndSplice(f func(T, int) (bool, int, int, []T), reverse 
 	defer s.mu.Unlock()
 
 	if len(reverse) > 0 && reverse[0] {
-		for i := len(s.elements) - 1; i >= 0; i-- {
-			if condition, start, deleteCount, insert := f(s.elements[i], i); condition {
+		for i, v := range slices.Backward(s.elements) {
+			if condition, start, deleteCount, insert := f(v, i); condition {
 				return s.splice(start, deleteCount, insert...)
 			}
 		}
