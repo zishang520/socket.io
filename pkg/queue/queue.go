@@ -12,6 +12,8 @@ import (
 
 var queueLog = log.NewLog("engine:events")
 
+const initialQueueCapacity = 1024
+
 // Queue serializes function execution through a single goroutine.
 // It uses an unbounded slice backed by a condition variable to ensure
 // Enqueue never blocks the caller.
@@ -19,6 +21,8 @@ type Queue struct {
 	mu           sync.Mutex
 	cond         *sync.Cond
 	tasks        []func()
+	head         int
+	size         int
 	shuttingDown bool
 	done         chan struct{}
 }
@@ -26,7 +30,7 @@ type Queue struct {
 // New creates a new Queue and starts the internal consumer goroutine.
 func New() *Queue {
 	q := &Queue{
-		tasks: make([]func(), 0, 1024),
+		tasks: make([]func(), initialQueueCapacity),
 		done:  make(chan struct{}),
 	}
 	q.cond = sync.NewCond(&q.mu)
@@ -50,7 +54,7 @@ func (q *Queue) Enqueue(task func()) {
 		return
 	}
 
-	q.tasks = append(q.tasks, task)
+	q.push(task)
 	q.cond.Signal()
 }
 
@@ -58,7 +62,7 @@ func (q *Queue) Enqueue(task func()) {
 func (q *Queue) Size() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return len(q.tasks)
+	return q.size
 }
 
 // loop is the main consumer goroutine.
@@ -80,25 +84,50 @@ func (q *Queue) get() (func(), bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	for len(q.tasks) == 0 && !q.shuttingDown {
+	for q.size == 0 && !q.shuttingDown {
 		q.cond.Wait()
 	}
 
-	if len(q.tasks) == 0 && q.shuttingDown {
+	if q.size == 0 && q.shuttingDown {
 		return nil, false
 	}
 
-	task := q.tasks[0]
+	return q.pop(), true
+}
 
-	q.tasks[0] = nil
-	q.tasks = q.tasks[1:]
-
-	if len(q.tasks) == 0 {
-		// Reset cursor when queue logically empties out to reuse backing array space
-		q.tasks = q.tasks[:0]
+func (q *Queue) push(task func()) {
+	if q.size == len(q.tasks) {
+		q.grow()
 	}
 
-	return task, true
+	tail := (q.head + q.size) % len(q.tasks)
+	q.tasks[tail] = task
+	q.size++
+}
+
+func (q *Queue) pop() func() {
+	task := q.tasks[q.head]
+	q.tasks[q.head] = nil
+	q.head = (q.head + 1) % len(q.tasks)
+	q.size--
+
+	if q.size == 0 {
+		q.head = 0
+		if len(q.tasks) > initialQueueCapacity {
+			q.tasks = make([]func(), initialQueueCapacity)
+		}
+	}
+
+	return task
+}
+
+func (q *Queue) grow() {
+	next := make([]func(), len(q.tasks)*2)
+	for i := range q.size {
+		next[i] = q.tasks[(q.head+i)%len(q.tasks)]
+	}
+	q.tasks = next
+	q.head = 0
 }
 
 // execute runs the task with built-in panic recovery.
