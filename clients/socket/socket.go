@@ -369,7 +369,7 @@ func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack, timeout *time.D
 
 	timer := utils.SetTimeout(func() {
 		s.acks.Delete(id)
-		s.sendBuffer.RemoveAll(func(p *Packet) bool {
+		s.sendBuffer.Remove(func(p *Packet) bool {
 			if p.Id != nil && *p.Id == id {
 				socketLog.Debug("removing packet with ack id %d from the buffer", id)
 				return true

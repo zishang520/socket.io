@@ -141,15 +141,12 @@ func (p *parserv3) DecodePacket(data types.BufferInterface, utf8decode ...bool) 
 		if !ok {
 			return newErrorPacket(), fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType)
 		}
+		if !utf8de {
+			return &packet.Packet{Type: packetType, Data: v}, nil
+		}
 		decode := types.NewStringBuffer(nil)
-		if utf8de {
-			if _, err := decode.ReadFrom(utils.NewUtf8Decoder(v)); err != nil {
-				return newErrorPacket(), err
-			}
-		} else {
-			if _, err := decode.ReadFrom(v); err != nil {
-				return newErrorPacket(), err
-			}
+		if _, err := decode.ReadFrom(utils.NewUtf8Decoder(v)); err != nil {
+			return newErrorPacket(), err
 		}
 		return &packet.Packet{Type: packetType, Data: decode}, nil
 	}
@@ -159,11 +156,7 @@ func (p *parserv3) DecodePacket(data types.BufferInterface, utf8decode ...bool) 
 	if !ok {
 		return newErrorPacket(), fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType+'0')
 	}
-	decode := types.NewBytesBuffer(nil)
-	if _, err := io.Copy(decode, data); err != nil {
-		return newErrorPacket(), err
-	}
-	return &packet.Packet{Type: packetType, Data: decode}, nil
+	return &packet.Packet{Type: packetType, Data: data}, nil
 }
 
 func (p *parserv3) hasBinary(packets []*packet.Packet) bool {

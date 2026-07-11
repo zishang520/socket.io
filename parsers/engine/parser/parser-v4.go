@@ -142,11 +142,7 @@ func (p *parserv4) decodeStringPacket(sb *types.StringBuffer) (*packet.Packet, e
 		return newErrorPacket(), fmt.Errorf("%w: [%c]", ErrUnknownPacketType, msgType)
 	}
 
-	stringBuffer := types.NewStringBuffer(nil)
-	if _, err := stringBuffer.ReadFrom(sb); err != nil {
-		return newErrorPacket(), err
-	}
-	return &packet.Packet{Type: packetType, Data: stringBuffer}, nil
+	return &packet.Packet{Type: packetType, Data: sb}, nil
 }
 
 // decodeBase64Packet decodes a base64-encoded binary packet.
@@ -162,11 +158,7 @@ func (p *parserv4) decodeBase64Packet(sb *types.StringBuffer) (*packet.Packet, e
 // decodeBinaryPacket decodes a raw binary packet.
 // Binary packets are always MESSAGE type in v4.
 func (p *parserv4) decodeBinaryPacket(data types.BufferInterface) (*packet.Packet, error) {
-	decode := types.NewBytesBuffer(nil)
-	if _, err := io.Copy(decode, data); err != nil {
-		return newErrorPacket(), err
-	}
-	return &packet.Packet{Type: packet.MESSAGE, Data: decode}, nil
+	return &packet.Packet{Type: packet.MESSAGE, Data: data}, nil
 }
 
 // EncodePayload encodes multiple packets into a single payload for Engine.IO v4.

@@ -127,19 +127,31 @@ func (e *emmiter) Emit(evt EventName, data ...any) {
 		return
 	}
 
-	for _, event := range evtEntry.All() {
-		if event != nil {
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						// Prevent a panicking listener from crashing the emitter.
-						eventsLog.Errorf("event listener panic recovered: %v\n%s", r, debug.Stack())
-					}
-				}()
-				event.fn(data...)
-			}()
+	if evtEntry.Len() == 1 {
+		event, err := evtEntry.Get(0)
+		if err == nil {
+			executeEvent(event, data...)
 		}
+		return
 	}
+
+	for _, event := range evtEntry.All() {
+		executeEvent(event, data...)
+	}
+}
+
+func executeEvent(event *eventEntry, data ...any) {
+	if event == nil {
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			// Prevent a panicking listener from crashing the emitter.
+			eventsLog.Errorf("event listener panic recovered: %v\n%s", r, debug.Stack())
+		}
+	}()
+	event.fn(data...)
 }
 
 func (e *emmiter) EventNames() []EventName {

@@ -289,6 +289,50 @@ func TestParserv3(t *testing.T) {
 		}
 	})
 
+	t.Run("DecodePacket/String/ReusesBuffer", func(t *testing.T) {
+		data := types.NewStringBufferString("2probe")
+		pack, err := p.DecodePacket(data)
+
+		if err != nil {
+			t.Fatal("Error with DecodePacket:", err)
+		}
+		if pack.Type != packet.PING {
+			t.Fatalf(`DecodePacket *Packet.Type value not as expected: %q, want match for %q`, pack.Type, packet.PING)
+		}
+		if pack.Data != data {
+			t.Fatal("Expected DecodePacket to reuse the input string buffer")
+		}
+		buf, err := types.NewStringBufferReader(pack.Data)
+		if err != nil {
+			t.Fatal("io.Reader data read failed:", err)
+		}
+		if got := buf.String(); got != "probe" {
+			t.Fatalf("Expected decoded payload %q, got %q", "probe", got)
+		}
+	})
+
+	t.Run("DecodePacket/Byte/ReusesBuffer", func(t *testing.T) {
+		data := types.NewBytesBuffer([]byte{4, 65, 66, 67})
+		pack, err := p.DecodePacket(data)
+
+		if err != nil {
+			t.Fatal("Error with DecodePacket:", err)
+		}
+		if pack.Type != packet.MESSAGE {
+			t.Fatalf(`DecodePacket *Packet.Type value not as expected: %q, want match for %q`, pack.Type, packet.MESSAGE)
+		}
+		if pack.Data != data {
+			t.Fatal("Expected DecodePacket to reuse the input binary buffer")
+		}
+		buf, err := types.NewBytesBufferReader(pack.Data)
+		if err != nil {
+			t.Fatal("io.Reader data read failed:", err)
+		}
+		if got := buf.Bytes(); !bytes.Equal(got, []byte{65, 66, 67}) {
+			t.Fatalf("Expected decoded payload %v, got %v", []byte{65, 66, 67}, got)
+		}
+	})
+
 	t.Run("EncodePayload/Base64", func(t *testing.T) {
 		data, err := p.EncodePayload(
 			[]*packet.Packet{
@@ -655,6 +699,50 @@ func TestParserv4(t *testing.T) {
 		}
 	})
 
+	t.Run("DecodePacket/String/ReusesBuffer", func(t *testing.T) {
+		data := types.NewStringBufferString("2probe")
+		pack, err := p.DecodePacket(data)
+
+		if err != nil {
+			t.Fatal("Error with DecodePacket:", err)
+		}
+		if pack.Type != packet.PING {
+			t.Fatalf(`DecodePacket *Packet.Type value not as expected: %q, want match for %q`, pack.Type, packet.PING)
+		}
+		if pack.Data != data {
+			t.Fatal("Expected DecodePacket to reuse the input string buffer")
+		}
+		buf, err := types.NewStringBufferReader(pack.Data)
+		if err != nil {
+			t.Fatal("io.Reader data read failed:", err)
+		}
+		if got := buf.String(); got != "probe" {
+			t.Fatalf("Expected decoded payload %q, got %q", "probe", got)
+		}
+	})
+
+	t.Run("DecodePacket/Byte/ReusesBuffer", func(t *testing.T) {
+		data := types.NewBytesBuffer([]byte{65, 66, 67})
+		pack, err := p.DecodePacket(data)
+
+		if err != nil {
+			t.Fatal("Error with DecodePacket:", err)
+		}
+		if pack.Type != packet.MESSAGE {
+			t.Fatalf(`DecodePacket *Packet.Type value not as expected: %q, want match for %q`, pack.Type, packet.MESSAGE)
+		}
+		if pack.Data != data {
+			t.Fatal("Expected DecodePacket to reuse the input binary buffer")
+		}
+		buf, err := types.NewBytesBufferReader(pack.Data)
+		if err != nil {
+			t.Fatal("io.Reader data read failed:", err)
+		}
+		if got := buf.Bytes(); !bytes.Equal(got, []byte{65, 66, 67}) {
+			t.Fatalf("Expected decoded payload %v, got %v", []byte{65, 66, 67}, got)
+		}
+	})
+
 	t.Run("EncodePayload", func(t *testing.T) {
 		data, err := p.EncodePayload(
 			[]*packet.Packet{
@@ -738,6 +826,24 @@ func TestParserv4(t *testing.T) {
 				t.Fatalf(`DecodePacket packs[1].Data value not as expected: %s, want match for %s`, b, check)
 			}
 		}()
+	})
+
+	t.Run("DecodePayload/StringBufferConsumed", func(t *testing.T) {
+		data := types.NewStringBufferString("2probe\x1e3pong")
+		packs, err := p.DecodePayload(data)
+
+		if err != nil {
+			t.Fatal("DecodePayload error:", err)
+		}
+		if len(packs) != 2 {
+			t.Fatalf("Expected 2 packets, got %d", len(packs))
+		}
+		if data.Len() != 0 {
+			t.Fatalf("Expected DecodePayload to consume input buffer, got len %d", data.Len())
+		}
+		if packs[0].Type != packet.PING || packs[1].Type != packet.PONG {
+			t.Fatalf("Unexpected packet types: %v, %v", packs[0].Type, packs[1].Type)
+		}
 	})
 
 	t.Run("DecodePayload", func(t *testing.T) {

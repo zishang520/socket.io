@@ -140,6 +140,40 @@ func TestEventsOnce(t *testing.T) {
 
 }
 
+func TestEventsOnceSingleListenerDoesNotDeadlock(t *testing.T) {
+	emitter := NewEventEmitter()
+	done := make(chan struct{})
+
+	if err := emitter.Once("once", func(...any) {
+		close(done)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	emitted := make(chan struct{})
+	go func() {
+		defer close(emitted)
+		emitter.Emit("once")
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Once listener was not called")
+	}
+
+	select {
+	case <-emitted:
+	case <-time.After(time.Second):
+		t.Fatal("Emit deadlocked while removing single Once listener")
+	}
+
+	emitter.Emit("once")
+	if count := emitter.ListenerCount("once"); count != 0 {
+		t.Fatalf("Expected Once listener to be removed, got %d", count)
+	}
+}
+
 func TestRemoveListener(t *testing.T) {
 	// on default
 	e := NewEventEmitter()
