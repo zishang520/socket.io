@@ -210,7 +210,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 	a.Publish(&ClusterMessage{
 		Type: SERVER_SIDE_EMIT,
 		Data: &ServerSideEmitMessage{
-			RequestId: &requestId, // the presence of this attribute defines whether an acknowledgement is needed
+			RequestId: new(requestId), // the presence of this attribute defines whether an acknowledgement is needed
 			Packet:    packet[:data_len-1],
 		},
 	})

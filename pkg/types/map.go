@@ -112,7 +112,7 @@ type entry[TValue any] struct {
 
 func newEntry[TValue any](i TValue) *entry[TValue] {
 	e := &entry[TValue]{expunged: new(TValue)}
-	e.p.Store(&i)
+	e.p.Store(new(i))
 	return e
 }
 
@@ -510,8 +510,7 @@ func (m *Map[TKey, TValue]) Range(f func(key TKey, value TValue) bool) {
 		read = m.loadReadOnly()
 		if read.amended {
 			read = readOnly[TKey, TValue]{m: m.dirty}
-			copyRead := read
-			m.read.Store(&copyRead)
+			m.read.Store(new(read))
 			m.dirty = nil
 			m.misses = 0
 		}

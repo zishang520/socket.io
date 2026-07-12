@@ -172,6 +172,6 @@ func (d *Log) Prefix() string {
 
 // SetPrefix sets a new prefix for the logger
 func (d *Log) SetPrefix(prefix string) {
-	d.prefix.Store(&prefix)
+	d.prefix.Store(new(prefix))
 	d.Logger.SetPrefix(prefix + " ")
 }

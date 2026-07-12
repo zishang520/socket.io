@@ -12,18 +12,16 @@ func TestRegisterAckCallbackTimeoutRemovesOnlyMatchingBufferedPacket(t *testing.
 	s._opts = DefaultSocketOptions()
 
 	matchingId := uint64(1)
-	otherId := uint64(2)
 	matching := &Packet{Packet: &parser.Packet{Id: &matchingId}}
-	other := &Packet{Packet: &parser.Packet{Id: &otherId}}
+	other := &Packet{Packet: &parser.Packet{Id: new(uint64(2))}}
 	withoutAck := &Packet{Packet: &parser.Packet{}}
 
 	s.sendBuffer.Push(matching, other, withoutAck)
 
 	timedOut := make(chan error, 1)
-	timeout := 10 * time.Millisecond
 	s._registerAckCallback(matchingId, func(_ []any, err error) {
 		timedOut <- err
-	}, &timeout)
+	}, new(10*time.Millisecond))
 
 	select {
 	case err := <-timedOut:
@@ -53,10 +51,9 @@ func TestRegisterAckCallbackClearsTimeoutOnAck(t *testing.T) {
 
 	id := uint64(1)
 	called := make(chan error, 1)
-	timeout := time.Second
 	s._registerAckCallback(id, func(_ []any, err error) {
 		called <- err
-	}, &timeout)
+	}, new(time.Second))
 
 	ack, ok := s.acks.Load(id)
 	if !ok {

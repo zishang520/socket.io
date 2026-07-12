@@ -323,7 +323,7 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 			Type: BROADCAST,
 			Data: &BroadcastMessage{
 				Packet:    packet,
-				RequestId: &requestId,
+				RequestId: new(requestId),
 				Opts:      EncodeOptions(opts),
 			},
 		})
@@ -496,7 +496,7 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 	c.Publish(&ClusterMessage{
 		Type: SERVER_SIDE_EMIT,
 		Data: &ServerSideEmitMessage{
-			RequestId: &requestId, // the presence of this attribute defines whether an acknowledgement is needed
+			RequestId: new(requestId), // the presence of this attribute defines whether an acknowledgement is needed
 			Packet:    packet[:packetLen-1],
 		},
 	})

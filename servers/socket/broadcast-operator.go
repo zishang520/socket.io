@@ -92,30 +92,30 @@ func (b *BroadcastOperator) Except(room ...Room) *BroadcastOperator {
 
 // Compress sets the compress flag for subsequent event emissions.
 func (b *BroadcastOperator) Compress(compress bool) *BroadcastOperator {
-	flags := *b.flags
-	flags.Compress = &compress
-	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, &flags)
+	flags := new(*b.flags)
+	flags.Compress = new(compress)
+	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, flags)
 }
 
 // Volatile sets a modifier for a subsequent event emission that the event data may be lost if the client is not ready to receive messages.
 func (b *BroadcastOperator) Volatile() *BroadcastOperator {
-	flags := *b.flags
+	flags := new(*b.flags)
 	flags.Volatile = true
-	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, &flags)
+	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, flags)
 }
 
 // Local sets a modifier for a subsequent event emission that the event data will only be broadcast to the current node.
 func (b *BroadcastOperator) Local() *BroadcastOperator {
-	flags := *b.flags
+	flags := new(*b.flags)
 	flags.Local = true
-	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, &flags)
+	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, flags)
 }
 
 // Timeout adds a timeout for the next operation.
 func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
-	flags := *b.flags
-	flags.Timeout = &timeout
-	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, &flags)
+	flags := new(*b.flags)
+	flags.Timeout = new(timeout)
+	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, flags)
 }
 
 // Emit broadcasts an event to all connected clients.

@@ -326,7 +326,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 
 		packet.Data = data[:data_len-1]
 		s._registerAckCallback(id, ack, flags.Timeout)
-		packet.Id = &id
+		packet.Id = new(id)
 	}
 
 	isTransportWritable := false
@@ -358,8 +358,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack, timeout *time.Duration) {
 	if timeout == nil {
 		if s._opts.GetRawAckTimeout() != nil {
-			ackTimeout := s._opts.AckTimeout()
-			timeout = &ackTimeout
+			timeout = new(s._opts.AckTimeout())
 		}
 	}
 
@@ -759,7 +758,7 @@ func (s *Socket) Close() *Socket {
 //
 // compress: If `true`, compresses the sending data.
 func (s *Socket) Compress(compress bool) *Socket {
-	s.flags.Load().Compress = &compress
+	s.flags.Load().Compress = new(compress)
 	return s
 }
 
@@ -787,7 +786,7 @@ func (s *Socket) Volatile() *Socket {
 //	  }
 //	})
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
-	s.flags.Load().Timeout = &timeout
+	s.flags.Load().Timeout = new(timeout)
 	return s
 }
 

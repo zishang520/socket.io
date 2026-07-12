@@ -92,16 +92,16 @@ func (b *ShardedBroadcastOperator) Except(room ...socket.Room) BroadcastOperator
 
 // Compress sets the compress flag for the broadcast.
 func (b *ShardedBroadcastOperator) Compress(compress bool) BroadcastOperatorInterface {
-	flags := *b.flags
-	flags.Compress = &compress
-	return NewShardedBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
+	flags := new(*b.flags)
+	flags.Compress = new(compress)
+	return NewShardedBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
 }
 
 // Volatile sets the volatile flag, allowing event data to be lost if the client is not ready.
 func (b *ShardedBroadcastOperator) Volatile() BroadcastOperatorInterface {
-	flags := *b.flags
+	flags := new(*b.flags)
 	flags.Volatile = true
-	return NewShardedBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
+	return NewShardedBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
 }
 
 // Emit emits an event to all targeted clients using SPUBLISH (for Redis Cluster).

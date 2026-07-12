@@ -187,7 +187,7 @@ func (s *Socket) Handshake() *Handshake {
 // Additional information that can be attached to the Socket instance and which will be used in the
 // [Server.fetchSockets()] method.
 func (s *Socket) SetData(data any) {
-	s.data.Store(&data)
+	s.data.Store(new(data))
 }
 func (s *Socket) Data() any {
 	if data := s.data.Load(); data != nil {
@@ -308,7 +308,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		Type: parser.EVENT,
 		Data: data,
 	}
-	flags := *s.flags.Swap(&BroadcastFlags{})
+	flags := new(*s.flags.Swap(&BroadcastFlags{}))
 
 	// access last argument to see if it's an ACK callback
 	if fn, ok := data[data_len-1].(Ack); ok {
@@ -316,7 +316,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		socketLog.Debug("emitting packet with ack id %d", id)
 		packet.Data = data[:data_len-1]
 		s.registerAckCallback(id, fn, flags.Timeout)
-		packet.Id = &id
+		packet.Id = new(id)
 	}
 
 	if s.nsp.Server().Opts().ConnectionStateRecovery() != nil {
@@ -324,11 +324,11 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		s.adapter.Broadcast(packet, &BroadcastOptions{
 			Rooms:  types.NewSet(Room(s.id)),
 			Except: types.NewSet[Room](),
-			Flags:  &flags,
+			Flags:  flags,
 		})
 	} else {
 		s.notifyOutgoingListeners(packet)
-		s.packet(packet, &flags)
+		s.packet(packet, flags)
 	}
 
 	return nil
@@ -665,7 +665,7 @@ func (s *Socket) Disconnect(status bool) *Socket {
 //
 // Param: compress - if `true`, compresses the sending data
 func (s *Socket) Compress(compress bool) *Socket {
-	s.flags.Load().Compress = &compress
+	s.flags.Load().Compress = new(compress)
 	return s
 }
 
@@ -721,7 +721,7 @@ func (s *Socket) Local() *BroadcastOperator {
 //		})
 //	})
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
-	s.flags.Load().Timeout = &timeout
+	s.flags.Load().Timeout = new(timeout)
 	return s
 }
 
@@ -898,6 +898,5 @@ func (s *Socket) NotifyOutgoingListeners() func(*parser.Packet) {
 }
 
 func (s *Socket) newBroadcastOperator() *BroadcastOperator {
-	flags := *s.flags.Swap(&BroadcastFlags{})
-	return NewBroadcastOperator(s.adapter, types.NewSet[Room](), types.NewSet(Room(s.id)), &flags)
+	return NewBroadcastOperator(s.adapter, types.NewSet[Room](), types.NewSet(Room(s.id)), new(*s.flags.Swap(&BroadcastFlags{})))
 }

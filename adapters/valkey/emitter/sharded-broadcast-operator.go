@@ -86,15 +86,15 @@ func (b *ShardedBroadcastOperator) Except(room ...socket.Room) BroadcastOperator
 }
 
 func (b *ShardedBroadcastOperator) Compress(compress bool) BroadcastOperatorInterface {
-	flags := *b.flags
-	flags.Compress = &compress
-	return NewShardedBroadcastOperator(b.valkeyClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
+	flags := new(*b.flags)
+	flags.Compress = new(compress)
+	return NewShardedBroadcastOperator(b.valkeyClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
 }
 
 func (b *ShardedBroadcastOperator) Volatile() BroadcastOperatorInterface {
-	flags := *b.flags
+	flags := new(*b.flags)
 	flags.Volatile = true
-	return NewShardedBroadcastOperator(b.valkeyClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
+	return NewShardedBroadcastOperator(b.valkeyClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
 }
 
 // Emit emits an event to all targeted clients using SPUBLISH.

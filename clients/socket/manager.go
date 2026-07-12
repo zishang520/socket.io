@@ -249,7 +249,7 @@ func (m *Manager) ReconnectionDelayMax() float64 {
 
 // Sets the connection timeout. `false` to disable
 func (m *Manager) SetTimeout(timeout time.Duration) {
-	m._timeout.Store(&timeout)
+	m._timeout.Store(new(timeout))
 }
 
 // Timeout returns the connection timeout duration.
@@ -283,7 +283,7 @@ func (m *Manager) Open(fn func(error)) *Manager {
 
 	managerLog.Debug("opening %s", m.uri)
 	socket := engine.NewSocket(m.uri, m.opts)
-	m.engine.Store(&socket)
+	m.engine.Store(new(socket))
 	m._readyState.Store(ReadyStateOpening)
 	m.skipReconnect.Store(false)
 

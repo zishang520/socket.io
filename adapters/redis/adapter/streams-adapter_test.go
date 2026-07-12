@@ -574,10 +574,9 @@ func TestIsEphemeral(t *testing.T) {
 	})
 
 	t.Run("broadcast with requestId is ephemeral", func(t *testing.T) {
-		reqID := "req-1"
 		msg := &adapter.ClusterMessage{
 			Type: adapter.BROADCAST,
-			Data: &adapter.BroadcastMessage{RequestId: &reqID},
+			Data: &adapter.BroadcastMessage{RequestId: new("req-1")},
 		}
 		if !isEphemeral(msg) {
 			t.Error("Expected true for broadcast with requestId")

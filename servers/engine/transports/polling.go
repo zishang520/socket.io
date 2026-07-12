@@ -281,8 +281,7 @@ func (p *polling) send(packets []*packet.Packet) {
 			break
 		}
 	}
-	compressOption := compress
-	option := &packet.Options{Compress: &compressOption}
+	option := &packet.Options{Compress: new(compress)}
 
 	if p.Protocol() == 3 {
 		data, _ := p.Parser().EncodePayload(packets, p.SupportsBinary())
@@ -453,11 +452,11 @@ func (p *polling) DoClose(fn types.Callable) {
 	} else {
 		pollingLog.Debug("transport not writable - buffering orderly close")
 		closeTimeoutTimer := utils.SetTimeout(onClose, p.closeTimeout)
-		shouldClose := func() {
+		shouldClose := new(func() {
 			utils.ClearTimeout(closeTimeoutTimer)
 			onClose()
-		}
-		p.shouldClose.Store(&shouldClose)
+		})
+		p.shouldClose.Store(shouldClose)
 	}
 }
 

@@ -9,13 +9,12 @@ import (
 )
 
 func TestBroadcastFlagsInheritance(t *testing.T) {
-	compress := true
 	flags := BroadcastFlags{
 		WriteOptions: WriteOptions{
 			Volatile:   true,
 			PreEncoded: false,
 			Options: packet.Options{
-				Compress: &compress,
+				Compress: new(true),
 			},
 		},
 		Local:     true,

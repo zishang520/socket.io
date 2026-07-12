@@ -96,15 +96,15 @@ func (b *BroadcastOperator) Except(room ...socket.Room) BroadcastOperatorInterfa
 }
 
 func (b *BroadcastOperator) Compress(compress bool) BroadcastOperatorInterface {
-	flags := *b.flags
-	flags.Compress = &compress
-	return NewBroadcastOperator(b.valkeyClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
+	flags := new(*b.flags)
+	flags.Compress = new(compress)
+	return NewBroadcastOperator(b.valkeyClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
 }
 
 func (b *BroadcastOperator) Volatile() BroadcastOperatorInterface {
-	flags := *b.flags
+	flags := new(*b.flags)
 	flags.Volatile = true
-	return NewBroadcastOperator(b.valkeyClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
+	return NewBroadcastOperator(b.valkeyClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
 }
 
 // Emit broadcasts an event with the given name and arguments to all targeted clients.

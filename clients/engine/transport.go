@@ -115,7 +115,7 @@ func (t *transport) SupportsBinary() bool {
 // Parameters:
 //   - readyState: The new state to set for the transport
 func (t *transport) SetReadyState(readyState TransportState) {
-	t.readyState.Store(&readyState)
+	t.readyState.Store(new(readyState))
 }
 
 // ReadyState returns the current state of the transport connection.

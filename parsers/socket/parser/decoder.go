@@ -262,7 +262,7 @@ func (d *decoder) parseAttachments(buffer types.BufferInterface, packet *Packet)
 		return ErrTooManyAttachments
 	}
 
-	packet.Attachments = &attachmentCount
+	packet.Attachments = new(attachmentCount)
 	return nil
 }
 
@@ -346,7 +346,7 @@ func (d *decoder) parsePacketID(buffer types.BufferInterface, packet *Packet) er
 		if err != nil {
 			return err
 		}
-		packet.Id = &packetID
+		packet.Id = new(packetID)
 	}
 
 	return nil

@@ -22,8 +22,7 @@ type Placeholder struct {
 func DeconstructPacket(packet *Packet) (*Packet, []types.BufferInterface) {
 	var buffers []types.BufferInterface
 	packet.Data = deconstructData(packet.Data, &buffers)
-	attachments := uint64(len(buffers))
-	packet.Attachments = &attachments
+	packet.Attachments = new(uint64(len(buffers)))
 	return packet, buffers
 }
 

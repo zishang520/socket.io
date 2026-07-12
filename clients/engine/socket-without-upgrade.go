@@ -387,7 +387,7 @@ func (s *socketWithoutUpgrade) SetTransport(transport Transport) {
 	}
 
 	// set up transport
-	s.transport.Store(&transport)
+	s.transport.Store(new(transport))
 
 	// set up transport listeners
 	_ = transport.On("drain", func(...any) { s._onDrain() })

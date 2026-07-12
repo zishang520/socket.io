@@ -286,7 +286,7 @@ func (s *socket) setTransport(transport transports.Transport) {
 	onDrain := func(...any) { s.onDrain() }
 	onClose := func(...any) { s.OnClose("transport close") }
 
-	s.transport.Store(&transport)
+	s.transport.Store(new(transport))
 
 	_ = transport.Once("error", onError)
 	_ = transport.On("ready", onReady)
@@ -515,13 +515,11 @@ func (s *socket) sendPacket(
 		if options != nil {
 			opts.WsPreEncodedFrame = options.WsPreEncodedFrame
 			if options.Compress != nil {
-				compress := *options.Compress
-				opts.Compress = &compress
+				opts.Compress = new(*options.Compress)
 			}
 		}
 
-		compress := opts.Compress == nil || *opts.Compress
-		opts.Compress = &compress
+		opts.Compress = new(opts.Compress == nil || *opts.Compress)
 
 		packet := &packet.Packet{
 			Type:    packetType,

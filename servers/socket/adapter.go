@@ -180,8 +180,7 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 
 	packet.Nsp = a.nsp.Name()
 	// we can use the same id for each packet, since the _ids counter is common (no duplicate)
-	packetId := a.nsp.Ids()
-	packet.Id = &packetId
+	packet.Id = new(a.nsp.Ids())
 	encodedPackets := a._encode(packet, packetOpts)
 	var clientCount atomic.Uint64
 	a.apply(opts, func(socket *Socket) {

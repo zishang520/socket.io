@@ -408,10 +408,9 @@ func TestEncodeConnectErrorPacket(t *testing.T) {
 func TestEncodeBinaryAckPacket(t *testing.T) {
 	e := NewEncoder()
 
-	id := uint64(5)
 	packet := &Packet{
 		Type: ACK,
-		Id:   &id,
+		Id:   new(uint64(5)),
 		Data: []any{[]byte{0x01, 0x02, 0x03}},
 	}
 
@@ -506,10 +505,9 @@ func TestEncodeWithIOReader(t *testing.T) {
 func TestEncodeBinaryEventExplicit(t *testing.T) {
 	e := NewEncoder()
 
-	attachments := uint64(1)
 	packet := &Packet{
 		Type:        BINARY_EVENT,
-		Attachments: &attachments,
+		Attachments: new(uint64(1)),
 		Nsp:         "/chat",
 	}
 
@@ -528,11 +526,10 @@ func TestEncodeBinaryEventExplicit(t *testing.T) {
 func TestEncodePacketWithAllFields(t *testing.T) {
 	e := NewEncoder()
 
-	id := uint64(42)
 	packet := &Packet{
 		Type: EVENT,
 		Nsp:  "/admin",
-		Id:   &id,
+		Id:   new(uint64(42)),
 		Data: []any{"message", "hello"},
 	}
 

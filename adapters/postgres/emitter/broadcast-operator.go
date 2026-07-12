@@ -108,17 +108,17 @@ func (b *BroadcastOperator) Except(room ...socket.Room) BroadcastOperatorInterfa
 // Compress sets the compress flag for the broadcast.
 // When true, the message will be compressed before transmission.
 func (b *BroadcastOperator) Compress(compress bool) BroadcastOperatorInterface {
-	flags := *b.flags
-	flags.Compress = &compress
-	return NewBroadcastOperator(b.postgresClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
+	flags := new(*b.flags)
+	flags.Compress = new(compress)
+	return NewBroadcastOperator(b.postgresClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
 }
 
 // Volatile sets the volatile flag for the broadcast.
 // When set, the event data may be lost if the client is not ready to receive.
 func (b *BroadcastOperator) Volatile() BroadcastOperatorInterface {
-	flags := *b.flags
+	flags := new(*b.flags)
 	flags.Volatile = true
-	return NewBroadcastOperator(b.postgresClient, b.broadcastOptions, b.rooms, b.exceptRooms, &flags)
+	return NewBroadcastOperator(b.postgresClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
 }
 
 // Emit broadcasts an event with the given name and arguments to all targeted clients.

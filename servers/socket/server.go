@@ -533,8 +533,8 @@ func (s *Server) Of(name any, fn types.EventListener) Namespace {
 		parentNsp := NewParentNamespace(s)
 		serverLog.Debug("initializing parent namespace %s", parentNsp.Name())
 
-		matchFn := func(nsp string, _ map[string]any, next func(error, bool)) { next(nil, n.MatchString(nsp)) }
-		s.parentNsps.Store(ParentNspNameMatchFn(&matchFn), parentNsp)
+		matchFn := new(func(nsp string, _ map[string]any, next func(error, bool)) { next(nil, n.MatchString(nsp)) })
+		s.parentNsps.Store(ParentNspNameMatchFn(matchFn), parentNsp)
 		s.parentNamespacesFromRegExp.Store(n, parentNsp)
 
 		if fn != nil {

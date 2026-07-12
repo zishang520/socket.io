@@ -35,7 +35,7 @@ type Options struct {
 
 // NewOptions creates a new Options with the given compress flag.
 func NewOptions(compress bool) *Options {
-	return &Options{Compress: &compress}
+	return &Options{Compress: new(compress)}
 }
 
 // Packet represents an Engine.IO packet.
