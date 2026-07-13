@@ -2,9 +2,12 @@ package parser
 
 import (
 	"encoding/json"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
@@ -20,7 +23,9 @@ func NewEncoder() Encoder {
 // For non-binary packets, it returns a single string buffer.
 // For binary packets, it returns the encoded packet header followed by binary buffers.
 func (e *encoder) Encode(packet *Packet) []types.BufferInterface {
-	parserLog.Debug("encoding packet %v", packet)
+	if log.DEBUG.Load() {
+		parserLog.Debug("encoding packet %v", packet)
+	}
 
 	// Check if the packet contains binary data and upgrade packet type if needed
 	if packet.Type == EVENT || packet.Type == ACK {
@@ -46,8 +51,10 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 
 	// Add attachment count for binary packets
 	if (packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK) && packet.Attachments != nil {
-		_, _ = buffer.WriteString(strconv.FormatUint(*packet.Attachments, 10))
-		_ = buffer.WriteByte('-')
+		buffer.Grow(21)
+		encoded := strconv.AppendUint(buffer.AvailableBuffer(), *packet.Attachments, 10)
+		encoded = append(encoded, '-')
+		_, _ = buffer.Write(encoded)
 	}
 
 	// Add namespace (if not the default "/")
@@ -58,7 +65,9 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 
 	// Add packet ID for acknowledgments
 	if packet.Id != nil {
-		_, _ = buffer.WriteString(strconv.FormatUint(*packet.Id, 10))
+		buffer.Grow(20)
+		encoded := strconv.AppendUint(buffer.AvailableBuffer(), *packet.Id, 10)
+		_, _ = buffer.Write(encoded)
 	}
 
 	// Add JSON-encoded data
@@ -71,7 +80,9 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 		}
 	}
 
-	parserLog.Debug("encoded %v as %v", packet, buffer)
+	if log.DEBUG.Load() {
+		parserLog.Debug("encoded %v as %v", packet, buffer)
+	}
 	return buffer
 }
 
@@ -84,8 +95,7 @@ func (e *encoder) encodeAsBinary(packet *Packet) []types.BufferInterface {
 	return append([]types.BufferInterface{header}, buffers...)
 }
 
-// preprocessData recursively processes data to convert special types
-// that need transformation before JSON encoding.
+// preprocessData recursively converts strings.Reader values before JSON encoding.
 func preprocessData(data any) any {
 	switch typedData := data.(type) {
 	case nil:
@@ -95,14 +105,14 @@ func preprocessData(data any) any {
 		buffer, _ := types.NewStringBufferReader(typedData)
 		return buffer
 	case []any:
-		result := make([]any, 0, len(typedData))
-		for _, item := range typedData {
-			result = append(result, preprocessData(item))
+		result := slices.Clone(typedData)
+		for i := range result {
+			result[i] = preprocessData(result[i])
 		}
 		return result
 	case map[string]any:
-		result := make(map[string]any, len(typedData))
-		for key, value := range typedData {
+		result := maps.Clone(typedData)
+		for key, value := range result {
 			result[key] = preprocessData(value)
 		}
 		return result

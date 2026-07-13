@@ -2,7 +2,6 @@ package parser
 
 import (
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -135,11 +134,16 @@ func reconstructSlice(data []any, buffers []types.BufferInterface) ([]any, error
 // If the map itself is a placeholder, it returns the corresponding buffer.
 func reconstructMap(data map[string]any, buffers []types.BufferInterface) (any, error) {
 	// Check if this map is a placeholder
-	if placeholder, err := parsePlaceholder(data); err == nil && placeholder.Placeholder {
-		if placeholder.Num < 0 || placeholder.Num >= int64(len(buffers)) {
-			return nil, ErrIllegalAttachments
+	if placeholderFlag, ok := data["_placeholder"].(bool); ok && placeholderFlag {
+		if num, ok := data["num"].(float64); ok && num >= 0 {
+			index := int64(num)
+			if num == float64(index) {
+				if index >= int64(len(buffers)) {
+					return nil, ErrIllegalAttachments
+				}
+				return buffers[index], nil
+			}
 		}
-		return buffers[placeholder.Num], nil
 	}
 
 	// Not a placeholder, reconstruct nested data
@@ -152,43 +156,4 @@ func reconstructMap(data map[string]any, buffers []types.BufferInterface) (any, 
 		result[key] = reconstructed
 	}
 	return result, nil
-}
-
-// parsePlaceholder attempts to parse a map as a Placeholder.
-// Returns an error if the map doesn't have the required fields.
-func parsePlaceholder(data map[string]any) (*Placeholder, error) {
-	placeholderFlag, err := extractField[bool](data, "_placeholder")
-	if err != nil {
-		return nil, err
-	}
-
-	num, err := extractField[float64](data, "num")
-	if err != nil {
-		return nil, err
-	}
-
-	// Validate that num is a non-negative integer value
-	if num < 0 || num != float64(int64(num)) {
-		return nil, fmt.Errorf("invalid placeholder num: %v", num)
-	}
-
-	return &Placeholder{
-		Placeholder: placeholderFlag,
-		Num:         int64(num),
-	}, nil
-}
-
-// extractField extracts a typed field from a map.
-// Returns an error if the field is missing or has an incorrect type.
-func extractField[T any](data map[string]any, key string) (T, error) {
-	var zero T
-	value, exists := data[key]
-	if !exists {
-		return zero, fmt.Errorf("missing '%s' field", key)
-	}
-	typedValue, ok := value.(T)
-	if !ok {
-		return zero, fmt.Errorf("invalid type for '%s' field: expected %T, got %T", key, zero, value)
-	}
-	return typedValue, nil
 }

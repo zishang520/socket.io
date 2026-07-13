@@ -122,9 +122,22 @@ func (d *decoder) handleBinaryData(data any) error {
 		return ErrBinaryWithoutReconstruction
 	}
 
-	buffer, err := d.readBinaryData(data)
-	if err != nil {
-		return err
+	buffer := types.NewBytesBuffer(nil)
+	switch typedData := data.(type) {
+	case []byte:
+		if _, err := buffer.Write(typedData); err != nil {
+			return err
+		}
+	case io.Reader:
+		_, readErr := buffer.ReadFrom(typedData)
+		if closer, ok := data.(io.Closer); ok {
+			if err := closer.Close(); err != nil {
+				parserLog.Debug("failed to close binary reader: %v", err)
+			}
+		}
+		if readErr != nil {
+			return readErr
+		}
 	}
 
 	packet, err := reconstructor.takeBinaryData(buffer)
@@ -139,31 +152,6 @@ func (d *decoder) handleBinaryData(data any) error {
 	}
 
 	return nil
-}
-
-// readBinaryData reads binary data from various source types into a buffer.
-func (d *decoder) readBinaryData(data any) (types.BufferInterface, error) {
-	buffer := types.NewBytesBuffer(nil)
-
-	switch typedData := data.(type) {
-	case io.Reader:
-		if closer, ok := data.(io.Closer); ok {
-			defer func() {
-				if err := closer.Close(); err != nil {
-					parserLog.Debug("failed to close binary reader: %v", err)
-				}
-			}()
-		}
-		if _, err := buffer.ReadFrom(typedData); err != nil {
-			return nil, err
-		}
-	case []byte:
-		if _, err := buffer.Write(typedData); err != nil {
-			return nil, err
-		}
-	}
-
-	return buffer, nil
 }
 
 // decodeAsString decodes a string buffer and handles binary packet initialization.
@@ -190,7 +178,11 @@ func (d *decoder) decodeAsString(buffer types.BufferInterface) error {
 
 // decodePacket parses a packet from a string buffer.
 func (d *decoder) decodePacket(buffer types.BufferInterface) (*Packet, error) {
-	originalStr := buffer.String() // For debug logging
+	debug := log.DEBUG.Load()
+	var originalStr string
+	if debug {
+		originalStr = buffer.String()
+	}
 	packet := &Packet{}
 
 	// Parse packet type
@@ -218,7 +210,9 @@ func (d *decoder) decodePacket(buffer types.BufferInterface) (*Packet, error) {
 		return nil, err
 	}
 
-	parserLog.Debug("decoded %s as %v", originalStr, packet)
+	if debug {
+		parserLog.Debug("decoded %s as %v", originalStr, packet)
+	}
 	return packet, nil
 }
 
@@ -314,40 +308,31 @@ func (d *decoder) parsePacketID(buffer types.BufferInterface, packet *Packet) er
 		return nil
 	}
 
-	var idBuilder strings.Builder
+	maxLength := d.opts.MaxPacketIDLength()
+	if maxLength <= 0 {
+		return ErrIllegalID
+	}
 
-	for {
-		if idBuilder.Len() >= d.opts.MaxPacketIDLength() {
+	data := buffer.Bytes()
+	idLength := 0
+	for idLength < len(data) && data[idLength] >= '0' && data[idLength] <= '9' {
+		idLength++
+		if idLength >= maxLength {
+			buffer.Next(idLength)
 			return ErrIllegalID
 		}
-
-		b, err := buffer.ReadByte()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
-		}
-
-		if b >= '0' && b <= '9' {
-			if err := idBuilder.WriteByte(b); err != nil {
-				return err
-			}
-		} else {
-			if err := buffer.UnreadByte(); err != nil {
-				return ErrIllegalID
-			}
-			break
-		}
 	}
 
-	if idBuilder.Len() > 0 {
-		packetID, err := strconv.ParseUint(idBuilder.String(), 10, 64)
-		if err != nil {
-			return err
-		}
-		packet.Id = new(packetID)
+	if idLength == 0 {
+		return nil
 	}
+
+	buffer.Next(idLength)
+	packetID, err := strconv.ParseUint(string(data[:idLength]), 10, 64)
+	if err != nil {
+		return err
+	}
+	packet.Id = new(packetID)
 
 	return nil
 }
