@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"sync/atomic"
 	"unicode"
+	"unicode/utf8"
 )
 
 type base64Id struct {
@@ -34,6 +35,26 @@ func IsValidSid(sid string) bool {
 	if len(sid) == 0 || len(sid) > 36 {
 		return false
 	}
+	for i := 0; i < len(sid); i++ {
+		c := sid[i]
+		if c >= utf8.RuneSelf {
+			return isValidUnicodeSid(sid[i:])
+		}
+		if !isValidASCIISidByte(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func isValidASCIISidByte(c byte) bool {
+	return 'a' <= c && c <= 'z' ||
+		'A' <= c && c <= 'Z' ||
+		'0' <= c && c <= '9' ||
+		c == '-' || c == '_' || c == '.' || c == '#' || c == ':'
+}
+
+func isValidUnicodeSid(sid string) bool {
 	for _, c := range sid {
 		if !unicode.IsLetter(c) && !unicode.IsDigit(c) && c != '-' && c != '_' && c != '.' && c != '#' && c != ':' {
 			return false

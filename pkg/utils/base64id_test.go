@@ -99,6 +99,25 @@ func TestGenerateId_RandomPrefixDiffers(t *testing.T) {
 	}
 }
 
+func TestIsValidSid(t *testing.T) {
+	tests := map[string]bool{
+		"yH8rZp1uWq3xA7cN9mK2vB4d":              true,
+		"namespace#socket:id.test":              true,
+		"会话编号42":                                true,
+		"":                                      false,
+		"contains space":                        false,
+		"contains/slash":                        false,
+		string([]byte{0xff}):                    false,
+		"abcdefghijklmnopqrstuvwxyzABCDEFGHIJK": false,
+	}
+
+	for sid, expected := range tests {
+		if actual := IsValidSid(sid); actual != expected {
+			t.Errorf("IsValidSid(%q) = %t, want %t", sid, actual, expected)
+		}
+	}
+}
+
 // binaryBigEndianUint64 decodes a uint64 from big-endian bytes.
 func binaryBigEndianUint64(b []byte) uint64 {
 	_ = b[7] // bounds check

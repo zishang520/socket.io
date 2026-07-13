@@ -12,7 +12,7 @@ import (
 
 var queueLog = log.NewLog("engine:events")
 
-const initialQueueCapacity = 1024
+const initialQueueCapacity = 1 << 10
 
 // Queue serializes function execution through a single goroutine.
 // It uses an unbounded slice backed by a condition variable to ensure
@@ -100,7 +100,9 @@ func (q *Queue) push(task func()) {
 		q.grow()
 	}
 
-	tail := (q.head + q.size) % len(q.tasks)
+	// The ring capacity starts at a power of two and only doubles, so masking
+	// avoids an integer division on every enqueue/dequeue operation.
+	tail := (q.head + q.size) & (len(q.tasks) - 1)
 	q.tasks[tail] = task
 	q.size++
 }
@@ -108,7 +110,7 @@ func (q *Queue) push(task func()) {
 func (q *Queue) pop() func() {
 	task := q.tasks[q.head]
 	q.tasks[q.head] = nil
-	q.head = (q.head + 1) % len(q.tasks)
+	q.head = (q.head + 1) & (len(q.tasks) - 1)
 	q.size--
 
 	if q.size == 0 {
@@ -123,9 +125,8 @@ func (q *Queue) pop() func() {
 
 func (q *Queue) grow() {
 	next := make([]func(), len(q.tasks)*2)
-	for i := range q.size {
-		next[i] = q.tasks[(q.head+i)%len(q.tasks)]
-	}
+	n := copy(next, q.tasks[q.head:])
+	copy(next[n:], q.tasks[:q.head])
 	q.tasks = next
 	q.head = 0
 }

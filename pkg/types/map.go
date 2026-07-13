@@ -533,6 +533,9 @@ func (m *Map[TKey, TValue]) Len() (n int) {
 }
 
 func (m *Map[TKey, TValue]) Keys() (keys []TKey) {
+	if size := m.Len(); size > 0 {
+		keys = make([]TKey, 0, size)
+	}
 	m.Range(func(k TKey, _ TValue) bool {
 		keys = append(keys, k)
 		return true
@@ -541,6 +544,9 @@ func (m *Map[TKey, TValue]) Keys() (keys []TKey) {
 }
 
 func (m *Map[TKey, TValue]) Values() (values []TValue) {
+	if size := m.Len(); size > 0 {
+		values = make([]TValue, 0, size)
+	}
 	m.Range(func(_ TKey, v TValue) bool {
 		values = append(values, v)
 		return true

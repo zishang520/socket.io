@@ -3,6 +3,7 @@ package types
 import (
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"sync"
 
 	"github.com/zishang520/socket.io/v3/pkg/log"
@@ -123,19 +124,24 @@ func (e *emmiter) Emit(evt EventName, data ...any) {
 		return
 	}
 
-	if evtEntry.Len() == 0 {
+	// Take a stable snapshot under one read lock. The previous Len/Len/Get path
+	// acquired the same lock three times for the common single-listener case.
+	evtEntry.mu.RLock()
+	count := len(evtEntry.elements)
+	if count == 0 {
+		evtEntry.mu.RUnlock()
 		return
 	}
-
-	if evtEntry.Len() == 1 {
-		event, err := evtEntry.Get(0)
-		if err == nil {
-			executeEvent(event, data...)
-		}
+	if count == 1 {
+		event := evtEntry.elements[0]
+		evtEntry.mu.RUnlock()
+		executeEvent(event, data...)
 		return
 	}
+	events := slices.Clone(evtEntry.elements)
+	evtEntry.mu.RUnlock()
 
-	for _, event := range evtEntry.All() {
+	for _, event := range events {
 		executeEvent(event, data...)
 	}
 }

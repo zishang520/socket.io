@@ -3,7 +3,6 @@ package types
 import (
 	"encoding/json"
 	"maps"
-	"slices"
 	"sync"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -97,7 +96,14 @@ func (s *Set[KType]) Keys() []KType {
 
 // keys returns a slice of all keys without locking (caller must hold lock).
 func (s *Set[KType]) keys() []KType {
-	return slices.Collect(maps.Keys(s.cache))
+	if len(s.cache) == 0 {
+		return nil
+	}
+	keys := make([]KType, 0, len(s.cache))
+	for key := range s.cache {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 // populate replaces the set contents from a slice of keys (caller must hold write lock).
