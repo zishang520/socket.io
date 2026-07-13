@@ -95,15 +95,11 @@ func (p *parserv3) EncodePacket(data *packet.Packet, supportsBinary bool, utf8en
 	}
 
 	// default nil data
-	encode := types.NewStringBuffer(nil)
 	typeByte, ok := lookupPacketByte(data.Type)
 	if !ok {
 		return nil, ErrPacketType
 	}
-	if err := encode.WriteByte(typeByte); err != nil {
-		return nil, err
-	}
-	return encode, nil
+	return types.NewStringBuffer([]byte{typeByte}), nil
 }
 
 // DecodePacket decodes a packet. Data also available as an ArrayBuffer if requested.
@@ -233,16 +229,7 @@ func (p *parserv3) encodeOneBinaryPacket(pkt *packet.Packet) (types.BufferInterf
 	binaryPacket := types.NewBytesBuffer(nil)
 
 	if _, ok := buf.(*types.StringBuffer); ok {
-		encodingLength := strconv.FormatInt(int64(utils.Utf16Count(buf.Bytes())), 10) // JS length
-		if err := binaryPacket.WriteByte(0x00); err != nil {
-			return nil, err
-		}
-		for i := 0; i < len(encodingLength); i++ {
-			if err := binaryPacket.WriteByte(encodingLength[i] - '0'); err != nil {
-				return nil, err
-			}
-		}
-		if err := binaryPacket.WriteByte(0xFF); err != nil {
+		if err := writeBinaryPacketHeader(binaryPacket, 0x00, utils.Utf16Count(buf.Bytes())); err != nil {
 			return nil, err
 		}
 		if _, err := buf.WriteTo(utils.NewUtf8Encoder(binaryPacket)); err != nil {
@@ -252,22 +239,26 @@ func (p *parserv3) encodeOneBinaryPacket(pkt *packet.Packet) (types.BufferInterf
 	}
 
 	// is binary (true binary = 1)
-	encodingLength := strconv.FormatInt(int64(buf.Len()), 10)
-	if err := binaryPacket.WriteByte(0x01); err != nil {
-		return nil, err
-	}
-	for i := 0; i < len(encodingLength); i++ {
-		if err := binaryPacket.WriteByte(encodingLength[i] - '0'); err != nil {
-			return nil, err
-		}
-	}
-	if err := binaryPacket.WriteByte(0xFF); err != nil {
+	if err := writeBinaryPacketHeader(binaryPacket, 0x01, buf.Len()); err != nil {
 		return nil, err
 	}
 	if _, err := binaryPacket.Write(buf.Bytes()); err != nil {
 		return nil, err
 	}
 	return binaryPacket, nil
+}
+
+func writeBinaryPacketHeader(dst types.BufferInterface, marker byte, length int) error {
+	dst.Grow(22)
+	encoded := append(dst.AvailableBuffer(), marker)
+	encoded = strconv.AppendInt(encoded, int64(length), 10)
+	// Engine.IO v3 stores length digits as numeric bytes, not ASCII.
+	for i := 1; i < len(encoded); i++ {
+		encoded[i] -= '0'
+	}
+	encoded = append(encoded, 0xFF)
+	_, err := dst.Write(encoded)
+	return err
 }
 
 // encodePayloadAsBinary encodes multiple messages (payload) as binary.
@@ -285,8 +276,26 @@ func (p *parserv3) encodePayloadAsBinary(packets []*packet.Packet) (types.Buffer
 	}
 
 	for _, pkt := range packets {
-		buf, err := p.encodeOneBinaryPacket(pkt)
+		if pkt == nil {
+			return nil, ErrPacketNil
+		}
+
+		buf, err := p.EncodePacket(pkt, true, true)
 		if err != nil {
+			return nil, err
+		}
+
+		if _, ok := buf.(*types.StringBuffer); ok {
+			if err := writeBinaryPacketHeader(enPayload, 0x00, utils.Utf16Count(buf.Bytes())); err != nil {
+				return nil, err
+			}
+			if _, err := buf.WriteTo(utils.NewUtf8Encoder(enPayload)); err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if err := writeBinaryPacketHeader(enPayload, 0x01, buf.Len()); err != nil {
 			return nil, err
 		}
 		if _, err := enPayload.Write(buf.Bytes()); err != nil {

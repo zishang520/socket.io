@@ -29,12 +29,10 @@ func (*parserv4) Protocol() int {
 // EncodePacket encodes a single packet for Engine.IO v4 protocol.
 // supportsBinary indicates whether the transport supports binary frames.
 // The utf8encode parameter is ignored in v4 (kept for interface compatibility).
-func (p *parserv4) EncodePacket(pkt *packet.Packet, supportsBinary bool, _ ...bool) (types.BufferInterface, error) {
+func (*parserv4) EncodePacket(pkt *packet.Packet, supportsBinary bool, _ ...bool) (types.BufferInterface, error) {
 	if pkt == nil {
 		return nil, ErrPacketNil
 	}
-
-	// Ensure data is closed if it implements io.Closer
 	if c, ok := pkt.Data.(io.Closer); ok {
 		defer func() { _ = c.Close() }()
 	}
@@ -44,69 +42,41 @@ func (p *parserv4) EncodePacket(pkt *packet.Packet, supportsBinary bool, _ ...bo
 		return nil, ErrPacketType
 	}
 
-	switch v := pkt.Data.(type) {
+	switch data := pkt.Data.(type) {
 	case *types.StringBuffer, *strings.Reader:
-		return p.encodeStringData(typeByte, v)
-
+		encoded := types.NewStringBuffer(nil)
+		if err := encoded.WriteByte(typeByte); err != nil {
+			return nil, err
+		}
+		if _, err := io.Copy(encoded, data); err != nil {
+			return nil, err
+		}
+		return encoded, nil
 	case io.Reader:
-		return p.encodeBinaryData(v, supportsBinary)
-	}
+		if supportsBinary {
+			encoded := types.NewBytesBuffer(nil)
+			if _, err := io.Copy(encoded, data); err != nil {
+				return nil, err
+			}
+			return encoded, nil
+		}
 
-	// Packet with no data - just write the type byte
-	return p.encodeEmptyPacket(typeByte)
-}
-
-// encodeStringData encodes string data for v4 protocol.
-func (p *parserv4) encodeStringData(typeByte byte, data io.Reader) (types.BufferInterface, error) {
-	encode := types.NewStringBuffer(nil)
-	if err := encode.WriteByte(typeByte); err != nil {
-		return nil, err
+		encoded := types.NewStringBuffer(nil)
+		if err := encoded.WriteByte('b'); err != nil {
+			return nil, err
+		}
+		encoder := base64.NewEncoder(base64.StdEncoding, encoded)
+		if _, err := io.Copy(encoder, data); err != nil {
+			_ = encoder.Close()
+			return nil, err
+		}
+		if err := encoder.Close(); err != nil {
+			return nil, err
+		}
+		return encoded, nil
+	default:
+		return types.NewStringBuffer([]byte{typeByte}), nil
 	}
-	if _, err := io.Copy(encode, data); err != nil {
-		return nil, err
-	}
-	return encode, nil
-}
-
-// encodeBinaryData encodes binary data, using base64 if binary is not supported.
-func (p *parserv4) encodeBinaryData(data io.Reader, supportsBinary bool) (types.BufferInterface, error) {
-	if !supportsBinary {
-		return p.encodeAsBase64(data)
-	}
-
-	// Binary support - write raw bytes (no type prefix in v4)
-	encode := types.NewBytesBuffer(nil)
-	if _, err := io.Copy(encode, data); err != nil {
-		return nil, err
-	}
-	return encode, nil
-}
-
-// encodeAsBase64 encodes data as base64 for transports that don't support binary.
-func (p *parserv4) encodeAsBase64(data io.Reader) (types.BufferInterface, error) {
-	encode := types.NewStringBuffer(nil)
-	if err := encode.WriteByte('b'); err != nil {
-		return nil, err
-	}
-
-	b64 := base64.NewEncoder(base64.StdEncoding, encode)
-	if _, err := io.Copy(b64, data); err != nil {
-		_ = b64.Close()
-		return nil, err
-	}
-	if err := b64.Close(); err != nil {
-		return nil, err
-	}
-	return encode, nil
-}
-
-// encodeEmptyPacket encodes a packet with no data.
-func (p *parserv4) encodeEmptyPacket(typeByte byte) (types.BufferInterface, error) {
-	encode := types.NewStringBuffer(nil)
-	if err := encode.WriteByte(typeByte); err != nil {
-		return nil, err
-	}
-	return encode, nil
 }
 
 // DecodePacket decodes a single packet from Engine.IO v4 wire format.
