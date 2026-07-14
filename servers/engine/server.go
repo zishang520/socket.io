@@ -14,6 +14,7 @@ import (
 	"github.com/zishang520/socket.io/servers/engine/v3/config"
 	"github.com/zishang520/socket.io/servers/engine/v3/errors"
 	"github.com/zishang520/socket.io/servers/engine/v3/transports"
+	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 	webtrans "github.com/zishang520/socket.io/v3/pkg/webtransport"
@@ -74,7 +75,9 @@ func (s *server) CreateTransport(transportName string, ctx *types.HttpContext) (
 
 // Handles an Engine.IO HTTP request.
 func (s *server) HandleRequest(ctx *types.HttpContext) {
-	serverLog.Debug(`handling "%s" http request "%s"`, ctx.Method(), ctx.Request().RequestURI)
+	if log.DEBUG.Load() {
+		serverLog.Debug(`handling "%s" http request "%s"`, ctx.Method(), ctx.Request().RequestURI)
+	}
 
 	callback := func(codeMessage *types.CodeMessage, errorContext map[string]any) {
 		if codeMessage != nil {

@@ -93,7 +93,8 @@ func (j *jsonp) DoWrite(ctx *types.HttpContext, data types.BufferInterface, opti
 	}
 
 	// prepare response
-	res := types.NewStringBufferString(j.head)
+	res := types.NewStringBuffer(make([]byte, 0, len(j.head)+len(payload)+len(j.foot)))
+	_, _ = res.WriteString(j.head)
 	_, _ = res.Write(payload)
 	_, _ = res.WriteString(j.foot)
 	j.Polling.DoWrite(ctx, res, options, callback)

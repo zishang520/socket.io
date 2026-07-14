@@ -25,6 +25,14 @@ const (
 	DefaultUpgradeCheckInterval = 100 * time.Millisecond
 )
 
+type openPacket struct {
+	MaxPayload   int64    `json:"maxPayload"`
+	PingInterval int64    `json:"pingInterval"`
+	PingTimeout  int64    `json:"pingTimeout"`
+	Sid          string   `json:"sid"`
+	Upgrades     []string `json:"upgrades"`
+}
+
 type socket struct {
 	types.EventEmitter
 
@@ -105,7 +113,9 @@ func (s *socket) ReadyState() string {
 }
 
 func (s *socket) SetReadyState(state string) {
-	socketLog.Debug("readyState updated from %s to %s", s.ReadyState(), state)
+	if log.DEBUG.Load() {
+		socketLog.Debug("readyState updated from %s to %s", s.ReadyState(), state)
+	}
 
 	s.readyState.Store(state)
 }
@@ -160,12 +170,13 @@ func (s *socket) onOpen() {
 	// sends an `open` packet
 	s.Transport().SetSid(s.id)
 
-	data, err := json.Marshal(map[string]any{
-		"sid":          s.id,
-		"upgrades":     s.getAvailableUpgrades(),
-		"pingInterval": int64(s.server.Opts().PingInterval() / time.Millisecond),
-		"pingTimeout":  int64(s.server.Opts().PingTimeout() / time.Millisecond),
-		"maxPayload":   s.server.Opts().MaxHttpBufferSize(),
+	opts := s.server.Opts()
+	data, err := json.Marshal(openPacket{
+		Sid:          s.id,
+		Upgrades:     s.getAvailableUpgrades(),
+		PingInterval: opts.PingInterval().Milliseconds(),
+		PingTimeout:  opts.PingTimeout().Milliseconds(),
+		MaxPayload:   opts.MaxHttpBufferSize(),
 	})
 
 	if err != nil {
@@ -207,7 +218,9 @@ func (s *socket) onPacket(data *packet.Packet) {
 	}
 
 	// export packet event
-	socketLog.Debug(`received packet %s`, data.Type)
+	if log.DEBUG.Load() {
+		socketLog.Debug(`received packet %s`, data.Type)
+	}
 	s.Emit("packet", data)
 
 	switch data.Type {
@@ -251,7 +264,9 @@ func (s *socket) onError(err error) {
 // within `this.pingTimeout` or closes connection.
 func (s *socket) schedulePing() {
 	s.pingIntervalTimer.Store(utils.SetTimeout(func() {
-		socketLog.Debug("writing ping packet - expecting pong within %dms", int64(s.server.Opts().PingTimeout()/time.Millisecond))
+		if log.DEBUG.Load() {
+			socketLog.Debug("writing ping packet - expecting pong within %dms", s.server.Opts().PingTimeout().Milliseconds())
+		}
 		s.sendPacket(packet.PING, nil, nil, nil)
 		s.resetPingTimeout()
 	}, s.server.Opts().PingInterval()))
@@ -315,7 +330,9 @@ func (s *socket) onDrain() {
 
 // Upgrades socket to the given transport
 func (s *socket) MaybeUpgrade(transport transports.Transport) {
-	socketLog.Debug(`might upgrade socket transport from "%s" to "%s"`, s.Transport().Name(), transport.Name())
+	if log.DEBUG.Load() {
+		socketLog.Debug(`might upgrade socket transport from "%s" to "%s"`, s.Transport().Name(), transport.Name())
+	}
 
 	s.upgrading.Store(true)
 
@@ -457,7 +474,10 @@ func (s *socket) clearTransport() {
 // `transport error`, `server close`, `transport close`
 func (s *socket) OnClose(reason string, description ...error) {
 	if s.ReadyState() != "closed" {
-		description = append(description, nil)
+		var closeErr error
+		if len(description) > 0 {
+			closeErr = description[0]
+		}
 
 		s.SetReadyState("closed")
 
@@ -475,7 +495,7 @@ func (s *socket) OnClose(reason string, description ...error) {
 		s.sentCallbackFn.Clear()
 
 		s.clearTransport()
-		s.Emit("close", reason, description[0])
+		s.Emit("close", reason, closeErr)
 	}
 }
 
@@ -507,19 +527,21 @@ func (s *socket) sendPacket(
 	callback SendCallback,
 ) {
 	if readystate := s.ReadyState(); readystate != "closing" && readystate != "closed" {
-		socketLog.Debug(`sending packet "%s" (%p)`, packetType, data)
+		if log.DEBUG.Load() {
+			socketLog.Debug(`sending packet "%s" (%p)`, packetType, data)
+		}
 
 		// Clone options to avoid data races when the same Options pointer
 		// is shared across multiple sockets during broadcast.
+		compress := true
 		opts := &packet.Options{}
 		if options != nil {
 			opts.WsPreEncodedFrame = options.WsPreEncodedFrame
 			if options.Compress != nil {
-				opts.Compress = new(*options.Compress)
+				compress = *options.Compress
 			}
 		}
-
-		opts.Compress = new(opts.Compress == nil || *opts.Compress)
+		opts.Compress = new(compress)
 
 		packet := &packet.Packet{
 			Type:    packetType,

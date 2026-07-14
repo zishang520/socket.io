@@ -136,7 +136,9 @@ func (w *webTransport) message() {
 }
 
 func (w *webTransport) onMessage(data types.BufferInterface) {
-	wtLog.Debug(`webTransport received "%s"`, data)
+	if log.DEBUG.Load() {
+		wtLog.Debug(`webTransport received "%s"`, data)
+	}
 	w.OnData(data)
 }
 
@@ -226,7 +228,9 @@ func (w *webTransport) write(data types.BufferInterface, _ bool) {
 	// 		compress = false
 	// 	}
 	// }
-	wtLog.Debug(`writing %s`, data)
+	if log.DEBUG.Load() {
+		wtLog.Debug(`writing %s`, data)
+	}
 
 	// w.session.EnableWriteCompression(compress)
 	mt := webtransport.BinaryMessage

@@ -225,7 +225,9 @@ func (p *polling) onDataRequest(ctx *types.HttpContext) {
 
 // Processes the incoming data payload.
 func (p *polling) OnData(data types.BufferInterface) {
-	pollingLog.Debug(`received "%s"`, data)
+	if log.DEBUG.Load() {
+		pollingLog.Debug(`received "%s"`, data)
+	}
 
 	packets, _ := p.Parser().DecodePayload(data)
 	for _, packetData := range packets {
@@ -294,7 +296,9 @@ func (p *polling) send(packets []*packet.Packet) {
 
 // Writes data as response to poll request.
 func (p *polling) write(data types.BufferInterface, options *packet.Options) {
-	pollingLog.Debug(`writing %#v`, data)
+	if log.DEBUG.Load() {
+		pollingLog.Debug(`writing %#v`, data)
+	}
 	ctx := p.req.Load()
 	if ctx == nil {
 		p.OnError("polling write error", nil)

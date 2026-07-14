@@ -107,7 +107,9 @@ func (t *transport) ReadyState() string {
 }
 
 func (t *transport) SetReadyState(state string) {
-	transportLog.Debug(`readyState updated from %s to %s (%s)`, t.ReadyState(), state, t._proto_.Name())
+	if log.DEBUG.Load() {
+		transportLog.Debug(`readyState updated from %s to %s (%s)`, t.ReadyState(), state, t._proto_.Name())
+	}
 
 	t._readyState.Store(state)
 }
@@ -162,8 +164,11 @@ func (t *transport) Close(fn ...types.Callable) {
 		return
 	}
 	t.SetReadyState("closing")
-	fn = append(fn, nil)
-	t._proto_.DoClose(fn[0])
+	var callback types.Callable
+	if len(fn) > 0 {
+		callback = fn[0]
+	}
+	t._proto_.DoClose(callback)
 }
 
 // Called with a transport error.

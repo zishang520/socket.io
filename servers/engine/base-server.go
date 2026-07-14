@@ -240,8 +240,7 @@ func (bs *baseServer) Use(fn Middleware) {
 // Apply the middlewares to the request.
 func (bs *baseServer) ApplyMiddlewares(ctx *types.HttpContext, callback func(error)) {
 	bs.middlewareMu.RLock()
-	middlewares := make([]Middleware, len(bs.middlewares))
-	copy(middlewares, bs.middlewares)
+	middlewares := bs.middlewares
 	bs.middlewareMu.RUnlock()
 
 	if len(middlewares) == 0 {
@@ -251,7 +250,9 @@ func (bs *baseServer) ApplyMiddlewares(ctx *types.HttpContext, callback func(err
 	}
 	var apply func(int)
 	apply = func(i int) {
-		serverLog.Debug("applying middleware n°%d", i+1)
+		if log.DEBUG.Load() {
+			serverLog.Debug("applying middleware n°%d", i+1)
+		}
 		middlewares[i](ctx, func(err error) {
 			if err != nil {
 				callback(err)
@@ -310,7 +311,9 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 	}
 
 	id := bs.GenerateId(ctx)
-	serverLog.Debug(`handshaking client "%s" (%s)`, id, transportName)
+	if log.DEBUG.Load() {
+		serverLog.Debug(`handshaking client "%s" (%s)`, id, transportName)
+	}
 
 	ctx.IdleTimeout = bs.opts.IdleTimeout()
 	transport, err := bs._proto_.CreateTransport(transportName, ctx)

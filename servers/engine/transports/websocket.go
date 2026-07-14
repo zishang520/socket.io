@@ -142,7 +142,9 @@ func (w *websocket) message() {
 }
 
 func (w *websocket) onMessage(data types.BufferInterface) {
-	wsLog.Debug(`websocket received "%s"`, data)
+	if log.DEBUG.Load() {
+		wsLog.Debug(`websocket received "%s"`, data)
+	}
 	w.OnData(data)
 }
 
@@ -237,7 +239,9 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 			compress = false
 		}
 	}
-	wsLog.Debug(`writing %#v`, data)
+	if log.DEBUG.Load() {
+		wsLog.Debug(`writing %#v`, data)
+	}
 
 	w.socket.EnableWriteCompression(compress)
 	mt := ws.BinaryMessage
