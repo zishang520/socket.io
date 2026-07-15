@@ -1,6 +1,8 @@
 package socket
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -74,6 +76,24 @@ func TestServerCustomPath(t *testing.T) {
 
 	if server.Path() != "/custom" {
 		t.Errorf("Expected path '/custom', got %q", server.Path())
+	}
+}
+
+func TestServerServeNotModified(t *testing.T) {
+	opts := DefaultServerOptions()
+	opts.SetClientVersion("test-version")
+	server := NewServer(nil, opts)
+	request := httptest.NewRequest(http.MethodGet, "/socket.io/socket.io.js", nil)
+	request.Header.Set("If-None-Match", `"test-version"`)
+	response := httptest.NewRecorder()
+
+	server.serve(response, request)
+
+	if response.Code != http.StatusNotModified {
+		t.Fatalf("Expected status 304, got %d", response.Code)
+	}
+	if response.Body.Len() != 0 {
+		t.Fatalf("Expected an empty body, got %q", response.Body.String())
 	}
 }
 

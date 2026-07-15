@@ -112,7 +112,8 @@ func TestAdapterEncodeUsesBroadcastScopedFrame(t *testing.T) {
 	if _, ok := packetOpts.WsPreEncodedFrame.(preparedFrameForTest); !ok {
 		t.Fatalf("expected pre-encoded frame to carry broadcast-scoped cache, got %T", packetOpts.WsPreEncodedFrame)
 	}
-	if got := string(packetOpts.WsPreEncodedFrame.Bytes()); got == "" || got[0] != '4' {
-		t.Fatalf("expected Engine.IO message prefix in pre-encoded frame, got %q", got)
+	want := "4" + string(encoded[0].Bytes())
+	if got := string(packetOpts.WsPreEncodedFrame.Bytes()); got != want {
+		t.Fatalf("expected pre-encoded frame %q, got %q", want, got)
 	}
 }

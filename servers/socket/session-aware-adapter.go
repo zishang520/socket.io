@@ -116,23 +116,22 @@ func (s *sessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 
 	// Use a pre-allocated slice to avoid memory allocation in the loop
 	missedPackets := make([]any, 0, s.packets.Len()-index-1)
-	missedNum := 0
+	sessionRooms := session.Rooms.Keys()
 	// Iterate over the packets and append the data of those that should be included
 	for i := index + 1; i < s.packets.Len(); i++ {
 		packet, err := s.packets.Get(i)
 		if err != nil {
 			break
 		}
-		if shouldIncludePacket(session.Rooms, packet.Opts) {
+		if shouldIncludePacket(sessionRooms, packet.Opts) {
 			missedPackets = append(missedPackets, packet.Data)
-			missedNum++
 		}
 	}
 
 	// Create a new Session object and return it
 	return &Session{
 		SessionToPersist: session.SessionToPersist,
-		MissedPackets:    missedPackets[:missedNum],
+		MissedPackets:    missedPackets,
 	}, nil
 }
 
@@ -158,10 +157,10 @@ func (s *sessionAwareAdapter) Broadcast(packet *parser.Packet, opts *BroadcastOp
 	s.Adapter.Broadcast(packet, opts)
 }
 
-func shouldIncludePacket(sessionRooms *types.Set[Room], opts *BroadcastOptions) bool {
+func shouldIncludePacket(sessionRooms []Room, opts *BroadcastOptions) bool {
 	included := opts.Rooms.Len() == 0
 	notExcluded := true
-	for _, room := range sessionRooms.Keys() {
+	for _, room := range sessionRooms {
 		if included && !notExcluded {
 			break
 		}

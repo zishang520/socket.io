@@ -88,7 +88,9 @@ func (c *Client) setup() {
 // connect connects a client to a namespace with optional auth parameters.
 func (c *Client) connect(name string, auth map[string]any) {
 	if _, ok := c.server._nsps.Load(name); ok {
-		client_log.Debug("connecting to namespace %s", name)
+		if log.DEBUG.Load() {
+			client_log.Debug("connecting to namespace %s", name)
+		}
 		c.doConnect(name, auth)
 		return
 	}
@@ -196,9 +198,11 @@ func (c *Client) ondecoded(args ...any) {
 	if c.conn.Protocol() == 3 {
 		if parsed, err := url.Parse(packet.Nsp); err == nil {
 			namespace = parsed.Path
-			authPayload = utils.MapValues(parsed.Query(), func(value []string) any {
-				return value
-			})
+			if packet.Type == parser.CONNECT {
+				authPayload = utils.MapValues(parsed.Query(), func(value []string) any {
+					return value
+				})
+			}
 		}
 	} else {
 		namespace = packet.Nsp
@@ -226,7 +230,9 @@ func (c *Client) onerror(args ...any) {
 
 // onclose is called upon transport close.
 func (c *Client) onclose(args ...any) {
-	client_log.Debug("client close with reason %v", args[0])
+	if log.DEBUG.Load() {
+		client_log.Debug("client close with reason %v", args[0])
+	}
 
 	// ignore a potential subsequent `close` event
 	c.destroy()

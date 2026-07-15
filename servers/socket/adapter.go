@@ -2,7 +2,6 @@ package socket
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -99,10 +98,16 @@ func (a *adapter) ServerCount() int64 {
 
 // AddAll adds a socket to a list of rooms.
 func (a *adapter) AddAll(id SocketId, rooms *types.Set[Room]) {
-	_rooms, _ := a.sids.LoadOrStore(id, types.NewSet[Room]())
+	_rooms, ok := a.sids.Load(id)
+	if !ok {
+		_rooms, _ = a.sids.LoadOrStore(id, types.NewSet[Room]())
+	}
 	for _, room := range rooms.Keys() {
 		_rooms.Add(room)
-		ids, ok := a.rooms.LoadOrStore(room, types.NewSet[SocketId]())
+		ids, ok := a.rooms.Load(room)
+		if !ok {
+			ids, ok = a.rooms.LoadOrStore(room, types.NewSet[SocketId]())
+		}
 		if !ok {
 			a.Emit("create-room", room)
 		}
@@ -182,10 +187,10 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 	// we can use the same id for each packet, since the _ids counter is common (no duplicate)
 	packet.Id = new(a.nsp.Ids())
 	encodedPackets := a._encode(packet, packetOpts)
-	var clientCount atomic.Uint64
+	var clientCount uint64
 	a.apply(opts, func(socket *Socket) {
 		// track the total number of acknowledgements that are expected
-		clientCount.Add(1)
+		clientCount++
 		// call the ack callback for each client response
 		socket.Acks().Store(*packet.Id, ack)
 		if notifyOutgoingListeners := socket.NotifyOutgoingListeners(); notifyOutgoingListeners != nil {
@@ -193,7 +198,7 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 		}
 		socket.Client().WriteToEngine(encodedPackets, packetOpts)
 	})
-	clientCountCallback(clientCount.Load())
+	clientCountCallback(clientCount)
 }
 
 func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []types.BufferInterface {
@@ -202,10 +207,12 @@ func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []typ
 	if len(encodedPackets) == 1 {
 		if p, ok := encodedPackets[0].(*types.StringBuffer); ok {
 			// "4" being the "message" packet type in the Engine.IO protocol
-			data := types.NewStringBufferString("4")
-			_, _ = data.Write(p.Bytes())
+			payload := p.Bytes()
+			data := make([]byte, len(payload)+1)
+			data[0] = '4'
+			copy(data[1:], payload)
 			// see https://github.com/websockets/ws/issues/617#issuecomment-283002469
-			packetOpts.WsPreEncodedFrame = newBroadcastFrame(data)
+			packetOpts.WsPreEncodedFrame = newBroadcastFrame(types.NewStringBuffer(data))
 		}
 	}
 
@@ -264,56 +271,74 @@ func (a *adapter) DisconnectSockets(opts *BroadcastOptions, status bool) {
 }
 
 func (a *adapter) apply(opts *BroadcastOptions, callback func(*Socket)) {
-	if opts == nil {
-		opts = &BroadcastOptions{
-			Rooms:  types.NewSet[Room](),
-			Except: types.NewSet[Room](),
+	var roomKeys []Room
+	var except *types.Set[SocketId]
+	if opts != nil {
+		except = a.computeExceptSids(opts.Except)
+		if opts.Rooms != nil {
+			roomKeys = opts.Rooms.Keys()
 		}
 	}
 
-	rooms := opts.Rooms
-	except := a.computeExceptSids(opts.Except)
-
-	if rooms != nil && rooms.Len() > 0 {
-		ids := types.NewSet[SocketId]()
-		for _, room := range rooms.Keys() {
-			if _ids, ok := a.rooms.Load(room); ok {
-				for _, id := range _ids.Keys() {
-					if ids.Has(id) || except.Has(id) {
-						continue
-					}
-					if socket, ok := a.nsp.Sockets().Load(id); ok {
-						if socket.Connected() {
-							callback(socket)
-						}
-						ids.Add(id)
-					}
-				}
-			}
-		}
-	} else {
+	if len(roomKeys) == 0 {
 		a.sids.Range(func(id SocketId, _ *types.Set[Room]) bool {
-			if except.Has(id) {
+			if except != nil && except.Has(id) {
 				return true
 			}
-			if socket, ok := a.nsp.Sockets().Load(id); ok {
-				if socket.Connected() {
-					callback(socket)
-				}
+			if socket, ok := a.nsp.Sockets().Load(id); ok && socket.Connected() {
+				callback(socket)
 			}
 			return true
 		})
+		return
+	}
+
+	var seen *types.Set[SocketId]
+	if len(roomKeys) > 1 {
+		seen = types.NewSet[SocketId]()
+	}
+	for _, room := range roomKeys {
+		roomIds, ok := a.rooms.Load(room)
+		if !ok {
+			continue
+		}
+		for _, id := range roomIds.Keys() {
+			if seen != nil && seen.Has(id) {
+				continue
+			}
+			if except != nil && except.Has(id) {
+				continue
+			}
+			socket, ok := a.nsp.Sockets().Load(id)
+			if !ok {
+				continue
+			}
+			if socket.Connected() {
+				callback(socket)
+			}
+			if seen != nil {
+				seen.Add(id)
+			}
+		}
 	}
 }
 
 func (a *adapter) computeExceptSids(exceptRooms *types.Set[Room]) *types.Set[SocketId] {
+	if exceptRooms == nil {
+		return nil
+	}
+	roomKeys := exceptRooms.Keys()
+	if len(roomKeys) == 0 {
+		return nil
+	}
+
 	exceptSids := types.NewSet[SocketId]()
-	if exceptRooms != nil && exceptRooms.Len() > 0 {
-		for _, room := range exceptRooms.Keys() {
-			if ids, ok := a.rooms.Load(room); ok {
-				exceptSids.Add(ids.Keys()...)
-			}
+	for _, room := range roomKeys {
+		ids, ok := a.rooms.Load(room)
+		if !ok {
+			continue
 		}
+		exceptSids.Add(ids.Keys()...)
 	}
 	return exceptSids
 }

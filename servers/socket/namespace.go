@@ -262,7 +262,9 @@ func (n *namespace) Except(room ...Room) *BroadcastOperator {
 
 // Adds a new client.
 func (n *namespace) Add(client *Client, auth map[string]any, fn func(*Socket)) {
-	namespaceLog.Debug("adding socket to nsp %s", n.name)
+	if log.DEBUG.Load() {
+		namespaceLog.Debug("adding socket to nsp %s", n.name)
+	}
 	socket := n._createSocket(client, auth)
 	if connectionStateRecovery := n.server.Opts().ConnectionStateRecovery(); connectionStateRecovery != nil && connectionStateRecovery.SkipMiddlewares() && socket.Recovered() && client.Conn().ReadyState() == "open" {
 		n._doConnect(socket, fn)
@@ -323,7 +325,9 @@ func (n *namespace) _createSocket(client *Client, auth map[string]any) *Socket {
 			if err != nil {
 				namespaceLog.Debug("error while restoring session: %v", err)
 			} else if session != nil {
-				namespaceLog.Debug("connection state recovered for sid %s", session.Sid)
+				if log.DEBUG.Load() {
+					namespaceLog.Debug("connection state recovered for sid %s", session.Sid)
+				}
 				return NewSocket(n, client, auth, session)
 			}
 		}

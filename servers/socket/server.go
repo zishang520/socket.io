@@ -35,10 +35,7 @@ const (
 	DefaultSessionCleanupInterval = 60_000 * time.Millisecond
 )
 
-var (
-	dotMapRegex = regexp.MustCompile(`\.map`)
-	serverLog   = log.NewLog("socket.io:server")
-)
+var serverLog = log.NewLog("socket.io:server")
 
 type (
 	ParentNspNameMatchFn *func(string, map[string]any, func(error, bool))
@@ -382,7 +379,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filename := filepath.Base(r.URL.Path)
-	isMap := dotMapRegex.MatchString(filename)
+	isMap := strings.Contains(filename, ".map")
 	_type := "source"
 	if isMap {
 		_type = "map"
@@ -397,14 +394,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 	if etag := r.Header.Get("If-None-Match"); etag != "" {
 		if expectedEtag == etag || weakEtag == etag {
-			serverLog.Debug("serve client %s 304", _type)
+			if log.DEBUG.Load() {
+				serverLog.Debug("serve client %s 304", _type)
+			}
 			w.WriteHeader(http.StatusNotModified)
-			_, _ = w.Write(nil)
 			return
 		}
 	}
 
-	serverLog.Debug("serve client %s", _type)
+	if log.DEBUG.Load() {
+		serverLog.Debug("serve client %s", _type)
+	}
 	w.Header().Set("Cache-Control", "public, max-age=0")
 	if isMap {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -416,7 +416,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // sendFile sends a static file to the client.
-func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) {
+func (*Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) {
 	_file, err := os.Executable()
 	if err != nil {
 		serverLog.Debug("Failed to get run path: %v", err)
@@ -425,14 +425,16 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 	}
 	// Construct the full, intended destination path
 	basePath := filepath.Dir(filepath.Dir(_file))
-	targetPath := filepath.Clean(filepath.Join(basePath, "client-dist", filename))
-
-	// Verify the target path is still within the intended directory boundary
-	if !strings.HasPrefix(targetPath, basePath) {
+	clientDistPath := filepath.Clean(filepath.Join(basePath, "client-dist"))
+	clientDist, err := os.OpenRoot(clientDistPath)
+	if err != nil {
+		serverLog.Debug("Failed to open client directory: %v", err)
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
-	file, err := os.Open(targetPath)
+	defer func() { _ = clientDist.Close() }()
+
+	file, err := clientDist.Open(filename)
 	if err != nil {
 		serverLog.Debug("File read failed: %v", err)
 		http.Error(w, "file not found", http.StatusNotFound)
@@ -491,7 +493,7 @@ func (Server) sendFile(filename string, w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(zd, file)
 	default:
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
+		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10))
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, file)
 	}
@@ -508,7 +510,9 @@ func (s *Server) Bind(egs engine.BaseServer) *Server {
 // onconnection is called with each incoming transport connection.
 func (s *Server) onconnection(conns ...any) {
 	conn := slices.TryGetAny[engine.Socket](conns, 0)
-	serverLog.Debug("incoming connection with id %s", conn.Id())
+	if log.DEBUG.Load() {
+		serverLog.Debug("incoming connection with id %s", conn.Id())
+	}
 	client := NewClient(s, conn)
 	if conn.Protocol() == 3 {
 		client.connect("/", nil)

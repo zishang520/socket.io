@@ -1,6 +1,8 @@
 package socket
 
 import (
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -53,6 +55,45 @@ func TestAdapterAddAllMultipleSockets(t *testing.T) {
 	}
 	if ids.Len() != 2 {
 		t.Errorf("Expected 2 sockets in room1, got %d", ids.Len())
+	}
+}
+
+func TestAdapterAddAllConcurrent(t *testing.T) {
+	adapter := newTestAdapter()
+	const count = 64
+	var wg sync.WaitGroup
+	sharedRoom := types.NewSet[Room]("shared-room")
+
+	for i := range count {
+		id := SocketId(strconv.Itoa(i))
+		wg.Go(func() {
+			adapter.AddAll(id, sharedRoom)
+		})
+	}
+	wg.Wait()
+
+	ids, ok := adapter.Rooms().Load("shared-room")
+	if !ok {
+		t.Fatal("Expected shared-room to exist")
+	}
+	if ids.Len() != count {
+		t.Fatalf("Expected %d sockets in shared-room, got %d", count, ids.Len())
+	}
+
+	for i := range count {
+		room := Room("room-" + strconv.Itoa(i))
+		wg.Go(func() {
+			adapter.AddAll("shared-socket", types.NewSet(room))
+		})
+	}
+	wg.Wait()
+
+	rooms := adapter.SocketRooms("shared-socket")
+	if rooms == nil {
+		t.Fatal("Expected shared-socket to have rooms")
+	}
+	if rooms.Len() != count {
+		t.Fatalf("Expected shared-socket in %d rooms, got %d", count, rooms.Len())
 	}
 }
 
@@ -129,6 +170,49 @@ func TestAdapterSockets(t *testing.T) {
 	}
 	if !ids.Has("s1") || !ids.Has("s2") {
 		t.Error("Expected room1 to contain s1 and s2")
+	}
+}
+
+func TestAdapterApplyFiltersAndDeduplicates(t *testing.T) {
+	adapter := newTestAdapter().(*adapter)
+	first := &Socket{id: "s1"}
+	second := &Socket{id: "s2"}
+	first.connected.Store(true)
+	second.connected.Store(true)
+	adapter.nsp.Sockets().Store(first.id, first)
+	adapter.nsp.Sockets().Store(second.id, second)
+	adapter.AddAll(first.id, types.NewSet[Room]("room1", "room2"))
+	adapter.AddAll(second.id, types.NewSet[Room]("room2", "excluded"))
+
+	seen := make(map[SocketId]int)
+	adapter.apply(&BroadcastOptions{
+		Rooms:  types.NewSet[Room]("room1", "room2"),
+		Except: types.NewSet[Room]("excluded"),
+	}, func(socket *Socket) {
+		seen[socket.Id()]++
+	})
+
+	if seen[first.id] != 1 {
+		t.Fatalf("Expected s1 once, got %d", seen[first.id])
+	}
+	if seen[second.id] != 0 {
+		t.Fatalf("Expected s2 to be excluded, got %d callbacks", seen[second.id])
+	}
+
+	clear(seen)
+	adapter.apply(&BroadcastOptions{Rooms: types.NewSet[Room]("room1")}, func(socket *Socket) {
+		seen[socket.Id()]++
+	})
+	if len(seen) != 1 || seen[first.id] != 1 {
+		t.Fatalf("Expected only s1 once for a single room, got %v", seen)
+	}
+
+	clear(seen)
+	adapter.apply(nil, func(socket *Socket) {
+		seen[socket.Id()]++
+	})
+	if seen[first.id] != 1 || seen[second.id] != 1 {
+		t.Fatalf("Expected all sockets once, got %v", seen)
 	}
 }
 

@@ -58,6 +58,33 @@ func TestSessionAwareAdapterRestoreNonExistent(t *testing.T) {
 	}
 }
 
+func TestSessionAwareAdapterRestoreMissedPackets(t *testing.T) {
+	adapter := newTestSessionAwareAdapter().(*sessionAwareAdapter)
+	defer adapter.Close()
+	adapter.PersistSession(&SessionToPersist{
+		Sid:   "sid1",
+		Pid:   "pid1",
+		Rooms: types.NewSet[Room]("room1", "room2"),
+	})
+	adapter.packets.Push(
+		&PersistedPacket{Id: "offset", Opts: &BroadcastOptions{Rooms: types.NewSet[Room](), Except: types.NewSet[Room]()}},
+		&PersistedPacket{Id: "included", Data: "included", Opts: &BroadcastOptions{Rooms: types.NewSet[Room]("room1"), Except: types.NewSet[Room]()}},
+		&PersistedPacket{Id: "other-room", Data: "other-room", Opts: &BroadcastOptions{Rooms: types.NewSet[Room]("room3"), Except: types.NewSet[Room]()}},
+		&PersistedPacket{Id: "excluded", Data: "excluded", Opts: &BroadcastOptions{Rooms: types.NewSet[Room](), Except: types.NewSet[Room]("room2")}},
+	)
+
+	restored, err := adapter.RestoreSession("pid1", "offset")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if restored == nil {
+		t.Fatal("Expected a restored session")
+	}
+	if len(restored.MissedPackets) != 1 || restored.MissedPackets[0] != "included" {
+		t.Fatalf("Expected only the included packet, got %v", restored.MissedPackets)
+	}
+}
+
 func TestSessionAwareAdapterExpiredSession(t *testing.T) {
 	opts := DefaultServerOptions()
 	recovery := DefaultConnectionStateRecovery()

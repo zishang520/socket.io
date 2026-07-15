@@ -182,13 +182,15 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	var expectedClientCount atomic.Uint64
 
 	checkCompleteness := func() {
-		broadcast_log.Debug(
-			"responses: servers: %d / %d ; clients: %d / %d",
-			actualServerCount.Load(),
-			expectedServerCount.Load(),
-			responses.Len(),
-			expectedClientCount.Load(),
-		)
+		if log.DEBUG.Load() {
+			broadcast_log.Debug(
+				"responses: servers: %d / %d ; clients: %d / %d",
+				actualServerCount.Load(),
+				expectedServerCount.Load(),
+				responses.Len(),
+				expectedClientCount.Load(),
+			)
+		}
 		expected := expectedServerCount.Load()
 		if expected < 0 {
 			// ServerCount not yet known, skip check
