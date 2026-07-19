@@ -11,5 +11,6 @@ func TestClusterAdapterWithHeartbeatBuilder(t *testing.T) {
 		Opts: nil,
 	}
 
-	builder.New(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
+	cluster := builder.New(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
+	t.Cleanup(cluster.Close)
 }

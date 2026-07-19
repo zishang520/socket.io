@@ -91,8 +91,8 @@ type (
 
 	// FetchSocketsResponse represents a response for fetching sockets.
 	FetchSocketsResponse struct {
-		RequestId string            `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		Sockets   []*SocketResponse `json:"sockets,omitempty" msgpack:"sockets,omitempty"`
+		RequestId string           `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
+		Sockets   []SocketResponse `json:"sockets" msgpack:"sockets"`
 	}
 
 	// ServerSideEmitResponse represents a response for server-side emit.

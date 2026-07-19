@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -20,12 +21,12 @@ type (
 	clusterAdapterWithHeartbeat struct {
 		ClusterAdapter
 
-		_opts *ClusterAdapterOptions
+		_opts ClusterAdapterOptions
 
 		heartbeatTimer atomic.Pointer[utils.Timer]
-		nodesMap       *types.Map[ServerId, int64] // uid => timestamp of last message
 		cleanupTimer   atomic.Pointer[utils.Timer]
-		customRequests *types.Map[string, *CustomClusterRequest]
+		nodesMap       types.Map[ServerId, int64] // uid => timestamp of last message
+		customRequests types.Map[string, *CustomClusterRequest]
 	}
 )
 
@@ -36,10 +37,6 @@ func (c *ClusterAdapterWithHeartbeatBuilder) New(nsp socket.Namespace) Adapter {
 func MakeClusterAdapterWithHeartbeat() ClusterAdapterWithHeartbeat {
 	c := &clusterAdapterWithHeartbeat{
 		ClusterAdapter: MakeClusterAdapter(),
-
-		_opts:          DefaultClusterAdapterOptions(),
-		nodesMap:       &types.Map[ServerId, int64]{},
-		customRequests: &types.Map[string, *CustomClusterRequest]{},
 	}
 
 	c.Prototype(c)
@@ -76,8 +73,9 @@ func (a *clusterAdapterWithHeartbeat) Construct(nsp socket.Namespace) {
 
 	a.cleanupTimer.Store(utils.SetInterval(func() {
 		now := time.Now().UnixMilli()
+		heartbeatTimeout := a._opts.HeartbeatTimeout()
 		a.nodesMap.Range(func(uid ServerId, lastSeen int64) bool {
-			if now-lastSeen > a._opts.HeartbeatTimeout() {
+			if now-lastSeen > heartbeatTimeout {
 				adapterLog.Debug("[%s] node %s seems down", a.Uid(), uid)
 				a.removeNode(uid)
 			}
@@ -93,14 +91,18 @@ func (a *clusterAdapterWithHeartbeat) Init() {
 }
 
 func (a *clusterAdapterWithHeartbeat) scheduleHeartbeat() {
-	if heartbeatTimer := a.heartbeatTimer.Load(); heartbeatTimer != nil {
+	heartbeatTimer := a.heartbeatTimer.Load()
+	if heartbeatTimer != nil {
 		heartbeatTimer.Refresh()
-	} else {
-		a.heartbeatTimer.Store(utils.SetTimeout(func() {
-			a.Publish(&ClusterMessage{
-				Type: HEARTBEAT,
-			})
-		}, a._opts.HeartbeatInterval()))
+		return
+	}
+
+	heartbeatTimer = utils.SetTimeout(func() {
+		a.Publish(&ClusterMessage{Type: HEARTBEAT})
+	}, a._opts.HeartbeatInterval())
+	if !a.heartbeatTimer.CompareAndSwap(nil, heartbeatTimer) {
+		heartbeatTimer.Stop()
+		a.heartbeatTimer.Load().Refresh()
 	}
 }
 
@@ -114,7 +116,9 @@ func (a *clusterAdapterWithHeartbeat) Close() {
 
 func (a *clusterAdapterWithHeartbeat) OnMessage(message *ClusterMessage, offset Offset) {
 	if message.Uid == a.Uid() {
-		adapterLog.Debug("[%s] ignore message from self", a.Uid())
+		if log.DEBUG.Load() {
+			adapterLog.Debug("[%s] ignore message from self", a.Uid())
+		}
 		return
 	}
 
@@ -123,12 +127,14 @@ func (a *clusterAdapterWithHeartbeat) OnMessage(message *ClusterMessage, offset 
 		a.nodesMap.Store(message.Uid, time.Now().UnixMilli())
 	}
 
-	adapterLog.Debug(
-		"[%s] new event of type %d from %s",
-		a.Uid(),
-		message.Type,
-		message.Uid,
-	)
+	if log.DEBUG.Load() {
+		adapterLog.Debug(
+			"[%s] new event of type %d from %s",
+			a.Uid(),
+			message.Type,
+			message.Uid,
+		)
+	}
 
 	switch message.Type {
 	case INITIAL_HEARTBEAT:
@@ -148,7 +154,6 @@ func (a *clusterAdapterWithHeartbeat) ServerCount() int64 {
 
 func (a *clusterAdapterWithHeartbeat) Publish(message *ClusterMessage) {
 	a.scheduleHeartbeat()
-
 	a.ClusterAdapter.Publish(message)
 }
 
@@ -170,11 +175,13 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 	}
 	expectedResponseCount := a.nodesMap.Len()
 
-	adapterLog.Debug(
-		`[%s] waiting for %d responses to "serverSideEmit" request`,
-		a.Uid(),
-		expectedResponseCount,
-	)
+	if log.DEBUG.Load() {
+		adapterLog.Debug(
+			`[%s] waiting for %d responses to "serverSideEmit" request`,
+			a.Uid(),
+			expectedResponseCount,
+		)
+	}
 
 	if expectedResponseCount <= 0 {
 		ack(nil, nil)
@@ -183,7 +190,18 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 
 	requestId := RandomId()
 
-	timeout := utils.SetTimeout(func() {
+	request := &CustomClusterRequest{
+		Type: SERVER_SIDE_EMIT,
+		Resolve: func(data *types.Slice[any]) {
+			ack(data.All(), nil)
+		},
+		Timeout:     new(atomic.Pointer[utils.Timer]),
+		MissingUids: types.NewSet(a.nodesMap.Keys()...),
+		Responses:   types.NewSlice[any](),
+	}
+	a.customRequests.Store(requestId, request)
+
+	request.Timeout.Store(utils.SetTimeout(func() {
 		if storedRequest, ok := a.customRequests.Load(requestId); ok {
 			storedRequest.Once.Do(func() {
 				ack(
@@ -193,19 +211,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 				a.customRequests.Delete(requestId)
 			})
 		}
-	}, DEFAULT_TIMEOUT)
-
-	a.customRequests.Store(requestId, &CustomClusterRequest{
-		Type: SERVER_SIDE_EMIT,
-		Resolve: func(data *types.Slice[any]) {
-			ack(data.All(), nil)
-		},
-		Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
-			t.Store(timeout)
-		}),
-		MissingUids: types.NewSet(a.nodesMap.Keys()...),
-		Responses:   types.NewSlice[any](),
-	})
+	}, DEFAULT_TIMEOUT))
 
 	a.Publish(&ClusterMessage{
 		Type: SERVER_SIDE_EMIT,
@@ -219,10 +225,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 
 func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
 	if opts == nil {
-		opts = &socket.BroadcastOptions{
-			Rooms:  types.NewSet[socket.Room](),
-			Except: types.NewSet[socket.Room](),
-		}
+		opts = &socket.BroadcastOptions{}
 	}
 	return func(cb func([]socket.SocketDetails, error)) {
 		a.ClusterAdapter.FetchSockets(&socket.BroadcastOptions{
@@ -234,7 +237,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 		})(func(localSockets []socket.SocketDetails, _ error) {
 			expectedResponseCount := a.ServerCount() - 1
 
-			if (opts != nil && opts.Flags != nil && opts.Flags.Local) || expectedResponseCount <= 0 {
+			if (opts.Flags != nil && opts.Flags.Local) || expectedResponseCount <= 0 {
 				cb(localSockets, nil)
 				return
 			}
@@ -242,30 +245,29 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 			requestId := RandomId()
 
 			t := DEFAULT_TIMEOUT
-			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
+			if opts.Flags != nil && opts.Flags.Timeout != nil {
 				t = *opts.Flags.Timeout
 			}
 
-			timeout := utils.SetTimeout(func() {
+			request := &CustomClusterRequest{
+				Type: FETCH_SOCKETS,
+				Resolve: func(data *types.Slice[any]) {
+					cb(anySliceToSocketDetails(data.All()), nil)
+				},
+				Timeout:     new(atomic.Pointer[utils.Timer]),
+				MissingUids: types.NewSet(a.nodesMap.Keys()...),
+				Responses:   types.NewSlice(socketDetailsToAny(localSockets)...),
+			}
+			a.customRequests.Store(requestId, request)
+
+			request.Timeout.Store(utils.SetTimeout(func() {
 				if storedRequest, ok := a.customRequests.Load(requestId); ok {
 					storedRequest.Once.Do(func() {
 						cb(nil, fmt.Errorf("timeout reached: missing %d responses", storedRequest.MissingUids.Len()))
 						a.customRequests.Delete(requestId)
 					})
 				}
-			}, t)
-
-			a.customRequests.Store(requestId, &CustomClusterRequest{
-				Type: FETCH_SOCKETS,
-				Resolve: func(data *types.Slice[any]) {
-					cb(anySliceToSocketDetails(data.All()), nil)
-				},
-				Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
-					t.Store(timeout)
-				}),
-				MissingUids: types.NewSet(a.nodesMap.Keys()...),
-				Responses:   types.NewSlice(socketDetailsToAny(localSockets)...),
-			})
+			}, t))
 
 			a.Publish(&ClusterMessage{
 				Type: FETCH_SOCKETS,
@@ -286,7 +288,9 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 			adapterLog.Debug("[%s] invalid data for FETCH_SOCKETS_RESPONSE message", a.Uid())
 			return
 		}
-		adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
+		if log.DEBUG.Load() {
+			adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
+		}
 		if request, ok := a.customRequests.Load(data.RequestId); ok {
 			request.Responses.Push(socketResponsesToDetailsAny(data.Sockets)...)
 
@@ -306,7 +310,9 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 			adapterLog.Debug("[%s] invalid data for SERVER_SIDE_EMIT_RESPONSE message", a.Uid())
 			return
 		}
-		adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
+		if log.DEBUG.Load() {
+			adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
+		}
 		if request, ok := a.customRequests.Load(data.RequestId); ok {
 			request.Responses.Push(data.Packet)
 

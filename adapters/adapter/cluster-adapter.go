@@ -8,6 +8,7 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -27,8 +28,8 @@ type (
 		// uid is the unique server identifier.
 		uid ServerId
 
-		requests    *types.Map[string, *ClusterRequest]
-		ackRequests *types.Map[string, *ClusterAckRequest]
+		requests    types.Map[string, *ClusterRequest]
+		ackRequests types.Map[string, *ClusterAckRequest]
 	}
 )
 
@@ -40,9 +41,7 @@ func (cb *ClusterAdapterBuilder) New(nsp socket.Namespace) Adapter {
 // MakeClusterAdapter returns a new default ClusterAdapter instance.
 func MakeClusterAdapter() ClusterAdapter {
 	c := &clusterAdapter{
-		Adapter:     MakeAdapter(),
-		requests:    &types.Map[string, *ClusterRequest]{},
-		ackRequests: &types.Map[string, *ClusterAckRequest]{},
+		Adapter: MakeAdapter(),
 	}
 	c.Prototype(c)
 	return c
@@ -69,16 +68,22 @@ func (c *clusterAdapter) Construct(nsp socket.Namespace) {
 // OnMessage handles incoming messages
 func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 	if message.Uid == c.uid {
-		adapterLog.Debug("[%s] ignore message from self", c.uid)
+		if log.DEBUG.Load() {
+			adapterLog.Debug("[%s] ignore message from self", c.uid)
+		}
 		return
 	}
 
 	if message.Nsp != c.Nsp().Name() {
-		adapterLog.Debug("[%s] ignore message from another namespace (%s)", c.uid, message.Nsp)
+		if log.DEBUG.Load() {
+			adapterLog.Debug("[%s] ignore message from another namespace (%s)", c.uid, message.Nsp)
+		}
 		return
 	}
 
-	adapterLog.Debug("[%s] new event of type %d from %s", c.uid, message.Type, message.Uid)
+	if log.DEBUG.Load() {
+		adapterLog.Debug("[%s] new event of type %d from %s", c.uid, message.Type, message.Uid)
+	}
 
 	switch message.Type {
 	case BROADCAST:
@@ -94,7 +99,9 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 				data.Packet,
 				opts,
 				func(clientCount uint64) {
-					adapterLog.Debug("[%s] waiting for %d client acknowledgements", c.uid, clientCount)
+					if log.DEBUG.Load() {
+						adapterLog.Debug("[%s] waiting for %d client acknowledgements", c.uid, clientCount)
+					}
 					c.PublishResponse(message.Uid, &ClusterResponse{
 						Type: BROADCAST_CLIENT_COUNT,
 						Data: &BroadcastClientCount{
@@ -104,7 +111,9 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					})
 				},
 				func(args []any, _ error) {
-					adapterLog.Debug("[%s] received acknowledgement with value %v", c.uid, args)
+					if log.DEBUG.Load() {
+						adapterLog.Debug("[%s] received acknowledgement with value %v", c.uid, args)
+					}
 					c.PublishResponse(message.Uid, &ClusterResponse{
 						Type: BROADCAST_ACK,
 						Data: &BroadcastAck{
@@ -146,7 +155,9 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			adapterLog.Debug("[%s] invalid data for FETCH_SOCKETS message", c.uid)
 			return
 		}
-		adapterLog.Debug("[%s] calling fetchSockets with opts %v", c.uid, data.Opts)
+		if log.DEBUG.Load() {
+			adapterLog.Debug("[%s] calling fetchSockets with opts %v", c.uid, data.Opts)
+		}
 
 		c.Adapter.FetchSockets(DecodeOptions(data.Opts))(
 			func(localSockets []socket.SocketDetails, err error) {
@@ -181,7 +192,9 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 		callback := func(arg []any, _ error) {
 			// only one argument is expected, ensure Exactly-Once semantics
 			called.Do(func() {
-				adapterLog.Debug("[%s] calling acknowledgement with %v", c.uid, arg)
+				if log.DEBUG.Load() {
+					adapterLog.Debug("[%s] calling acknowledgement with %v", c.uid, arg)
+				}
 				c.PublishResponse(message.Uid, &ClusterResponse{
 					Type: SERVER_SIDE_EMIT_RESPONSE,
 					Data: &ServerSideEmitResponse{
@@ -208,7 +221,9 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 	switch response.Type {
 	case BROADCAST_CLIENT_COUNT:
 		if data, ok := response.Data.(*BroadcastClientCount); ok {
-			adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+			if log.DEBUG.Load() {
+				adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+			}
 			if ackRequest, ok := c.ackRequests.Load(data.RequestId); ok {
 				ackRequest.ClientCountCallback(data.ClientCount)
 			}
@@ -218,7 +233,9 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 
 	case BROADCAST_ACK:
 		if data, ok := response.Data.(*BroadcastAck); ok {
-			adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+			if log.DEBUG.Load() {
+				adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+			}
 			if ackRequest, ok := c.ackRequests.Load(data.RequestId); ok {
 				ackRequest.Ack(data.Packet, nil)
 			}
@@ -232,7 +249,9 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 			adapterLog.Debug("[%s] invalid data for FETCH_SOCKETS_RESPONSE message", c.uid)
 			return
 		}
-		adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+		if log.DEBUG.Load() {
+			adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+		}
 
 		if request, ok := c.requests.Load(data.RequestId); ok {
 			request.Responses.Push(socketResponsesToDetailsAny(data.Sockets)...)
@@ -252,7 +271,9 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 			adapterLog.Debug("[%s] invalid data for SERVER_SIDE_EMIT_RESPONSE message", c.uid)
 			return
 		}
-		adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+		if log.DEBUG.Load() {
+			adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
+		}
 
 		if request, ok := c.requests.Load(data.RequestId); ok {
 			request.Responses.Push(data.Packet)
@@ -408,27 +429,26 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 				t = *opts.Flags.Timeout
 			}
 
-			timeout := utils.SetTimeout(func() {
+			request := &ClusterRequest{
+				Type: FETCH_SOCKETS,
+				Resolve: func(data *types.Slice[any]) {
+					callback(anySliceToSocketDetails(data.All()), nil)
+				},
+				Timeout:   new(atomic.Pointer[utils.Timer]),
+				Current:   new(atomic.Int64),
+				Expected:  expectedResponseCount,
+				Responses: types.NewSlice(socketDetailsToAny(localSockets)...),
+			}
+			c.requests.Store(requestId, request)
+
+			request.Timeout.Store(utils.SetTimeout(func() {
 				if storedRequest, ok := c.requests.Load(requestId); ok {
 					storedRequest.Once.Do(func() {
 						callback(nil, fmt.Errorf("timeout reached: only %d responses received out of %d", storedRequest.Current.Load(), storedRequest.Expected))
 						c.requests.Delete(requestId)
 					})
 				}
-			}, t)
-
-			c.requests.Store(requestId, &ClusterRequest{
-				Type: FETCH_SOCKETS,
-				Resolve: func(data *types.Slice[any]) {
-					callback(anySliceToSocketDetails(data.All()), nil)
-				},
-				Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
-					t.Store(timeout)
-				}),
-				Current:   &atomic.Int64{},
-				Expected:  expectedResponseCount,
-				Responses: types.NewSlice(socketDetailsToAny(localSockets)...),
-			})
+			}, t))
 
 			c.Publish(&ClusterMessage{
 				Type: FETCH_SOCKETS,
@@ -459,7 +479,9 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 	}
 
 	expectedResponseCount := c.ServerCount() - 1
-	adapterLog.Debug(`[%s] waiting for %d responses to "serverSideEmit" request`, c.uid, expectedResponseCount)
+	if log.DEBUG.Load() {
+		adapterLog.Debug(`[%s] waiting for %d responses to "serverSideEmit" request`, c.uid, expectedResponseCount)
+	}
 
 	if expectedResponseCount <= 0 {
 		ack(nil, nil)
@@ -468,7 +490,19 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 
 	requestId := RandomId()
 
-	timeout := utils.SetTimeout(func() {
+	request := &ClusterRequest{
+		Type: SERVER_SIDE_EMIT,
+		Resolve: func(data *types.Slice[any]) {
+			ack(data.All(), nil)
+		},
+		Timeout:   new(atomic.Pointer[utils.Timer]),
+		Current:   new(atomic.Int64),
+		Expected:  expectedResponseCount,
+		Responses: types.NewSlice[any](),
+	}
+	c.requests.Store(requestId, request)
+
+	request.Timeout.Store(utils.SetTimeout(func() {
 		if storedRequest, ok := c.requests.Load(requestId); ok {
 			storedRequest.Once.Do(func() {
 				ack(
@@ -478,20 +512,7 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 				c.requests.Delete(requestId)
 			})
 		}
-	}, DEFAULT_TIMEOUT)
-
-	c.requests.Store(requestId, &ClusterRequest{
-		Type: SERVER_SIDE_EMIT,
-		Resolve: func(data *types.Slice[any]) {
-			ack(data.All(), nil)
-		},
-		Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
-			t.Store(timeout)
-		}),
-		Current:   &atomic.Int64{},
-		Expected:  expectedResponseCount,
-		Responses: types.NewSlice[any](),
-	})
+	}, DEFAULT_TIMEOUT))
 
 	c.Publish(&ClusterMessage{
 		Type: SERVER_SIDE_EMIT,

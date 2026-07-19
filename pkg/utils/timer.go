@@ -1,62 +1,111 @@
 package utils
 
 import (
-	"runtime"
+	"sync"
 	"time"
 )
 
+const (
+	minTimerDuration = time.Millisecond
+	maxTimerDuration = time.Duration(1<<31-1) * time.Millisecond
+)
+
 type Timer struct {
-	timer  *time.Timer
-	sleep  time.Duration
-	fn     func()
-	stopCh chan struct{}
+	mu sync.Mutex
+
+	timer    *time.Timer
+	callback func()
+	delay    time.Duration
+	deadline time.Time
+	interval bool
+	running  bool
+	stopped  bool
+}
+
+func newTimer(callback func(), delay time.Duration, interval bool) *Timer {
+	if delay < minTimerDuration || delay > maxTimerDuration {
+		delay = minTimerDuration
+	} else {
+		delay = delay.Truncate(time.Millisecond)
+	}
+
+	timer := &Timer{
+		callback: callback,
+		delay:    delay,
+		interval: interval,
+	}
+	timer.mu.Lock()
+	timer.deadline = time.Now().Add(delay)
+	timer.timer = time.AfterFunc(delay, timer.run)
+	timer.mu.Unlock()
+	return timer
+}
+
+func (t *Timer) run() {
+	t.mu.Lock()
+	if t.stopped || t.running {
+		t.mu.Unlock()
+		return
+	}
+	if delay := time.Until(t.deadline); delay > 0 {
+		t.timer.Reset(delay)
+		t.mu.Unlock()
+		return
+	}
+
+	t.running = true
+	callback := t.callback
+	deadline := t.deadline
+	started := time.Now()
+	t.mu.Unlock()
+
+	callback()
+
+	t.mu.Lock()
+	t.running = false
+	reset := false
+	if !t.stopped {
+		if t.interval {
+			t.deadline = started.Add(t.delay)
+			reset = true
+		} else if t.deadline.After(deadline) {
+			reset = true
+		}
+	}
+	if reset {
+		t.timer.Reset(max(time.Until(t.deadline), 0))
+	}
+	t.mu.Unlock()
 }
 
 func (t *Timer) Refresh() *Timer {
-	defer t.timer.Reset(t.sleep)
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-	if !t.timer.Stop() {
-		// Idempotent repeated calls
-		go t.fn()
+	if !t.stopped {
+		t.deadline = time.Now().Add(t.delay)
+		t.timer.Reset(t.delay)
 	}
-
 	return t
 }
 
-func (t *Timer) Unref() {
-	stopCh := t.stopCh
-	runtime.AddCleanup(t, func(timer *time.Timer) {
-		if timer.Stop() {
-			close(stopCh)
-		}
-	}, t.timer)
+func (*Timer) Unref() {
+	// Go timers do not keep the process alive, so no action is required.
 }
 
-func SetTimeout(fn func(), sleep time.Duration) *Timer {
-	timer := &Timer{
-		timer:  time.NewTimer(sleep),
-		sleep:  sleep,
-		stopCh: make(chan struct{}, 1),
-	}
-	timer.fn = func() {
-		defer func() {
-			// Ensure channel is drained to prevent leaks
-			select {
-			case <-timer.stopCh:
-			default:
-			}
-		}()
+func (t *Timer) Stop() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-		select {
-		case <-timer.timer.C:
-			fn()
-		case <-timer.stopCh:
-			return
-		}
+	if !t.stopped {
+		t.stopped = true
+		t.callback = nil
+		t.timer.Stop()
 	}
-	// Idempotent repeated calls
-	go timer.fn()
-	return timer
+}
+
+func SetTimeout(callback func(), delay time.Duration) *Timer {
+	return newTimer(callback, delay, false)
 }
 
 func ClearTimeout(timer *Timer) {
@@ -65,50 +114,8 @@ func ClearTimeout(timer *Timer) {
 	}
 }
 
-func (t *Timer) Stop() {
-	// Always stop the underlying timer regardless of whether it already fired.
-	// In Go 1.23+, time.Timer.Stop() drains the C channel when returning false
-	// (timer had already expired). Without the unconditional signal below, the
-	// goroutine inside timer.fn would be permanently blocked: it can no longer
-	// receive from the now-empty C, and stopCh was never signaled.
-	// The buffered channel (cap 1) ensures the signal is queued even if the
-	// goroutine hasn't reached its select yet.
-	t.timer.Stop()
-	select {
-	case t.stopCh <- struct{}{}:
-	default:
-	}
-}
-
-func SetInterval(fn func(), sleep time.Duration) *Timer {
-	timer := &Timer{
-		timer:  time.NewTimer(sleep),
-		sleep:  sleep,
-		stopCh: make(chan struct{}, 1),
-	}
-	timer.fn = func() {
-		defer func() {
-			// Ensure channel is drained to prevent leaks
-			select {
-			case <-timer.stopCh:
-			default:
-			}
-		}()
-
-		for {
-			select {
-			case <-timer.timer.C:
-				timer.timer.Reset(timer.sleep)
-				// Idempotent repeated calls
-				go fn()
-			case <-timer.stopCh:
-				return
-			}
-		}
-	}
-	// Idempotent repeated calls
-	go timer.fn()
-	return timer
+func SetInterval(callback func(), delay time.Duration) *Timer {
+	return newTimer(callback, delay, true)
 }
 
 func ClearInterval(timer *Timer) {

@@ -5,10 +5,10 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-func socketDetailsToResponses(localSockets []socket.SocketDetails) []*SocketResponse {
-	responses := make([]*SocketResponse, len(localSockets))
+func socketDetailsToResponses(localSockets []socket.SocketDetails) []SocketResponse {
+	responses := make([]SocketResponse, len(localSockets))
 	for i, client := range localSockets {
-		responses[i] = &SocketResponse{
+		responses[i] = SocketResponse{
 			Id:        client.Id(),
 			Handshake: client.Handshake(),
 			Rooms:     client.Rooms().Keys(),
@@ -18,10 +18,10 @@ func socketDetailsToResponses(localSockets []socket.SocketDetails) []*SocketResp
 	return responses
 }
 
-func socketResponsesToDetailsAny(socketResponses []*SocketResponse) []any {
+func socketResponsesToDetailsAny(socketResponses []SocketResponse) []any {
 	responses := make([]any, len(socketResponses))
-	for i, client := range socketResponses {
-		responses[i] = socket.SocketDetails(NewRemoteSocket(client))
+	for i := range socketResponses {
+		responses[i] = NewRemoteSocket(&socketResponses[i])
 	}
 	return responses
 }

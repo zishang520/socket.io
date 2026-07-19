@@ -1,168 +1,398 @@
 package utils
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
+func advanceTime(delay time.Duration) {
+	time.Sleep(delay)
+	synctest.Wait()
+}
+
+func assertCalls(t *testing.T, calls *atomic.Int32, want int32) {
+	t.Helper()
+	if got := calls.Load(); got != want {
+		t.Fatalf("calls = %d, want %d", got, want)
+	}
+}
+
+func TestTimerDelayNormalization(t *testing.T) {
+	tests := []struct {
+		name  string
+		delay time.Duration
+		want  time.Duration
+	}{
+		{name: "negative", delay: -time.Second, want: minTimerDuration},
+		{name: "zero", want: minTimerDuration},
+		{name: "below minimum", delay: time.Microsecond, want: minTimerDuration},
+		{name: "fractional millisecond", delay: 1_500 * time.Microsecond, want: time.Millisecond},
+		{name: "valid", delay: 2 * time.Millisecond, want: 2 * time.Millisecond},
+		{name: "maximum", delay: maxTimerDuration, want: maxTimerDuration},
+		{name: "above maximum", delay: maxTimerDuration + time.Millisecond, want: minTimerDuration},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var calls atomic.Int32
+				timer := SetTimeout(func() {
+					calls.Add(1)
+				}, test.delay)
+				defer timer.Stop()
+
+				advanceTime(test.want - time.Nanosecond)
+				assertCalls(t, &calls, 0)
+
+				advanceTime(time.Nanosecond)
+				assertCalls(t, &calls, 1)
+			})
+		})
+	}
+}
+
 func TestSetTimeout(t *testing.T) {
-	called := int32(0)
+	synctest.Test(t, func(t *testing.T) {
+		const delay = time.Second
+		var calls atomic.Int32
 
-	timer := SetTimeout(func() {
-		atomic.AddInt32(&called, 1)
-	}, 50*time.Millisecond)
+		timer := SetTimeout(func() {
+			calls.Add(1)
+		}, delay)
+		defer timer.Stop()
 
-	// Wait for timeout
-	time.Sleep(100 * time.Millisecond)
+		advanceTime(delay - time.Nanosecond)
+		assertCalls(t, &calls, 0)
 
-	if atomic.LoadInt32(&called) != 1 {
-		t.Errorf("Expected timeout to be called once, got %d", called)
-	}
+		advanceTime(time.Nanosecond)
+		assertCalls(t, &calls, 1)
 
-	_ = timer
-}
-
-func TestSetTimeoutStop(t *testing.T) {
-	called := int32(0)
-
-	timer := SetTimeout(func() {
-		atomic.AddInt32(&called, 1)
-	}, 100*time.Millisecond)
-
-	// Stop before timeout
-	timer.Stop()
-	time.Sleep(150 * time.Millisecond)
-
-	if atomic.LoadInt32(&called) != 0 {
-		t.Errorf("Expected timeout not to be called after stop, got %d", called)
-	}
-}
-
-func TestClearTimeout(t *testing.T) {
-	called := int32(0)
-
-	timer := SetTimeout(func() {
-		atomic.AddInt32(&called, 1)
-	}, 100*time.Millisecond)
-
-	// Clear timeout
-	ClearTimeout(timer)
-	time.Sleep(150 * time.Millisecond)
-
-	if atomic.LoadInt32(&called) != 0 {
-		t.Errorf("Expected timeout not to be called after clearTimeout, got %d", called)
-	}
-}
-
-func TestClearTimeoutNil(t *testing.T) {
-	// Should not panic
-	ClearTimeout(nil)
+		advanceTime(delay)
+		assertCalls(t, &calls, 1)
+	})
 }
 
 func TestTimerRefresh(t *testing.T) {
-	called := int32(0)
+	t.Run("before timeout", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const delay = time.Second
+			var calls atomic.Int32
 
-	timer := SetTimeout(func() {
-		atomic.AddInt32(&called, 1)
-	}, 50*time.Millisecond)
+			timer := SetTimeout(func() {
+				calls.Add(1)
+			}, delay)
+			defer timer.Stop()
 
-	// Refresh before timeout
-	time.Sleep(25 * time.Millisecond)
-	timer.Refresh()
+			time.Sleep(delay / 2)
+			if got := timer.Refresh(); got != timer {
+				t.Fatal("Refresh() did not return the timer")
+			}
 
-	// Should not have fired yet
-	if atomic.LoadInt32(&called) > 0 {
-		t.Errorf("Timeout should not have fired yet")
+			advanceTime(delay - time.Nanosecond)
+			assertCalls(t, &calls, 0)
+
+			advanceTime(time.Nanosecond)
+			assertCalls(t, &calls, 1)
+		})
+	})
+
+	t.Run("after timeout", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const delay = time.Second
+			var calls atomic.Int32
+
+			timer := SetTimeout(func() {
+				calls.Add(1)
+			}, delay)
+			defer timer.Stop()
+
+			advanceTime(delay)
+			assertCalls(t, &calls, 1)
+
+			timer.Refresh()
+			advanceTime(delay)
+			assertCalls(t, &calls, 2)
+		})
+	})
+
+	t.Run("from callback", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const delay = time.Second
+			var calls atomic.Int32
+			var timer atomic.Pointer[Timer]
+
+			timer.Store(SetTimeout(func() {
+				if calls.Add(1) == 1 {
+					timer.Load().Refresh()
+				}
+			}, delay))
+			defer timer.Load().Stop()
+
+			advanceTime(2 * delay)
+			assertCalls(t, &calls, 2)
+		})
+	})
+
+	t.Run("after timeout and stop", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const delay = time.Second
+			var calls atomic.Int32
+
+			timer := SetTimeout(func() {
+				calls.Add(1)
+			}, delay)
+			advanceTime(delay)
+
+			timer.Stop()
+			timer.Refresh()
+			advanceTime(delay)
+			assertCalls(t, &calls, 1)
+		})
+	})
+}
+
+func TestTimerCancellation(t *testing.T) {
+	tests := []struct {
+		name   string
+		cancel func(*Timer)
+	}{
+		{name: "Stop", cancel: (*Timer).Stop},
+		{name: "ClearTimeout", cancel: ClearTimeout},
+		{name: "ClearInterval", cancel: ClearInterval},
 	}
 
-	// Wait for refreshed timeout
-	time.Sleep(100 * time.Millisecond)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				const delay = time.Second
+				var calls atomic.Int32
 
-	if atomic.LoadInt32(&called) != 1 {
-		t.Errorf("Expected timeout to fire after refresh, got %d", called)
+				timer := SetTimeout(func() {
+					calls.Add(1)
+				}, delay)
+				test.cancel(timer)
+				test.cancel(timer)
+				timer.Refresh()
+
+				advanceTime(2 * delay)
+				assertCalls(t, &calls, 0)
+			})
+		})
 	}
+
+	ClearTimeout(nil)
+	ClearInterval(nil)
 }
 
 func TestSetInterval(t *testing.T) {
-	called := int32(0)
+	t.Run("refresh", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const delay = time.Second
+			var calls atomic.Int32
 
-	timer := SetInterval(func() {
-		atomic.AddInt32(&called, 1)
-	}, 30*time.Millisecond)
+			timer := SetInterval(func() {
+				calls.Add(1)
+			}, delay)
+			defer timer.Stop()
 
-	// Wait for multiple intervals
-	time.Sleep(100 * time.Millisecond)
+			time.Sleep(delay / 2)
+			timer.Refresh()
+			advanceTime(delay - time.Nanosecond)
+			assertCalls(t, &calls, 0)
 
-	count := atomic.LoadInt32(&called)
-	if count < 2 {
-		t.Errorf("Expected interval to fire at least twice, got %d", count)
-	}
+			advanceTime(time.Nanosecond)
+			assertCalls(t, &calls, 1)
 
-	// Stop interval
-	timer.Stop()
-	time.Sleep(50 * time.Millisecond)
+			advanceTime(delay)
+			assertCalls(t, &calls, 2)
+		})
+	})
 
-	finalCount := atomic.LoadInt32(&called)
-	if finalCount-count > 1 {
-		t.Errorf("Interval should have stopped, but fired %d more times", finalCount-count)
-	}
+	t.Run("repeat and clear", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const delay = time.Second
+			var calls atomic.Int32
+
+			timer := SetInterval(func() {
+				calls.Add(1)
+			}, delay)
+			defer timer.Stop()
+
+			advanceTime(3 * delay)
+			assertCalls(t, &calls, 3)
+
+			ClearInterval(timer)
+			ClearInterval(timer)
+			advanceTime(2 * delay)
+			assertCalls(t, &calls, 3)
+		})
+	})
+
+	t.Run("stop from callback", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const delay = time.Second
+			var calls atomic.Int32
+			var timer atomic.Pointer[Timer]
+
+			timer.Store(SetInterval(func() {
+				calls.Add(1)
+				timer.Load().Stop()
+			}, delay))
+			defer timer.Load().Stop()
+
+			advanceTime(3 * delay)
+			assertCalls(t, &calls, 1)
+		})
+	})
+
+	t.Run("clear while callback is running", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const delay = time.Second
+			var calls atomic.Int32
+			started := make(chan struct{})
+			release := make(chan struct{})
+
+			timer := SetInterval(func() {
+				if calls.Add(1) == 1 {
+					close(started)
+					<-release
+				}
+			}, delay)
+			defer timer.Stop()
+
+			advanceTime(delay)
+			<-started
+			ClearInterval(timer)
+			close(release)
+			synctest.Wait()
+
+			advanceTime(3 * delay)
+			assertCalls(t, &calls, 1)
+		})
+	})
 }
 
-func TestClearInterval(t *testing.T) {
-	called := int32(0)
+func TestIntervalCallbacksDoNotOverlap(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const delay = time.Second
+		var active, maxActive, calls atomic.Int32
+		started := make(chan struct{})
+		release := make(chan struct{})
 
-	timer := SetInterval(func() {
-		atomic.AddInt32(&called, 1)
-	}, 30*time.Millisecond)
+		timer := SetInterval(func() {
+			current := active.Add(1)
+			for {
+				peak := maxActive.Load()
+				if current <= peak || maxActive.CompareAndSwap(peak, current) {
+					break
+				}
+			}
+			if calls.Add(1) == 1 {
+				close(started)
+				<-release
+			}
+			active.Add(-1)
+		}, delay)
+		defer timer.Stop()
 
-	// Wait for one interval
-	time.Sleep(50 * time.Millisecond)
+		advanceTime(3 * delay)
+		<-started
+		assertCalls(t, &calls, 1)
 
-	count := atomic.LoadInt32(&called)
-
-	// Clear interval
-	ClearInterval(timer)
-	time.Sleep(100 * time.Millisecond)
-
-	finalCount := atomic.LoadInt32(&called)
-	if finalCount-count > 0 {
-		t.Errorf("Interval should have stopped after clearInterval, but fired %d more times", finalCount-count)
-	}
-}
-
-func TestSetTimeoutMultipleStops(t *testing.T) {
-	called := int32(0)
-
-	timer := SetTimeout(func() {
-		atomic.AddInt32(&called, 1)
-	}, 100*time.Millisecond)
-
-	// Multiple stops should not panic
-	timer.Stop()
-	timer.Stop()
-	timer.Stop()
-
-	time.Sleep(150 * time.Millisecond)
-
-	if atomic.LoadInt32(&called) != 0 {
-		t.Errorf("Expected timeout not to fire after stop, got %d", called)
-	}
+		close(release)
+		synctest.Wait()
+		if got := maxActive.Load(); got != 1 {
+			t.Fatalf("maximum concurrent callbacks = %d, want 1", got)
+		}
+		assertCalls(t, &calls, 2)
+	})
 }
 
 func TestTimerUnref(t *testing.T) {
-	called := int32(0)
+	synctest.Test(t, func(t *testing.T) {
+		const delay = time.Second
+		var calls atomic.Int32
 
-	timer := SetTimeout(func() {
-		atomic.AddInt32(&called, 1)
-	}, 50*time.Millisecond)
+		timer := SetTimeout(func() {
+			calls.Add(1)
+		}, delay)
+		defer timer.Stop()
+		timer.Unref()
+		timer.Unref()
 
-	// Unref should not prevent timeout from firing
-	timer.Unref()
+		advanceTime(delay)
+		assertCalls(t, &calls, 1)
+	})
+}
 
-	time.Sleep(100 * time.Millisecond)
+func TestTimerConcurrentRefreshAndStop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const delay = time.Second
+		var calls atomic.Int32
 
-	if atomic.LoadInt32(&called) != 1 {
-		t.Errorf("Expected timeout to fire even after Unref, got %d", atomic.LoadInt32(&called))
-	}
+		timer := SetTimeout(func() {
+			calls.Add(1)
+		}, delay)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range 64 {
+			wg.Go(func() {
+				<-start
+				timer.Refresh()
+			})
+		}
+		wg.Go(func() {
+			<-start
+			timer.Stop()
+		})
+
+		close(start)
+		wg.Wait()
+		timer.Stop()
+		timer.Refresh()
+
+		advanceTime(2 * delay)
+		assertCalls(t, &calls, 0)
+	})
+}
+
+func TestTimerConcurrentRefreshDuringCallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const delay = time.Second
+		var calls atomic.Int32
+		started := make(chan struct{})
+		release := make(chan struct{})
+
+		timer := SetTimeout(func() {
+			if calls.Add(1) == 1 {
+				close(started)
+				<-release
+			}
+		}, delay)
+		defer timer.Stop()
+
+		advanceTime(delay)
+		<-started
+
+		var wg sync.WaitGroup
+		for range 64 {
+			wg.Go(func() {
+				timer.Refresh()
+			})
+		}
+		wg.Wait()
+
+		advanceTime(delay)
+		assertCalls(t, &calls, 1)
+
+		close(release)
+		synctest.Wait()
+		assertCalls(t, &calls, 2)
+
+		advanceTime(delay)
+		assertCalls(t, &calls, 2)
+	})
 }

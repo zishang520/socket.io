@@ -33,19 +33,18 @@ func EncodeOptions(opts *socket.BroadcastOptions) *PacketOptions {
 
 // DecodeOptions decodes PacketOptions back into BroadcastOptions.
 func DecodeOptions(opts *PacketOptions) *socket.BroadcastOptions {
-	b := &socket.BroadcastOptions{
-		Rooms:  types.NewSet[socket.Room](),
-		Except: types.NewSet[socket.Room](),
-	}
 	if opts == nil {
-		return b
+		return &socket.BroadcastOptions{
+			Rooms:  types.NewSet[socket.Room](),
+			Except: types.NewSet[socket.Room](),
+		}
 	}
 
-	b.Rooms.Add(opts.Rooms...)   // Convert slice to set
-	b.Except.Add(opts.Except...) // Convert slice to set
-	b.Flags = opts.Flags         // Pass flags as is
-
-	return b
+	return &socket.BroadcastOptions{
+		Rooms:  types.NewSet(opts.Rooms...),
+		Except: types.NewSet(opts.Except...),
+		Flags:  opts.Flags,
+	}
 }
 
 // RandomId generates a random hexadecimal string of 8 bytes.
