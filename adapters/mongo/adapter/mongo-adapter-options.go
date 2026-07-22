@@ -6,6 +6,7 @@ import (
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 // Default configuration values for MongoAdapterOptions.
@@ -15,6 +16,9 @@ const (
 
 	// DefaultHeartbeatTimeout is the default timeout for heartbeat responses.
 	DefaultHeartbeatTimeout int64 = 10_000
+
+	// DefaultRequestsTimeout is the default timeout for inter-node requests.
+	DefaultRequestsTimeout = 5_000 * time.Millisecond
 )
 
 type (
@@ -23,13 +27,21 @@ type (
 	MongoAdapterOptionsInterface interface {
 		adapter.ClusterAdapterOptionsInterface
 
+		SetUid(adapter.ServerId)
+		GetRawUid() types.Optional[adapter.ServerId]
+		Uid() adapter.ServerId
+
+		SetRequestsTimeout(time.Duration)
+		GetRawRequestsTimeout() types.Optional[time.Duration]
+		RequestsTimeout() time.Duration
+
 		SetAddCreatedAtField(bool)
 		GetRawAddCreatedAtField() types.Optional[bool]
 		AddCreatedAtField() bool
 
-		SetErrorHandler(func(error))
-		GetRawErrorHandler() types.Optional[func(error)]
-		ErrorHandler() func(error)
+		SetChangeStreamOptions(*options.ChangeStreamOptionsBuilder)
+		GetRawChangeStreamOptions() types.Optional[*options.ChangeStreamOptionsBuilder]
+		ChangeStreamOptions() *options.ChangeStreamOptionsBuilder
 	}
 
 	// MongoAdapterOptions holds configuration for the MongoDB adapter.
@@ -38,13 +50,13 @@ type (
 	//   - addCreatedAtField: Whether to add a createdAt field to each MongoDB document.
 	//     Required when using a TTL index instead of a capped collection.
 	//     Default: false.
-	//   - errorHandler: Custom error handler callback.
-	//     Default: nil (errors are logged via debug).
 	MongoAdapterOptions struct {
 		adapter.ClusterAdapterOptions
 
-		addCreatedAtField types.Optional[bool]
-		errorHandler      types.Optional[func(error)]
+		uid                 types.Optional[adapter.ServerId]
+		requestsTimeout     types.Optional[time.Duration]
+		addCreatedAtField   types.Optional[bool]
+		changeStreamOptions types.Optional[*options.ChangeStreamOptionsBuilder]
 	}
 )
 
@@ -61,15 +73,56 @@ func (s *MongoAdapterOptions) Assign(data MongoAdapterOptionsInterface) MongoAda
 	}
 
 	s.ClusterAdapterOptions.Assign(data)
-
+	if data.GetRawUid() != nil {
+		s.SetUid(data.Uid())
+	}
+	if data.GetRawRequestsTimeout() != nil {
+		s.SetRequestsTimeout(data.RequestsTimeout())
+	}
 	if data.GetRawAddCreatedAtField() != nil {
 		s.SetAddCreatedAtField(data.AddCreatedAtField())
 	}
-	if data.GetRawErrorHandler() != nil {
-		s.SetErrorHandler(data.ErrorHandler())
+	if data.GetRawChangeStreamOptions() != nil {
+		s.SetChangeStreamOptions(data.ChangeStreamOptions())
 	}
 
 	return s
+}
+
+// SetUid sets the identifier shared by every namespace created by this factory.
+func (s *MongoAdapterOptions) SetUid(uid adapter.ServerId) {
+	s.uid = types.NewSome(uid)
+}
+
+// GetRawUid returns the raw Optional value for uid.
+func (s *MongoAdapterOptions) GetRawUid() types.Optional[adapter.ServerId] {
+	return s.uid
+}
+
+// Uid returns the configured server identifier, or an empty string if unset.
+func (s *MongoAdapterOptions) Uid() adapter.ServerId {
+	if s.uid == nil {
+		return ""
+	}
+	return s.uid.Get()
+}
+
+// SetRequestsTimeout sets the timeout for inter-node requests.
+func (s *MongoAdapterOptions) SetRequestsTimeout(timeout time.Duration) {
+	s.requestsTimeout = types.NewSome(timeout)
+}
+
+// GetRawRequestsTimeout returns the raw Optional value for requestsTimeout.
+func (s *MongoAdapterOptions) GetRawRequestsTimeout() types.Optional[time.Duration] {
+	return s.requestsTimeout
+}
+
+// RequestsTimeout returns the configured timeout, or zero if unset.
+func (s *MongoAdapterOptions) RequestsTimeout() time.Duration {
+	if s.requestsTimeout == nil {
+		return 0
+	}
+	return s.requestsTimeout.Get()
 }
 
 // SetAddCreatedAtField sets whether to add a createdAt field to documents.
@@ -91,20 +144,20 @@ func (s *MongoAdapterOptions) AddCreatedAtField() bool {
 	return s.addCreatedAtField.Get()
 }
 
-// SetErrorHandler sets the error handler callback.
-func (s *MongoAdapterOptions) SetErrorHandler(handler func(error)) {
-	s.errorHandler = types.NewSome(handler)
+// SetChangeStreamOptions sets the options passed to Collection.Watch.
+func (s *MongoAdapterOptions) SetChangeStreamOptions(value *options.ChangeStreamOptionsBuilder) {
+	s.changeStreamOptions = types.NewSome(value)
 }
 
-// GetRawErrorHandler returns the raw Optional value for errorHandler.
-func (s *MongoAdapterOptions) GetRawErrorHandler() types.Optional[func(error)] {
-	return s.errorHandler
+// GetRawChangeStreamOptions returns the raw Optional value for changeStreamOptions.
+func (s *MongoAdapterOptions) GetRawChangeStreamOptions() types.Optional[*options.ChangeStreamOptionsBuilder] {
+	return s.changeStreamOptions
 }
 
-// ErrorHandler returns the configured error handler callback, or nil if not set.
-func (s *MongoAdapterOptions) ErrorHandler() func(error) {
-	if s.errorHandler == nil {
+// ChangeStreamOptions returns the configured change stream options, or nil if unset.
+func (s *MongoAdapterOptions) ChangeStreamOptions() *options.ChangeStreamOptionsBuilder {
+	if s.changeStreamOptions == nil {
 		return nil
 	}
-	return s.errorHandler.Get()
+	return s.changeStreamOptions.Get()
 }

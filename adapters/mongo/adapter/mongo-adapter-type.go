@@ -3,13 +3,19 @@
 package adapter
 
 import (
-	"sync/atomic"
+	"bytes"
+	"context"
+	"errors"
+	"sync"
 	"time"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/mongo/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongod "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 type (
@@ -46,10 +52,13 @@ type (
 	// BroadcastAck is an alias for adapter.BroadcastAck.
 	BroadcastAck = adapter.BroadcastAck
 
-	// MongoAdapter defines the interface for a MongoDB-based Socket.IO adapter.
-	// It extends ClusterAdapterWithHeartbeat with MongoDB-specific functionality.
+	// MongoAdapter keeps the cluster adapter API while implementing MongoDB's
+	// standalone heartbeat and session protocol.
 	MongoAdapter interface {
-		adapter.ClusterAdapterWithHeartbeat
+		adapter.ClusterAdapter
+
+		// SetOpts configures adapter options.
+		SetOpts(any)
 
 		// SetMongo configures the MongoDB client for the adapter.
 		SetMongo(*mongo.MongoClient)
@@ -60,125 +69,176 @@ type (
 		// OnEvent processes a change stream document from MongoDB.
 		OnEvent(document *mongo.AdapterEvent)
 	}
+
+	changeStreamEvent struct {
+		OperationType string              `bson:"operationType"`
+		FullDocument  *mongo.AdapterEvent `bson:"fullDocument"`
+	}
 )
 
 // MongoAdapterBuilder creates MongoDB adapters for Socket.IO namespaces.
-// It manages the shared Change Stream connection across all namespace adapters.
+// It manages the shared Change Stream across all namespace adapters.
 type MongoAdapterBuilder struct {
-	// Mongo is the MongoDB client used for operations.
 	Mongo *mongo.MongoClient
-	// Opts contains configuration options for the adapter.
-	Opts MongoAdapterOptionsInterface
+	Opts  MongoAdapterOptionsInterface
 
-	namespaceToAdapters types.Map[string, MongoAdapter]
-	listening           atomic.Bool
-	isClosed            atomic.Bool
+	mu               sync.Mutex
+	adapters         types.Map[string, MongoAdapter]
+	uid              adapter.ServerId
+	cancel           context.CancelFunc
+	changeStreamOpts *options.ChangeStreamOptionsBuilder
+	resumeToken      bson.Raw
 }
 
-// New creates a new MongoAdapter for the given namespace.
-// This method implements the socket.AdapterBuilder interface.
+// New creates a MongoAdapter for the given namespace.
 func (mb *MongoAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
-	options := DefaultMongoAdapterOptions()
-	options.Assign(mb.Opts)
-
-	// Apply defaults
-	if options.GetRawHeartbeatInterval() == nil {
-		options.SetHeartbeatInterval(DefaultHeartbeatInterval)
-	}
-	if options.GetRawHeartbeatTimeout() == nil {
-		options.SetHeartbeatTimeout(DefaultHeartbeatTimeout)
-	}
-
-	adapterInstance := NewMongoAdapter(nsp, mb.Mongo, options)
-
-	mb.namespaceToAdapters.Store(nsp.Name(), adapterInstance)
-
-	// Start listening if not already
-	if mb.listening.CompareAndSwap(false, true) {
-		mb.isClosed.Store(false)
-		go mb.startChangeStream()
-	}
-
-	// Register cleanup callback
-	adapterInstance.Cleanup(func() {
-		mb.namespaceToAdapters.Delete(nsp.Name())
-
-		// If no more adapters, close the change stream
-		hasAdapters := false
-		mb.namespaceToAdapters.Range(func(_ string, _ MongoAdapter) bool {
-			hasAdapters = true
-			return false
-		})
-		if !hasAdapters {
-			mb.isClosed.Store(true)
+	name := nsp.Name()
+	mb.mu.Lock()
+	opts := DefaultMongoAdapterOptions()
+	opts.Assign(mb.Opts)
+	if mb.uid == "" {
+		mb.uid = opts.Uid()
+		if mb.uid == "" {
+			mb.uid = adapter.ServerId(adapter.RandomId())
 		}
+		if mb.Opts != nil {
+			mb.Opts.SetUid(mb.uid)
+		}
+		mb.changeStreamOpts = opts.ChangeStreamOptions()
+	}
+	opts.SetUid(mb.uid)
+	var ctx context.Context
+	if mb.cancel == nil {
+		ctx, mb.cancel = context.WithCancel(mb.Mongo.Context)
+	}
+	adapterInstance := NewMongoAdapter(nsp, mb.Mongo, opts)
+	mb.adapters.Store(name, adapterInstance)
+	mb.mu.Unlock()
+
+	if ctx != nil {
+		go mb.initChangeStream(ctx)
+	}
+
+	adapterInstance.Cleanup(func() {
+		mb.mu.Lock()
+		defer mb.mu.Unlock()
+
+		if !mb.adapters.CompareAndDelete(name, adapterInstance) || mb.adapters.Len() != 0 {
+			return
+		}
+
+		if mb.cancel != nil {
+			mb.cancel()
+		}
+		mb.cancel = nil
 	})
 
 	return adapterInstance
 }
 
-// startChangeStream opens a MongoDB Change Stream and dispatches events
-// to the appropriate namespace adapter.
-func (mb *MongoAdapterBuilder) startChangeStream() {
-	for !mb.isClosed.Load() {
-		mb.watchChangeStream()
+func (mb *MongoAdapterBuilder) initChangeStream(ctx context.Context) {
+	initialHeartbeatSent := false
+	for {
+		mongoLog.Debug("opening change stream")
 
-		if mb.isClosed.Load() {
+		mb.mu.Lock()
+		changeStreamOpts := mb.changeStreamOpts
+		resumeToken := bytes.Clone(mb.resumeToken)
+		uid := mb.uid
+		mb.mu.Unlock()
+
+		watchOptions := options.ChangeStream()
+		if changeStreamOpts != nil {
+			watchOptions.Opts = append(watchOptions.Opts, changeStreamOpts.List()...)
+		}
+		if len(resumeToken) != 0 {
+			watchOptions.SetResumeAfter(resumeToken)
+		}
+
+		changeStream, err := mb.Mongo.Collection.Watch(ctx, mongod.Pipeline{
+			{{Key: "$match", Value: bson.D{
+				{Key: "fullDocument.uid", Value: bson.D{{Key: "$ne", Value: uid}}},
+			}}},
+		}, watchOptions)
+		if err == nil {
+			// New stays non-blocking, so repeat the initial heartbeat once the cursor can receive replies.
+			if !initialHeartbeatSent {
+				var adapterInstances []MongoAdapter
+				mb.mu.Lock()
+				if ctx.Err() == nil {
+					adapterInstances = mb.adapters.Values()
+					initialHeartbeatSent = true
+				}
+				mb.mu.Unlock()
+				for _, adapterInstance := range adapterInstances {
+					adapterInstance.Publish(&ClusterMessage{Type: mongo.INITIAL_HEARTBEAT})
+				}
+			}
+
+			var event changeStreamEvent
+			for changeStream.Next(ctx) {
+				event = changeStreamEvent{}
+				if decodeErr := changeStream.Decode(&event); decodeErr != nil {
+					if operationType, ok := changeStream.Current.Lookup("operationType").StringValueOK(); ok && operationType == "insert" {
+						token := changeStream.ResumeToken()
+						mb.mu.Lock()
+						if ctx.Err() == nil && len(token) != 0 {
+							mb.resumeToken = append(mb.resumeToken[:0], token...)
+						}
+						mb.mu.Unlock()
+					}
+					mongoLog.Debug("failed to decode change stream event: %s", decodeErr.Error())
+					continue
+				}
+				if event.OperationType != "insert" {
+					continue
+				}
+
+				token := changeStream.ResumeToken()
+				mb.mu.Lock()
+				active := ctx.Err() == nil
+				if active && len(token) != 0 {
+					mb.resumeToken = append(mb.resumeToken[:0], token...)
+				}
+				document := event.FullDocument
+				var adapterInstance MongoAdapter
+				var found bool
+				if document != nil {
+					adapterInstance, found = mb.adapters.Load(document.Nsp)
+				}
+				mb.mu.Unlock()
+				if active && found {
+					adapterInstance.OnEvent(document)
+				}
+			}
+			err = changeStream.Err()
+			closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			_ = changeStream.Close(closeCtx)
+			cancel()
+		}
+
+		if ctx.Err() != nil {
 			return
 		}
+		if err != nil {
+			var serverError mongod.ServerError
+			if errors.As(err, &serverError) && !serverError.HasErrorLabel("ResumableChangeStreamError") {
+				mb.mu.Lock()
+				if ctx.Err() == nil {
+					mb.changeStreamOpts = nil
+					mb.resumeToken = nil
+				}
+				mb.mu.Unlock()
+			}
+			mongoLog.Debug("change stream error: %s", err.Error())
+		}
 
-		// Brief delay before reconnecting to avoid tight error loop
-		// Matches Node.js behavior: setTimeout(() => initChangeStream(), 1000)
-		time.Sleep(1 * time.Second)
-	}
-}
-
-// watchChangeStream opens and processes a single Change Stream session.
-// Returns when the stream is closed or encounters a non-recoverable error.
-func (mb *MongoAdapterBuilder) watchChangeStream() {
-	mongoLog.Debug("opening change stream")
-
-	cs, err := mb.Mongo.Collection.Watch(mb.Mongo.Context, buildChangeStreamPipeline())
-	if err != nil {
-		mongoLog.Debug("failed to open change stream: %s", err.Error())
-		mb.Mongo.Emit("error", err)
-		return
-	}
-	defer func() { _ = cs.Close(mb.Mongo.Context) }()
-
-	for cs.Next(mb.Mongo.Context) {
-		if mb.isClosed.Load() {
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
 			return
 		}
-
-		var event struct {
-			OperationType string              `bson:"operationType"`
-			FullDocument  *mongo.AdapterEvent `bson:"fullDocument"`
-		}
-		if err := cs.Decode(&event); err != nil {
-			mongoLog.Debug("failed to decode change stream event: %s", err.Error())
-			continue
-		}
-
-		if event.OperationType != "insert" {
-			continue
-		}
-
-		doc := event.FullDocument
-		if doc == nil {
-			continue
-		}
-
-		// Route to the appropriate namespace adapter
-		if adapterInstance, ok := mb.namespaceToAdapters.Load(doc.Nsp); ok {
-			adapterInstance.OnEvent(doc)
-		}
-	}
-	if err := cs.Err(); err != nil {
-		if mb.Mongo.Context.Err() != nil {
-			return // Context canceled, stop listening
-		}
-		mongoLog.Debug("change stream error: %s", err.Error())
-		mb.Mongo.Emit("error", err)
 	}
 }

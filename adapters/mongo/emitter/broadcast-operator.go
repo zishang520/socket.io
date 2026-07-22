@@ -2,6 +2,7 @@
 package emitter
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -22,6 +23,8 @@ var reservedEvents = types.NewSet(
 	"newListener",
 	"removeListener",
 )
+
+var errAcknowledgementsNotSupported = errors.New("Acknowledgements are not supported") //nolint:staticcheck // Node.js API text
 
 // BroadcastOperator provides a fluent API for broadcasting events to Socket.IO clients via MongoDB.
 // It supports room targeting, exclusions, and broadcast flags through method chaining.
@@ -140,11 +143,14 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Nsp:  b.broadcastOptions.Nsp,
 		Data: data,
 	}
+	flags := &socket.BroadcastFlags{}
+	flags.Compress = b.flags.Compress
+	flags.Volatile = b.flags.Volatile
 
 	opts := &adapter.PacketOptions{
 		Rooms:  b.rooms.Keys(),
 		Except: b.exceptRooms.Keys(),
-		Flags:  b.flags,
+		Flags:  flags,
 	}
 
 	// Build document matching Node.js format:
@@ -169,12 +175,11 @@ func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 	}
 
 	if message.Data != nil {
-		// Encode data to bson.RawValue
-		dataBytes, err := bson.Marshal(message.Data)
+		data, err := mongo.MarshalAdapterData(message.Data)
 		if err != nil {
 			return err
 		}
-		event.Data = bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: dataBytes}
+		event.Data = data
 	}
 
 	if b.broadcastOptions.AddCreatedAtField {
@@ -242,7 +247,7 @@ func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 func (b *BroadcastOperator) ServerSideEmit(args ...any) error {
 	if len(args) > 0 {
 		if _, withAck := args[len(args)-1].(socket.Ack); withAck {
-			return fmt.Errorf("acknowledgements are not supported when using emitter")
+			return errAcknowledgementsNotSupported
 		}
 	}
 
