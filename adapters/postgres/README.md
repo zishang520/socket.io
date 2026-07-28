@@ -105,7 +105,7 @@ func main() {
 
 ```golang
 type PostgresAdapterOptions struct {
-    Key               string        // PostgreSQL channel prefix (default: "socket.io")
+    ChannelPrefix     string        // PostgreSQL channel prefix (default: "socket.io")
     TableName         string        // Attachment storage table name (default: "socket_io_attachments")
     PayloadThreshold  int           // Byte threshold for attachment storage (default: 8000)
     CleanupInterval   int64         // Cleanup interval in milliseconds (default: 30000)
@@ -119,11 +119,13 @@ type PostgresAdapterOptions struct {
 
 ```golang
 type EmitterOptions struct {
-    Key              string // PostgreSQL channel prefix (default: "socket.io")
+    ChannelPrefix    string // PostgreSQL channel prefix (default: "socket.io")
     TableName        string // Attachment storage table name (default: "socket_io_attachments")
     PayloadThreshold int    // Byte threshold for attachment storage (default: 8000)
 }
 ```
+
+`TableName` accepts unquoted, schema-qualified names such as `public.socket_io_attachments`.
 
 ## Architecture
 
@@ -136,7 +138,8 @@ Messages are serialized as JSON for direct NOTIFY, or MessagePack for attachment
 
 ### Database Schema
 
-The adapter automatically creates the attachment table on startup:
+Create the attachment table before starting the adapter. Like the Node.js adapter,
+the Go adapter does not execute schema migrations automatically:
 
 ```sql
 CREATE TABLE IF NOT EXISTS socket_io_attachments (

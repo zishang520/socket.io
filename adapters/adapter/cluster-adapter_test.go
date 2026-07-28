@@ -8,11 +8,35 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 type fixedServerCountAdapter struct {
 	socket.Adapter
 	serverCount int64
+}
+
+func TestServerSideEmitResponseStoresScalarPacket(t *testing.T) {
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	request := &ClusterRequest{
+		Expected:  2,
+		Current:   new(atomic.Int64),
+		Responses: types.NewSlice[any](),
+	}
+	cluster.requests.Store("request", request)
+
+	cluster.OnResponse(&ClusterResponse{
+		Type: SERVER_SIDE_EMIT_RESPONSE,
+		Data: &ServerSideEmitResponse{
+			RequestId: "request",
+			Packet:    []any{"response"},
+		},
+	})
+
+	responses := request.Responses.All()
+	if len(responses) != 1 || responses[0] != "response" {
+		t.Fatalf("expected scalar response, got %#v", responses)
+	}
 }
 
 func (a *fixedServerCountAdapter) ServerCount() int64 {

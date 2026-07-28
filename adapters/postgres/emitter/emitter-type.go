@@ -16,7 +16,7 @@ type (
 		Nsp string
 
 		// BroadcastChannel is the PostgreSQL channel used for all messages.
-		// Format: "{key}#{nsp}"
+		// Format: "{channelPrefix}#{nsp}"
 		BroadcastChannel string
 
 		// TableName is the name of the attachment table for large payloads.
@@ -36,7 +36,7 @@ type (
 		Emit(ev string, args ...any) error
 		SocketsJoin(rooms ...socket.Room) error
 		SocketsLeave(rooms ...socket.Room) error
-		DisconnectSockets(state bool) error
+		DisconnectSockets(close bool) error
 		ServerSideEmit(args ...any) error
 	}
 	// ClusterMessage is an alias for adapter.ClusterMessage.

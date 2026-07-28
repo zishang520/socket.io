@@ -13,8 +13,8 @@ func TestDefaultPostgresAdapterOptions(t *testing.T) {
 	}
 
 	t.Run("default values are nil", func(t *testing.T) {
-		if opts.GetRawKey() != nil {
-			t.Fatal("Expected nil RawKey by default")
+		if opts.GetRawChannelPrefix() != nil {
+			t.Fatal("Expected nil RawChannelPrefix by default")
 		}
 		if opts.GetRawTableName() != nil {
 			t.Fatal("Expected nil RawTableName by default")
@@ -37,19 +37,19 @@ func TestDefaultPostgresAdapterOptions(t *testing.T) {
 	})
 }
 
-func TestPostgresAdapterOptions_Key(t *testing.T) {
+func TestPostgresAdapterOptions_ChannelPrefix(t *testing.T) {
 	opts := DefaultPostgresAdapterOptions()
 
 	t.Run("empty by default", func(t *testing.T) {
-		if opts.Key() != "" {
-			t.Fatalf("Expected empty, got %s", opts.Key())
+		if opts.ChannelPrefix() != "" {
+			t.Fatalf("Expected empty, got %s", opts.ChannelPrefix())
 		}
 	})
 
 	t.Run("set and get", func(t *testing.T) {
-		opts.SetKey("custom-prefix")
-		if opts.Key() != "custom-prefix" {
-			t.Fatalf("Expected 'custom-prefix', got %s", opts.Key())
+		opts.SetChannelPrefix("custom-prefix")
+		if opts.ChannelPrefix() != "custom-prefix" {
+			t.Fatalf("Expected 'custom-prefix', got %s", opts.ChannelPrefix())
 		}
 	})
 }
@@ -175,7 +175,7 @@ func TestPostgresAdapterOptions_Assign(t *testing.T) {
 
 	t.Run("assign all fields", func(t *testing.T) {
 		source := DefaultPostgresAdapterOptions()
-		source.SetKey("src-key")
+		source.SetChannelPrefix("src-key")
 		source.SetTableName("src_table")
 		source.SetPayloadThreshold(4000)
 		source.SetCleanupInterval(60000)
@@ -185,8 +185,8 @@ func TestPostgresAdapterOptions_Assign(t *testing.T) {
 		target := DefaultPostgresAdapterOptions()
 		target.Assign(source)
 
-		if target.Key() != "src-key" {
-			t.Fatalf("Expected 'src-key', got %s", target.Key())
+		if target.ChannelPrefix() != "src-key" {
+			t.Fatalf("Expected 'src-key', got %s", target.ChannelPrefix())
 		}
 		if target.TableName() != "src_table" {
 			t.Fatalf("Expected 'src_table', got %s", target.TableName())
@@ -207,15 +207,15 @@ func TestPostgresAdapterOptions_Assign(t *testing.T) {
 
 	t.Run("partial assign preserves existing values", func(t *testing.T) {
 		source := DefaultPostgresAdapterOptions()
-		source.SetKey("new-key")
+		source.SetChannelPrefix("new-key")
 
 		target := DefaultPostgresAdapterOptions()
 		target.SetTableName("existing_table")
 		target.SetCleanupInterval(60000)
 		target.Assign(source)
 
-		if target.Key() != "new-key" {
-			t.Fatalf("Expected 'new-key', got %s", target.Key())
+		if target.ChannelPrefix() != "new-key" {
+			t.Fatalf("Expected 'new-key', got %s", target.ChannelPrefix())
 		}
 		// Original values should be preserved
 		if target.TableName() != "existing_table" {

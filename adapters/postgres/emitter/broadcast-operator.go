@@ -3,6 +3,7 @@ package emitter
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -23,6 +24,8 @@ var reservedEvents = types.NewSet(
 	"newListener",
 	"removeListener",
 )
+
+var errAcknowledgementsNotSupported = errors.New("Acknowledgements are not supported") //nolint:staticcheck // Node.js API text
 
 // BroadcastOperator provides a fluent API for broadcasting events to Socket.IO clients via PostgreSQL.
 // It supports room targeting, exclusions, and broadcast flags through method chaining.
@@ -150,10 +153,8 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Flags:  b.flags,
 	}
 
-	// Build ClusterMessage matching Node.js format:
-	// {uid: "emitter", type: BROADCAST, data: {packet, opts}}
+	// Build ClusterMessage matching Node.js format.
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.BROADCAST,
 		Data: &adapter.BroadcastMessage{
 			Packet: packet,
@@ -169,14 +170,18 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 // publish() method behavior exactly.
 func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 	channel := b.broadcastOptions.BroadcastChannel
+	wireMessage := *message
+	wireMessage.Uid = adapter.EMITTER_UID
+	wireMessage.Nsp = b.broadcastOptions.Nsp
+	wireData, binary := postgres.MarshalAdapterData(message.Data)
+	wireMessage.Data = wireData
 
 	// Check binary data first — binary always goes to attachment table
-	if b.messageHasBinary(message) {
-		return b.publishWithAttachment(channel, message)
+	if binary {
+		return b.publishWithAttachment(&wireMessage)
 	}
 
-	// Encode as JSON
-	payload, err := json.Marshal(message)
+	payload, err := json.Marshal(&wireMessage)
 	if err != nil {
 		return err
 	}
@@ -185,32 +190,16 @@ func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 
 	// Check if payload exceeds threshold — use attachment table
 	if len(payload) > b.broadcastOptions.PayloadThreshold {
-		return b.publishWithAttachment(channel, message)
+		return b.publishWithAttachment(&wireMessage)
 	}
 
 	return b.postgresClient.Notify(b.postgresClient.Context, channel, string(payload))
 }
 
-// messageHasBinary checks if a ClusterMessage contains binary data.
-// Matches the Node.js emitter's binary type check:
-// BROADCAST, SERVER_SIDE_EMIT, SERVER_SIDE_EMIT_RESPONSE.
-func (b *BroadcastOperator) messageHasBinary(message *adapter.ClusterMessage) bool {
-	if message.Data == nil {
-		return false
-	}
-	switch message.Type {
-	case adapter.BROADCAST, adapter.SERVER_SIDE_EMIT, adapter.SERVER_SIDE_EMIT_RESPONSE:
-		return parser.HasBinary(message.Data)
-	default:
-		return false
-	}
-}
-
 // publishWithAttachment msgpack-encodes the full ClusterMessage, stores it in the
 // attachment table, and sends a lightweight NOTIFY header with the attachment ID.
 // This matches the Node.js emitter's publishWithAttachment() behavior.
-func (b *BroadcastOperator) publishWithAttachment(channel string, message *adapter.ClusterMessage) error {
-	// Msgpack-encode the entire ClusterMessage (matches Node.js: encode(document))
+func (b *BroadcastOperator) publishWithAttachment(message *adapter.ClusterMessage) error {
 	payload, err := utils.MsgPack().Encode(message)
 	if err != nil {
 		return fmt.Errorf("failed to msgpack-encode message: %w", err)
@@ -227,7 +216,7 @@ func (b *BroadcastOperator) publishWithAttachment(channel string, message *adapt
 
 	// Send notification header with uid, type and attachment reference
 	notification, err := json.Marshal(&NotificationMessage{
-		Uid:          emitterUID,
+		Uid:          message.Uid,
 		Type:         message.Type,
 		AttachmentId: strconv.FormatInt(id, 10),
 	})
@@ -235,14 +224,13 @@ func (b *BroadcastOperator) publishWithAttachment(channel string, message *adapt
 		return err
 	}
 
-	return b.postgresClient.Notify(b.postgresClient.Context, channel, string(notification))
+	return b.postgresClient.Notify(b.postgresClient.Context, b.broadcastOptions.BroadcastChannel, string(notification))
 }
 
 // SocketsJoin makes all matching socket instances join the specified rooms.
 // This sends a SOCKETS_JOIN ClusterMessage to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.SOCKETS_JOIN,
 		Data: &adapter.SocketsJoinLeaveMessage{
 			Opts: &adapter.PacketOptions{
@@ -260,7 +248,6 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 // This sends a SOCKETS_LEAVE ClusterMessage to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.SOCKETS_LEAVE,
 		Data: &adapter.SocketsJoinLeaveMessage{
 			Opts: &adapter.PacketOptions{
@@ -275,18 +262,17 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 }
 
 // DisconnectSockets disconnects all matching socket instances.
-// If state is true, the underlying transport connection will be closed.
+// If close is true, the underlying transport connection will be closed.
 // This sends a DISCONNECT_SOCKETS ClusterMessage to all Socket.IO servers in the cluster.
-func (b *BroadcastOperator) DisconnectSockets(state bool) error {
+func (b *BroadcastOperator) DisconnectSockets(close bool) error {
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.DISCONNECT_SOCKETS,
 		Data: &adapter.DisconnectSocketsMessage{
 			Opts: &adapter.PacketOptions{
 				Rooms:  b.rooms.Keys(),
 				Except: b.exceptRooms.Keys(),
 			},
-			Close: state,
+			Close: close,
 		},
 	}
 
@@ -299,12 +285,11 @@ func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 func (b *BroadcastOperator) ServerSideEmit(args ...any) error {
 	if len(args) > 0 {
 		if _, withAck := args[len(args)-1].(socket.Ack); withAck {
-			return fmt.Errorf("acknowledgements are not supported when using emitter")
+			return errAcknowledgementsNotSupported
 		}
 	}
 
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.SERVER_SIDE_EMIT,
 		Data: &adapter.ServerSideEmitMessage{
 			Packet: args,

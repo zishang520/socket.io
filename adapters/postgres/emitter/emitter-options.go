@@ -2,14 +2,11 @@
 // without requiring a full Socket.IO server instance.
 package emitter
 
-import (
-	"github.com/zishang520/socket.io/adapters/postgres/v3"
-	"github.com/zishang520/socket.io/v3/pkg/types"
-)
+import "github.com/zishang520/socket.io/v3/pkg/types"
 
 const (
-	// DefaultEmitterKey is the default PostgreSQL channel prefix for the emitter.
-	DefaultEmitterKey = "socket.io"
+	// DefaultChannelPrefix is the default PostgreSQL channel prefix for the emitter.
+	DefaultChannelPrefix = "socket.io"
 
 	// DefaultTableName is the default name for the attachment storage table.
 	DefaultTableName = "socket_io_attachments"
@@ -23,19 +20,12 @@ type (
 	// EmitterOptionsInterface defines the interface for configuring emitter options.
 	// It provides getters and setters for all configurable options.
 	EmitterOptionsInterface interface {
-		// SetKey sets the PostgreSQL channel prefix for notifications.
-		SetKey(string)
-		// GetRawKey returns the raw Optional wrapper for the key setting.
-		GetRawKey() types.Optional[string]
-		// Key returns the PostgreSQL channel prefix, or empty string if not set.
-		Key() string
-
-		// SetParser sets the parser for encoding messages.
-		SetParser(postgres.Parser)
-		// GetRawParser returns the raw Optional wrapper for the parser setting.
-		GetRawParser() types.Optional[postgres.Parser]
-		// Parser returns the parser, or nil if not set.
-		Parser() postgres.Parser
+		// SetChannelPrefix sets the PostgreSQL channel prefix for notifications.
+		SetChannelPrefix(string)
+		// GetRawChannelPrefix returns the raw Optional wrapper for the channel prefix.
+		GetRawChannelPrefix() types.Optional[string]
+		// ChannelPrefix returns the PostgreSQL channel prefix, or empty string if not set.
+		ChannelPrefix() string
 
 		// SetTableName sets the attachment table name.
 		SetTableName(string)
@@ -55,13 +45,9 @@ type (
 	// EmitterOptions holds configuration options for the PostgreSQL emitter.
 	// All fields are optional and will use default values if not explicitly set.
 	EmitterOptions struct {
-		// key is the PostgreSQL channel prefix used for constructing channel names.
+		// channelPrefix is the PostgreSQL channel prefix used for constructing channel names.
 		// Default: "socket.io"
-		key types.Optional[string]
-
-		// parser is the encoder/decoder used for serializing messages.
-		// Default: MessagePack parser
-		parser types.Optional[postgres.Parser]
+		channelPrefix types.Optional[string]
 
 		// tableName is the name of the attachment table for large payloads.
 		// Default: "socket_io_attachments"
@@ -73,7 +59,8 @@ type (
 	}
 )
 
-// DefaultEmitterOptions creates a new EmitterOptions instance with default values.
+// DefaultEmitterOptions returns empty options.
+// Defaults are applied when the emitter is constructed.
 func DefaultEmitterOptions() *EmitterOptions {
 	return &EmitterOptions{}
 }
@@ -85,11 +72,8 @@ func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 		return o
 	}
 
-	if data.GetRawKey() != nil {
-		o.SetKey(data.Key())
-	}
-	if data.Parser() != nil {
-		o.SetParser(data.Parser())
+	if data.GetRawChannelPrefix() != nil {
+		o.SetChannelPrefix(data.ChannelPrefix())
 	}
 	if data.GetRawTableName() != nil {
 		o.SetTableName(data.TableName())
@@ -101,40 +85,22 @@ func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 	return o
 }
 
-// SetKey sets the PostgreSQL channel prefix.
-func (o *EmitterOptions) SetKey(key string) {
-	o.key = types.NewSome(key)
+// SetChannelPrefix sets the PostgreSQL notification channel prefix.
+func (o *EmitterOptions) SetChannelPrefix(channelPrefix string) {
+	o.channelPrefix = types.NewSome(channelPrefix)
 }
 
-// GetRawKey returns the raw Optional value for key.
-func (o *EmitterOptions) GetRawKey() types.Optional[string] {
-	return o.key
+// GetRawChannelPrefix returns the raw Optional value for channelPrefix.
+func (o *EmitterOptions) GetRawChannelPrefix() types.Optional[string] {
+	return o.channelPrefix
 }
 
-// Key returns the configured channel prefix, or empty string if not set.
-func (o *EmitterOptions) Key() string {
-	if o.key == nil {
+// ChannelPrefix returns the configured channel prefix, or empty string if not set.
+func (o *EmitterOptions) ChannelPrefix() string {
+	if o.channelPrefix == nil {
 		return ""
 	}
-	return o.key.Get()
-}
-
-// SetParser sets the parser for message encoding/decoding.
-func (o *EmitterOptions) SetParser(parser postgres.Parser) {
-	o.parser = types.NewSome(parser)
-}
-
-// GetRawParser returns the raw Optional value for parser.
-func (o *EmitterOptions) GetRawParser() types.Optional[postgres.Parser] {
-	return o.parser
-}
-
-// Parser returns the configured parser, or nil if not set.
-func (o *EmitterOptions) Parser() postgres.Parser {
-	if o.parser == nil {
-		return nil
-	}
-	return o.parser.Get()
+	return o.channelPrefix.Get()
 }
 
 // SetTableName sets the attachment table name.

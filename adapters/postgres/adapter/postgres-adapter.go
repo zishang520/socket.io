@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/postgres/v3"
-	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -30,7 +30,8 @@ type postgresAdapter struct {
 	postgresClient *postgres.PostgresClient
 	opts           *PostgresAdapterOptions
 	channel        string
-	cleanupFunc    types.Callable // Cleanup callback for resource management
+	cleanupFunc    atomic.Pointer[types.Callable]
+	isClosed       atomic.Bool
 }
 
 // MakePostgresAdapter creates a new uninitialized postgresAdapter.
@@ -39,7 +40,6 @@ func MakePostgresAdapter() PostgresAdapter {
 	a := &postgresAdapter{
 		ClusterAdapterWithHeartbeat: adapter.MakeClusterAdapterWithHeartbeat(),
 		opts:                        DefaultPostgresAdapterOptions(),
-		cleanupFunc:                 nil,
 	}
 
 	a.Prototype(a)
@@ -83,23 +83,26 @@ func (a *postgresAdapter) SetChannel(channel string) {
 // This method must be called before using the adapter.
 func (a *postgresAdapter) Construct(nsp socket.Namespace) {
 	a.ClusterAdapterWithHeartbeat.Construct(nsp)
-}
 
-// hasBinary checks if a cluster message contains binary data.
-// Only certain message types may carry binary payloads.
-// This matches the Node.js adapter's binary detection types exactly:
-// BROADCAST, BROADCAST_ACK, SERVER_SIDE_EMIT, SERVER_SIDE_EMIT_RESPONSE.
-func hasBinary(message *ClusterResponse) bool {
-	if message.Data == nil {
-		return false
+	if a.opts.GetRawChannelPrefix() == nil {
+		a.opts.SetChannelPrefix(DefaultChannelPrefix)
 	}
-
-	switch message.Type {
-	case adapter.BROADCAST, adapter.BROADCAST_ACK,
-		adapter.SERVER_SIDE_EMIT, adapter.SERVER_SIDE_EMIT_RESPONSE:
-		return parser.HasBinary(message.Data)
-	default:
-		return false
+	if a.opts.GetRawTableName() == nil {
+		a.opts.SetTableName(DefaultTableName)
+	}
+	if a.opts.GetRawPayloadThreshold() == nil {
+		a.opts.SetPayloadThreshold(DefaultPayloadThreshold)
+	}
+	if a.opts.GetRawCleanupInterval() == nil {
+		a.opts.SetCleanupInterval(DefaultCleanupInterval)
+	}
+	if a.opts.ErrorHandler() == nil {
+		a.opts.SetErrorHandler(func(err error) {
+			postgresLog.Debug("%s", err.Error())
+		})
+	}
+	if a.channel == "" {
+		a.channel = a.opts.ChannelPrefix() + "#" + nsp.Name()
 	}
 }
 
@@ -108,36 +111,42 @@ func hasBinary(message *ClusterResponse) bool {
 // the full message is msgpack-encoded and stored in the attachment table. Only a reference
 // header is sent via NOTIFY. This matches the Node.js adapter protocol exactly.
 // Returns an empty offset since PostgreSQL NOTIFY does not support ordered offsets.
-func (a *postgresAdapter) DoPublish(message *ClusterMessage) (adapter.Offset, error) {
-	postgresLog.Debug("publishing message of type %d", message.Type)
+func (a *postgresAdapter) DoPublish(message *ClusterMessage) (offset adapter.Offset, err error) {
+	defer func() {
+		if err != nil {
+			a.onError(err)
+		}
+	}()
 
-	// Binary data always goes to attachment table (Node.js never sends binary via NOTIFY)
-	if hasBinary(message) {
-		return a.publishWithAttachment(message)
+	if log.DEBUG.Load() {
+		postgresLog.Debug("publishing message of type %d", message.Type)
 	}
 
-	// Encode as JSON for NOTIFY
-	payload, err := json.Marshal(message)
+	wireMessage := *message
+	wireData, binary := postgres.MarshalAdapterData(message.Data)
+	wireMessage.Data = wireData
+
+	// Binary data always goes to attachment table (Node.js never sends binary via NOTIFY)
+	if binary {
+		return "", a.publishWithAttachment(&wireMessage)
+	}
+
+	payload, err := json.Marshal(&wireMessage)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode message: %w", err)
 	}
 
 	// If JSON payload exceeds threshold, use attachment table
-	if len(payload) > a.opts.PayloadThreshold() {
-		return a.publishWithAttachment(message)
+	if len(payload) >= a.opts.PayloadThreshold() {
+		return "", a.publishWithAttachment(&wireMessage)
 	}
 
-	err = a.postgresClient.Notify(a.postgresClient.Context, a.channel, string(payload))
-	if err != nil {
-		return "", err
-	}
-
-	return "", nil
+	return "", a.postgresClient.Notify(a.postgresClient.Context, a.channel, string(payload))
 }
 
 // DoPublishResponse publishes a response message to the cluster.
 // This is used for request-response patterns between nodes.
-func (a *postgresAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *ClusterResponse) error {
+func (a *postgresAdapter) DoPublishResponse(_ adapter.ServerId, response *ClusterResponse) error {
 	_, err := a.DoPublish(response)
 	return err
 }
@@ -145,11 +154,10 @@ func (a *postgresAdapter) DoPublishResponse(requesterUid adapter.ServerId, respo
 // publishWithAttachment msgpack-encodes the full ClusterMessage, stores it in the
 // attachment table, and sends a lightweight NOTIFY header with the attachment ID.
 // This matches the Node.js adapter protocol: attachments are always msgpack-encoded.
-func (a *postgresAdapter) publishWithAttachment(message *ClusterMessage) (adapter.Offset, error) {
-	// Msgpack-encode the entire ClusterMessage (matches Node.js: encode(message))
+func (a *postgresAdapter) publishWithAttachment(message *ClusterMessage) error {
 	payload, err := utils.MsgPack().Encode(message)
 	if err != nil {
-		return "", fmt.Errorf("failed to msgpack-encode message: %w", err)
+		return fmt.Errorf("failed to msgpack-encode message: %w", err)
 	}
 
 	id, err := a.postgresClient.InsertAttachment(
@@ -158,32 +166,28 @@ func (a *postgresAdapter) publishWithAttachment(message *ClusterMessage) (adapte
 		payload,
 	)
 	if err != nil {
-		return "", fmt.Errorf("failed to insert attachment: %w", err)
+		return fmt.Errorf("failed to insert attachment: %w", err)
 	}
 
 	// Send notification header with uid, type, and attachmentId (matches Node.js format)
 	notification, err := json.Marshal(&NotificationMessage{
-		Uid:          a.Uid(),
+		Uid:          message.Uid,
 		Type:         message.Type,
 		AttachmentId: strconv.FormatInt(id, 10),
 	})
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	err = a.postgresClient.Notify(a.postgresClient.Context, a.channel, string(notification))
-	return "", err
+	return a.postgresClient.Notify(a.postgresClient.Context, a.channel, string(notification))
 }
 
 // OnNotification processes a raw notification payload received from PostgreSQL LISTEN/NOTIFY.
 // It handles both direct JSON payloads and attachment references (msgpack-encoded in the DB).
 func (a *postgresAdapter) OnNotification(payload string) {
-	postgresLog.Debug("received notification on channel %s", a.channel)
-
-	// Parse the JSON notification (either a full message or an attachment header)
 	var notification NotificationMessage
 	if err := json.Unmarshal([]byte(payload), &notification); err != nil {
-		postgresLog.Debug("failed to parse notification: %s", err.Error())
+		a.onError(fmt.Errorf("failed to parse notification: %w", err))
 		return
 	}
 
@@ -192,86 +196,77 @@ func (a *postgresAdapter) OnNotification(payload string) {
 		return
 	}
 
-	// If there's an attachment ID, fetch the full payload from the table and decode as msgpack
+	var (
+		message *ClusterResponse
+		err     error
+	)
 	if notification.AttachmentId != "" {
-		attachmentId, err := strconv.ParseInt(notification.AttachmentId, 10, 64)
-		if err != nil {
-			postgresLog.Debug("invalid attachment ID: %s", notification.AttachmentId)
+		attachmentId, parseErr := strconv.ParseInt(notification.AttachmentId, 10, 64)
+		if parseErr != nil {
+			a.onError(fmt.Errorf("invalid attachment ID %q: %w", notification.AttachmentId, parseErr))
 			return
 		}
 
-		attachmentPayload, err := a.postgresClient.GetAttachment(
+		attachmentPayload, fetchErr := a.postgresClient.GetAttachment(
 			a.postgresClient.Context,
 			a.opts.TableName(),
 			attachmentId,
 		)
-		if err != nil {
-			postgresLog.Debug("failed to fetch attachment %d: %s", attachmentId, err.Error())
+		if fetchErr != nil {
+			a.onError(fmt.Errorf("failed to fetch attachment %d: %w", attachmentId, fetchErr))
 			return
 		}
 
 		// Attachment payloads are msgpack-encoded (matches Node.js: decode(result.rows[0].payload))
-		message, err := a.decodeMsgpack(attachmentPayload)
-		if err != nil {
-			postgresLog.Debug("failed to decode msgpack attachment: %s", err.Error())
-			return
-		}
-
-		if message.Uid == a.Uid() {
-			return
-		}
-
-		a.OnMessage(message, "")
-		return
+		message, err = a.decodeMsgpack(attachmentPayload)
+	} else {
+		// Direct NOTIFY payload: decode as JSON.
+		message, err = a.decodeNotification(&notification)
 	}
-
-	// Direct NOTIFY payload — decode as JSON
-	message, err := a.decode([]byte(payload))
 	if err != nil {
-		postgresLog.Debug("failed to decode message: %s", err.Error())
+		a.onError(err)
 		return
 	}
 
-	// The uid was already checked above, but verify again from the full message
-	if message.Uid == a.Uid() {
+	nsp := a.Nsp().Name()
+	if message.Nsp == "" && message.Uid == adapter.EMITTER_UID {
+		// The Node.js emitter 0.1.x omits the top-level namespace and relies on the notification channel.
+		message.Nsp = nsp
+	}
+	if message.Nsp != nsp {
 		return
 	}
 
 	a.OnMessage(message, "")
 }
 
-// decode converts a JSON NOTIFY payload into a typed ClusterResponse.
-// This handles non-binary messages sent directly via pg_notify.
-func (a *postgresAdapter) decode(payload []byte) (*ClusterResponse, error) {
-	// Parse the outer structure with Data as raw JSON
-	var raw struct {
-		Uid  string              `json:"uid"`
-		Nsp  string              `json:"nsp"`
-		Type adapter.MessageType `json:"type"`
-		Data json.RawMessage     `json:"data,omitempty"`
+func (a *postgresAdapter) onError(err error) {
+	if handler := a.opts.ErrorHandler(); handler != nil {
+		handler(err)
+		return
 	}
+	postgresLog.Debug("%s", err.Error())
+}
 
-	if err := json.Unmarshal(payload, &raw); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal notification: %w", err)
-	}
-
+func (a *postgresAdapter) decodeNotification(notification *NotificationMessage) (*ClusterResponse, error) {
 	message := &adapter.ClusterMessage{
-		Uid:  adapter.ServerId(raw.Uid),
-		Nsp:  raw.Nsp,
-		Type: raw.Type,
+		Uid:  notification.Uid,
+		Nsp:  notification.Nsp,
+		Type: notification.Type,
 	}
 
-	// Return early if no data
-	if len(raw.Data) == 0 || isJSONNull(raw.Data) {
+	if len(notification.Data) == 0 || isJSONNull(notification.Data) {
 		return message, nil
 	}
 
-	// Decode message data based on the message type
-	data, err := a.decodeData(message.Type, raw.Data)
-	if err != nil {
-		return nil, err
+	target := postgres.AdapterDataTarget(message.Type)
+	if target == nil {
+		return message, nil
 	}
-	message.Data = data
+	if err := json.Unmarshal(notification.Data, target); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON data: %w", err)
+	}
+	message.Data = postgres.UnmarshalAdapterData(message.Type, target)
 
 	return message, nil
 }
@@ -283,9 +278,8 @@ func isJSONNull(data json.RawMessage) bool {
 // decodeMsgpack converts a msgpack-encoded attachment payload into a typed ClusterResponse.
 // This handles binary/large messages stored in the attachment table.
 func (a *postgresAdapter) decodeMsgpack(payload []byte) (*ClusterResponse, error) {
-	// Two-pass decode: first get outer fields with Data as raw msgpack
 	var raw struct {
-		Uid  string              `msgpack:"uid,omitempty"`
+		Uid  adapter.ServerId    `msgpack:"uid,omitempty"`
 		Nsp  string              `msgpack:"nsp,omitempty"`
 		Type adapter.MessageType `msgpack:"type,omitempty"`
 		Data msgpack.RawMessage  `msgpack:"data,omitempty"`
@@ -296,7 +290,7 @@ func (a *postgresAdapter) decodeMsgpack(payload []byte) (*ClusterResponse, error
 	}
 
 	message := &adapter.ClusterMessage{
-		Uid:  adapter.ServerId(raw.Uid),
+		Uid:  raw.Uid,
 		Nsp:  raw.Nsp,
 		Type: raw.Type,
 	}
@@ -305,82 +299,40 @@ func (a *postgresAdapter) decodeMsgpack(payload []byte) (*ClusterResponse, error
 		return message, nil
 	}
 
-	// Decode data based on message type using msgpack
-	data, err := a.decodeMsgpackData(message.Type, raw.Data)
-	if err != nil {
-		return nil, err
+	target := postgres.AdapterDataTarget(message.Type)
+	if target == nil {
+		return message, nil
 	}
-	message.Data = data
+	if err := utils.MsgPack().Decode(raw.Data, target); err != nil {
+		return nil, fmt.Errorf("failed to decode MessagePack data: %w", err)
+	}
+	message.Data = postgres.UnmarshalAdapterData(message.Type, target)
 
 	return message, nil
 }
 
-// decodeData deserializes a JSON data payload based on the message type.
-func (a *postgresAdapter) decodeData(messageType adapter.MessageType, rawData json.RawMessage) (any, error) {
-	target := allocateTarget(messageType)
-	if target == nil {
-		return nil, nil
-	}
-
-	if err := json.Unmarshal(rawData, target); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON data: %w", err)
-	}
-
-	return target, nil
-}
-
-// decodeMsgpackData deserializes a msgpack data payload based on the message type.
-func (a *postgresAdapter) decodeMsgpackData(messageType adapter.MessageType, rawData msgpack.RawMessage) (any, error) {
-	target := allocateTarget(messageType)
-	if target == nil {
-		return nil, nil
-	}
-
-	if err := utils.MsgPack().Decode(rawData, target); err != nil {
-		return nil, fmt.Errorf("failed to decode MessagePack data: %w", err)
-	}
-
-	return target, nil
-}
-
-// allocateTarget returns a pointer to the appropriate struct for the given message type.
-func allocateTarget(messageType adapter.MessageType) any {
-	switch messageType {
-	case adapter.INITIAL_HEARTBEAT, adapter.HEARTBEAT, adapter.ADAPTER_CLOSE:
-		return nil
-	case adapter.BROADCAST:
-		return &BroadcastMessage{}
-	case adapter.SOCKETS_JOIN, adapter.SOCKETS_LEAVE:
-		return &SocketsJoinLeaveMessage{}
-	case adapter.DISCONNECT_SOCKETS:
-		return &DisconnectSocketsMessage{}
-	case adapter.FETCH_SOCKETS:
-		return &FetchSocketsMessage{}
-	case adapter.FETCH_SOCKETS_RESPONSE:
-		return &FetchSocketsResponse{}
-	case adapter.SERVER_SIDE_EMIT:
-		return &ServerSideEmitMessage{}
-	case adapter.SERVER_SIDE_EMIT_RESPONSE:
-		return &ServerSideEmitResponse{}
-	case adapter.BROADCAST_CLIENT_COUNT:
-		return &BroadcastClientCount{}
-	case adapter.BROADCAST_ACK:
-		return &BroadcastAck{}
-	default:
-		return nil
-	}
-}
-
 // Cleanup registers a cleanup callback to be called when the adapter is closed.
 func (a *postgresAdapter) Cleanup(cleanup func()) {
-	a.cleanupFunc = cleanup
+	if cleanup == nil {
+		a.cleanupFunc.Store(nil)
+		return
+	}
+	a.cleanupFunc.Store(&cleanup)
+	if a.isClosed.Load() {
+		if callback := a.cleanupFunc.Swap(nil); callback != nil {
+			(*callback)()
+		}
+	}
 }
 
 // Close releases resources and invokes the registered cleanup callback.
 func (a *postgresAdapter) Close() {
+	if !a.isClosed.CompareAndSwap(false, true) {
+		return
+	}
 	defer a.ClusterAdapterWithHeartbeat.Close()
 
-	if a.cleanupFunc != nil {
-		a.cleanupFunc()
+	if callback := a.cleanupFunc.Swap(nil); callback != nil {
+		(*callback)()
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -276,7 +277,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		}
 
 		if request, ok := c.requests.Load(data.RequestId); ok {
-			request.Responses.Push(data.Packet)
+			request.Responses.Push(slices.TryGet(data.Packet, 0))
 
 			if request.Current.Add(1) == request.Expected {
 				request.Once.Do(func() {

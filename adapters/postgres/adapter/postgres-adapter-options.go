@@ -2,8 +2,6 @@
 package adapter
 
 import (
-	"time"
-
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/postgres/v3/emitter"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -12,23 +10,17 @@ import (
 // Default configuration values for PostgresAdapterOptions.
 const (
 	// DefaultChannelPrefix is the default PostgreSQL channel prefix for LISTEN/NOTIFY.
-	DefaultChannelPrefix = "socket.io"
+	DefaultChannelPrefix = emitter.DefaultChannelPrefix
 
 	// DefaultTableName is the default name for the attachment storage table.
-	DefaultTableName = "socket_io_attachments"
+	DefaultTableName = emitter.DefaultTableName
 
 	// DefaultPayloadThreshold is the default byte threshold for using attachment storage.
 	// PostgreSQL's NOTIFY payload limit is 8000 bytes.
-	DefaultPayloadThreshold = 8000
+	DefaultPayloadThreshold = emitter.DefaultPayloadThreshold
 
 	// DefaultCleanupInterval is the default interval in milliseconds for cleaning up old attachments.
 	DefaultCleanupInterval int64 = 30_000
-
-	// DefaultHeartbeatInterval is the default interval between heartbeats.
-	DefaultHeartbeatInterval = 5_000 * time.Millisecond
-
-	// DefaultHeartbeatTimeout is the default timeout for heartbeat responses.
-	DefaultHeartbeatTimeout int64 = 10_000
 )
 
 type (
@@ -63,7 +55,8 @@ type (
 	}
 )
 
-// DefaultPostgresAdapterOptions returns a new PostgresAdapterOptions with default values.
+// DefaultPostgresAdapterOptions returns empty options.
+// Defaults are applied when the adapter is constructed.
 func DefaultPostgresAdapterOptions() *PostgresAdapterOptions {
 	return &PostgresAdapterOptions{}
 }

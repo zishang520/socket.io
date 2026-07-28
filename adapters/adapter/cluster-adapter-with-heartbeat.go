@@ -7,6 +7,7 @@ import (
 
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -314,7 +315,7 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 			adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
 		}
 		if request, ok := a.customRequests.Load(data.RequestId); ok {
-			request.Responses.Push(data.Packet)
+			request.Responses.Push(slices.TryGet(data.Packet, 0))
 
 			request.MissingUids.Delete(response.Uid)
 			if request.MissingUids.Len() == 0 {

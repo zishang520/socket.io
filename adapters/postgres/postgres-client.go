@@ -1,12 +1,12 @@
-// Package postgres provides PostgreSQL client wrapper for Socket.IO PostgreSQL adapter.
-// This package offers a unified interface for PostgreSQL operations with event handling support
-// using LISTEN/NOTIFY for pub/sub communication.
+// Package postgres provides a PostgreSQL LISTEN/NOTIFY client for the Socket.IO adapter.
 package postgres
 
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -14,18 +14,12 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-// PostgresClient wraps a pgxpool.Pool and provides context management
-// and event emitting capabilities for the Socket.IO PostgreSQL adapter.
+// PostgresClient wraps a pgxpool.Pool for the Socket.IO PostgreSQL adapter.
 //
 // The client supports a separate listener connection for LISTEN/NOTIFY operations.
 // The Pool is used for write operations (pg_notify, INSERT, DELETE, etc.)
 // and the Listener connection is used for LISTEN operations.
-//
-// The client supports error event emission, which allows higher-level components
-// to handle PostgreSQL-related errors gracefully.
 type PostgresClient struct {
-	types.EventEmitter
-
 	// Pool is the connection pool used for write operations
 	// (pg_notify, INSERT, DELETE, SELECT, etc.).
 	Pool *pgxpool.Pool
@@ -34,10 +28,14 @@ type PostgresClient struct {
 	// This context controls the lifecycle of subscriptions and operations.
 	Context context.Context
 
-	// listenerConn is a dedicated connection for LISTEN operations.
-	// It is lazily acquired from the pool.
-	listenerConn *pgx.Conn
-	listenerMu   sync.Mutex
+	listenerConn        *pgx.Conn
+	listenerChannels    *types.Set[string]
+	listenerOpCancel    context.CancelFunc
+	listenerCommandDone chan struct{}
+	listenerClosed      bool
+	listenerMu          sync.Mutex // guards listener state
+	listenerCommandMu   sync.Mutex // preserves LISTEN/UNLISTEN order
+	listenerOpMu        sync.Mutex // serializes access to listenerConn
 }
 
 // NewPostgresClient creates a new PostgresClient with the given context and connection pool.
@@ -58,32 +56,19 @@ func NewPostgresClient(ctx context.Context, pool *pgxpool.Pool) *PostgresClient 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
 	return &PostgresClient{
-		EventEmitter: types.NewEventEmitter(),
-		Pool:         pool,
-		Context:      ctx,
+		Pool:             pool,
+		Context:          ctx,
+		listenerChannels: types.NewSet[string](),
 	}
 }
 
-// getListenerConn returns a dedicated connection for LISTEN/NOTIFY operations.
-// The connection is lazily acquired from the pool on first call and reused thereafter.
-// This is thread-safe.
-func (c *PostgresClient) getListenerConn() (*pgx.Conn, error) {
-	c.listenerMu.Lock()
-	defer c.listenerMu.Unlock()
-
-	if c.listenerConn != nil {
-		return c.listenerConn, nil
+func sanitizeTableName(tableName string) string {
+	identifiers := strings.Split(tableName, ".")
+	for i, identifier := range identifiers {
+		identifiers[i] = strings.ToLower(strings.TrimSpace(identifier))
 	}
-
-	conn, err := pgx.Connect(c.Context, c.Pool.Config().ConnConfig.ConnString())
-	if err != nil {
-		return nil, fmt.Errorf("failed to acquire listener connection: %w", err)
-	}
-
-	c.listenerConn = conn
-	return conn, nil
+	return pgx.Identifier(identifiers).Sanitize()
 }
 
 // Listen subscribes to the specified PostgreSQL notification channels using LISTEN.
@@ -93,18 +78,7 @@ func (c *PostgresClient) getListenerConn() (*pgx.Conn, error) {
 //   - ctx: The context for the LISTEN operation.
 //   - channels: One or more channel names to listen on.
 func (c *PostgresClient) Listen(ctx context.Context, channels ...string) error {
-	conn, err := c.getListenerConn()
-	if err != nil {
-		return err
-	}
-
-	for _, channel := range channels {
-		if _, err := conn.Exec(ctx, fmt.Sprintf("LISTEN %s", pgx.Identifier{channel}.Sanitize())); err != nil {
-			return fmt.Errorf("failed to LISTEN on channel %q: %w", channel, err)
-		}
-	}
-
-	return nil
+	return c.updateListener(ctx, true, channels)
 }
 
 // Unlisten unsubscribes from the specified PostgreSQL notification channels using UNLISTEN.
@@ -113,20 +87,105 @@ func (c *PostgresClient) Listen(ctx context.Context, channels ...string) error {
 //   - ctx: The context for the UNLISTEN operation.
 //   - channels: One or more channel names to unlisten from.
 func (c *PostgresClient) Unlisten(ctx context.Context, channels ...string) error {
+	return c.updateListener(ctx, false, channels)
+}
+
+func (c *PostgresClient) updateListener(ctx context.Context, listen bool, channels []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.listenerCommandMu.Lock()
+	defer c.listenerCommandMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	c.listenerMu.Lock()
-	conn := c.listenerConn
+	if c.listenerClosed {
+		c.listenerMu.Unlock()
+		return context.Canceled
+	}
+	if c.listenerChannels == nil {
+		c.listenerChannels = types.NewSet[string]()
+	}
+
+	var changed []string
+	for _, channel := range channels {
+		hasChannel := c.listenerChannels.Has(channel)
+		if listen == hasChannel {
+			continue
+		}
+		if listen {
+			c.listenerChannels.Add(channel)
+		} else {
+			c.listenerChannels.Delete(channel)
+		}
+		changed = append(changed, channel)
+	}
+	needsListener := listen && len(channels) > 0 && c.listenerConn == nil
+	if len(changed) == 0 && !needsListener {
+		c.listenerMu.Unlock()
+		return nil
+	}
+	noChannels := c.listenerChannels.Len() == 0
+
+	c.listenerCommandDone = make(chan struct{})
+	if c.listenerOpCancel != nil {
+		c.listenerOpCancel()
+	}
 	c.listenerMu.Unlock()
 
+	defer func() {
+		c.listenerMu.Lock()
+		close(c.listenerCommandDone)
+		c.listenerCommandDone = nil
+		c.listenerMu.Unlock()
+	}()
+
+	c.listenerOpMu.Lock()
+	defer c.listenerOpMu.Unlock()
+
+	c.listenerMu.Lock()
+	if c.listenerClosed {
+		c.listenerMu.Unlock()
+		return context.Canceled
+	}
+	opCtx, opCancel := context.WithCancel(ctx)
+	c.listenerOpCancel = opCancel
+	conn := c.listenerConn
+	c.listenerMu.Unlock()
+	defer func() {
+		opCancel()
+		c.listenerMu.Lock()
+		c.listenerOpCancel = nil
+		c.listenerMu.Unlock()
+	}()
+
 	if conn == nil {
+		if !listen {
+			return nil
+		}
+		_, err := c.openListener(opCtx)
+		return err
+	}
+	if !listen && noChannels {
+		c.discardListener(conn)
+		return nil
+	}
+	if len(changed) == 0 {
 		return nil
 	}
 
-	for _, channel := range channels {
-		if _, err := conn.Exec(ctx, fmt.Sprintf("UNLISTEN %s", pgx.Identifier{channel}.Sanitize())); err != nil {
-			return fmt.Errorf("failed to UNLISTEN on channel %q: %w", channel, err)
+	command := "UNLISTEN"
+	if listen {
+		command = "LISTEN"
+	}
+	for _, channel := range changed {
+		if _, err := conn.Exec(opCtx, fmt.Sprintf("%s %s", command, pgx.Identifier{channel}.Sanitize())); err != nil {
+			c.discardListener(conn)
+			return fmt.Errorf("failed to %s on channel %q: %w", command, channel, err)
 		}
 	}
-
 	return nil
 }
 
@@ -135,12 +194,115 @@ func (c *PostgresClient) Unlisten(ctx context.Context, channels ...string) error
 //
 // Returns the received notification or an error if the wait was interrupted.
 func (c *PostgresClient) WaitForNotification(ctx context.Context) (*pgconn.Notification, error) {
-	conn, err := c.getListenerConn()
+	for {
+		c.listenerOpMu.Lock()
+		c.listenerMu.Lock()
+		if c.listenerClosed {
+			c.listenerMu.Unlock()
+			c.listenerOpMu.Unlock()
+			return nil, context.Canceled
+		}
+		if c.listenerCommandDone != nil {
+			done := c.listenerCommandDone
+			c.listenerMu.Unlock()
+			c.listenerOpMu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-done:
+				continue
+			}
+		}
+		opCtx, opCancel := context.WithCancel(ctx)
+		c.listenerOpCancel = opCancel
+		conn := c.listenerConn
+		c.listenerMu.Unlock()
+
+		var notification *pgconn.Notification
+		var waitErr error
+		if conn == nil {
+			conn, waitErr = c.openListener(opCtx)
+		}
+		if waitErr == nil {
+			notification, waitErr = conn.WaitForNotification(opCtx)
+		}
+		opCancel()
+
+		c.listenerMu.Lock()
+		c.listenerOpCancel = nil
+		pending := c.listenerCommandDone != nil
+		closed := c.listenerClosed
+		contextCanceled := ctx.Err() != nil
+		discard := conn != nil && waitErr != nil && !pending && !contextCanceled
+		if discard && c.listenerConn == conn {
+			c.listenerConn = nil
+		}
+		c.listenerMu.Unlock()
+		if discard {
+			c.releaseListener(conn)
+		}
+		c.listenerOpMu.Unlock()
+		switch {
+		case closed:
+			return nil, context.Canceled
+		case notification != nil:
+			return notification, nil
+		case pending && !contextCanceled:
+			continue
+		default:
+			return notification, waitErr
+		}
+	}
+}
+
+func (c *PostgresClient) openListener(ctx context.Context) (*pgx.Conn, error) {
+	c.listenerMu.Lock()
+	if c.listenerClosed {
+		c.listenerMu.Unlock()
+		return nil, context.Canceled
+	}
+	var channels []string
+	if c.listenerChannels != nil {
+		channels = c.listenerChannels.Keys()
+	}
+	c.listenerMu.Unlock()
+
+	pooledConn, err := c.Pool.Acquire(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to acquire listener connection: %w", err)
+	}
+	conn := pooledConn.Hijack()
+	for _, channel := range channels {
+		if _, err := conn.Exec(ctx, fmt.Sprintf("LISTEN %s", pgx.Identifier{channel}.Sanitize())); err != nil {
+			c.releaseListener(conn)
+			return nil, fmt.Errorf("failed to LISTEN on channel %q: %w", channel, err)
+		}
 	}
 
-	return conn.WaitForNotification(ctx)
+	c.listenerMu.Lock()
+	if c.listenerClosed {
+		c.listenerMu.Unlock()
+		c.releaseListener(conn)
+		return nil, context.Canceled
+	}
+	c.listenerConn = conn
+	c.listenerMu.Unlock()
+	return conn, nil
+}
+
+func (c *PostgresClient) discardListener(conn *pgx.Conn) {
+	c.listenerMu.Lock()
+	if c.listenerConn == conn {
+		c.listenerConn = nil
+	}
+	c.listenerMu.Unlock()
+	c.releaseListener(conn)
+}
+
+func (*PostgresClient) releaseListener(conn *pgx.Conn) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = conn.Close(ctx)
 }
 
 // Notify sends a NOTIFY on the specified channel with the given payload.
@@ -164,7 +326,7 @@ func (c *PostgresClient) Notify(ctx context.Context, channel, payload string) er
 func (c *PostgresClient) EnsureTable(ctx context.Context, tableName string) error {
 	query := fmt.Sprintf(
 		"CREATE TABLE IF NOT EXISTS %s (id bigserial UNIQUE, created_at timestamptz DEFAULT NOW(), payload bytea)",
-		pgx.Identifier{tableName}.Sanitize(),
+		sanitizeTableName(tableName),
 	)
 	_, err := c.Pool.Exec(ctx, query)
 	return err
@@ -178,7 +340,7 @@ func (c *PostgresClient) EnsureTable(ctx context.Context, tableName string) erro
 //   - payload: The binary payload to store.
 func (c *PostgresClient) InsertAttachment(ctx context.Context, tableName string, payload []byte) (int64, error) {
 	var id int64
-	query := fmt.Sprintf("INSERT INTO %s (payload) VALUES ($1) RETURNING id", pgx.Identifier{tableName}.Sanitize())
+	query := fmt.Sprintf("INSERT INTO %s (payload) VALUES ($1) RETURNING id", sanitizeTableName(tableName))
 	err := c.Pool.QueryRow(ctx, query, payload).Scan(&id)
 	return id, err
 }
@@ -191,7 +353,7 @@ func (c *PostgresClient) InsertAttachment(ctx context.Context, tableName string,
 //   - id: The attachment ID.
 func (c *PostgresClient) GetAttachment(ctx context.Context, tableName string, id int64) ([]byte, error) {
 	var payload []byte
-	query := fmt.Sprintf("SELECT payload FROM %s WHERE id = $1", pgx.Identifier{tableName}.Sanitize())
+	query := fmt.Sprintf("SELECT payload FROM %s WHERE id = $1", sanitizeTableName(tableName))
 	err := c.Pool.QueryRow(ctx, query, id).Scan(&payload)
 	return payload, err
 }
@@ -205,7 +367,7 @@ func (c *PostgresClient) GetAttachment(ctx context.Context, tableName string, id
 func (c *PostgresClient) CleanupAttachments(ctx context.Context, tableName string, cleanupIntervalMs int64) error {
 	query := fmt.Sprintf(
 		"DELETE FROM %s WHERE created_at < now() - interval '%d milliseconds'",
-		pgx.Identifier{tableName}.Sanitize(),
+		sanitizeTableName(tableName),
 		cleanupIntervalMs,
 	)
 	_, err := c.Pool.Exec(ctx, query)
@@ -215,10 +377,23 @@ func (c *PostgresClient) CleanupAttachments(ctx context.Context, tableName strin
 // Close releases the listener connection if it was acquired.
 func (c *PostgresClient) Close() {
 	c.listenerMu.Lock()
-	defer c.listenerMu.Unlock()
-
-	if c.listenerConn != nil {
-		_ = c.listenerConn.Close(c.Context)
-		c.listenerConn = nil
+	if c.listenerClosed {
+		c.listenerMu.Unlock()
+		return
 	}
+	c.listenerClosed = true
+	if c.listenerOpCancel != nil {
+		c.listenerOpCancel()
+	}
+	c.listenerMu.Unlock()
+
+	c.listenerOpMu.Lock()
+	c.listenerMu.Lock()
+	conn := c.listenerConn
+	c.listenerConn = nil
+	c.listenerMu.Unlock()
+	if conn != nil {
+		c.releaseListener(conn)
+	}
+	c.listenerOpMu.Unlock()
 }

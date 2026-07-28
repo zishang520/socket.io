@@ -8,22 +8,16 @@ func TestDefaultEmitterOptions(t *testing.T) {
 	opts := DefaultEmitterOptions()
 	opts.Assign(nil)
 
-	t.Run("Key", func(t *testing.T) {
-		if opts.GetRawKey() != nil {
-			t.Fatal(`DefaultEmitterOptions.GetRawKey() value must be nil`)
+	t.Run("ChannelPrefix", func(t *testing.T) {
+		if opts.GetRawChannelPrefix() != nil {
+			t.Fatal(`DefaultEmitterOptions.GetRawChannelPrefix() value must be nil`)
 		}
-		if opts.Key() != "" {
-			t.Fatal(`DefaultEmitterOptions.Key() value must be ""`)
+		if opts.ChannelPrefix() != "" {
+			t.Fatal(`DefaultEmitterOptions.ChannelPrefix() value must be ""`)
 		}
-		opts.SetKey("test")
-		if opts.Key() != "test" {
-			t.Fatal(`DefaultEmitterOptions.Key() value must be "test"`)
-		}
-	})
-
-	t.Run("Parser", func(t *testing.T) {
-		if opts.GetRawParser() != nil {
-			t.Fatal(`DefaultEmitterOptions.GetRawParser() value must be nil`)
+		opts.SetChannelPrefix("test")
+		if opts.ChannelPrefix() != "test" {
+			t.Fatal(`DefaultEmitterOptions.ChannelPrefix() value must be "test"`)
 		}
 	})
 
@@ -65,15 +59,15 @@ func TestEmitterOptions_Assign(t *testing.T) {
 
 	t.Run("assign all fields", func(t *testing.T) {
 		source := DefaultEmitterOptions()
-		source.SetKey("custom-key")
+		source.SetChannelPrefix("custom-key")
 		source.SetTableName("custom_table")
 		source.SetPayloadThreshold(4000)
 
 		target := DefaultEmitterOptions()
 		target.Assign(source)
 
-		if target.Key() != "custom-key" {
-			t.Fatalf("Expected 'custom-key', got %s", target.Key())
+		if target.ChannelPrefix() != "custom-key" {
+			t.Fatalf("Expected 'custom-key', got %s", target.ChannelPrefix())
 		}
 		if target.TableName() != "custom_table" {
 			t.Fatalf("Expected 'custom_table', got %s", target.TableName())
@@ -85,14 +79,14 @@ func TestEmitterOptions_Assign(t *testing.T) {
 
 	t.Run("partial assign preserves existing", func(t *testing.T) {
 		source := DefaultEmitterOptions()
-		source.SetKey("new-key")
+		source.SetChannelPrefix("new-key")
 
 		target := DefaultEmitterOptions()
 		target.SetTableName("existing_table")
 		target.Assign(source)
 
-		if target.Key() != "new-key" {
-			t.Fatalf("Expected 'new-key', got %s", target.Key())
+		if target.ChannelPrefix() != "new-key" {
+			t.Fatalf("Expected 'new-key', got %s", target.ChannelPrefix())
 		}
 		if target.TableName() != "existing_table" {
 			t.Fatalf("Expected 'existing_table' to be preserved, got %s", target.TableName())

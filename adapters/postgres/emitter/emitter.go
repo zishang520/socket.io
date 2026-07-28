@@ -8,19 +8,12 @@ package emitter
 import (
 	"strings"
 
-	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/postgres/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
 )
 
-const (
-	// emitterUID is the unique identifier for messages sent by the emitter.
-	emitterUID adapter.ServerId = "emitter"
-
-	// defaultNamespace is the default Socket.IO namespace.
-	defaultNamespace = "/"
-)
+const defaultNamespace = "/"
 
 // emitterLog is the logger for the emitter package.
 var emitterLog = log.NewLog("socket.io-postgres-emitter")
@@ -52,28 +45,22 @@ func NewEmitter(client *postgres.PostgresClient, opts *EmitterOptions, nsps ...s
 }
 
 // Construct initializes the Emitter with the given PostgreSQL client, options, and namespace.
-// This method sets up the broadcast and request channels based on the configured key prefix.
+// This method sets up the broadcast channel based on the configured channel prefix.
 func (e *Emitter) Construct(client *postgres.PostgresClient, opts *EmitterOptions, nsps ...string) {
 	e.postgresClient = client
 
-	// Merge provided options with defaults
-	if opts == nil {
-		opts = DefaultEmitterOptions()
-	}
 	e.opts.Assign(opts)
 
-	// Apply default key if not set
-	if e.opts.GetRawKey() == nil {
-		e.opts.SetKey(DefaultEmitterKey)
+	// Match the Node.js emitter's logical-OR defaults, including explicit zero values.
+	if e.opts.ChannelPrefix() == "" {
+		e.opts.SetChannelPrefix(DefaultChannelPrefix)
 	}
 
-	// Apply default table name if not set
-	if e.opts.GetRawTableName() == nil {
+	if e.opts.TableName() == "" {
 		e.opts.SetTableName(DefaultTableName)
 	}
 
-	// Apply default payload threshold if not set
-	if e.opts.GetRawPayloadThreshold() == nil {
+	if e.opts.PayloadThreshold() == 0 {
 		e.opts.SetPayloadThreshold(DefaultPayloadThreshold)
 	}
 
@@ -83,10 +70,10 @@ func (e *Emitter) Construct(client *postgres.PostgresClient, opts *EmitterOption
 	}
 
 	// Configure broadcast options with channel names
-	key := e.opts.Key()
+	channelPrefix := e.opts.ChannelPrefix()
 	e.broadcastOptions = &BroadcastOptions{
 		Nsp:              e.nsp,
-		BroadcastChannel: key + "#" + e.nsp,
+		BroadcastChannel: channelPrefix + "#" + e.nsp,
 		TableName:        e.opts.TableName(),
 		PayloadThreshold: e.opts.PayloadThreshold(),
 	}
@@ -149,9 +136,9 @@ func (e *Emitter) SocketsLeave(rooms ...socket.Room) error {
 }
 
 // DisconnectSockets disconnects all matching socket instances.
-// If state is true, the underlying connection will be closed.
-func (e *Emitter) DisconnectSockets(state bool) error {
-	return e.newBroadcastOperator().DisconnectSockets(state)
+// If close is true, the underlying connection will be closed.
+func (e *Emitter) DisconnectSockets(close bool) error {
+	return e.newBroadcastOperator().DisconnectSockets(close)
 }
 
 // ServerSideEmit sends a message to all Socket.IO servers in the cluster.

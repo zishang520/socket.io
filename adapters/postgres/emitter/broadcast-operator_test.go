@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/postgres/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
@@ -266,9 +267,7 @@ func TestBroadcastOperator_Emit_NilClient(t *testing.T) {
 }
 
 func TestBroadcastOperator_SocketsJoin_Marshal(t *testing.T) {
-	// Verify ClusterMessage format for SOCKETS_JOIN matches Node.js wire format
 	msg := &adapter.ClusterMessage{
-		Uid:  "emitter",
 		Type: adapter.SOCKETS_JOIN,
 		Data: &adapter.SocketsJoinLeaveMessage{
 			Opts: &adapter.PacketOptions{
@@ -277,31 +276,50 @@ func TestBroadcastOperator_SocketsJoin_Marshal(t *testing.T) {
 			Rooms: []socket.Room{"target-room"},
 		},
 	}
+	wireData, binary := postgres.MarshalAdapterData(msg.Data)
+	if binary {
+		t.Fatal("SOCKETS_JOIN must not be marked as binary")
+	}
+	msg.Uid = adapter.EMITTER_UID
+	msg.Data = wireData
 	data, err := json.Marshal(msg)
 	if err != nil {
-		t.Fatalf("Failed to marshal join message: %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("Expected non-empty JSON")
+		t.Fatalf("failed to marshal join message: %v", err)
 	}
 
-	// Verify structure matches Node.js: {uid, type, data: {opts: {rooms, except}, rooms}}
-	var raw NotificationMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("Failed to parse JSON: %v", err)
+	var wire struct {
+		Uid  adapter.ServerId    `json:"uid"`
+		Type adapter.MessageType `json:"type"`
+		Data struct {
+			Opts struct {
+				Rooms  []socket.Room `json:"rooms"`
+				Except []socket.Room `json:"except"`
+			} `json:"opts"`
+			Rooms []socket.Room `json:"rooms"`
+		} `json:"data"`
 	}
-	if raw.Uid != "emitter" {
-		t.Errorf("Expected uid 'emitter', got %v", raw.Uid)
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatalf("failed to parse join message: %v", err)
 	}
-	if raw.Type != adapter.SOCKETS_JOIN {
-		t.Errorf("Expected type %d, got %v", adapter.SOCKETS_JOIN, raw.Type)
+	if wire.Uid != adapter.EMITTER_UID {
+		t.Errorf("expected uid %q, got %q", adapter.EMITTER_UID, wire.Uid)
+	}
+	if wire.Type != adapter.SOCKETS_JOIN {
+		t.Errorf("expected type %d, got %v", adapter.SOCKETS_JOIN, wire.Type)
+	}
+	if len(wire.Data.Opts.Rooms) != 1 || wire.Data.Opts.Rooms[0] != "room1" {
+		t.Fatalf("unexpected target rooms: %v", wire.Data.Opts.Rooms)
+	}
+	if wire.Data.Opts.Except == nil {
+		t.Fatal("Node.js wire format requires an empty except array")
+	}
+	if len(wire.Data.Rooms) != 1 || wire.Data.Rooms[0] != "target-room" {
+		t.Fatalf("unexpected joined rooms: %v", wire.Data.Rooms)
 	}
 }
 
 func TestBroadcastOperator_DisconnectSockets_Marshal(t *testing.T) {
-	// Verify ClusterMessage format for DISCONNECT_SOCKETS matches Node.js wire format
 	msg := &adapter.ClusterMessage{
-		Uid:  "emitter",
 		Type: adapter.DISCONNECT_SOCKETS,
 		Data: &adapter.DisconnectSocketsMessage{
 			Opts: &adapter.PacketOptions{
@@ -310,11 +328,38 @@ func TestBroadcastOperator_DisconnectSockets_Marshal(t *testing.T) {
 			Close: true,
 		},
 	}
+	wireData, binary := postgres.MarshalAdapterData(msg.Data)
+	if binary {
+		t.Fatal("DISCONNECT_SOCKETS must not be marked as binary")
+	}
+	msg.Uid = adapter.EMITTER_UID
+	msg.Data = wireData
 	data, err := json.Marshal(msg)
 	if err != nil {
-		t.Fatalf("Failed to marshal disconnect message: %v", err)
+		t.Fatalf("failed to marshal disconnect message: %v", err)
 	}
-	if len(data) == 0 {
-		t.Error("Expected non-empty JSON")
+
+	var wire struct {
+		Uid  adapter.ServerId    `json:"uid"`
+		Type adapter.MessageType `json:"type"`
+		Data struct {
+			Opts struct {
+				Rooms  []socket.Room `json:"rooms"`
+				Except []socket.Room `json:"except"`
+			} `json:"opts"`
+			Close bool `json:"close"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatalf("failed to parse disconnect message: %v", err)
+	}
+	if wire.Uid != adapter.EMITTER_UID || wire.Type != adapter.DISCONNECT_SOCKETS {
+		t.Fatalf("unexpected header: uid=%q type=%d", wire.Uid, wire.Type)
+	}
+	if wire.Data.Opts.Except == nil {
+		t.Fatal("Node.js wire format requires an empty except array")
+	}
+	if !wire.Data.Close {
+		t.Fatal("expected close to be true")
 	}
 }

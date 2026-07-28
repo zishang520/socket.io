@@ -3,7 +3,10 @@
 package adapter
 
 import (
-	"sync/atomic"
+	"context"
+	"errors"
+	"math/rand/v2"
+	"sync"
 	"time"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
@@ -76,67 +79,64 @@ type PostgresAdapterBuilder struct {
 	// Opts contains configuration options for the adapter.
 	Opts PostgresAdapterOptionsInterface
 
-	namespaceToAdapters types.Map[string, PostgresAdapter]
-	listening           atomic.Bool
+	namespaces   types.Map[string, PostgresAdapter]
+	mu           sync.Mutex
+	cancel       context.CancelFunc
+	listenerDone chan struct{}
 }
 
 // New creates a new PostgresAdapter for the given namespace.
 // This method implements the socket.AdapterBuilder interface.
 func (pb *PostgresAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
-	options := DefaultPostgresAdapterOptions()
-	options.Assign(pb.Opts)
+	adapterInstance := NewPostgresAdapter(nsp, pb.Postgres, pb.Opts).(*postgresAdapter)
+	channel := adapterInstance.channel
 
-	// Apply defaults
-	if options.GetRawKey() == nil {
-		options.SetKey(DefaultChannelPrefix)
+	pb.mu.Lock()
+	pb.namespaces.Store(channel, adapterInstance)
+	var listenerCtx context.Context
+	var previousDone, listenerDone chan struct{}
+	if pb.cancel == nil {
+		listenerCtx, pb.cancel = context.WithCancel(pb.Postgres.Context)
+		previousDone = pb.listenerDone
+		listenerDone = make(chan struct{})
+		pb.listenerDone = listenerDone
 	}
-	if options.GetRawTableName() == nil {
-		options.SetTableName(DefaultTableName)
+	pb.mu.Unlock()
+
+	if err := pb.Postgres.Listen(pb.Postgres.Context, channel); err != nil {
+		postgresLog.Debug("failed to listen on channel %s: %s", channel, err.Error())
 	}
-	if options.GetRawPayloadThreshold() == nil {
-		options.SetPayloadThreshold(DefaultPayloadThreshold)
-	}
-	if options.GetRawCleanupInterval() == nil {
-		options.SetCleanupInterval(DefaultCleanupInterval)
-	}
-	if options.GetRawHeartbeatInterval() == nil {
-		options.SetHeartbeatInterval(DefaultHeartbeatInterval)
-	}
-	if options.GetRawHeartbeatTimeout() == nil {
-		options.SetHeartbeatTimeout(DefaultHeartbeatTimeout)
-	}
-
-	channel := options.Key() + "#" + nsp.Name()
-
-	adapterInstance := NewPostgresAdapter(nsp, pb.Postgres, options)
-	adapterInstance.SetChannel(channel)
-
-	pb.namespaceToAdapters.Store(nsp.Name(), adapterInstance)
-
-	// Start listening if not already
-	if pb.listening.CompareAndSwap(false, true) {
-		// Ensure the attachment table exists
-		if err := pb.Postgres.EnsureTable(pb.Postgres.Context, options.TableName()); err != nil {
-			pb.Postgres.Emit("error", err)
-		}
-
-		// Listen on the channel for this namespace
-		if err := pb.Postgres.Listen(pb.Postgres.Context, channel); err != nil {
-			pb.Postgres.Emit("error", err)
-		}
-
-		go pb.startListening(options)
-	} else {
-		// Listen on additional channel for new namespace
-		if err := pb.Postgres.Listen(pb.Postgres.Context, channel); err != nil {
-			pb.Postgres.Emit("error", err)
-		}
+	if listenerCtx != nil {
+		options := adapterInstance.opts
+		go func() {
+			defer close(listenerDone)
+			if previousDone != nil {
+				<-previousDone
+			}
+			if listenerCtx.Err() == nil {
+				pb.startListening(listenerCtx, options)
+			}
+		}()
 	}
 
-	// Register cleanup callback
 	adapterInstance.Cleanup(func() {
-		_ = pb.Postgres.Unlisten(pb.Postgres.Context, channel)
-		pb.namespaceToAdapters.Delete(nsp.Name())
+		pb.mu.Lock()
+		if !pb.namespaces.CompareAndDelete(channel, adapterInstance) {
+			pb.mu.Unlock()
+			return
+		}
+		if pb.namespaces.Len() == 0 {
+			if pb.cancel != nil {
+				pb.cancel()
+			}
+			pb.cancel = nil
+		}
+		err := pb.Postgres.Unlisten(pb.Postgres.Context, channel)
+		pb.mu.Unlock()
+
+		if err != nil {
+			postgresLog.Debug("failed to unlisten from channel %s: %s", channel, err.Error())
+		}
 	})
 
 	return adapterInstance
@@ -144,25 +144,32 @@ func (pb *PostgresAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 
 // startListening continuously waits for PostgreSQL notifications and dispatches them
 // to the appropriate namespace adapter.
-func (pb *PostgresAdapterBuilder) startListening(options *PostgresAdapterOptions) {
+func (pb *PostgresAdapterBuilder) startListening(ctx context.Context, options *PostgresAdapterOptions) {
 	// Start cleanup timer for old attachments
 	cleanupInterval := options.CleanupInterval()
 	tableName := options.TableName()
 
 	if cleanupInterval > 0 {
-		go pb.cleanupLoop(cleanupInterval, tableName)
+		cleanupCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go pb.cleanupLoop(cleanupCtx, cleanupInterval, tableName, options.ErrorHandler())
 	}
 
 	for {
-		notification, err := pb.Postgres.WaitForNotification(pb.Postgres.Context)
+		notification, err := pb.Postgres.WaitForNotification(ctx)
 		if err != nil {
-			if pb.Postgres.Context.Err() != nil {
-				return // Context canceled, stop listening
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				return
 			}
-			pb.Postgres.Emit("error", err)
+			postgresLog.Debug("listener error: %s", err.Error())
 
-			// Brief delay before retrying to avoid tight error loop
-			time.Sleep(1 * time.Second)
+			timer := time.NewTimer(time.Duration(rand.IntN(2_000)+1_000) * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 			continue
 		}
 
@@ -170,38 +177,24 @@ func (pb *PostgresAdapterBuilder) startListening(options *PostgresAdapterOptions
 			continue
 		}
 
-		// Dispatch notification to the matching adapter
-		// The channel format is "{prefix}#{nsp}" — extract namespace from the channel
-		pb.dispatchNotification(notification.Channel, notification.Payload, options)
-	}
-}
-
-// dispatchNotification sends a notification payload to the correct adapter based on channel.
-func (pb *PostgresAdapterBuilder) dispatchNotification(channel, payload string, options *PostgresAdapterOptions) {
-	// Find namespace from channel: "{prefix}#{nsp}"
-	prefix := options.Key() + "#"
-	if len(channel) <= len(prefix) {
-		return
-	}
-	nspName := channel[len(prefix):]
-
-	if adapterInstance, ok := pb.namespaceToAdapters.Load(nspName); ok {
-		adapterInstance.OnNotification(payload)
+		if adapterInstance, ok := pb.namespaces.Load(notification.Channel); ok {
+			adapterInstance.OnNotification(notification.Payload)
+		}
 	}
 }
 
 // cleanupLoop periodically cleans up old attachments from the storage table.
-func (pb *PostgresAdapterBuilder) cleanupLoop(intervalMs int64, tableName string) {
+func (pb *PostgresAdapterBuilder) cleanupLoop(ctx context.Context, intervalMs int64, tableName string, errorHandler func(error)) {
 	ticker := time.NewTicker(time.Duration(intervalMs) * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-pb.Postgres.Context.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := pb.Postgres.CleanupAttachments(pb.Postgres.Context, tableName, intervalMs); err != nil {
-				pb.Postgres.Emit("error", err)
+			if err := pb.Postgres.CleanupAttachments(ctx, tableName, intervalMs); err != nil && ctx.Err() == nil {
+				errorHandler(err)
 			}
 		}
 	}
