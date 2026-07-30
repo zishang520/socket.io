@@ -8,27 +8,40 @@ import (
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var adapterLog = log.NewLog("socket.io-adapter")
 
 // EncodeOptions encodes BroadcastOptions into PacketOptions.
 func EncodeOptions(opts *socket.BroadcastOptions) *PacketOptions {
-	p := &PacketOptions{}
+	p := &PacketOptions{
+		Rooms:  []socket.Room{},
+		Except: []socket.Room{},
+	}
 	if opts == nil {
 		return p
 	}
 
 	if opts.Rooms != nil {
-		p.Rooms = opts.Rooms.Keys() // Convert the set to a slice of strings
+		p.Rooms = utils.NonNilSlice(opts.Rooms.Keys())
 	}
 	if opts.Except != nil {
-		p.Except = opts.Except.Keys() // Convert the set to a slice of strings
+		p.Except = utils.NonNilSlice(opts.Except.Keys())
 	}
-	if opts.Flags != nil {
-		p.Flags = opts.Flags // Pass flags as is
-	}
+	p.Flags = opts.Flags
 	return p
+}
+
+// NormalizeOptions returns a shallow copy with non-nil room slices.
+func NormalizeOptions(opts *PacketOptions) *PacketOptions {
+	options := new(PacketOptions)
+	if opts != nil {
+		*options = *opts
+	}
+	options.Rooms = utils.NonNilSlice(options.Rooms)
+	options.Except = utils.NonNilSlice(options.Except)
+	return options
 }
 
 // DecodeOptions decodes PacketOptions back into BroadcastOptions.

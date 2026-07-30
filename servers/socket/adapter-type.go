@@ -1,8 +1,6 @@
 package socket
 
 import (
-	"time"
-
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -21,21 +19,22 @@ type (
 	Room string
 
 	WriteOptions struct {
-		packet.Options
+		packet.Options `bson:",inline"`
 
-		Volatile   bool `json:"volatile" msgpack:"volatile"`
-		PreEncoded bool `json:"preEncoded" msgpack:"preEncoded"`
+		Volatile   bool `json:"volatile,omitempty" msgpack:"volatile,omitempty" bson:"volatile,omitempty"`
+		PreEncoded bool `json:"-" msgpack:"-" bson:"-"`
 	}
 
 	BroadcastFlags struct {
-		WriteOptions
+		WriteOptions `bson:",inline"`
 
-		Local     bool           `json:"local" msgpack:"local"`
-		Broadcast bool           `json:"broadcast" msgpack:"broadcast"`
-		Binary    bool           `json:"binary" msgpack:"binary"`
-		Timeout   *time.Duration `json:"timeout,omitempty" msgpack:"timeout,omitempty"`
+		Local     bool `json:"local,omitempty" msgpack:"local,omitempty" bson:"local,omitempty"`
+		Broadcast bool `json:"broadcast,omitempty" msgpack:"broadcast,omitempty" bson:"broadcast,omitempty"`
+		Binary    bool `json:"binary,omitempty" msgpack:"binary,omitempty" bson:"binary,omitempty"`
+		// Timeout is expressed in milliseconds.
+		Timeout *int64 `json:"timeout,omitempty" msgpack:"timeout,omitempty" bson:"timeout,omitempty"`
 
-		ExpectSingleResponse bool `json:"expectSingleResponse" msgpack:"expectSingleResponse"`
+		ExpectSingleResponse bool `json:"expectSingleResponse,omitempty" msgpack:"expectSingleResponse,omitempty" bson:"expectSingleResponse,omitempty"`
 	}
 
 	BroadcastOptions struct {

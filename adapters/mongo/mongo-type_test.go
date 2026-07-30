@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
@@ -108,7 +107,7 @@ func TestMarshalAdapterDataOmitsOptionalRequestAndPacketID(t *testing.T) {
 
 func TestMarshalAdapterDataUsesNodeOptionsShape(t *testing.T) {
 	compress := false
-	timeout := 1_750 * time.Millisecond
+	timeout := int64(1_750)
 	flags := &socket.BroadcastFlags{
 		Local:                true,
 		Broadcast:            true,
@@ -118,7 +117,6 @@ func TestMarshalAdapterDataUsesNodeOptionsShape(t *testing.T) {
 	}
 	flags.Compress = &compress
 	flags.Volatile = true
-	flags.PreEncoded = true
 
 	raw := mustMarshalAdapterData(t, &adapter.BroadcastMessage{
 		Packet: &parser.Packet{Type: parser.EVENT, Nsp: "/", Data: []any{"event"}},
@@ -194,7 +192,7 @@ func TestUnmarshalAdapterDataAcceptsNodeOptions(t *testing.T) {
 	if message.Opts.Flags.Compress == nil || *message.Opts.Flags.Compress {
 		t.Fatal("compress=false was not decoded")
 	}
-	if message.Opts.Flags.Timeout == nil || *message.Opts.Flags.Timeout != 2_750*time.Millisecond {
+	if message.Opts.Flags.Timeout == nil || *message.Opts.Flags.Timeout != 2_750 {
 		t.Fatalf("unexpected timeout: %v", message.Opts.Flags.Timeout)
 	}
 	if !message.Opts.Flags.ExpectSingleResponse {
@@ -256,8 +254,13 @@ func TestMarshalAdapterDataUsesScalarResponses(t *testing.T) {
 	}{
 		{
 			name:       "server-side emit scalar",
-			data:       &adapter.ServerSideEmitResponse{RequestId: "request-1", Packet: []any{"answer"}},
+			data:       &adapter.ServerSideEmitResponse{RequestId: "request-1", Packet: "answer"},
 			packetType: bson.TypeString,
+		},
+		{
+			name:       "server-side emit array",
+			data:       &adapter.ServerSideEmitResponse{RequestId: "request-1", Packet: []any{"answer"}},
+			packetType: bson.TypeArray,
 		},
 		{
 			name:       "broadcast acknowledgement null",
@@ -274,9 +277,6 @@ func TestMarshalAdapterDataUsesScalarResponses(t *testing.T) {
 			if got := raw.Lookup("packet").Type; got != tt.packetType {
 				t.Fatalf("unexpected packet type: got %s, want %s", got, tt.packetType)
 			}
-			if raw.Lookup("packet").Type == bson.TypeArray {
-				t.Fatal("Node response packet must be a scalar, not an array")
-			}
 		})
 	}
 }
@@ -287,18 +287,18 @@ func TestUnmarshalAdapterDataAcceptsNodeScalarResponses(t *testing.T) {
 	t.Run("broadcast acknowledgement converts Binary", func(t *testing.T) {
 		decoded := mustUnmarshalNodeResponse(t, BROADCAST_ACK, bson.Binary{Subtype: 0x80, Data: binary})
 		packet := responsePacket(t, decoded)
-		got, ok := packet[0].([]byte)
+		got, ok := packet.([]byte)
 		if !ok || !bytes.Equal(got, binary) {
-			t.Fatalf("unexpected broadcast acknowledgement: %#v", packet[0])
+			t.Fatalf("unexpected broadcast acknowledgement: %#v", packet)
 		}
 	})
 
 	t.Run("server-side emit response preserves Binary", func(t *testing.T) {
 		decoded := mustUnmarshalNodeResponse(t, SERVER_SIDE_EMIT_RESPONSE, bson.Binary{Subtype: 0, Data: binary})
 		packet := responsePacket(t, decoded)
-		got, ok := packet[0].(bson.Binary)
+		got, ok := packet.(bson.Binary)
 		if !ok || got.Subtype != 0 || !bytes.Equal(got.Data, binary) {
-			t.Fatalf("unexpected server-side emit response: %#v", packet[0])
+			t.Fatalf("unexpected server-side emit response: %#v", packet)
 		}
 	})
 
@@ -312,7 +312,7 @@ func TestUnmarshalAdapterDataAcceptsNodeScalarResponses(t *testing.T) {
 		t.Run(tt.name+"/null", func(t *testing.T) {
 			decoded := mustUnmarshalNodeResponse(t, tt.messageType, nil)
 			packet := responsePacket(t, decoded)
-			if len(packet) != 1 || packet[0] != nil {
+			if packet != nil {
 				t.Fatalf("unexpected null packet: %#v", packet)
 			}
 		})
@@ -441,7 +441,7 @@ func mustUnmarshalNodeResponse(t *testing.T, messageType adapter.MessageType, pa
 	return decoded
 }
 
-func responsePacket(t *testing.T, response any) []any {
+func responsePacket(t *testing.T, response any) any {
 	t.Helper()
 	switch value := response.(type) {
 	case *adapter.ServerSideEmitResponse:

@@ -273,6 +273,30 @@ func TestRedisResponse_JSON(t *testing.T) {
 		if restored.ClientCount != resp.ClientCount {
 			t.Fatalf("ClientCount mismatch: expected %d, got %d", resp.ClientCount, restored.ClientCount)
 		}
+		var wire map[string]any
+		if err := json.Unmarshal(data, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire["clientCount"] != float64(resp.ClientCount) {
+			t.Fatalf("clientCount = %#v, want %d", wire["clientCount"], resp.ClientCount)
+		}
+		if _, exists := wire["clientcount"]; exists {
+			t.Fatal("response used non-Node.js clientcount field")
+		}
+	})
+
+	t.Run("scalar acknowledgement", func(t *testing.T) {
+		data, err := json.Marshal(&RedisResponse{
+			RequestId: "request",
+			Data:      "server response",
+			Packet:    "client response",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := string(data), `{"requestId":"request","data":"server response","packet":"client response"}`; got != want {
+			t.Fatalf("response = %s, want %s", got, want)
+		}
 	})
 
 	t.Run("with sockets", func(t *testing.T) {

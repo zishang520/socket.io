@@ -90,7 +90,7 @@ func TestServerSideEmitResponseKeepsScalarShape(t *testing.T) {
 
 	a.OnResponse(&ClusterResponse{
 		Type: mongo.SERVER_SIDE_EMIT_RESPONSE,
-		Data: &ServerSideEmitResponse{RequestId: "request", Packet: []any{"value"}},
+		Data: &ServerSideEmitResponse{RequestId: "request", Packet: "value"},
 	})
 
 	values := <-resolved
@@ -113,7 +113,7 @@ func TestRequestResponseCompletesOnceConcurrently(t *testing.T) {
 	a.requests.Store("request", request)
 	response := &ClusterResponse{
 		Type: mongo.SERVER_SIDE_EMIT_RESPONSE,
-		Data: &ServerSideEmitResponse{RequestId: "request", Packet: []any{"value"}},
+		Data: &ServerSideEmitResponse{RequestId: "request", Packet: "value"},
 	}
 
 	var waitGroup sync.WaitGroup
@@ -140,7 +140,7 @@ func TestBroadcastAckKeepsScalarShape(t *testing.T) {
 
 	a.OnResponse(&ClusterResponse{
 		Type: mongo.BROADCAST_ACK,
-		Data: &BroadcastAck{RequestId: "request", Packet: []any{"value"}},
+		Data: &BroadcastAck{RequestId: "request", Packet: "value"},
 	})
 
 	values := <-response

@@ -30,7 +30,7 @@ type (
 		uid ServerId
 
 		requests    types.Map[string, *ClusterRequest]
-		ackRequests types.Map[string, *ClusterAckRequest]
+		ackRequests types.Map[string, ClusterAckRequest]
 	}
 )
 
@@ -119,7 +119,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 						Type: BROADCAST_ACK,
 						Data: &BroadcastAck{
 							RequestId: *data.RequestId,
-							Packet:    args,
+							Packet:    slices.TryGet(args, 0),
 						},
 					})
 				},
@@ -200,7 +200,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					Type: SERVER_SIDE_EMIT_RESPONSE,
 					Data: &ServerSideEmitResponse{
 						RequestId: *data.RequestId,
-						Packet:    arg,
+						Packet:    slices.TryGet(arg, 0),
 					},
 				})
 			})
@@ -238,7 +238,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 				adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
 			}
 			if ackRequest, ok := c.ackRequests.Load(data.RequestId); ok {
-				ackRequest.Ack(data.Packet, nil)
+				ackRequest.Ack([]any{data.Packet}, nil)
 			}
 		} else {
 			adapterLog.Debug("[%s] invalid data for BROADCAST_ACK message", c.uid)
@@ -277,7 +277,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		}
 
 		if request, ok := c.requests.Load(data.RequestId); ok {
-			request.Responses.Push(slices.TryGet(data.Packet, 0))
+			request.Responses.Push(data.Packet)
 
 			if request.Current.Add(1) == request.Expected {
 				request.Once.Do(func() {
@@ -336,7 +336,7 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 	if !onlyLocal {
 		requestId := RandomId()
 
-		c.ackRequests.Store(requestId, &ClusterAckRequest{
+		c.ackRequests.Store(requestId, ClusterAckRequest{
 			ClientCountCallback: clientCountCallback,
 			Ack:                 ack,
 		})
@@ -352,7 +352,7 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 
 		timeout := DEFAULT_TIMEOUT
 		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-			timeout = *opts.Flags.Timeout
+			timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
 		}
 
 		// we have no way to know at this level whether the server has received an acknowledgement from each client, so we
@@ -427,7 +427,7 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 
 			t := DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-				t = *opts.Flags.Timeout
+				t = utils.FromMilliseconds(*opts.Flags.Timeout)
 			}
 
 			request := &ClusterRequest{
@@ -485,7 +485,7 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 	}
 
 	if expectedResponseCount <= 0 {
-		ack(nil, nil)
+		ack([]any{}, nil)
 		return nil
 	}
 

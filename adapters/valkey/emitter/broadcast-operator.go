@@ -127,11 +127,11 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Data: data,
 	}
 
-	opts := &adapter.PacketOptions{
-		Rooms:  b.rooms.Keys(),
-		Except: b.exceptRooms.Keys(),
+	opts := adapter.EncodeOptions(&socket.BroadcastOptions{
+		Rooms:  b.rooms,
+		Except: b.exceptRooms,
 		Flags:  b.flags,
-	}
+	})
 
 	msg, err := b.broadcastOptions.Parser.Encode(&Packet{
 		Uid:    emitterUID,
@@ -159,10 +159,10 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	request, err := json.Marshal(&Request{
 		Type: valkey.REMOTE_JOIN,
-		Opts: &adapter.PacketOptions{
-			Rooms:  b.rooms.Keys(),
-			Except: b.exceptRooms.Keys(),
-		},
+		Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
+			Rooms:  b.rooms,
+			Except: b.exceptRooms,
+		}),
 		Rooms: rooms,
 	})
 	if err != nil {
@@ -175,10 +175,10 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	request, err := json.Marshal(&Request{
 		Type: valkey.REMOTE_LEAVE,
-		Opts: &adapter.PacketOptions{
-			Rooms:  b.rooms.Keys(),
-			Except: b.exceptRooms.Keys(),
-		},
+		Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
+			Rooms:  b.rooms,
+			Except: b.exceptRooms,
+		}),
 		Rooms: rooms,
 	})
 	if err != nil {
@@ -191,10 +191,10 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 	request, err := json.Marshal(&Request{
 		Type: valkey.REMOTE_DISCONNECT,
-		Opts: &adapter.PacketOptions{
-			Rooms:  b.rooms.Keys(),
-			Except: b.exceptRooms.Keys(),
-		},
+		Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
+			Rooms:  b.rooms,
+			Except: b.exceptRooms,
+		}),
 		Close: state,
 	})
 	if err != nil {

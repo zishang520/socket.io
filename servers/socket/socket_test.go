@@ -17,7 +17,7 @@ func TestSocketNewBroadcastOperatorConsumesFlags(t *testing.T) {
 	if operator.flags.Compress == nil || *operator.flags.Compress {
 		t.Fatal("Expected compression to be disabled")
 	}
-	if !operator.flags.Volatile || operator.flags.Timeout == nil || *operator.flags.Timeout != timeout {
+	if !operator.flags.Volatile || operator.flags.Timeout == nil || *operator.flags.Timeout != timeout.Milliseconds() {
 		t.Fatal("Expected broadcast flags to be preserved")
 	}
 	if !operator.exceptRooms.Has(Room(socket.id)) {

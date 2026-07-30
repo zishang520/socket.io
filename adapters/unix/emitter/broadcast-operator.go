@@ -144,11 +144,11 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Data: data,
 	}
 
-	opts := &adapter.PacketOptions{
-		Rooms:  b.rooms.Keys(),
-		Except: b.exceptRooms.Keys(),
+	opts := adapter.EncodeOptions(&socket.BroadcastOptions{
+		Rooms:  b.rooms,
+		Except: b.exceptRooms,
 		Flags:  b.flags,
-	}
+	})
 
 	// Build ClusterMessage
 	message := &adapter.ClusterMessage{
@@ -249,10 +249,10 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 		Nsp:  b.broadcastOptions.Nsp,
 		Type: adapter.SOCKETS_JOIN,
 		Data: &adapter.SocketsJoinLeaveMessage{
-			Opts: &adapter.PacketOptions{
-				Rooms:  b.rooms.Keys(),
-				Except: b.exceptRooms.Keys(),
-			},
+			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
+				Rooms:  b.rooms,
+				Except: b.exceptRooms,
+			}),
 			Rooms: rooms,
 		},
 	}
@@ -268,10 +268,10 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 		Nsp:  b.broadcastOptions.Nsp,
 		Type: adapter.SOCKETS_LEAVE,
 		Data: &adapter.SocketsJoinLeaveMessage{
-			Opts: &adapter.PacketOptions{
-				Rooms:  b.rooms.Keys(),
-				Except: b.exceptRooms.Keys(),
-			},
+			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
+				Rooms:  b.rooms,
+				Except: b.exceptRooms,
+			}),
 			Rooms: rooms,
 		},
 	}
@@ -288,10 +288,10 @@ func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 		Nsp:  b.broadcastOptions.Nsp,
 		Type: adapter.DISCONNECT_SOCKETS,
 		Data: &adapter.DisconnectSocketsMessage{
-			Opts: &adapter.PacketOptions{
-				Rooms:  b.rooms.Keys(),
-				Except: b.exceptRooms.Keys(),
-			},
+			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
+				Rooms:  b.rooms,
+				Except: b.exceptRooms,
+			}),
 			Close: state,
 		},
 	}

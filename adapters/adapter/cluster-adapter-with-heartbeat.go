@@ -7,7 +7,6 @@ import (
 
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
-	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -78,7 +77,7 @@ func (a *clusterAdapterWithHeartbeat) Construct(nsp socket.Namespace) {
 		a.nodesMap.Range(func(uid ServerId, lastSeen int64) bool {
 			if now-lastSeen > heartbeatTimeout {
 				adapterLog.Debug("[%s] node %s seems down", a.Uid(), uid)
-				a.removeNode(uid)
+				a.removeNode(uid, lastSeen)
 			}
 			return true
 		})
@@ -123,7 +122,7 @@ func (a *clusterAdapterWithHeartbeat) OnMessage(message *ClusterMessage, offset 
 		return
 	}
 
-	if message.Uid != EMITTER_UID {
+	if message.Uid != "" && message.Uid != EMITTER_UID {
 		// we track the UID of each sender, in order to know how many servers there are in the cluster
 		a.nodesMap.Store(message.Uid, time.Now().UnixMilli())
 	}
@@ -163,8 +162,8 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		return fmt.Errorf("packet cannot be empty")
 	}
 
-	data_len := len(packet)
-	ack, withAck := packet[data_len-1].(socket.Ack)
+	packetLen := len(packet)
+	ack, withAck := packet[packetLen-1].(socket.Ack)
 	if !withAck {
 		a.Publish(&ClusterMessage{
 			Type: SERVER_SIDE_EMIT,
@@ -174,8 +173,8 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		})
 		return nil
 	}
-	expectedResponseCount := a.nodesMap.Len()
-
+	missingUids := types.NewSet(a.nodesMap.Keys()...)
+	expectedResponseCount := missingUids.Len()
 	if log.DEBUG.Load() {
 		adapterLog.Debug(
 			`[%s] waiting for %d responses to "serverSideEmit" request`,
@@ -183,9 +182,8 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 			expectedResponseCount,
 		)
 	}
-
-	if expectedResponseCount <= 0 {
-		ack(nil, nil)
+	if expectedResponseCount == 0 {
+		ack([]any{}, nil)
 		return nil
 	}
 
@@ -197,7 +195,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 			ack(data.All(), nil)
 		},
 		Timeout:     new(atomic.Pointer[utils.Timer]),
-		MissingUids: types.NewSet(a.nodesMap.Keys()...),
+		MissingUids: missingUids,
 		Responses:   types.NewSlice[any](),
 	}
 	a.customRequests.Store(requestId, request)
@@ -218,7 +216,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		Type: SERVER_SIDE_EMIT,
 		Data: &ServerSideEmitMessage{
 			RequestId: new(requestId), // the presence of this attribute defines whether an acknowledgement is needed
-			Packet:    packet[:data_len-1],
+			Packet:    packet[:packetLen-1],
 		},
 	})
 	return nil
@@ -236,9 +234,13 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 				Local: true,
 			},
 		})(func(localSockets []socket.SocketDetails, _ error) {
-			expectedResponseCount := a.ServerCount() - 1
+			if opts.Flags != nil && opts.Flags.Local {
+				cb(localSockets, nil)
+				return
+			}
 
-			if (opts.Flags != nil && opts.Flags.Local) || expectedResponseCount <= 0 {
+			missingUids := a.nodesMap.Keys()
+			if len(missingUids) == 0 {
 				cb(localSockets, nil)
 				return
 			}
@@ -247,7 +249,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 
 			t := DEFAULT_TIMEOUT
 			if opts.Flags != nil && opts.Flags.Timeout != nil {
-				t = *opts.Flags.Timeout
+				t = utils.FromMilliseconds(*opts.Flags.Timeout)
 			}
 
 			request := &CustomClusterRequest{
@@ -256,7 +258,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 					cb(anySliceToSocketDetails(data.All()), nil)
 				},
 				Timeout:     new(atomic.Pointer[utils.Timer]),
-				MissingUids: types.NewSet(a.nodesMap.Keys()...),
+				MissingUids: types.NewSet(missingUids...),
 				Responses:   types.NewSlice(socketDetailsToAny(localSockets)...),
 			}
 			a.customRequests.Store(requestId, request)
@@ -315,7 +317,7 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 			adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
 		}
 		if request, ok := a.customRequests.Load(data.RequestId); ok {
-			request.Responses.Push(slices.TryGet(data.Packet, 0))
+			request.Responses.Push(data.Packet)
 
 			request.MissingUids.Delete(response.Uid)
 			if request.MissingUids.Len() == 0 {
@@ -332,7 +334,15 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 	}
 }
 
-func (a *clusterAdapterWithHeartbeat) removeNode(uid ServerId) {
+func (a *clusterAdapterWithHeartbeat) removeNode(uid ServerId, expectedLastSeen ...int64) {
+	if len(expectedLastSeen) > 0 {
+		if !a.nodesMap.CompareAndDelete(uid, expectedLastSeen[0]) {
+			return
+		}
+	} else {
+		a.nodesMap.Delete(uid)
+	}
+
 	a.customRequests.Range(func(requestId string, request *CustomClusterRequest) bool {
 		request.MissingUids.Delete(uid)
 		if request.MissingUids.Len() == 0 {
@@ -344,6 +354,4 @@ func (a *clusterAdapterWithHeartbeat) removeNode(uid ServerId) {
 		}
 		return true
 	})
-
-	a.nodesMap.Delete(uid)
 }

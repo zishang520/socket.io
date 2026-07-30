@@ -1,10 +1,13 @@
 package adapter
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 func TestHeartbeatServerSideEmitResponseStoresScalarPacket(t *testing.T) {
@@ -20,13 +23,113 @@ func TestHeartbeatServerSideEmitResponseStoresScalarPacket(t *testing.T) {
 		Type: SERVER_SIDE_EMIT_RESPONSE,
 		Data: &ServerSideEmitResponse{
 			RequestId: "request",
-			Packet:    []any{"response"},
+			Packet:    "response",
 		},
 	})
 
 	responses := request.Responses.All()
 	if len(responses) != 1 || responses[0] != "response" {
 		t.Fatalf("expected scalar response, got %#v", responses)
+	}
+}
+
+func TestHeartbeatServerSideEmitWithoutRemoteNodesReturnsEmptyResponses(t *testing.T) {
+	cluster := MakeClusterAdapterWithHeartbeat().(*clusterAdapterWithHeartbeat)
+	var responses []any
+
+	err := cluster.ServerSideEmit([]any{"event", func(args []any, err error) {
+		if err != nil {
+			t.Errorf("unexpected acknowledgement error: %v", err)
+		}
+		responses = args
+	}})
+	if err != nil {
+		t.Fatalf("ServerSideEmit() error = %v", err)
+	}
+	if responses == nil || len(responses) != 0 {
+		t.Fatalf("acknowledgement responses = %#v, want non-nil empty slice", responses)
+	}
+}
+
+func TestHeartbeatDoesNotTrackEmptyUid(t *testing.T) {
+	cluster := MakeClusterAdapterWithHeartbeat().(*clusterAdapterWithHeartbeat)
+	cluster.ClusterAdapter.(*clusterAdapter).uid = "self"
+
+	cluster.OnMessage(&ClusterMessage{
+		Type: HEARTBEAT,
+	}, "")
+
+	if cluster.nodesMap.Len() != 0 {
+		t.Fatal("message with empty uid was tracked as a cluster node")
+	}
+	if cluster.ServerCount() != 1 {
+		t.Fatalf("ServerCount() = %d, want 1", cluster.ServerCount())
+	}
+}
+
+func TestHeartbeatCleanupDoesNotRemoveRefreshedNode(t *testing.T) {
+	cluster := MakeClusterAdapterWithHeartbeat().(*clusterAdapterWithHeartbeat)
+	const (
+		uid       ServerId = "node"
+		lastSeen           = int64(1)
+		refreshed          = int64(2)
+	)
+	cluster.nodesMap.Store(uid, lastSeen)
+	cluster.nodesMap.Store(uid, refreshed)
+
+	cluster.removeNode(uid, lastSeen)
+
+	if got, ok := cluster.nodesMap.Load(uid); !ok || got != refreshed {
+		t.Fatalf("refreshed node timestamp = %d, %v; want %d, true", got, ok, refreshed)
+	}
+}
+
+func TestHeartbeatResponseAndRemoveNodeCallOnce(t *testing.T) {
+	cluster := MakeClusterAdapterWithHeartbeat().(*clusterAdapterWithHeartbeat)
+	const (
+		requestId          = "request"
+		uid       ServerId = "node"
+	)
+	var calls atomic.Int64
+	request := &CustomClusterRequest{
+		Type:        SERVER_SIDE_EMIT,
+		Resolve:     func(*types.Slice[any]) { calls.Add(1) },
+		Timeout:     new(atomic.Pointer[utils.Timer]),
+		MissingUids: types.NewSet(uid),
+		Responses:   types.NewSlice[any](),
+	}
+	cluster.nodesMap.Store(uid, 1)
+	cluster.customRequests.Store(requestId, request)
+
+	response := &ClusterResponse{
+		Uid:  uid,
+		Type: SERVER_SIDE_EMIT_RESPONSE,
+		Data: &ServerSideEmitResponse{
+			RequestId: requestId,
+			Packet:    "response",
+		},
+	}
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Go(func() {
+			cluster.OnResponse(response)
+		})
+		wg.Go(func() {
+			cluster.removeNode(uid)
+		})
+	}
+	wg.Wait()
+
+	if calls.Load() != 1 {
+		t.Fatalf("Resolve() calls = %d, want 1", calls.Load())
+	}
+	if cluster.customRequests.Len() != 0 {
+		t.Fatal("completed request was not removed")
+	}
+	for _, response := range request.Responses.All() {
+		if response != "response" {
+			t.Fatalf("response = %#v, want response", response)
+		}
 	}
 }
 

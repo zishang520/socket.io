@@ -4,6 +4,7 @@ import (
 	"net"
 	"path"
 	"strings"
+	"time"
 )
 
 func Is[T any](val any) bool {
@@ -14,6 +15,19 @@ func Is[T any](val any) bool {
 func TryCast[T any](val any) T {
 	r, _ := val.(T)
 	return r
+}
+
+// NonNilSlice returns an empty slice when values is nil.
+func NonNilSlice[T any](values []T) []T {
+	if values == nil {
+		return []T{}
+	}
+	return values
+}
+
+// FromMilliseconds converts milliseconds to a time.Duration.
+func FromMilliseconds(milliseconds int64) time.Duration {
+	return time.Duration(milliseconds) * time.Millisecond
 }
 
 //go:fix inline

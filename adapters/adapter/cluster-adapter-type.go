@@ -32,9 +32,9 @@ type (
 
 	// PacketOptions represents the options for broadcasting messages.
 	PacketOptions struct {
-		Rooms  []socket.Room          `json:"rooms,omitempty" msgpack:"rooms,omitempty"`
-		Except []socket.Room          `json:"except,omitempty" msgpack:"except,omitempty"`
-		Flags  *socket.BroadcastFlags `json:"flags,omitempty" msgpack:"flags,omitempty"`
+		Rooms  []socket.Room          `json:"rooms" msgpack:"rooms" bson:"rooms"`
+		Except []socket.Room          `json:"except" msgpack:"except" bson:"except"`
+		Flags  *socket.BroadcastFlags `json:"flags,omitempty" msgpack:"flags,omitempty" bson:"flags,omitempty"`
 	}
 
 	// BroadcastMessage is a message for broadcasting.
@@ -85,7 +85,7 @@ type (
 	SocketResponse struct {
 		Id        socket.SocketId   `json:"id,omitempty" msgpack:"id,omitempty"`
 		Handshake *socket.Handshake `json:"handshake,omitempty" msgpack:"handshake,omitempty"`
-		Rooms     []socket.Room     `json:"rooms,omitempty" msgpack:"rooms,omitempty"`
+		Rooms     []socket.Room     `json:"rooms" msgpack:"rooms"`
 		Data      any               `json:"data,omitempty" msgpack:"data,omitempty"`
 	}
 
@@ -98,7 +98,7 @@ type (
 	// ServerSideEmitResponse represents a response for server-side emit.
 	ServerSideEmitResponse struct {
 		RequestId string `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		Packet    []any  `json:"packet,omitempty" msgpack:"packet,omitempty"`
+		Packet    any    `json:"packet,omitempty" msgpack:"packet,omitempty"`
 	}
 
 	// BroadcastClientCount represents a broadcast client count.
@@ -110,7 +110,7 @@ type (
 	// BroadcastAck represents a broadcast acknowledgment.
 	BroadcastAck struct {
 		RequestId string `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		Packet    []any  `json:"packet,omitempty" msgpack:"packet,omitempty"`
+		Packet    any    `json:"packet,omitempty" msgpack:"packet,omitempty"`
 	}
 
 	// ClusterAckRequest represents a cluster acknowledgment request.

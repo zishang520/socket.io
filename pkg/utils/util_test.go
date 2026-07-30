@@ -2,6 +2,7 @@ package utils
 
 import (
 	"testing"
+	"time"
 )
 
 func TestIs(t *testing.T) {
@@ -49,6 +50,25 @@ func TestTryCast(t *testing.T) {
 	intResult = TryCast[int]("test")
 	if intResult != 0 {
 		t.Errorf("Expected 0 for failed cast, got %d", intResult)
+	}
+}
+
+func TestNonNilSlice(t *testing.T) {
+	if NonNilSlice[int](nil) == nil {
+		t.Fatal("NonNilSlice(nil) returned nil")
+	}
+
+	values := []int{1}
+	result := NonNilSlice(values)
+	result[0] = 2
+	if values[0] != 2 {
+		t.Fatal("NonNilSlice copied a non-nil slice")
+	}
+}
+
+func TestFromMilliseconds(t *testing.T) {
+	if duration := FromMilliseconds(750); duration != 750*time.Millisecond {
+		t.Fatalf("FromMilliseconds(750) = %s", duration)
 	}
 }
 

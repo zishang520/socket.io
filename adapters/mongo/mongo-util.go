@@ -3,12 +3,11 @@ package mongo
 import (
 	"bytes"
 	"reflect"
-	"time"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
-	"github.com/zishang520/socket.io/v3/pkg/slices"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -26,22 +25,22 @@ func MarshalAdapterData(data any) (bson.RawValue, error) {
 	case *adapter.BroadcastMessage:
 		data = &PacketData[*SocketPacket]{
 			Packet:    (*SocketPacket)(value.Packet),
-			Opts:      serializeOptions(value.Opts),
+			Opts:      adapter.NormalizeOptions(value.Opts),
 			RequestId: value.RequestId,
 		}
 	case *adapter.SocketsJoinLeaveMessage:
 		data = &EventData{
-			Opts:  serializeOptions(value.Opts),
-			Rooms: new(nonNil(value.Rooms)),
+			Opts:  adapter.NormalizeOptions(value.Opts),
+			Rooms: new(utils.NonNilSlice(value.Rooms)),
 		}
 	case *adapter.DisconnectSocketsMessage:
 		data = &EventData{
-			Opts:  serializeOptions(value.Opts),
+			Opts:  adapter.NormalizeOptions(value.Opts),
 			Close: new(value.Close),
 		}
 	case *adapter.FetchSocketsMessage:
 		data = &EventData{
-			Opts:      serializeOptions(value.Opts),
+			Opts:      adapter.NormalizeOptions(value.Opts),
 			RequestId: value.RequestId,
 		}
 	case *adapter.FetchSocketsResponse:
@@ -52,12 +51,12 @@ func MarshalAdapterData(data any) (bson.RawValue, error) {
 	case *adapter.ServerSideEmitMessage:
 		data = &PacketData[[]any]{
 			RequestId: value.RequestId,
-			Packet:    nonNil(value.Packet),
+			Packet:    utils.NonNilSlice(value.Packet),
 		}
 	case *adapter.ServerSideEmitResponse:
 		data = &PacketData[any]{
 			RequestId: new(value.RequestId),
-			Packet:    slices.TryGet(value.Packet, 0),
+			Packet:    value.Packet,
 		}
 	case *adapter.BroadcastClientCount:
 		data = &EventData{
@@ -67,11 +66,11 @@ func MarshalAdapterData(data any) (bson.RawValue, error) {
 	case *adapter.BroadcastAck:
 		data = &PacketData[any]{
 			RequestId: new(value.RequestId),
-			Packet:    slices.TryGet(value.Packet, 0),
+			Packet:    value.Packet,
 		}
 	case *SessionDocument:
 		session := *value
-		session.Rooms = nonNil(session.Rooms)
+		session.Rooms = utils.NonNilSlice(session.Rooms)
 		data = &session
 	}
 
@@ -115,13 +114,13 @@ func UnmarshalAdapterData(messageType adapter.MessageType, raw bson.RawValue) (a
 	case *PacketData[*SocketPacket]:
 		return &adapter.BroadcastMessage{
 			Packet:    deserializePacket(value.Packet),
-			Opts:      deserializeOptions(value.Opts),
+			Opts:      adapter.NormalizeOptions(value.Opts),
 			RequestId: value.RequestId,
 		}, nil
 	case *PacketData[[]any]:
 		return &adapter.ServerSideEmitMessage{
 			RequestId: value.RequestId,
-			Packet:    nonNil(value.Packet),
+			Packet:    utils.NonNilSlice(value.Packet),
 		}, nil
 	case *PacketData[any]:
 		packet := value.Packet
@@ -138,17 +137,17 @@ func UnmarshalAdapterData(messageType adapter.MessageType, raw bson.RawValue) (a
 		if messageType == BROADCAST_ACK {
 			return &adapter.BroadcastAck{
 				RequestId: requestId,
-				Packet:    []any{packet},
+				Packet:    packet,
 			}, nil
 		}
 		return &adapter.ServerSideEmitResponse{
 			RequestId: requestId,
-			Packet:    []any{packet},
+			Packet:    packet,
 		}, nil
 	case *EventData:
 		return decodeEventData(messageType, value), nil
 	case *SessionDocument:
-		value.Rooms = nonNil(value.Rooms)
+		value.Rooms = utils.NonNilSlice(value.Rooms)
 	}
 
 	return target, nil
@@ -169,20 +168,20 @@ func decodeEventData(messageType adapter.MessageType, data *EventData) any {
 	case SOCKETS_JOIN, SOCKETS_LEAVE:
 		rooms := []socket.Room{}
 		if data.Rooms != nil {
-			rooms = nonNil(*data.Rooms)
+			rooms = utils.NonNilSlice(*data.Rooms)
 		}
 		return &adapter.SocketsJoinLeaveMessage{
-			Opts:  deserializeOptions(data.Opts),
+			Opts:  adapter.NormalizeOptions(data.Opts),
 			Rooms: rooms,
 		}
 	case DISCONNECT_SOCKETS:
 		return &adapter.DisconnectSocketsMessage{
-			Opts:  deserializeOptions(data.Opts),
+			Opts:  adapter.NormalizeOptions(data.Opts),
 			Close: data.Close != nil && *data.Close,
 		}
 	case FETCH_SOCKETS:
 		return &adapter.FetchSocketsMessage{
-			Opts:      deserializeOptions(data.Opts),
+			Opts:      adapter.NormalizeOptions(data.Opts),
 			RequestId: data.RequestId,
 		}
 	case FETCH_SOCKETS_RESPONSE:
@@ -212,7 +211,7 @@ func encodeSocketResponses(sockets []adapter.SocketResponse) []SocketResponse {
 	responses := make([]SocketResponse, len(sockets))
 	for i, details := range sockets {
 		responses[i] = SocketResponse(details)
-		responses[i].Rooms = nonNil(responses[i].Rooms)
+		responses[i].Rooms = utils.NonNilSlice(responses[i].Rooms)
 	}
 	return responses
 }
@@ -221,65 +220,9 @@ func decodeSocketResponses(sockets []SocketResponse) []adapter.SocketResponse {
 	responses := make([]adapter.SocketResponse, len(sockets))
 	for i, details := range sockets {
 		responses[i] = adapter.SocketResponse(details)
-		responses[i].Rooms = nonNil(responses[i].Rooms)
+		responses[i].Rooms = utils.NonNilSlice(responses[i].Rooms)
 	}
 	return responses
-}
-
-func serializeOptions(opts *adapter.PacketOptions) *PacketOptions {
-	if opts == nil {
-		return &PacketOptions{
-			Rooms:  []socket.Room{},
-			Except: []socket.Room{},
-		}
-	}
-
-	result := &PacketOptions{
-		Rooms:  nonNil(opts.Rooms),
-		Except: nonNil(opts.Except),
-	}
-	if flags := opts.Flags; flags != nil {
-		result.Flags = &BroadcastFlags{
-			Compress:             flags.Compress,
-			Volatile:             flags.Volatile,
-			Local:                flags.Local,
-			Broadcast:            flags.Broadcast,
-			Binary:               flags.Binary,
-			ExpectSingleResponse: flags.ExpectSingleResponse,
-		}
-		if flags.Timeout != nil {
-			result.Flags.Timeout = new(flags.Timeout.Milliseconds())
-		}
-	}
-	return result
-}
-
-func deserializeOptions(opts *PacketOptions) *adapter.PacketOptions {
-	if opts == nil {
-		return &adapter.PacketOptions{
-			Rooms:  []socket.Room{},
-			Except: []socket.Room{},
-		}
-	}
-
-	result := &adapter.PacketOptions{
-		Rooms:  nonNil(opts.Rooms),
-		Except: nonNil(opts.Except),
-	}
-	if flags := opts.Flags; flags != nil {
-		result.Flags = &socket.BroadcastFlags{
-			Local:                flags.Local,
-			Broadcast:            flags.Broadcast,
-			Binary:               flags.Binary,
-			ExpectSingleResponse: flags.ExpectSingleResponse,
-		}
-		result.Flags.Compress = flags.Compress
-		result.Flags.Volatile = flags.Volatile
-		if flags.Timeout != nil {
-			result.Flags.Timeout = new(time.Duration(*flags.Timeout) * time.Millisecond)
-		}
-	}
-	return result
 }
 
 func deserializePacket(packet *SocketPacket) *parser.Packet {
@@ -304,11 +247,4 @@ func replaceBinaryObjectsByBuffers(value any) any {
 		}
 	}
 	return value
-}
-
-func nonNil[T any](values []T) []T {
-	if values == nil {
-		return []T{}
-	}
-	return values
 }

@@ -65,23 +65,8 @@ type (
 		Tombstone bool                    `bson:"tombstone"`
 	}
 
-	// BroadcastFlags contains the flags encoded in a MongoDB adapter event.
-	BroadcastFlags struct {
-		Compress             *bool  `bson:"compress,omitempty"`
-		Volatile             bool   `bson:"volatile,omitempty"`
-		Local                bool   `bson:"local,omitempty"`
-		Broadcast            bool   `bson:"broadcast,omitempty"`
-		Binary               bool   `bson:"binary,omitempty"`
-		Timeout              *int64 `bson:"timeout,omitempty"`
-		ExpectSingleResponse bool   `bson:"expectSingleResponse,omitempty"`
-	}
-
 	// PacketOptions contains the rooms, exclusions and flags encoded in an event.
-	PacketOptions struct {
-		Rooms  []socket.Room   `bson:"rooms"`
-		Except []socket.Room   `bson:"except"`
-		Flags  *BroadcastFlags `bson:"flags,omitempty"`
-	}
+	PacketOptions = adapter.PacketOptions
 
 	// PacketData contains a packet and its optional request metadata.
 	PacketData[T any] struct {

@@ -366,16 +366,16 @@ func (s *Socket) EmitWithAck(ev string, args ...any) func(Ack) {
 	}
 }
 
-func (s *Socket) registerAckCallback(id uint64, ack Ack, timeout *time.Duration) {
+func (s *Socket) registerAckCallback(id uint64, ack Ack, timeout *int64) {
 	if timeout == nil {
 		s.acks.Store(id, ack)
 		return
 	}
 	timer := utils.SetTimeout(func() {
-		socketLog.Debug("event with ack id %d has timed out after %d ms", id, *timeout/time.Millisecond)
+		socketLog.Debug("event with ack id %d has timed out after %d ms", id, *timeout)
 		s.acks.Delete(id)
 		ack(nil, errors.New("operation has timed out"))
-	}, *timeout)
+	}, utils.FromMilliseconds(*timeout))
 	s.acks.Store(id, func(args []any, _ error) {
 		utils.ClearTimeout(timer)
 		ack(args, nil)
@@ -739,7 +739,7 @@ func (s *Socket) Local() *BroadcastOperator {
 //		})
 //	})
 func (s *Socket) Timeout(timeout time.Duration) *Socket {
-	s.flags.Load().Timeout = new(timeout)
+	s.flags.Load().Timeout = new(timeout.Milliseconds())
 	return s
 }
 

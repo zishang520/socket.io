@@ -9,6 +9,7 @@ import (
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -114,7 +115,7 @@ func (b *BroadcastOperator) Local() *BroadcastOperator {
 // Timeout adds a timeout for the next operation.
 func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
 	flags := new(*b.flags)
-	flags.Timeout = new(timeout)
+	flags.Timeout = new(timeout.Milliseconds())
 	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, flags)
 }
 
@@ -151,8 +152,8 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	var timeout time.Duration
 	var ackOnce sync.Once
 
-	if time := b.flags.Timeout; time != nil {
-		timeout = *time
+	if milliseconds := b.flags.Timeout; milliseconds != nil {
+		timeout = utils.FromMilliseconds(*milliseconds)
 	}
 
 	timer := utils.SetTimeout(func() {
@@ -201,7 +202,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 			ackOnce.Do(func() {
 				if b.flags.ExpectSingleResponse {
 					data, _ := responses.Get(0)
-					ack(utils.TryCast[[]any](data), nil)
+					ack([]any{data}, nil)
 				} else {
 					ack(responses.All(), nil)
 				}
@@ -220,7 +221,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		checkCompleteness()
 	}, func(clientResponse []any, _ error) {
 		// each client sends an acknowledgement
-		responses.Push(clientResponse...)
+		responses.Push(slices.TryGet(clientResponse, 0))
 		checkCompleteness()
 	})
 	expectedServerCount.Store(b.adapter.ServerCount())

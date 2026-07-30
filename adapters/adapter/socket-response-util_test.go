@@ -12,6 +12,7 @@ func TestSocketDetailsToResponses(t *testing.T) {
 	details := []socket.SocketDetails{
 		NewRemoteSocket(&SocketResponse{Id: "socket1", Rooms: []socket.Room{"room1"}}),
 		NewRemoteSocket(&SocketResponse{Id: "socket2", Rooms: []socket.Room{"room2"}}),
+		NewRemoteSocket(&SocketResponse{Id: "socket3"}),
 	}
 
 	responses := socketDetailsToResponses(details)
@@ -20,6 +21,16 @@ func TestSocketDetailsToResponses(t *testing.T) {
 	}
 	if responses[0].Id != "socket1" || responses[1].Id != "socket2" {
 		t.Fatal("responses do not preserve socket IDs")
+	}
+	if responses[2].Rooms == nil || len(responses[2].Rooms) != 0 {
+		t.Fatalf("empty rooms = %#v, want non-nil empty slice", responses[2].Rooms)
+	}
+	data, err := json.Marshal(responses[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), `{"id":"socket3","rooms":[]}`; got != want {
+		t.Fatalf("JSON socket details = %s, want %s", got, want)
 	}
 }
 

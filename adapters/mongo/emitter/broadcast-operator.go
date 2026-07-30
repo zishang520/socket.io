@@ -143,20 +143,15 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Nsp:  b.broadcastOptions.Nsp,
 		Data: data,
 	}
-	flags := &socket.BroadcastFlags{}
-	flags.Compress = b.flags.Compress
-	flags.Volatile = b.flags.Volatile
-
-	opts := &adapter.PacketOptions{
-		Rooms:  b.rooms.Keys(),
-		Except: b.exceptRooms.Keys(),
-		Flags:  flags,
-	}
+	opts := adapter.EncodeOptions(&socket.BroadcastOptions{
+		Rooms:  b.rooms,
+		Except: b.exceptRooms,
+		Flags:  b.flags,
+	})
 
 	// Build document matching Node.js format:
 	// {uid: "emitter", nsp: "/", type: BROADCAST, data: {packet, opts}}
 	return b.publish(&adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.BROADCAST,
 		Data: &adapter.BroadcastMessage{
 			Packet: packet,
@@ -196,13 +191,12 @@ func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 // This sends a SOCKETS_JOIN document to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	return b.publish(&adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.SOCKETS_JOIN,
 		Data: &adapter.SocketsJoinLeaveMessage{
-			Opts: &adapter.PacketOptions{
-				Rooms:  b.rooms.Keys(),
-				Except: b.exceptRooms.Keys(),
-			},
+			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
+				Rooms:  b.rooms,
+				Except: b.exceptRooms,
+			}),
 			Rooms: rooms,
 		},
 	})
@@ -212,13 +206,12 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 // This sends a SOCKETS_LEAVE document to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	return b.publish(&adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.SOCKETS_LEAVE,
 		Data: &adapter.SocketsJoinLeaveMessage{
-			Opts: &adapter.PacketOptions{
-				Rooms:  b.rooms.Keys(),
-				Except: b.exceptRooms.Keys(),
-			},
+			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
+				Rooms:  b.rooms,
+				Except: b.exceptRooms,
+			}),
 			Rooms: rooms,
 		},
 	})
@@ -229,13 +222,12 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 // This sends a DISCONNECT_SOCKETS document to all Socket.IO servers in the cluster.
 func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 	return b.publish(&adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.DISCONNECT_SOCKETS,
 		Data: &adapter.DisconnectSocketsMessage{
-			Opts: &adapter.PacketOptions{
-				Rooms:  b.rooms.Keys(),
-				Except: b.exceptRooms.Keys(),
-			},
+			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
+				Rooms:  b.rooms,
+				Except: b.exceptRooms,
+			}),
 			Close: state,
 		},
 	})
@@ -252,7 +244,6 @@ func (b *BroadcastOperator) ServerSideEmit(args ...any) error {
 	}
 
 	return b.publish(&adapter.ClusterMessage{
-		Uid:  emitterUID,
 		Type: adapter.SERVER_SIDE_EMIT,
 		Data: &adapter.ServerSideEmitMessage{
 			Packet: args,

@@ -20,24 +20,8 @@ type (
 		AttachmentId string              `json:"attachmentId,omitempty" msgpack:"attachmentId,omitempty"`
 	}
 
-	// BroadcastFlags is the representation exchanged with Node.js adapters.
-	// Timeout is encoded in milliseconds, while Go uses time.Duration internally.
-	BroadcastFlags struct {
-		Compress             *bool  `json:"compress,omitempty" msgpack:"compress,omitempty"`
-		Volatile             bool   `json:"volatile,omitempty" msgpack:"volatile,omitempty"`
-		Local                bool   `json:"local,omitempty" msgpack:"local,omitempty"`
-		Broadcast            bool   `json:"broadcast,omitempty" msgpack:"broadcast,omitempty"`
-		Binary               bool   `json:"binary,omitempty" msgpack:"binary,omitempty"`
-		Timeout              *int64 `json:"timeout,omitempty" msgpack:"timeout,omitempty"`
-		ExpectSingleResponse bool   `json:"expectSingleResponse,omitempty" msgpack:"expectSingleResponse,omitempty"`
-	}
-
 	// PacketOptions is the Node.js wire representation of broadcast options.
-	PacketOptions struct {
-		Rooms  []socket.Room   `json:"rooms" msgpack:"rooms"`
-		Except []socket.Room   `json:"except" msgpack:"except"`
-		Flags  *BroadcastFlags `json:"flags,omitempty" msgpack:"flags,omitempty"`
-	}
+	PacketOptions = adapter.PacketOptions
 
 	// PacketData contains a packet and its optional request metadata.
 	PacketData[T any] struct {

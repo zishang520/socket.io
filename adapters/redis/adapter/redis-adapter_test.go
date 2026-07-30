@@ -1,9 +1,12 @@
 package adapter
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	baseadapter "github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 )
 
 type recordingParser struct {
@@ -32,5 +35,30 @@ func TestRedisAdapterOnMessageAcceptsNamespaceChannel(t *testing.T) {
 
 	if !parser.decodeCalled {
 		t.Fatal("expected namespace channel message to be decoded")
+	}
+}
+
+func TestRedisAdapterOnResponseWrapsAckPacket(t *testing.T) {
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	var response []any
+	adapter.ackRequests.Store("request", &AckRequest{
+		Ack: func(args []any, _ error) {
+			response = args
+		},
+	})
+	payload, err := json.Marshal(&Response{
+		Type:      redis.BROADCAST_ACK,
+		RequestId: "request",
+		Packet:    []any{"first", "second"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adapter.onResponse("", payload)
+
+	want := []any{[]any{"first", "second"}}
+	if !reflect.DeepEqual(response, want) {
+		t.Fatalf("acknowledgement = %#v, want %#v", response, want)
 	}
 }

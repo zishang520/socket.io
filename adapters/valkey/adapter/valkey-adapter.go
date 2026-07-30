@@ -624,7 +624,7 @@ func (r *valkeyAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Bro
 
 			timeout := adapter.DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-				timeout = *opts.Flags.Timeout
+				timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
 			}
 			utils.SetTimeout(func() {
 				r.ackRequests.Delete(requestId)

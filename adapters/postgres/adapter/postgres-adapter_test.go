@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
@@ -292,11 +291,13 @@ func TestPostgresAdapter_DecodeNodeResponses(t *testing.T) {
 		name        string
 		messageType adapter.MessageType
 		payload     string
+		packet      any
 	}{
 		{
 			name:        "server-side emit response",
 			messageType: adapter.SERVER_SIDE_EMIT_RESPONSE,
 			payload:     `{"uid":"node","nsp":"/","type":10,"data":{"requestId":"request","packet":"response"}}`,
+			packet:      "response",
 		},
 		{
 			name:        "broadcast acknowledgement",
@@ -310,15 +311,15 @@ func TestPostgresAdapter_DecodeNodeResponses(t *testing.T) {
 				t.Fatalf("expected type %d, got %d", test.messageType, message.Type)
 			}
 
-			var packet []any
+			var packet any
 			switch data := message.Data.(type) {
 			case *adapter.ServerSideEmitResponse:
 				packet = data.Packet
 			case *adapter.BroadcastAck:
 				packet = data.Packet
 			}
-			if len(packet) != 1 {
-				t.Fatalf("expected one ACK argument, got %#v", packet)
+			if packet != test.packet {
+				t.Fatalf("packet = %#v, want %#v", packet, test.packet)
 			}
 		})
 	}
@@ -337,8 +338,8 @@ func TestPostgresAdapter_DecodeNodeMsgpackFixtures(t *testing.T) {
 			t.Fatalf("decodeMsgpack failed: %v", err)
 		}
 		packet := message.Data.(*adapter.ServerSideEmitResponse).Packet
-		if len(packet) != 1 || packet[0] != nil {
-			t.Fatalf("expected one nil argument, got %#v", packet)
+		if packet != nil {
+			t.Fatalf("expected nil packet, got %#v", packet)
 		}
 	})
 
@@ -357,7 +358,7 @@ func TestPostgresAdapter_DecodeNodeMsgpackFixtures(t *testing.T) {
 		if !ok || !bytes.Equal(binary, []byte{1, 2, 3}) {
 			t.Fatalf("unexpected binary payload: %#v", packetData[1])
 		}
-		if data.Opts.Flags.Timeout == nil || *data.Opts.Flags.Timeout != 750*time.Millisecond {
+		if data.Opts.Flags.Timeout == nil || *data.Opts.Flags.Timeout != 750 {
 			t.Fatalf("unexpected timeout: %v", data.Opts.Flags.Timeout)
 		}
 	})

@@ -11,7 +11,7 @@ func socketDetailsToResponses(localSockets []socket.SocketDetails) []SocketRespo
 		responses[i] = SocketResponse{
 			Id:        client.Id(),
 			Handshake: client.Handshake(),
-			Rooms:     client.Rooms().Keys(),
+			Rooms:     utils.NonNilSlice(client.Rooms().Keys()),
 			Data:      client.Data(),
 		}
 	}

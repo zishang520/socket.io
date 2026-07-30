@@ -17,6 +17,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -463,13 +464,13 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 
 	// Handle with acknowledgement
 	called := &sync.Once{}
-	callback := func(args []any, err error) {
+	callback := func(args []any, _ error) {
 		called.Do(func() {
 			redisLog.Debug("calling acknowledgement with %v", args)
 			response, err := json.Marshal(&Response{
 				Type:      redis.SERVER_SIDE_EMIT,
 				RequestId: request.RequestId,
-				Data:      args,
+				Data:      slices.TryGet(args, 0),
 			})
 			if err != nil {
 				redisLog.Debug("Error marshaling SERVER_SIDE_EMIT response for RequestId %s: %s", request.RequestId, err.Error())
@@ -510,7 +511,7 @@ func (r *redisAdapter) handleBroadcastRequest(request *Request) {
 			response, err := r.parser.Encode(&Response{
 				Type:      redis.BROADCAST_ACK,
 				RequestId: request.RequestId,
-				Packet:    args,
+				Packet:    slices.TryGet(args, 0),
 			})
 			if err != nil {
 				redisLog.Debug("Error marshaling BROADCAST_ACK response for RequestId %s: %s", request.RequestId, err.Error())
@@ -556,7 +557,7 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 		case redis.BROADCAST_CLIENT_COUNT:
 			ackRequest.ClientCountCallback(response.ClientCount)
 		case redis.BROADCAST_ACK:
-			ackRequest.Ack(response.Packet, nil)
+			ackRequest.Ack([]any{response.Packet}, nil)
 		}
 		return
 	}
@@ -688,7 +689,7 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 			// Calculate cleanup timeout
 			timeout := adapter.DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-				timeout = *opts.Flags.Timeout
+				timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
 			}
 			// Clean up ackRequests after timeout
 			utils.SetTimeout(func() {
@@ -894,7 +895,7 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 	redisLog.Debug(`waiting for %d responses to "serverSideEmit" request`, numSub)
 	// No other servers to wait for
 	if numSub <= 0 {
-		ack(nil, nil)
+		ack([]any{}, nil)
 		return nil
 	}
 

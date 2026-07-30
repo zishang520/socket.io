@@ -17,6 +17,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	sliceUtils "github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -297,7 +298,7 @@ func (a *mongoAdapter) OnMessage(message *ClusterMessage, offset adapter.Offset)
 					Type: mongo.BROADCAST_ACK,
 					Data: &BroadcastAck{
 						RequestId: *data.RequestId,
-						Packet:    packet,
+						Packet:    sliceUtils.TryGet(packet, 0),
 					},
 				})
 			},
@@ -350,7 +351,7 @@ func (a *mongoAdapter) OnMessage(message *ClusterMessage, offset adapter.Offset)
 				Type: mongo.SERVER_SIDE_EMIT_RESPONSE,
 				Data: &ServerSideEmitResponse{
 					RequestId: *data.RequestId,
-					Packet:    packet,
+					Packet:    sliceUtils.TryGet(packet, 0),
 				},
 			})
 		}
@@ -377,7 +378,7 @@ func (a *mongoAdapter) OnResponse(response *ClusterResponse) {
 			return
 		}
 		if request, found := a.ackRequests.Load(data.RequestId); found {
-			request.Ack(data.Packet, nil)
+			request.Ack([]any{data.Packet}, nil)
 		}
 	case mongo.FETCH_SOCKETS_RESPONSE:
 		data, ok := response.Data.(*FetchSocketsResponse)
@@ -430,11 +431,7 @@ func (a *mongoAdapter) OnResponse(response *ClusterResponse) {
 			return
 		}
 		request.Current++
-		if len(data.Packet) == 0 {
-			request.Responses = append(request.Responses, nil)
-		} else {
-			request.Responses = append(request.Responses, data.Packet[0])
-		}
+		request.Responses = append(request.Responses, data.Packet)
 		if request.Current != request.Expected {
 			request.Unlock()
 			return
@@ -508,7 +505,7 @@ func (a *mongoAdapter) BroadcastWithAck(
 
 		var timeout time.Duration
 		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-			timeout = *opts.Flags.Timeout
+			timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
 		}
 		utils.SetTimeout(func() {
 			a.ackRequests.Delete(requestId)

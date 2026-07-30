@@ -1,11 +1,68 @@
 package socket
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
+
+type broadcastAckAdapter struct {
+	Adapter
+	response []any
+}
+
+func (*broadcastAckAdapter) ServerCount() int64 {
+	return 1
+}
+
+func (a *broadcastAckAdapter) BroadcastWithAck(_ *parser.Packet, _ *BroadcastOptions, clientCount func(uint64), ack Ack) {
+	clientCount(1)
+	ack(a.response, nil)
+}
+
+func TestBroadcastOperatorKeepsFirstAckValue(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		args   []any
+		single bool
+		want   []any
+	}{
+		{name: "multiple arguments", args: []any{"first", "ignored"}, want: []any{"first"}},
+		{name: "array value", args: []any{[]any{"first", "second"}}, want: []any{[]any{"first", "second"}}},
+		{name: "empty arguments", want: []any{nil}},
+		{name: "single response", args: []any{"response"}, single: true, want: []any{"response"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			timeout := time.Hour.Milliseconds()
+			operator := NewBroadcastOperator(
+				&broadcastAckAdapter{response: test.args},
+				nil,
+				nil,
+				&BroadcastFlags{
+					Timeout:              &timeout,
+					ExpectSingleResponse: test.single,
+				},
+			)
+			var response []any
+
+			err := operator.Emit("event", func(args []any, err error) {
+				if err != nil {
+					t.Errorf("unexpected acknowledgement error: %v", err)
+				}
+				response = args
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(response, test.want) {
+				t.Fatalf("acknowledgement = %#v, want %#v", response, test.want)
+			}
+		})
+	}
+}
 
 func TestBroadcastOperatorTo(t *testing.T) {
 	op := MakeBroadcastOperator()
@@ -135,7 +192,7 @@ func TestBroadcastOperatorTimeout(t *testing.T) {
 
 	timeout := 5 * time.Second
 	result := op.Timeout(timeout)
-	if result.flags.Timeout == nil || *result.flags.Timeout != timeout {
+	if result.flags.Timeout == nil || *result.flags.Timeout != timeout.Milliseconds() {
 		t.Errorf("Expected Timeout to be %v", timeout)
 	}
 	if op.flags.Timeout != nil {

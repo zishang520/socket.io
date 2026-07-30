@@ -28,9 +28,9 @@ func (t Type) IsValid() bool {
 // Options contains optional packet configuration.
 type Options struct {
 	// Compress indicates whether the packet should be compressed.
-	Compress *bool `json:"compress,omitempty" msgpack:"compress,omitempty"`
+	Compress *bool `json:"compress,omitempty" msgpack:"compress,omitempty" bson:"compress,omitempty"`
 	// WsPreEncodedFrame contains a pre-encoded WebSocket frame.
-	WsPreEncodedFrame types.BufferInterface `json:"wsPreEncodedFrame,omitempty" msgpack:"wsPreEncodedFrame,omitempty"`
+	WsPreEncodedFrame types.BufferInterface `json:"-" msgpack:"-" bson:"-"`
 }
 
 // NewOptions creates a new Options with the given compress flag.

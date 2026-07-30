@@ -6,7 +6,6 @@ import (
 	"io"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
@@ -24,7 +23,7 @@ func (*failingBinaryReader) MarshalBinary() ([]byte, error) {
 }
 
 func TestAdapterDataOptionsWireFormat(t *testing.T) {
-	timeout := 750 * time.Millisecond
+	timeout := int64(750)
 	wireData, _ := MarshalAdapterData(&adapter.BroadcastMessage{
 		Packet: &parser.Packet{Type: parser.EVENT},
 		Opts: &adapter.PacketOptions{
@@ -42,7 +41,7 @@ func TestAdapterDataOptionsWireFormat(t *testing.T) {
 
 	decoded := UnmarshalAdapterData(adapter.BROADCAST, wire).(*adapter.BroadcastMessage)
 	if decoded.Opts.Flags.Timeout == nil || *decoded.Opts.Flags.Timeout != timeout {
-		t.Fatalf("expected timeout %s, got %v", timeout, decoded.Opts.Flags.Timeout)
+		t.Fatalf("expected timeout %d, got %v", timeout, decoded.Opts.Flags.Timeout)
 	}
 }
 
@@ -69,12 +68,12 @@ func TestAdapterDataScalarResponses(t *testing.T) {
 		{
 			name:        "server-side emit response",
 			messageType: adapter.SERVER_SIDE_EMIT_RESPONSE,
-			data:        &adapter.ServerSideEmitResponse{RequestId: "request", Packet: []any{"response"}},
+			data:        &adapter.ServerSideEmitResponse{RequestId: "request", Packet: "response"},
 		},
 		{
 			name:        "broadcast acknowledgement",
 			messageType: adapter.BROADCAST_ACK,
-			data:        &adapter.BroadcastAck{RequestId: "request", Packet: []any{"response"}},
+			data:        &adapter.BroadcastAck{RequestId: "request", Packet: "response"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -85,15 +84,15 @@ func TestAdapterDataScalarResponses(t *testing.T) {
 			}
 
 			decoded := UnmarshalAdapterData(test.messageType, wire)
-			var packet []any
+			var packet any
 			switch value := decoded.(type) {
 			case *adapter.ServerSideEmitResponse:
 				packet = value.Packet
 			case *adapter.BroadcastAck:
 				packet = value.Packet
 			}
-			if len(packet) != 1 || packet[0] != "response" {
-				t.Fatalf("expected one internal ACK argument, got %#v", packet)
+			if packet != "response" {
+				t.Fatalf("expected scalar packet, got %#v", packet)
 			}
 		})
 	}
@@ -153,8 +152,9 @@ func TestMarshalAdapterDataBinary(t *testing.T) {
 			}},
 		},
 		{
-			name:    "unused second acknowledgement argument",
+			name:    "array acknowledgement",
 			message: &adapter.ClusterMessage{Type: adapter.BROADCAST_ACK, Data: &adapter.BroadcastAck{Packet: []any{"first", []byte{1}}}},
+			want:    true,
 		},
 		{
 			name:    "heartbeat",
