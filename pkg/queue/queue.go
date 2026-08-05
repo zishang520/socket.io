@@ -3,7 +3,6 @@
 package queue
 
 import (
-	"runtime"
 	"runtime/debug"
 	"sync"
 
@@ -32,7 +31,6 @@ func New() *Queue {
 	q.cond = sync.NewCond(&q.mu)
 
 	go q.loop()
-	runtime.SetFinalizer(q, func(q *Queue) { q.TryClose() })
 	return q
 }
 
@@ -63,7 +61,12 @@ func (q *Queue) Size() int {
 
 // loop is the main consumer goroutine.
 func (q *Queue) loop() {
-	defer close(q.done)
+	defer func() {
+		q.mu.Lock()
+		q.tasks = nil
+		q.mu.Unlock()
+		close(q.done)
+	}()
 
 	for {
 		task, ok := q.get()
