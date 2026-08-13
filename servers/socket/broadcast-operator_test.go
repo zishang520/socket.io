@@ -1,8 +1,10 @@
 package socket
 
 import (
+	"errors"
 	"reflect"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
@@ -14,13 +16,88 @@ type broadcastAckAdapter struct {
 	response []any
 }
 
-func (*broadcastAckAdapter) ServerCount() int64 {
-	return 1
+type serverCountErrorAdapter struct {
+	*broadcastAckAdapter
+	err error
+}
+
+func (a *serverCountErrorAdapter) ServerCount() (int64, error) {
+	return 0, a.err
+}
+
+func (*broadcastAckAdapter) ServerCount() (int64, error) {
+	return 1, nil
 }
 
 func (a *broadcastAckAdapter) BroadcastWithAck(_ *parser.Packet, _ *BroadcastOptions, clientCount func(uint64), ack Ack) {
 	clientCount(1)
 	ack(a.response, nil)
+}
+
+func TestBroadcastOperatorRequiresAckTimeout(t *testing.T) {
+	operator := NewBroadcastOperator(nil, nil, nil, nil)
+	const want = "acknowledgement timeout must be set"
+
+	var callbackErr error
+	if err := operator.Emit("event", func(_ []any, err error) {
+		callbackErr = err
+	}); err == nil || err.Error() != want {
+		t.Fatalf("Emit() error = %v, want %q", err, want)
+	}
+	if callbackErr == nil || callbackErr.Error() != want {
+		t.Fatalf("Emit() callback error = %v, want %q", callbackErr, want)
+	}
+
+	callbackErr = nil
+	callbackCount := 0
+	operator.EmitWithAck("event")(func(_ []any, err error) {
+		callbackCount++
+		callbackErr = err
+	})
+	if callbackErr == nil || callbackErr.Error() != want {
+		t.Fatalf("EmitWithAck() error = %v, want %q", callbackErr, want)
+	}
+	if callbackCount != 1 {
+		t.Fatalf("EmitWithAck() callback count = %d, want 1", callbackCount)
+	}
+
+	operator = NewBroadcastOperator(new(broadcastAckAdapter), nil, nil, nil).Timeout(0)
+	if err := operator.Emit("event", func([]any, error) {}); err != nil {
+		t.Fatalf("Emit() with an explicit zero timeout returned %v", err)
+	}
+}
+
+func TestBroadcastOperatorWaitsForTimeoutWhenServerCountFails(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		countErr := errors.New("count failed")
+		adapter := &serverCountErrorAdapter{
+			broadcastAckAdapter: &broadcastAckAdapter{response: []any{"response"}},
+			err:                 countErr,
+		}
+		result := make(chan error, 1)
+		if err := NewBroadcastOperator(adapter, nil, nil, nil).Timeout(time.Millisecond).Emit(
+			"event",
+			func(_ []any, err error) { result <- err },
+		); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-result:
+			t.Fatalf("acknowledgement completed before timeout: %v", err)
+		default:
+		}
+
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		select {
+		case err := <-result:
+			if err == nil {
+				t.Fatal("acknowledgement timeout returned nil error")
+			}
+		default:
+			t.Fatal("acknowledgement did not time out")
+		}
+	})
 }
 
 func TestBroadcastOperatorKeepsFirstAckValue(t *testing.T) {

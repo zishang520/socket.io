@@ -133,15 +133,10 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
-	// Construct the packet data
-	data := make([]any, len(args)+1)
-	data[0] = ev
-	copy(data[1:], args)
-
 	packet := &parser.Packet{
 		Type: parser.EVENT,
 		Nsp:  b.broadcastOptions.Nsp,
-		Data: data,
+		Data: utils.EventPayload(ev, args),
 	}
 
 	opts := adapter.EncodeOptions(&socket.BroadcastOptions{

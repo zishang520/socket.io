@@ -3,17 +3,10 @@
 package redis
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
-
-// ErrNilRedisPacket indicates an attempt to unmarshal into a nil RedisPacket.
-var ErrNilRedisPacket = errors.New("cannot unmarshal into nil RedisPacket")
 
 type (
 	// RedisPacket represents a packet to be broadcast via Redis.
@@ -34,29 +27,32 @@ type (
 	// RedisRequest represents a request message sent between servers via Redis.
 	// It is used for various inter-node operations such as remote joins, leaves, and fetches.
 	RedisRequest struct {
-		Type      adapter.MessageType    `json:"type,omitempty" msgpack:"type,omitempty"`
+		Type      adapter.MessageType    `json:"type" msgpack:"type"`
 		RequestId string                 `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		Rooms     []socket.Room          `json:"rooms,omitempty" msgpack:"rooms,omitempty"`
+		Rooms     []socket.Room          `json:"rooms,omitzero" msgpack:"rooms,omitempty"`
 		Opts      *adapter.PacketOptions `json:"opts,omitempty" msgpack:"opts,omitempty"`
 		Sid       socket.SocketId        `json:"sid,omitempty" msgpack:"sid,omitempty"`
 		Room      socket.Room            `json:"room,omitempty" msgpack:"room,omitempty"`
 		Close     bool                   `json:"close,omitempty" msgpack:"close,omitempty"`
 		Uid       adapter.ServerId       `json:"uid,omitempty" msgpack:"uid,omitempty"`
-		Data      []any                  `json:"data,omitempty" msgpack:"data,omitempty"`
+		Data      []any                  `json:"data,omitzero" msgpack:"data,omitempty"`
 		Packet    *parser.Packet         `json:"packet,omitempty" msgpack:"packet,omitempty"`
 	}
 
 	// RedisResponse represents a response message sent between servers via Redis.
 	// It contains the response data for various inter-node requests.
 	RedisResponse struct {
-		Type        adapter.MessageType       `json:"type,omitempty" msgpack:"type,omitempty"`
-		RequestId   string                    `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		Rooms       []socket.Room             `json:"rooms,omitempty" msgpack:"rooms,omitempty"`
-		Sockets     []*adapter.SocketResponse `json:"sockets,omitempty" msgpack:"sockets,omitempty"`
-		Data        any                       `json:"data,omitempty" msgpack:"data,omitempty"`
-		ClientCount uint64                    `json:"clientCount,omitempty" msgpack:"clientCount,omitempty"`
-		Packet      any                       `json:"packet,omitempty" msgpack:"packet,omitempty"`
+		Type        adapter.MessageType `json:"type,omitempty" msgpack:"type,omitempty"`
+		RequestId   string              `json:"requestId" msgpack:"requestId"`
+		Rooms       []socket.Room       `json:"rooms,omitzero" msgpack:"rooms,omitempty"`
+		Sockets     any                 `json:"sockets,omitempty" msgpack:"sockets,omitempty"`
+		Data        any                 `json:"data,omitzero" msgpack:"data,omitempty"`
+		ClientCount *uint64             `json:"clientCount,omitzero" msgpack:"clientCount,omitempty"`
+		Packet      any                 `json:"packet,omitzero" msgpack:"packet,omitempty"`
 	}
+
+	// RawClusterMessage is the flat field-value shape stored in Redis Streams.
+	RawClusterMessage map[string]any
 
 	// Parser defines the interface for encoding and decoding data for Redis communication.
 	// Implementations must be thread-safe as they may be called from multiple goroutines.
@@ -68,59 +64,6 @@ type (
 		Decode([]byte, any) error
 	}
 )
-
-// MarshalJSON implements the json.Marshaler interface for RedisPacket.
-// It serializes the RedisPacket as a JSON array in the format [Uid, Packet, Opts].
-func (r *RedisPacket) MarshalJSON() ([]byte, error) {
-	if r == nil {
-		return json.Marshal(nil)
-	}
-	return json.Marshal([]any{r.Uid, r.Packet, r.Opts})
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface for RedisPacket.
-// It deserializes a JSON array [Uid, Packet?, Opts?] back into the RedisPacket struct.
-// The Uid field is required; Packet and Opts are optional.
-func (r *RedisPacket) UnmarshalJSON(data []byte) error {
-	if r == nil {
-		return ErrNilRedisPacket
-	}
-
-	var arr []json.RawMessage
-	if err := json.Unmarshal(data, &arr); err != nil {
-		return fmt.Errorf("failed to unmarshal RedisPacket array: %w", err)
-	}
-
-	// Validate minimum required fields
-	if len(arr) < 1 {
-		return fmt.Errorf("RedisPacket array must contain at least 1 element (Uid), got %d", len(arr))
-	}
-
-	// Unmarshal Uid (required)
-	if err := json.Unmarshal(arr[0], &r.Uid); err != nil {
-		return fmt.Errorf("failed to unmarshal RedisPacket Uid: %w", err)
-	}
-
-	// Unmarshal Packet (optional)
-	if len(arr) > 1 {
-		var p *parser.Packet
-		if err := json.Unmarshal(arr[1], &p); err != nil {
-			return fmt.Errorf("failed to unmarshal RedisPacket Packet: %w", err)
-		}
-		r.Packet = p
-	}
-
-	// Unmarshal Opts (optional)
-	if len(arr) > 2 {
-		var o *adapter.PacketOptions
-		if err := json.Unmarshal(arr[2], &o); err != nil {
-			return fmt.Errorf("failed to unmarshal RedisPacket Opts: %w", err)
-		}
-		r.Opts = o
-	}
-
-	return nil
-}
 
 // SubscriptionMode determines how Redis Pub/Sub channels are managed.
 // This type is shared between the adapter and emitter packages.
@@ -144,21 +87,6 @@ const (
 	DefaultSubscriptionMode = DynamicSubscriptionMode
 )
 
-// privateRoomIdLength is the length of a socket ID, used to determine if a room is private.
+// PrivateRoomIdLength is the length of a socket ID used to identify private rooms.
 // Private rooms (socket IDs) have exactly this length.
 const PrivateRoomIdLength = 20
-
-// ShouldUseDynamicChannel determines if a dynamic channel should be used for the given room.
-// This function is shared between the adapter and emitter packages to ensure consistent behavior.
-func ShouldUseDynamicChannel(mode SubscriptionMode, room socket.Room) bool {
-	switch mode {
-	case DynamicSubscriptionMode:
-		// Private rooms (session IDs) have length of PrivateRoomIdLength
-		return len(string(room)) != PrivateRoomIdLength
-	case DynamicPrivateSubscriptionMode:
-		return true
-	default:
-		// StaticSubscriptionMode or empty: always use main channel
-		return false
-	}
-}

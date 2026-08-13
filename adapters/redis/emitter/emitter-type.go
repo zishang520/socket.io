@@ -26,17 +26,18 @@ type (
 		// Parser is the encoder/decoder for serializing messages.
 		Parser redis.Parser
 
-		// Sharded indicates whether to use Redis sharded Pub/Sub (SPUBLISH).
-		// Set to true when using Redis Cluster with sharded Pub/Sub (Redis 7.0+).
-		Sharded bool
-
 		// SubscriptionMode controls how room-specific channels are computed.
 		// This should match the adapter's subscriptionMode setting.
 		SubscriptionMode redis.SubscriptionMode
+
+		// Sharded is kept for source compatibility. Operator selection is
+		// controlled by EmitterOptions.Sharded.
+		//
+		// Deprecated: configure sharded mode through EmitterOptions.
+		Sharded bool
 	}
 
-	// BroadcastOperatorInterface defines the common interface for broadcast operators.
-	// Both BroadcastOperator and ShardedBroadcastOperator implement this interface.
+	// BroadcastOperatorInterface defines the fluent broadcast API.
 	BroadcastOperatorInterface interface {
 		To(room ...socket.Room) BroadcastOperatorInterface
 		In(room ...socket.Room) BroadcastOperatorInterface
@@ -46,7 +47,8 @@ type (
 		Emit(ev string, args ...any) error
 		SocketsJoin(rooms ...socket.Room) error
 		SocketsLeave(rooms ...socket.Room) error
-		DisconnectSockets(state bool) error
+		DisconnectSockets(close bool) error
+		ServerSideEmit(args ...any) error
 	}
 
 	// Packet is an alias for redis.RedisPacket.

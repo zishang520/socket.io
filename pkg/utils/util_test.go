@@ -53,6 +53,18 @@ func TestTryCast(t *testing.T) {
 	}
 }
 
+func TestEventPayload(t *testing.T) {
+	args := []any{"value", 1}
+	payload := EventPayload("event", args)
+	if len(payload) != 3 || payload[0] != "event" || payload[1] != "value" || payload[2] != 1 {
+		t.Fatalf("EventPayload() = %#v", payload)
+	}
+	payload[1] = "changed"
+	if args[0] != "value" {
+		t.Fatal("EventPayload reused the input backing array")
+	}
+}
+
 func TestNonNilSlice(t *testing.T) {
 	if NonNilSlice[int](nil) == nil {
 		t.Fatal("NonNilSlice(nil) returned nil")
@@ -91,6 +103,15 @@ func TestPtr(t *testing.T) {
 	}
 	if *strPtr != "hello" {
 		t.Errorf("Expected 'hello', got %q", *strPtr)
+	}
+}
+
+func TestFromPtr(t *testing.T) {
+	if value := FromPtr(new(42)); value != 42 {
+		t.Fatalf("FromPtr(new(42)) = %d", value)
+	}
+	if value := FromPtr[int](nil); value != 0 {
+		t.Fatalf("FromPtr[int](nil) = %d", value)
 	}
 }
 

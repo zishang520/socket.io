@@ -17,6 +17,14 @@ func TryCast[T any](val any) T {
 	return r
 }
 
+// EventPayload prepends an event name to its arguments.
+func EventPayload(event string, args []any) []any {
+	payload := make([]any, len(args)+1)
+	payload[0] = event
+	copy(payload[1:], args)
+	return payload
+}
+
 // NonNilSlice returns an empty slice when values is nil.
 func NonNilSlice[T any](values []T) []T {
 	if values == nil {
@@ -33,6 +41,14 @@ func FromMilliseconds(milliseconds int64) time.Duration {
 //go:fix inline
 func Ptr[T any](v T) *T {
 	return new(v)
+}
+
+// FromPtr returns the pointed value, or its zero value when ptr is nil.
+func FromPtr[T any](ptr *T) (zero T) {
+	if ptr != nil {
+		return *ptr
+	}
+	return
 }
 
 // Tap calls the given function with the given value, then returns the value.

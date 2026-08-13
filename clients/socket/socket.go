@@ -299,7 +299,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
-	data := append([]any{ev}, args...)
+	data := utils.EventPayload(ev, args)
 	data_len := len(data)
 
 	flags := s.flags.Swap(&Flags{})
@@ -401,7 +401,7 @@ func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack, timeout *time.D
 //	})
 func (s *Socket) EmitWithAck(ev string, args ...any) func(socket.Ack) {
 	return func(ack socket.Ack) {
-		_ = s.Emit(ev, append(args, ack)...)
+		_ = s.Emit(ev, slices.AppendCopy(args, ack)...)
 	}
 }
 

@@ -229,19 +229,6 @@ func (r *valkeyAdapter) hasRoom(room socket.Room) bool {
 	return ok
 }
 
-func socketResponsesFromDetails(localSockets []socket.SocketDetails) []*adapter.SocketResponse {
-	socketResponses := make([]*adapter.SocketResponse, len(localSockets))
-	for i, client := range localSockets {
-		socketResponses[i] = &adapter.SocketResponse{
-			Id:        client.Id(),
-			Handshake: client.Handshake(),
-			Rooms:     client.Rooms().Keys(),
-			Data:      client.Data(),
-		}
-	}
-	return socketResponses
-}
-
 func (r *valkeyAdapter) onRequest(channel string, msg []byte) {
 	if strings.HasPrefix(channel, r.responseChannel) {
 		r.onResponse(channel, msg)
@@ -296,14 +283,12 @@ func (r *valkeyAdapter) handleSocketsRequest(request *Request) {
 		return
 	}
 	sockets := r.Sockets(types.NewSet(request.Rooms...))
-	socketIds := sockets.Keys()
-	socketResponses := make([]*adapter.SocketResponse, len(socketIds))
-	for i, socketId := range socketIds {
-		socketResponses[i] = &adapter.SocketResponse{Id: socketId}
-	}
-	response, err := json.Marshal(&Response{
+	response, err := json.Marshal(&struct {
+		RequestId string            `json:"requestId"`
+		Sockets   []socket.SocketId `json:"sockets"`
+	}{
 		RequestId: request.RequestId,
-		Sockets:   socketResponses,
+		Sockets:   utils.NonNilSlice(sockets.Keys()),
 	})
 	if err != nil {
 		valkeyLog.Debug("Error marshaling SOCKETS response: %s", err.Error())
@@ -386,7 +371,7 @@ func (r *valkeyAdapter) handleRemoteFetchRequest(request *Request) {
 		}
 		response, err := json.Marshal(&Response{
 			RequestId: request.RequestId,
-			Sockets:   socketResponsesFromDetails(localSockets),
+			Sockets:   adapter.SocketDetailsToResponses(localSockets),
 		})
 		if err != nil {
 			valkeyLog.Debug("Error marshaling REMOTE_FETCH response: %s", err.Error())
@@ -512,18 +497,13 @@ func (r *valkeyAdapter) processResponse(request *ValkeyRequest, response *Respon
 	switch request.Type {
 	case valkey.SOCKETS, valkey.REMOTE_FETCH:
 		if len(response.Sockets) > 0 {
-			request.Sockets.Push(response.Sockets...)
+			request.Responses.Push(adapter.SocketResponsesToDetailsAny(response.Sockets)...)
 		}
 		if request.MsgCount.Add(1) == request.NumSub {
 			request.Once.Do(func() {
 				utils.ClearTimeout(request.Timeout.Load())
 				if request.Resolve != nil {
-					socketResponses := request.Sockets.All()
-					socketDetails := make([]any, len(socketResponses))
-					for i, client := range socketResponses {
-						socketDetails[i] = socket.SocketDetails(adapter.NewRemoteSocket(client))
-					}
-					request.Resolve(types.NewSlice(socketDetails...))
+					request.Resolve(request.Responses)
 				}
 				r.requests.Delete(requestId)
 			})
@@ -622,7 +602,7 @@ func (r *valkeyAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Bro
 				Ack:                 ack,
 			})
 
-			timeout := adapter.DEFAULT_TIMEOUT
+			var timeout time.Duration
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
 				timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
 			}
@@ -638,7 +618,11 @@ func (r *valkeyAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Bro
 func (r *valkeyAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 	return func(cb func(*types.Set[socket.Room], error)) {
 		localRooms := types.NewSet(r.Rooms().Keys()...)
-		numSub := r.ServerCount()
+		numSub, err := r.ServerCount()
+		if err != nil {
+			cb(nil, err)
+			return
+		}
 		valkeyLog.Debug(`waiting for %d responses to "allRooms" request`, numSub)
 		if numSub <= 1 {
 			cb(localRooms, nil)
@@ -697,7 +681,11 @@ func (r *valkeyAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]
 				return
 			}
 
-			numSub := r.ServerCount()
+			numSub, err := r.ServerCount()
+			if err != nil {
+				cb(nil, err)
+				return
+			}
 			valkeyLog.Debug(`waiting for %d responses to "fetchSockets" request`, numSub)
 
 			if numSub <= 1 {
@@ -726,12 +714,7 @@ func (r *valkeyAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]
 				Type:   valkey.REMOTE_FETCH,
 				NumSub: numSub,
 				Resolve: func(data *types.Slice[any]) {
-					values := data.All()
-					sockets := make([]socket.SocketDetails, len(values))
-					for i, value := range values {
-						sockets[i] = utils.TryCast[socket.SocketDetails](value)
-					}
-					cb(sockets, nil)
+					cb(adapter.AnySliceToSocketDetails(data.All()), nil)
 				},
 				Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
 					t.Store(timeout)
@@ -739,7 +722,7 @@ func (r *valkeyAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]
 				MsgCount: utils.Tap(&atomic.Int64{}, func(c *atomic.Int64) {
 					c.Store(1)
 				}),
-				Sockets: types.NewSlice(socketResponsesFromDetails(localSockets)...),
+				Responses: types.NewSlice(adapter.SocketDetailsToAny(localSockets)...),
 			})
 
 			if err := r.valkeyClient.Publish(r.ctx, r.requestChannel, request); err != nil {
@@ -816,7 +799,11 @@ func (r *valkeyAdapter) ServerSideEmit(packet []any) error {
 }
 
 func (r *valkeyAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error {
-	numSub := r.ServerCount() - 1
+	serverCount, err := r.ServerCount()
+	if err != nil {
+		return err
+	}
+	numSub := serverCount - 1
 	valkeyLog.Debug(`waiting for %d responses to "serverSideEmit" request`, numSub)
 	if numSub <= 0 {
 		ack(nil, nil)
@@ -855,16 +842,12 @@ func (r *valkeyAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) erro
 }
 
 // ServerCount returns the number of servers subscribed to the request channel.
-func (r *valkeyAdapter) ServerCount() int64 {
+func (r *valkeyAdapter) ServerCount() (int64, error) {
 	result, err := r.valkeyClient.PubSubNumSub(r.ctx, r.requestChannel)
 	if err != nil {
-		r.valkeyClient.Emit("error", err)
-		return 0
+		return 0, err
 	}
-	if count, ok := result[r.requestChannel]; ok {
-		return count
-	}
-	return 0
+	return result[r.requestChannel], nil
 }
 
 // Close cleans up Valkey subscriptions and listeners.

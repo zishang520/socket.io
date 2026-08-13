@@ -3,6 +3,7 @@ module github.com/zishang520/socket.io/adapters/redis/v3
 go 1.26.0
 
 require (
+	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.4
@@ -23,6 +24,7 @@ require (
 	github.com/quic-go/webtransport-go v0.11.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.4 // indirect
 	github.com/zishang520/socket.io/servers/engine/v3 v3.0.4 // indirect
 	go.uber.org/atomic v1.11.0 // indirect

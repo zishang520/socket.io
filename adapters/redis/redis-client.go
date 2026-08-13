@@ -65,15 +65,7 @@ func (r *RedisClient) Sub() redis.UniversalClient {
 //	client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 //	redisClient := NewRedisClient(context.Background(), client)
 func NewRedisClient(ctx context.Context, client redis.UniversalClient) *RedisClient {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	return &RedisClient{
-		EventEmitter: types.NewEventEmitter(),
-		Client:       client,
-		Context:      ctx,
-	}
+	return NewRedisClientWithSub(ctx, client, nil)
 }
 
 // NewRedisClientWithSub creates a new RedisClient with separate clients for read/write separation.

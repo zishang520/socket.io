@@ -203,8 +203,8 @@ func TestServerCountRemovesExpiredNodes(t *testing.T) {
 	a.nodesMap.Store("active", time.Now().UnixMilli())
 	a.nodesMap.Store("expired", time.Now().Add(-11*time.Second).UnixMilli())
 
-	if count := a.ServerCount(); count != 2 {
-		t.Fatalf("server count = %d, want 2", count)
+	if count, err := a.ServerCount(); err != nil || count != 2 {
+		t.Fatalf("server count = %d, %v; want 2, nil", count, err)
 	}
 	if _, exists := a.nodesMap.Load("expired"); exists {
 		t.Fatal("expired node was not removed")

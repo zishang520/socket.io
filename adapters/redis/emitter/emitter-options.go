@@ -85,8 +85,8 @@ func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 	if data.GetRawKey() != nil {
 		o.SetKey(data.Key())
 	}
-	if data.Parser() != nil {
-		o.SetParser(data.Parser())
+	if parser := data.Parser(); parser != nil {
+		o.SetParser(parser)
 	}
 	if data.GetRawSharded() != nil {
 		o.SetSharded(data.Sharded())

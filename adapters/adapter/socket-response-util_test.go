@@ -6,7 +6,17 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
+
+type socketDetailsWithoutRooms struct{}
+
+func (socketDetailsWithoutRooms) Id() socket.SocketId          { return "socket" }
+func (socketDetailsWithoutRooms) Handshake() *socket.Handshake { return nil }
+func (socketDetailsWithoutRooms) Rooms() *types.Set[socket.Room] {
+	return nil
+}
+func (socketDetailsWithoutRooms) Data() any { return nil }
 
 func TestSocketDetailsToResponses(t *testing.T) {
 	details := []socket.SocketDetails{
@@ -15,7 +25,7 @@ func TestSocketDetailsToResponses(t *testing.T) {
 		NewRemoteSocket(&SocketResponse{Id: "socket3"}),
 	}
 
-	responses := socketDetailsToResponses(details)
+	responses := SocketDetailsToResponses(details)
 	if len(responses) != len(details) {
 		t.Fatalf("responses length = %d, want %d", len(responses), len(details))
 	}
@@ -29,15 +39,33 @@ func TestSocketDetailsToResponses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), `{"id":"socket3","rooms":[]}`; got != want {
+	if got, want := string(data), `{"id":"socket3","handshake":null,"rooms":[],"data":null}`; got != want {
 		t.Fatalf("JSON socket details = %s, want %s", got, want)
+	}
+}
+
+func TestSocketDetailsToResponsesAcceptsNilRooms(t *testing.T) {
+	responses := SocketDetailsToResponses([]socket.SocketDetails{socketDetailsWithoutRooms{}})
+	if len(responses) != 1 || responses[0].Rooms == nil || len(responses[0].Rooms) != 0 {
+		t.Fatalf("rooms = %#v, want non-nil empty slice", responses[0].Rooms)
+	}
+}
+
+func TestSocketDetailConversions(t *testing.T) {
+	local := NewRemoteSocket(&SocketResponse{Id: "local"})
+	details := SocketDetailsToAny([]socket.SocketDetails{local})
+	details = append(details, SocketResponsesToDetailsAny([]SocketResponse{{Id: "remote"}})...)
+
+	sockets := AnySliceToSocketDetails(details)
+	if len(sockets) != 2 || sockets[0] != local || sockets[1].Id() != "remote" {
+		t.Fatalf("socket details = %#v", sockets)
 	}
 }
 
 func TestFetchSocketsResponseKeepsEmptySockets(t *testing.T) {
 	response := FetchSocketsResponse{
 		RequestId: "request",
-		Sockets:   socketDetailsToResponses(nil),
+		Sockets:   SocketDetailsToResponses(nil),
 	}
 
 	jsonData, err := json.Marshal(response)

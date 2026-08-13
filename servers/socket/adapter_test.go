@@ -117,6 +117,57 @@ func TestAdapterDel(t *testing.T) {
 	}
 }
 
+func TestAdapterDelIsReentrant(t *testing.T) {
+	adapter := newTestAdapter()
+	adapter.AddAll("s1", types.NewSet[Room]("room1"))
+
+	leaveCount := 0
+	if err := adapter.On("leave-room", func(...any) {
+		leaveCount++
+		if leaveCount == 1 {
+			adapter.Del("s1", "room1")
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter.Del("s2", "room1")
+	if leaveCount != 0 {
+		t.Fatal("leave-room emitted for a socket outside the room")
+	}
+
+	adapter.Del("s1", "room1")
+	if leaveCount != 1 {
+		t.Fatalf("leave-room emitted %d times, want 1", leaveCount)
+	}
+}
+
+func TestAdapterDelDoesNotDeleteRecreatedRoom(t *testing.T) {
+	adapter := newTestAdapter()
+	adapter.AddAll("s1", types.NewSet[Room]("room1"))
+
+	recreated := false
+	if err := adapter.On("leave-room", func(...any) {
+		if !recreated {
+			recreated = true
+			adapter.Del("s1", "room1")
+			adapter.AddAll("s2", types.NewSet[Room]("room1"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter.Del("s1", "room1")
+
+	ids, ok := adapter.Rooms().Load("room1")
+	if !ok || !ids.Has("s2") {
+		t.Fatal("recreated room does not contain s2")
+	}
+	if rooms := adapter.SocketRooms("s2"); rooms == nil || !rooms.Has("room1") {
+		t.Fatal("s2 does not contain the recreated room")
+	}
+}
+
 func TestAdapterDelAll(t *testing.T) {
 	adapter := newTestAdapter()
 
@@ -219,7 +270,7 @@ func TestAdapterApplyFiltersAndDeduplicates(t *testing.T) {
 func TestAdapterServerCount(t *testing.T) {
 	adapter := newTestAdapter()
 
-	if count := adapter.ServerCount(); count != 1 {
+	if count, err := adapter.ServerCount(); err != nil || count != 1 {
 		t.Errorf("Expected ServerCount() = 1, got %d", count)
 	}
 }

@@ -40,11 +40,7 @@ type (
 		ClientCount *uint64           `json:"clientCount,omitempty" msgpack:"clientCount,omitempty"`
 	}
 
-	// SocketResponse is the socket detail representation used on the wire.
-	SocketResponse struct {
-		Id        socket.SocketId   `json:"id" msgpack:"id"`
-		Handshake *socket.Handshake `json:"handshake" msgpack:"handshake"`
-		Rooms     []socket.Room     `json:"rooms" msgpack:"rooms"`
-		Data      any               `json:"data" msgpack:"data"`
-	}
+	// SocketResponse is the PostgreSQL wire representation of a socket response.
+	// It reuses the shared fields while keeping a local type for JSON-specific encoding.
+	SocketResponse adapter.SocketResponse
 )

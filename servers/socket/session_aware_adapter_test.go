@@ -83,6 +83,14 @@ func TestSessionAwareAdapterRestoreMissedPackets(t *testing.T) {
 	if len(restored.MissedPackets) != 1 || restored.MissedPackets[0] != "included" {
 		t.Fatalf("Expected only the included packet, got %v", restored.MissedPackets)
 	}
+
+	restored, err = adapter.RestoreSession("pid1", "excluded")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if restored == nil || restored.MissedPackets == nil || len(restored.MissedPackets) != 0 {
+		t.Fatalf("Expected a non-nil empty missed packet list, got %#v", restored)
+	}
 }
 
 func TestSessionAwareAdapterExpiredSession(t *testing.T) {

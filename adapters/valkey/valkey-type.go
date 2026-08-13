@@ -49,13 +49,13 @@ type (
 	// ValkeyResponse represents a response message sent between servers via Valkey.
 	// It contains the response data for various inter-node requests.
 	ValkeyResponse struct {
-		Type        adapter.MessageType       `json:"type,omitempty" msgpack:"type,omitempty"`
-		RequestId   string                    `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		Rooms       []socket.Room             `json:"rooms,omitempty" msgpack:"rooms,omitempty"`
-		Sockets     []*adapter.SocketResponse `json:"sockets,omitempty" msgpack:"sockets,omitempty"`
-		Data        []any                     `json:"data,omitempty" msgpack:"data,omitempty"`
-		ClientCount uint64                    `json:"clientcount,omitempty" msgpack:"clientcount,omitempty"`
-		Packet      []any                     `json:"packet,omitempty" msgpack:"packet,omitempty"`
+		Type        adapter.MessageType      `json:"type,omitempty" msgpack:"type,omitempty"`
+		RequestId   string                   `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
+		Rooms       []socket.Room            `json:"rooms,omitempty" msgpack:"rooms,omitempty"`
+		Sockets     []adapter.SocketResponse `json:"sockets,omitempty" msgpack:"sockets,omitempty"`
+		Data        []any                    `json:"data,omitempty" msgpack:"data,omitempty"`
+		ClientCount uint64                   `json:"clientcount,omitempty" msgpack:"clientcount,omitempty"`
+		Packet      []any                    `json:"packet,omitempty" msgpack:"packet,omitempty"`
 	}
 
 	// Parser defines the interface for encoding and decoding data for Valkey communication.

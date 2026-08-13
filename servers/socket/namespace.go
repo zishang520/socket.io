@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var (
@@ -450,7 +452,7 @@ func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
-	return n.Proto().Adapter().ServerSideEmit(eventPayload(ev, args))
+	return n.Proto().Adapter().ServerSideEmit(utils.EventPayload(ev, args))
 }
 
 // Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
@@ -468,7 +470,7 @@ func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 // Return: a `func(socket.Ack)` that will be fulfilled when all servers have acknowledged the event
 func (n *namespace) ServerSideEmitWithAck(ev string, args ...any) func(Ack) error {
 	return func(ack Ack) error {
-		return n.ServerSideEmit(ev, appendAck(args, ack)...)
+		return n.ServerSideEmit(ev, slices.AppendCopy(args, ack)...)
 	}
 }
 

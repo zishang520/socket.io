@@ -30,10 +30,7 @@ var (
 	offsetRegex      = regexp.MustCompile(`^[0-9]+-[0-9]+$`)
 )
 
-const (
-	restoreSessionMaxXRangeCalls = 100
-	restoreSessionPageSize       = 1000
-)
+const restoreSessionMaxXRangeCalls = 100
 
 // hashCode computes a hash code for the given string, matching the Node.js implementation.
 // This is used to deterministically map namespaces to streams when streamCount > 1.
@@ -345,7 +342,7 @@ func (r *valkeyStreamsAdapter) encode(message *adapter.ClusterResponse) map[stri
 
 // ServerCount returns the number of servers connected to the cluster,
 // determined by the number of PUB/SUB subscribers on the public channel.
-func (r *valkeyStreamsAdapter) ServerCount() int64 {
+func (r *valkeyStreamsAdapter) ServerCount() (int64, error) {
 	var result map[string]int64
 	var err error
 	if r.opts.UseShardedPubSub() {
@@ -354,13 +351,9 @@ func (r *valkeyStreamsAdapter) ServerCount() int64 {
 		result, err = r.valkeyClient.PubSubNumSub(r.ctx, r.publicChannel)
 	}
 	if err != nil {
-		valkeyStreamsLog.Debug("error getting server count: %s", err.Error())
-		return 1
+		return 0, err
 	}
-	if count, ok := result[r.publicChannel]; ok {
-		return count
-	}
-	return 1
+	return result[r.publicChannel], nil
 }
 
 func (r *valkeyStreamsAdapter) Cleanup(cleanup func()) { r.cleanupFunc = cleanup }
@@ -537,12 +530,11 @@ func (r *valkeyStreamsAdapter) collectMissedPackets(session *socket.Session, off
 	broadcastTypeStr := strconv.Itoa(int(adapter.BROADCAST))
 
 	for range restoreSessionMaxXRangeCalls {
-		entries, err := r.valkeyClient.XRangeN(
+		entries, err := r.valkeyClient.XRange(
 			r.valkeyClient.Context,
 			r.streamName,
 			r.nextOffset(offset),
 			"+",
-			restoreSessionPageSize,
 		)
 
 		if err != nil || len(entries) == 0 {
@@ -563,10 +555,6 @@ func (r *valkeyStreamsAdapter) collectMissedPackets(session *socket.Session, off
 				}
 			}
 			offset = entry.ID
-		}
-
-		if len(entries) < restoreSessionPageSize {
-			break
 		}
 	}
 }

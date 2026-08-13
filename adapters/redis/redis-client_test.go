@@ -34,7 +34,8 @@ func TestNewRedisClient(t *testing.T) {
 		})
 		defer func() { _ = client.Close() }()
 
-		rc := NewRedisClient(context.TODO(), client)
+		var ctx context.Context
+		rc := NewRedisClient(ctx, client)
 
 		if rc == nil {
 			t.Fatal("Expected non-nil RedisClient")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
@@ -171,7 +172,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 					Type: FETCH_SOCKETS_RESPONSE,
 					Data: &FetchSocketsResponse{
 						RequestId: data.RequestId,
-						Sockets:   socketDetailsToResponses(localSockets),
+						Sockets:   SocketDetailsToResponses(localSockets),
 					},
 				})
 			},
@@ -211,7 +212,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 	case BROADCAST_CLIENT_COUNT, BROADCAST_ACK, FETCH_SOCKETS_RESPONSE, SERVER_SIDE_EMIT_RESPONSE:
 		// extending classes may not make a distinction between a ClusterMessage and a ClusterResponse payload and may
 		// always call the OnMessage() method
-		c.OnResponse(message)
+		c.Proto().(ClusterAdapter).OnResponse(message)
 	default:
 		adapterLog.Debug("[%s] unknown message type: %d", c.uid, message.Type)
 	}
@@ -255,7 +256,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		}
 
 		if request, ok := c.requests.Load(data.RequestId); ok {
-			request.Responses.Push(socketResponsesToDetailsAny(data.Sockets)...)
+			request.Responses.Push(SocketResponsesToDetailsAny(data.Sockets)...)
 
 			if request.Current.Add(1) == request.Expected {
 				request.Once.Do(func() {
@@ -341,7 +342,7 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 			Ack:                 ack,
 		})
 
-		c.Publish(&ClusterMessage{
+		c.Proto().(ClusterAdapter).Publish(&ClusterMessage{
 			Type: BROADCAST,
 			Data: &BroadcastMessage{
 				Packet:    packet,
@@ -350,7 +351,7 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 			},
 		})
 
-		timeout := DEFAULT_TIMEOUT
+		var timeout time.Duration
 		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
 			timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
 		}
@@ -416,7 +417,12 @@ func (c *clusterAdapter) DisconnectSockets(opts *socket.BroadcastOptions, state 
 func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
 	return func(callback func([]socket.SocketDetails, error)) {
 		c.Adapter.FetchSockets(opts)(func(localSockets []socket.SocketDetails, _ error) {
-			expectedResponseCount := c.ServerCount() - 1
+			count, err := c.Proto().ServerCount()
+			if err != nil {
+				callback(nil, err)
+				return
+			}
+			expectedResponseCount := count - 1
 
 			if (opts != nil && opts.Flags != nil && opts.Flags.Local) || expectedResponseCount <= 0 {
 				callback(localSockets, nil)
@@ -426,19 +432,19 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 			requestId := RandomId()
 
 			t := DEFAULT_TIMEOUT
-			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
+			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil && *opts.Flags.Timeout != 0 {
 				t = utils.FromMilliseconds(*opts.Flags.Timeout)
 			}
 
 			request := &ClusterRequest{
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
-					callback(anySliceToSocketDetails(data.All()), nil)
+					callback(AnySliceToSocketDetails(data.All()), nil)
 				},
 				Timeout:   new(atomic.Pointer[utils.Timer]),
 				Current:   new(atomic.Int64),
 				Expected:  expectedResponseCount,
-				Responses: types.NewSlice(socketDetailsToAny(localSockets)...),
+				Responses: types.NewSlice(SocketDetailsToAny(localSockets)...),
 			}
 			c.requests.Store(requestId, request)
 
@@ -479,7 +485,11 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 		return nil
 	}
 
-	expectedResponseCount := c.ServerCount() - 1
+	count, err := c.Proto().ServerCount()
+	if err != nil {
+		return err
+	}
+	expectedResponseCount := count - 1
 	if log.DEBUG.Load() {
 		adapterLog.Debug(`[%s] waiting for %d responses to "serverSideEmit" request`, c.uid, expectedResponseCount)
 	}

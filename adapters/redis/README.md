@@ -112,6 +112,13 @@ type RedisAdapterOptions struct {
 }
 ```
 
+## Cross-language payloads
+
+To preserve binary values when communicating with Node.js, compound payloads must use `[]any` and
+`map[string]any`. A `[]byte` value can be sent directly or nested inside either supported container.
+Typed containers such as structs, `[]T`, and `map[string]T` are not recursively inspected for nested
+binary values and must not be used for cross-language binary payloads.
+
 ## Testing
 
 Run the test suite with:

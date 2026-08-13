@@ -7,23 +7,22 @@ package adapter
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
+	_slices "slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	rds "github.com/redis/go-redis/v9"
-	"github.com/vmihailenco/msgpack/v5"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
-	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -39,17 +38,20 @@ var (
 const (
 	// restoreSessionMaxXRangeCalls limits the number of XRANGE calls during session restoration.
 	restoreSessionMaxXRangeCalls = 100
-
-	restoreSessionPageSize = 1000
 )
 
 // hashCode computes a hash code for the given string, matching the Node.js implementation.
 // This is used to deterministically map namespaces to streams when streamCount > 1.
-func hashCode(str string) int {
-	hash := 0
+func hashCode(str string) int32 {
+	var hash int32
 	for _, chr := range str {
-		hash = hash*31 + int(chr)
-		hash &= 0x7FFFFFFF // Keep positive (match JS |= 0 but unsigned)
+		if chr <= 0xffff {
+			hash = hash*31 + chr
+			continue
+		}
+		chr -= 0x10000
+		hash = hash*31 + 0xd800 + (chr >> 10)
+		hash = hash*31 + 0xdc00 + (chr & 0x3ff)
 	}
 	return hash
 }
@@ -61,8 +63,8 @@ func computeStreamName(namespaceName string, opts RedisStreamsAdapterOptionsInte
 	if opts.StreamCount() <= 1 {
 		return opts.StreamName()
 	}
-	i := hashCode(namespaceName) % opts.StreamCount()
-	return opts.StreamName() + "-" + strconv.Itoa(i)
+	i := int64(hashCode(namespaceName)) % int64(opts.StreamCount())
+	return opts.StreamName() + "-" + strconv.FormatInt(i, 10)
 }
 
 // isEphemeral determines whether a message should be sent via PUB/SUB instead of Streams.
@@ -86,13 +88,18 @@ type RedisStreamsAdapterBuilder struct {
 	Opts RedisStreamsAdapterOptionsInterface
 
 	namespaceToAdapters types.Map[string, RedisStreamsAdapter]
-	polling             atomic.Bool // Indicates if polling loops are active
-	cancel              types.Atomic[context.CancelFunc]
+	mu                  sync.Mutex
+	cancel              context.CancelFunc
 }
 
 // startPolling continuously reads messages from a Redis stream and dispatches them.
 func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, client rds.UniversalClient, streamName string, options RedisStreamsAdapterOptionsInterface) {
-	offset := "$"
+	readArgs := &rds.XReadArgs{
+		Streams: []string{streamName},
+		ID:      "$",
+		Count:   options.ReadCount(),
+		Block:   utils.FromMilliseconds(options.BlockTimeInMs()),
+	}
 
 	for {
 		select {
@@ -101,19 +108,14 @@ func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, client r
 		default:
 		}
 
-		response, err := client.XRead(ctx, &rds.XReadArgs{
-			Streams: []string{streamName},
-			ID:      offset,
-			Count:   options.ReadCount(),
-			Block:   time.Duration(options.BlockTimeInMs()) * time.Millisecond,
-		}).Result()
+		response, err := client.XRead(ctx, readArgs).Result()
 
 		if err != nil {
 			if errors.Is(err, rds.Nil) || errors.Is(err, context.Canceled) {
 				continue
 			}
 			redisStreamsLog.Debug("error reading from stream: %s", err.Error())
-			time.Sleep(1 * time.Second)
+			time.Sleep(time.Second)
 			continue
 		}
 
@@ -134,7 +136,7 @@ func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, client r
 				}
 			}
 
-			offset = entry.ID
+			readArgs.ID = entry.ID
 		}
 	}
 }
@@ -142,9 +144,8 @@ func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, client r
 // New creates a new Redis Streams adapter for the given namespace.
 // This method implements the socket.AdapterBuilder interface.
 func (sb *RedisStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
+	name := nsp.Name()
 	options := DefaultRedisStreamsAdapterOptions().Assign(sb.Opts)
-
-	// Apply default values
 	if options.GetRawStreamName() == nil {
 		options.SetStreamName(DefaultStreamName)
 	}
@@ -167,40 +168,43 @@ func (sb *RedisStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 		options.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
 	}
 	if options.GetRawHeartbeatInterval() == nil {
-		options.SetHeartbeatInterval(5_000)
+		options.SetHeartbeatInterval(5_000 * time.Millisecond)
 	}
 	if options.GetRawHeartbeatTimeout() == nil {
 		options.SetHeartbeatTimeout(10_000)
 	}
 
 	adapterInstance := NewRedisStreamsAdapter(nsp, sb.Redis, options)
-	sb.namespaceToAdapters.Store(nsp.Name(), adapterInstance)
 
-	// Start polling loops if not already running
-	if sb.polling.CompareAndSwap(false, true) {
+	sb.mu.Lock()
+	sb.namespaceToAdapters.Store(name, adapterInstance)
+	if sb.cancel == nil {
 		ctx, cancel := context.WithCancel(sb.Redis.Context)
-		sb.cancel.Store(cancel)
-
-		// Create one read client per stream
-		if options.StreamCount() <= 1 {
+		sb.cancel = cancel
+		if streamCount := options.StreamCount(); streamCount <= 1 {
 			go sb.startPolling(ctx, sb.Redis.Sub(), options.StreamName(), options)
 		} else {
-			for i := range options.StreamCount() {
+			for i := range streamCount {
 				streamName := options.StreamName() + "-" + strconv.Itoa(i)
 				go sb.startPolling(ctx, sb.Redis.Sub(), streamName, options)
 			}
 		}
 	}
+	sb.mu.Unlock()
 
 	// Register cleanup callback
 	adapterInstance.Cleanup(func() {
-		sb.namespaceToAdapters.Delete(nsp.Name())
-		if sb.namespaceToAdapters.Len() == 0 {
-			sb.polling.Store(false)
-			if cancel := sb.cancel.Swap(nil); cancel != nil {
-				cancel()
-			}
+		sb.mu.Lock()
+		defer sb.mu.Unlock()
+
+		if !sb.namespaceToAdapters.CompareAndDelete(name, adapterInstance) || sb.namespaceToAdapters.Len() != 0 {
+			return
 		}
+
+		if sb.cancel != nil {
+			sb.cancel()
+		}
+		sb.cancel = nil
 	})
 
 	return adapterInstance
@@ -213,12 +217,13 @@ type redisStreamsAdapter struct {
 
 	redisClient *redis.RedisClient
 	opts        *RedisStreamsAdapterOptions
-	cleanupFunc types.Callable
+	cleanupFunc atomic.Pointer[types.Callable]
 
 	streamName    string // The specific stream for this namespace
 	publicChannel string // PUB/SUB channel for ephemeral messages
 
-	pubsub *rds.PubSub // PUB/SUB subscription for this adapter
+	pubsub        *rds.PubSub // public and, in classic mode, private subscription
+	privatePubSub *rds.PubSub // private subscription in sharded mode
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -230,7 +235,6 @@ func MakeRedisStreamsAdapter() RedisStreamsAdapter {
 	a := &redisStreamsAdapter{
 		ClusterAdapter: adapter.MakeClusterAdapter(),
 		opts:           DefaultRedisStreamsAdapterOptions(),
-		cleanupFunc:    nil,
 	}
 
 	a.Prototype(a)
@@ -239,7 +243,6 @@ func MakeRedisStreamsAdapter() RedisStreamsAdapter {
 }
 
 // NewRedisStreamsAdapter creates and initializes a new Redis Streams adapter.
-// This is the preferred way to create a streams adapter instance.
 func NewRedisStreamsAdapter(nsp socket.Namespace, client *redis.RedisClient, opts any) RedisStreamsAdapter {
 	a := MakeRedisStreamsAdapter()
 
@@ -274,22 +277,24 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 
 	// Set up PUB/SUB channels matching Node.js format: prefix#nsp# and prefix#nsp#uid#
 	r.publicChannel = r.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
-	privateChannel := r.opts.ChannelPrefix() + "#" + nsp.Name() + "#" + string(r.Uid()) + "#"
+	privateChannel := r.publicChannel + string(r.Uid()) + "#"
 
 	// Subscribe to both public and private channels for PUB/SUB messages
 	if r.opts.UseShardedPubSub() {
-		r.pubsub = r.redisClient.Sub().SSubscribe(r.ctx, r.publicChannel, privateChannel)
+		r.pubsub = r.redisClient.Sub().SSubscribe(r.ctx, r.publicChannel)
+		r.privatePubSub = r.redisClient.Sub().SSubscribe(r.ctx, privateChannel)
+		go r.handlePubSubMessages(r.privatePubSub)
 	} else {
 		r.pubsub = r.redisClient.Sub().Subscribe(r.ctx, r.publicChannel, privateChannel)
 	}
-	go r.handlePubSubMessages()
+	go r.handlePubSubMessages(r.pubsub)
 }
 
 // handlePubSubMessages listens for PUB/SUB messages (ephemeral messages and responses).
-func (r *redisStreamsAdapter) handlePubSubMessages() {
-	defer func() { _ = r.pubsub.Close() }()
+func (r *redisStreamsAdapter) handlePubSubMessages(pubsub *rds.PubSub) {
+	defer func() { _ = pubsub.Close() }()
 	for {
-		msg, err := r.pubsub.ReceiveMessage(r.ctx)
+		msg, err := pubsub.ReceiveMessage(r.ctx)
 		if err != nil {
 			if errors.Is(err, rds.ErrClosed) || r.ctx.Err() != nil {
 				return
@@ -298,13 +303,13 @@ func (r *redisStreamsAdapter) handlePubSubMessages() {
 			continue
 		}
 
-		var message adapter.ClusterMessage
-		if err := utils.MsgPack().Decode([]byte(msg.Payload), &message); err != nil {
+		message, err := redis.UnmarshalClusterMessage([]byte(msg.Payload))
+		if err != nil {
 			redisStreamsLog.Debug("invalid PUB/SUB message format: %s", err.Error())
 			continue
 		}
 
-		r.OnMessage(&message, "")
+		r.OnMessage(message, "")
 	}
 }
 
@@ -316,29 +321,22 @@ func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 
 	if isEphemeral(message) {
 		// Ephemeral messages are sent via Redis PUB/SUB
-		payload, err := utils.MsgPack().Encode(message)
+		payload, err := redis.EncodeClusterMessageMsgpack(message)
 		if err != nil {
 			return "", fmt.Errorf("failed to encode ephemeral message: %w", err)
 		}
 		if r.opts.UseShardedPubSub() {
-			err = r.redisClient.Client.SPublish(r.ctx, r.publicChannel, payload).Err()
-		} else {
-			err = r.redisClient.Client.Publish(r.ctx, r.publicChannel, payload).Err()
+			return "", r.redisClient.Client.SPublish(r.ctx, r.publicChannel, payload).Err()
 		}
-		if err != nil {
-			return "", err
-		}
-		return "", nil
+		return "", r.redisClient.Client.Publish(r.ctx, r.publicChannel, payload).Err()
 	}
 
 	// Durable messages are sent via Redis Streams
-	entryID, err := r.redisClient.Client.XAdd(r.redisClient.Context, &rds.XAddArgs{
-		Stream: r.streamName,
-		MaxLen: r.opts.MaxLen(),
-		Approx: true, // Use approximate trimming (~) for better performance
-		ID:     "*",  // Let Redis generate the ID
-		Values: map[string]any(r.encode(message)),
-	}).Result()
+	rawMessage, err := redis.EncodeStreamMessage(message, r.opts.OnlyPlaintext())
+	if err != nil {
+		return "", fmt.Errorf("failed to encode stream message: %w", err)
+	}
+	entryID, err := redis.XAdd(r.redisClient, r.streamName, rawMessage, r.opts.MaxLen())
 
 	if err != nil {
 		return "", err
@@ -351,7 +349,7 @@ func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 // This matches the Node.js implementation where responses are sent via PUB/SUB.
 func (r *redisStreamsAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) error {
 	responseChannel := r.opts.ChannelPrefix() + "#" + r.Nsp().Name() + "#" + string(requesterUid) + "#"
-	payload, err := utils.MsgPack().Encode(response)
+	payload, err := redis.EncodeClusterMessageMsgpack(response)
 	if err != nil {
 		return fmt.Errorf("failed to encode response: %w", err)
 	}
@@ -361,63 +359,19 @@ func (r *redisStreamsAdapter) DoPublishResponse(requesterUid adapter.ServerId, r
 	return r.redisClient.Client.Publish(r.ctx, responseChannel, payload).Err()
 }
 
-// encode converts a ClusterResponse into a RawClusterMessage for Redis Streams storage.
-// Binary data is encoded as base64-encoded MessagePack, while other data uses JSON.
-func (r *redisStreamsAdapter) encode(message *adapter.ClusterResponse) RawClusterMessage {
-	rawMessage := RawClusterMessage{
-		"uid":  string(message.Uid),
-		"nsp":  message.Nsp,
-		"type": strconv.Itoa(int(message.Type)),
-	}
-
-	if message.Data == nil {
-		return rawMessage
-	}
-
-	// Determine if the message type may contain binary data
-	mayContainBinary := message.Type == adapter.BROADCAST ||
-		message.Type == adapter.FETCH_SOCKETS_RESPONSE ||
-		message.Type == adapter.SERVER_SIDE_EMIT ||
-		message.Type == adapter.SERVER_SIDE_EMIT_RESPONSE ||
-		message.Type == adapter.BROADCAST_ACK
-
-	// Use MessagePack for binary data, JSON for text data
-	if !r.opts.OnlyPlaintext() && mayContainBinary && parser.HasBinary(message.Data) {
-		if data, err := utils.MsgPack().Encode(message.Data); err == nil {
-			rawMessage["data"] = base64.StdEncoding.EncodeToString(data)
-		}
-	} else {
-		if data, err := json.Marshal(message.Data); err == nil {
-			rawMessage["data"] = string(data)
-		}
-	}
-
-	return rawMessage
-}
-
 // ServerCount returns the number of servers connected to the cluster,
 // determined by the number of PUB/SUB subscribers on the public channel.
-func (r *redisStreamsAdapter) ServerCount() int64 {
-	var result map[string]int64
-	var err error
-	if r.opts.UseShardedPubSub() {
-		result, err = r.redisClient.Client.PubSubShardNumSub(r.ctx, r.publicChannel).Result()
-	} else {
-		result, err = r.redisClient.Client.PubSubNumSub(r.ctx, r.publicChannel).Result()
-	}
-	if err != nil {
-		redisStreamsLog.Debug("error getting server count: %s", err.Error())
-		return 1
-	}
-	if count, ok := result[r.publicChannel]; ok {
-		return count
-	}
-	return 1
+func (r *redisStreamsAdapter) ServerCount() (int64, error) {
+	return pubSubNumSub(r.ctx, r.redisClient.Client, r.opts.UseShardedPubSub(), r.publicChannel)
 }
 
 // Cleanup registers a cleanup callback to be called when the adapter is closed.
 func (r *redisStreamsAdapter) Cleanup(cleanup func()) {
-	r.cleanupFunc = cleanup
+	if cleanup == nil {
+		r.cleanupFunc.Store(nil)
+		return
+	}
+	r.cleanupFunc.Store(&cleanup)
 }
 
 // Close releases resources and invokes the registered cleanup callback.
@@ -427,9 +381,12 @@ func (r *redisStreamsAdapter) Close() {
 	if r.pubsub != nil {
 		_ = r.pubsub.Close()
 	}
+	if r.privatePubSub != nil {
+		_ = r.privatePubSub.Close()
+	}
 
-	if r.cleanupFunc != nil {
-		r.cleanupFunc()
+	if cleanup := r.cleanupFunc.Swap(nil); cleanup != nil {
+		(*cleanup)()
 	}
 
 	r.ClusterAdapter.Close()
@@ -438,104 +395,13 @@ func (r *redisStreamsAdapter) Close() {
 // OnRawMessage processes a raw message from the Redis stream.
 // It decodes the message and dispatches it to the appropriate handler.
 func (r *redisStreamsAdapter) OnRawMessage(rawMessage RawClusterMessage, offset string) error {
-	message, err := r.decode(rawMessage)
+	message, err := redis.DecodeStreamMessage(rawMessage)
 	if err != nil {
 		return err
 	}
 
 	r.OnMessage(message, adapter.Offset(offset))
 	return nil
-}
-
-// decode converts a RawClusterMessage into a ClusterResponse.
-// It handles both JSON and base64-encoded MessagePack formats.
-func (r *redisStreamsAdapter) decode(rawMessage RawClusterMessage) (*adapter.ClusterResponse, error) {
-	// Parse the message type
-	messageType, err := strconv.ParseInt(rawMessage.Type(), 10, 0)
-	if err != nil {
-		return nil, fmt.Errorf("invalid message type: %w", err)
-	}
-
-	// Initialize the base message
-	message := &adapter.ClusterMessage{
-		Uid:  adapter.ServerId(rawMessage.Uid()),
-		Nsp:  rawMessage.Nsp(),
-		Type: adapter.MessageType(messageType),
-	}
-
-	// Return early if no data to process
-	data := rawMessage.Data()
-	if data == "" {
-		return message, nil
-	}
-
-	// Detect format by first character: '{' indicates JSON, otherwise base64 MessagePack
-	var rawData any
-	if data[0] == '{' {
-		rawData = json.RawMessage(data)
-	} else {
-		decodedData, b64Err := base64.StdEncoding.DecodeString(data)
-		if b64Err != nil {
-			return nil, fmt.Errorf("failed to decode base64 data: %w", b64Err)
-		}
-		rawData = msgpack.RawMessage(decodedData)
-	}
-
-	// Decode message data based on the message type
-	message.Data, err = r.decodeData(message.Type, rawData)
-	if err != nil {
-		return nil, err
-	}
-
-	return message, nil
-}
-
-// decodeData deserializes the message payload based on the message type and format.
-// It allocates the appropriate struct type and unmarshals the data into it.
-func (r *redisStreamsAdapter) decodeData(messageType adapter.MessageType, rawData any) (any, error) {
-	// Allocate the appropriate target struct based on message type
-	var target any
-	switch messageType {
-	case adapter.INITIAL_HEARTBEAT, adapter.HEARTBEAT, adapter.ADAPTER_CLOSE:
-		// These message types have no data payload
-		return nil, nil
-	case adapter.BROADCAST:
-		target = &adapter.BroadcastMessage{}
-	case adapter.SOCKETS_JOIN, adapter.SOCKETS_LEAVE:
-		target = &adapter.SocketsJoinLeaveMessage{}
-	case adapter.DISCONNECT_SOCKETS:
-		target = &adapter.DisconnectSocketsMessage{}
-	case adapter.FETCH_SOCKETS:
-		target = &adapter.FetchSocketsMessage{}
-	case adapter.FETCH_SOCKETS_RESPONSE:
-		target = &adapter.FetchSocketsResponse{}
-	case adapter.SERVER_SIDE_EMIT:
-		target = &adapter.ServerSideEmitMessage{}
-	case adapter.SERVER_SIDE_EMIT_RESPONSE:
-		target = &adapter.ServerSideEmitResponse{}
-	case adapter.BROADCAST_CLIENT_COUNT:
-		target = &adapter.BroadcastClientCount{}
-	case adapter.BROADCAST_ACK:
-		target = &adapter.BroadcastAck{}
-	default:
-		return nil, fmt.Errorf("unknown message type: %v", messageType)
-	}
-
-	// Unmarshal the data based on its format
-	switch raw := rawData.(type) {
-	case json.RawMessage:
-		if err := json.Unmarshal(raw, &target); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal JSON data: %w", err)
-		}
-	case msgpack.RawMessage:
-		if err := utils.MsgPack().Decode(raw, &target); err != nil {
-			return nil, fmt.Errorf("failed to decode MessagePack data: %w", err)
-		}
-	default:
-		return nil, errors.New("unsupported data format: expected JSON or MessagePack")
-	}
-
-	return target, nil
 }
 
 // PersistSession saves a session to Redis for later recovery.
@@ -551,7 +417,7 @@ func (r *redisStreamsAdapter) PersistSession(session *socket.SessionToPersist) {
 		return
 	}
 
-	ttl := time.Duration(r.Nsp().Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration()) * time.Millisecond
+	ttl := utils.FromMilliseconds(r.Nsp().Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration())
 
 	if err := r.redisClient.Client.Set(
 		r.redisClient.Context,
@@ -576,12 +442,16 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 
 	sessionKey := r.opts.SessionKeyPrefix() + string(pid)
 
-	// Get and delete the session atomically
-	rawSession, err := r.redisClient.Client.GetDel(r.redisClient.Context, sessionKey).Result()
+	// Use MULTI GET DEL for compatibility with Redis versions before 6.2.
+	pipeline := r.redisClient.Client.TxPipeline()
+	sessionCmd := pipeline.Get(r.redisClient.Context, sessionKey)
+	pipeline.Del(r.redisClient.Context, sessionKey)
+	_, err := pipeline.Exec(r.redisClient.Context)
 	if err != nil && !errors.Is(err, rds.Nil) {
 		return nil, fmt.Errorf("failed to retrieve session: %w", err)
 	}
 
+	rawSession := sessionCmd.Val()
 	if rawSession == "" {
 		return nil, errors.New("session not found")
 	}
@@ -602,7 +472,7 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 		return nil, fmt.Errorf("failed to decode session data: %w", err)
 	}
 
-	session := &socket.Session{}
+	session := &socket.Session{MissedPackets: []any{}}
 	if err := utils.MsgPack().Decode(rawSessionBytes, &session.SessionToPersist); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
 	}
@@ -610,27 +480,31 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	redisStreamsLog.Debug("found session: %+v", session)
 
 	// Collect missed packets from the stream
-	r.collectMissedPackets(session, offset)
+	if err := r.collectMissedPackets(session, offset); err != nil {
+		return nil, err
+	}
 
 	return session, nil
 }
 
 // collectMissedPackets iterates through the Redis stream to find packets
 // that the session missed during disconnection.
-func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offset string) {
+func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offset string) error {
 	broadcastTypeStr := strconv.Itoa(int(adapter.BROADCAST))
 
 	for range restoreSessionMaxXRangeCalls {
-		entries, err := r.redisClient.Sub().XRangeN(
+		entries, err := r.redisClient.Sub().XRange(
 			r.redisClient.Context,
 			r.streamName,
 			r.nextOffset(offset),
 			"+",
-			restoreSessionPageSize,
 		).Result()
 
-		if err != nil || len(entries) == 0 {
-			break
+		if err != nil {
+			return fmt.Errorf("failed to retrieve missed packets: %w", err)
+		}
+		if len(entries) == 0 {
+			return nil
 		}
 
 		for _, entry := range entries {
@@ -638,27 +512,29 @@ func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offs
 
 			// Only process broadcast messages for this namespace
 			if rawMessage.Nsp() == r.Nsp().Name() && rawMessage.Type() == broadcastTypeStr {
-				if message, err := r.decode(rawMessage); err == nil {
-					if data, ok := message.Data.(*adapter.BroadcastMessage); ok {
-						if r.shouldIncludePacket(session.Rooms, data.Opts) {
-							packetData := append(utils.TryCast[[]any](data.Packet.Data), entry.ID)
-							session.MissedPackets = append(session.MissedPackets, packetData)
-						}
-					}
+				message, err := redis.DecodeStreamMessage(rawMessage)
+				if err != nil {
+					return err
+				}
+				data, ok := message.Data.(*adapter.BroadcastMessage)
+				if !ok || data.Packet == nil {
+					return errors.New("invalid broadcast message")
+				}
+				if r.shouldIncludePacket(session.Rooms, data.Opts) {
+					packetData := slices.AppendCopy(utils.TryCast[[]any](data.Packet.Data), entry.ID)
+					session.MissedPackets = append(session.MissedPackets, packetData)
 				}
 			}
 			offset = entry.ID
 		}
-
-		if len(entries) < restoreSessionPageSize {
-			break
-		}
 	}
+
+	return nil
 }
 
 // nextOffset computes the next stream entry ID by incrementing the sequence number.
 // Redis stream IDs have the format "timestamp-sequence".
-func (redisStreamsAdapter) nextOffset(offset string) string {
+func (*redisStreamsAdapter) nextOffset(offset string) string {
 	timestamp, sequence, found := strings.Cut(offset, "-")
 	if !found {
 		return offset
@@ -675,17 +551,12 @@ func (redisStreamsAdapter) nextOffset(offset string) string {
 // A packet is included if:
 // 1. It was sent to all rooms (no specific rooms) OR to a room the session is in
 // 2. It was not sent to a room that excludes the session
-func (redisStreamsAdapter) shouldIncludePacket(sessionRooms *types.Set[socket.Room], opts *adapter.PacketOptions) bool {
+func (*redisStreamsAdapter) shouldIncludePacket(sessionRooms *types.Set[socket.Room], opts *adapter.PacketOptions) bool {
 	// Check if packet targets the session's rooms
-	included := len(opts.Rooms) == 0
-	if !included {
-		if slices.ContainsFunc(opts.Rooms, sessionRooms.Has) {
-			included = true
-		}
-	}
+	included := len(opts.Rooms) == 0 || _slices.ContainsFunc(opts.Rooms, sessionRooms.Has)
 
 	// Check if session is excluded
-	if slices.ContainsFunc(opts.Except, sessionRooms.Has) {
+	if _slices.ContainsFunc(opts.Except, sessionRooms.Has) {
 		return false
 	}
 

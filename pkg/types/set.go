@@ -22,104 +22,106 @@ func NewSet[KType comparable](keys ...KType) *Set[KType] {
 	return s
 }
 
-// Add adds the provided keys to the set.
+// Add adds the provided keys and reports whether the set changed.
 func (s *Set[KType]) Add(keys ...KType) bool {
 	if len(keys) == 0 {
 		return false
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for _, key := range keys {
-		s.cache[key] = NULL // idempotent; skip existence check
+	if s.cache == nil {
+		s.cache = make(map[KType]Void, len(keys))
 	}
-	return true
+	length := len(s.cache)
+	for _, key := range keys {
+		s.cache[key] = NULL
+	}
+	changed := len(s.cache) != length
+	s.mu.Unlock()
+	return changed
 }
 
-// Delete removes the provided keys from the set.
+// Delete removes the provided keys and reports whether the set changed.
 func (s *Set[KType]) Delete(keys ...KType) bool {
 	if len(keys) == 0 {
 		return false
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	length := len(s.cache)
 	for _, key := range keys {
 		delete(s.cache, key)
 	}
-	return true
+	changed := len(s.cache) != length
+	s.mu.Unlock()
+	return changed
 }
 
 // Clear removes all items from the set, reusing the underlying map memory.
 func (s *Set[KType]) Clear() bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	changed := len(s.cache) > 0
 	clear(s.cache)
-	return true
+	s.mu.Unlock()
+	return changed
 }
 
 // Has checks if the set contains the provided key.
 func (s *Set[KType]) Has(key KType) bool {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	_, exists := s.cache[key]
+	s.mu.RUnlock()
 	return exists
 }
 
 // Len returns the number of items in the set.
 func (s *Set[KType]) Len() int {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return len(s.cache)
+	length := len(s.cache)
+	s.mu.RUnlock()
+	return length
 }
 
 // All returns a copy of the set's internal map.
 func (s *Set[KType]) All() map[KType]Void {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return maps.Clone(s.cache)
+	cache := maps.Clone(s.cache)
+	s.mu.RUnlock()
+	return cache
 }
 
 // Keys returns a slice containing all keys in the set.
 func (s *Set[KType]) Keys() []KType {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return s.keys()
-}
-
-// keys returns a slice of all keys without locking (caller must hold lock).
-func (s *Set[KType]) keys() []KType {
 	if len(s.cache) == 0 {
+		s.mu.RUnlock()
 		return nil
 	}
-	keys := make([]KType, 0, len(s.cache))
+	keys := make([]KType, len(s.cache))
+	i := 0
 	for key := range s.cache {
-		keys = append(keys, key)
+		keys[i] = key
+		i++
 	}
+	s.mu.RUnlock()
 	return keys
 }
 
-// populate replaces the set contents from a slice of keys (caller must hold write lock).
+// populate replaces the set contents from a slice of keys.
 func (s *Set[KType]) populate(keys []KType) {
-	s.cache = make(map[KType]Void, len(keys))
+	cache := make(map[KType]Void, len(keys))
 	for _, key := range keys {
-		s.cache[key] = NULL
+		cache[key] = NULL
 	}
+
+	s.mu.Lock()
+	s.cache = cache
+	s.mu.Unlock()
 }
 
 // MarshalJSON implements the json.Marshaler interface.
 func (s *Set[KType]) MarshalJSON() ([]byte, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return json.Marshal(s.keys())
+	return json.Marshal(s.Keys())
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
@@ -129,18 +131,13 @@ func (s *Set[KType]) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.populate(keys)
 	return nil
 }
 
 // MarshalMsgpack implements the msgpack.Marshaler interface.
 func (s *Set[KType]) MarshalMsgpack() ([]byte, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return msgpack.Marshal(s.keys())
+	return msgpack.Marshal(s.Keys())
 }
 
 // UnmarshalMsgpack implements the msgpack.Unmarshaler interface.
@@ -150,8 +147,6 @@ func (s *Set[KType]) UnmarshalMsgpack(data []byte) error {
 		return err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.populate(keys)
 	return nil
 }

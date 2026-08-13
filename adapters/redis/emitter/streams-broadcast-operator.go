@@ -11,47 +11,56 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-// ShardedBroadcastOperator publishes cluster messages with Redis sharded Pub/Sub.
-type ShardedBroadcastOperator struct {
-	redisClient      *redis.RedisClient
-	broadcastOptions *BroadcastOptions
-	rooms            *types.Set[socket.Room]
-	exceptRooms      *types.Set[socket.Room]
-	flags            *socket.BroadcastFlags
+// RedisStreamsBroadcastOperator publishes cluster messages with Redis Streams.
+type RedisStreamsBroadcastOperator struct {
+	redisClient *redis.RedisClient
+	nsp         string
+	opts        RedisStreamsEmitterOptions
+	rooms       *types.Set[socket.Room]
+	exceptRooms *types.Set[socket.Room]
+	flags       *socket.BroadcastFlags
 }
 
-func MakeShardedBroadcastOperator() *ShardedBroadcastOperator {
-	return &ShardedBroadcastOperator{
+func MakeRedisStreamsBroadcastOperator() *RedisStreamsBroadcastOperator {
+	return &RedisStreamsBroadcastOperator{
 		rooms:       types.NewSet[socket.Room](),
 		exceptRooms: types.NewSet[socket.Room](),
 		flags:       new(socket.BroadcastFlags),
 	}
 }
 
-func NewShardedBroadcastOperator(
+func NewRedisStreamsBroadcastOperator(
 	client *redis.RedisClient,
-	broadcastOptions *BroadcastOptions,
+	nsp string,
+	opts *RedisStreamsEmitterOptions,
 	rooms *types.Set[socket.Room],
 	exceptRooms *types.Set[socket.Room],
 	flags *socket.BroadcastFlags,
-) *ShardedBroadcastOperator {
-	b := MakeShardedBroadcastOperator()
-	b.Construct(client, broadcastOptions, rooms, exceptRooms, flags)
+) *RedisStreamsBroadcastOperator {
+	b := MakeRedisStreamsBroadcastOperator()
+	b.Construct(client, nsp, opts, rooms, exceptRooms, flags)
 	return b
 }
 
-func (b *ShardedBroadcastOperator) Construct(
+func (b *RedisStreamsBroadcastOperator) Construct(
 	client *redis.RedisClient,
-	broadcastOptions *BroadcastOptions,
+	nsp string,
+	opts *RedisStreamsEmitterOptions,
 	rooms *types.Set[socket.Room],
 	exceptRooms *types.Set[socket.Room],
 	flags *socket.BroadcastFlags,
 ) {
-	if broadcastOptions == nil {
-		broadcastOptions = new(BroadcastOptions)
-	}
 	b.redisClient = client
-	b.broadcastOptions = broadcastOptions
+	b.nsp = nsp
+	if opts != nil {
+		b.opts = *opts
+	}
+	if b.opts.GetRawStreamName() == nil {
+		b.opts.SetStreamName(DefaultStreamName)
+	}
+	if b.opts.GetRawMaxLen() == nil {
+		b.opts.SetMaxLen(DefaultStreamMaxLen)
+	}
 	if rooms != nil {
 		b.rooms = rooms
 	}
@@ -63,35 +72,63 @@ func (b *ShardedBroadcastOperator) Construct(
 	}
 }
 
-func (b *ShardedBroadcastOperator) To(room ...socket.Room) BroadcastOperatorInterface {
+func (b *RedisStreamsBroadcastOperator) To(room ...socket.Room) BroadcastOperatorInterface {
 	rooms := types.NewSet(b.rooms.Keys()...)
 	rooms.Add(room...)
-	return NewShardedBroadcastOperator(b.redisClient, b.broadcastOptions, rooms, b.exceptRooms, b.flags)
+	return NewRedisStreamsBroadcastOperator(
+		b.redisClient,
+		b.nsp,
+		&b.opts,
+		rooms,
+		b.exceptRooms,
+		b.flags,
+	)
 }
 
-func (b *ShardedBroadcastOperator) In(room ...socket.Room) BroadcastOperatorInterface {
+func (b *RedisStreamsBroadcastOperator) In(room ...socket.Room) BroadcastOperatorInterface {
 	return b.To(room...)
 }
 
-func (b *ShardedBroadcastOperator) Except(room ...socket.Room) BroadcastOperatorInterface {
+func (b *RedisStreamsBroadcastOperator) Except(room ...socket.Room) BroadcastOperatorInterface {
 	exceptRooms := types.NewSet(b.exceptRooms.Keys()...)
 	exceptRooms.Add(room...)
-	return NewShardedBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, exceptRooms, b.flags)
+	return NewRedisStreamsBroadcastOperator(
+		b.redisClient,
+		b.nsp,
+		&b.opts,
+		b.rooms,
+		exceptRooms,
+		b.flags,
+	)
 }
 
-func (b *ShardedBroadcastOperator) Compress(compress bool) BroadcastOperatorInterface {
+func (b *RedisStreamsBroadcastOperator) Compress(compress bool) BroadcastOperatorInterface {
 	flags := new(*b.flags)
 	flags.Compress = new(compress)
-	return NewShardedBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
+	return NewRedisStreamsBroadcastOperator(
+		b.redisClient,
+		b.nsp,
+		&b.opts,
+		b.rooms,
+		b.exceptRooms,
+		flags,
+	)
 }
 
-func (b *ShardedBroadcastOperator) Volatile() BroadcastOperatorInterface {
+func (b *RedisStreamsBroadcastOperator) Volatile() BroadcastOperatorInterface {
 	flags := new(*b.flags)
 	flags.Volatile = true
-	return NewShardedBroadcastOperator(b.redisClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
+	return NewRedisStreamsBroadcastOperator(
+		b.redisClient,
+		b.nsp,
+		&b.opts,
+		b.rooms,
+		b.exceptRooms,
+		flags,
+	)
 }
 
-func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
+func (b *RedisStreamsBroadcastOperator) Emit(ev string, args ...any) error {
 	if reservedEvents.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
@@ -101,7 +138,7 @@ func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
 		Data: &adapter.BroadcastMessage{
 			Packet: &parser.Packet{
 				Type: parser.EVENT,
-				Nsp:  b.broadcastOptions.Nsp,
+				Nsp:  b.nsp,
 				Data: utils.EventPayload(ev, args),
 			},
 			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
@@ -113,7 +150,7 @@ func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
 	})
 }
 
-func (b *ShardedBroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
+func (b *RedisStreamsBroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	return b.publishMessage(&adapter.ClusterMessage{
 		Type: adapter.SOCKETS_JOIN,
 		Data: &adapter.SocketsJoinLeaveMessage{
@@ -126,7 +163,7 @@ func (b *ShardedBroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	})
 }
 
-func (b *ShardedBroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
+func (b *RedisStreamsBroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	return b.publishMessage(&adapter.ClusterMessage{
 		Type: adapter.SOCKETS_LEAVE,
 		Data: &adapter.SocketsJoinLeaveMessage{
@@ -139,7 +176,7 @@ func (b *ShardedBroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	})
 }
 
-func (b *ShardedBroadcastOperator) DisconnectSockets(close bool) error {
+func (b *RedisStreamsBroadcastOperator) DisconnectSockets(close bool) error {
 	return b.publishMessage(&adapter.ClusterMessage{
 		Type: adapter.DISCONNECT_SOCKETS,
 		Data: &adapter.DisconnectSocketsMessage{
@@ -152,7 +189,7 @@ func (b *ShardedBroadcastOperator) DisconnectSockets(close bool) error {
 	})
 }
 
-func (b *ShardedBroadcastOperator) ServerSideEmit(args ...any) error {
+func (b *RedisStreamsBroadcastOperator) ServerSideEmit(args ...any) error {
 	if len(args) > 0 {
 		if _, withAck := args[len(args)-1].(socket.Ack); withAck {
 			return errAcknowledgementsNotSupported
@@ -164,23 +201,16 @@ func (b *ShardedBroadcastOperator) ServerSideEmit(args ...any) error {
 	})
 }
 
-func (b *ShardedBroadcastOperator) publishMessage(message *adapter.ClusterMessage) error {
+func (b *RedisStreamsBroadcastOperator) publishMessage(message *adapter.ClusterMessage) error {
 	message.Uid = adapter.EMITTER_UID
-	message.Nsp = b.broadcastOptions.Nsp
-	channel := b.broadcastOptions.BroadcastChannel
+	message.Nsp = b.nsp
 
-	if message.Type == adapter.BROADCAST {
-		data := message.Data.(*adapter.BroadcastMessage)
-		if data.RequestId == nil && len(data.Opts.Rooms) == 1 &&
-			redis.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, data.Opts.Rooms[0]) {
-			channel += string(data.Opts.Rooms[0]) + "#"
-		}
-	}
-
-	payload, err := redis.EncodeClusterMessage(message)
+	payload, err := redis.EncodeStreamMessage(message, false)
 	if err != nil {
 		return err
 	}
-	emitterLog.Debug("publishing message to channel %s via SPUBLISH", channel)
-	return b.redisClient.Client.SPublish(b.redisClient.Context, channel, payload).Err()
+	streamName := b.opts.StreamName()
+	redisStreamsEmitterLog.Debug("publishing message %d to stream %s", message.Type, streamName)
+	_, err = redis.XAdd(b.redisClient, streamName, payload, b.opts.MaxLen())
+	return err
 }

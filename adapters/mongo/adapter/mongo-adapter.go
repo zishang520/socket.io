@@ -328,7 +328,7 @@ func (a *mongoAdapter) OnMessage(message *ClusterMessage, offset adapter.Offset)
 				Type: mongo.FETCH_SOCKETS_RESPONSE,
 				Data: &FetchSocketsResponse{
 					RequestId: data.RequestId,
-					Sockets:   socketDetailsToResponses(localSockets),
+					Sockets:   adapter.SocketDetailsToResponses(localSockets),
 				},
 			})
 		})
@@ -450,7 +450,7 @@ func (a *mongoAdapter) OnResponse(response *ClusterResponse) {
 	}
 }
 
-func (a *mongoAdapter) ServerCount() int64 {
+func (a *mongoAdapter) ServerCount() (int64, error) {
 	now := time.Now().UnixMilli()
 	a.nodesMap.Range(func(uid adapter.ServerId, lastSeen int64) bool {
 		if now-lastSeen > a.heartbeatTimeout {
@@ -458,7 +458,7 @@ func (a *mongoAdapter) ServerCount() int64 {
 		}
 		return true
 	})
-	return int64(a.nodesMap.Len() + 1)
+	return int64(a.nodesMap.Len() + 1), nil
 }
 
 func (a *mongoAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOptions) {
@@ -567,27 +567,24 @@ func (a *mongoAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				callback(nil, err)
 				return
 			}
-			expected := a.ServerCount() - 1
+			count, err := a.ServerCount()
+			if err != nil {
+				callback(nil, err)
+				return
+			}
+			expected := count - 1
 			if onlyLocal || expected == 0 {
 				callback(localSockets, nil)
 				return
 			}
 
 			requestId := adapter.RandomId()
-			responses := make([]any, len(localSockets))
-			for i, details := range localSockets {
-				responses[i] = details
-			}
 			request := &mongo.Request{
 				Type:      mongo.FETCH_SOCKETS,
 				Expected:  expected,
-				Responses: responses,
+				Responses: adapter.SocketDetailsToAny(localSockets),
 				Resolve: func(responses []any) {
-					sockets := make([]socket.SocketDetails, len(responses))
-					for i, response := range responses {
-						sockets[i], _ = response.(socket.SocketDetails)
-					}
-					callback(sockets, nil)
+					callback(adapter.AnySliceToSocketDetails(responses), nil)
 				},
 			}
 			request.Lock()
@@ -636,7 +633,11 @@ func (a *mongoAdapter) ServerSideEmit(packet []any) error {
 }
 
 func (a *mongoAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error {
-	expected := a.ServerCount() - 1
+	count, err := a.ServerCount()
+	if err != nil {
+		return err
+	}
+	expected := count - 1
 	if expected <= 0 {
 		ack([]any{}, nil)
 		return nil
@@ -855,23 +856,6 @@ func (a *mongoAdapter) addOffsetIfNecessary(packet *parser.Packet, opts *socket.
 		data = append(data, offset)
 		packet.Data = data
 	}
-}
-
-func socketDetailsToResponses(sockets []socket.SocketDetails) []adapter.SocketResponse {
-	responses := make([]adapter.SocketResponse, len(sockets))
-	for i, client := range sockets {
-		var rooms []socket.Room
-		if clientRooms := client.Rooms(); clientRooms != nil {
-			rooms = clientRooms.Keys()
-		}
-		responses[i] = adapter.SocketResponse{
-			Id:        client.Id(),
-			Handshake: client.Handshake(),
-			Rooms:     rooms,
-			Data:      client.Data(),
-		}
-	}
-	return responses
 }
 
 func (a *mongoAdapter) Cleanup(cleanup func()) {

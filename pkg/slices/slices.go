@@ -123,6 +123,14 @@ func Map[T, R any](vals []T, transform func(T) R) []R {
 	return result
 }
 
+// AppendCopy returns a copy of values with value appended.
+func AppendCopy(values []any, value any) []any {
+	result := make([]any, len(values)+1)
+	copy(result, values)
+	result[len(values)] = value
+	return result
+}
+
 // Reduce applies a function against elements to reduce to a single value
 func Reduce[T, R any](vals []T, initial R, reducer func(R, T) R) R {
 	result := initial

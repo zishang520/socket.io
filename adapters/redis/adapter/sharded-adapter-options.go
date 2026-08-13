@@ -12,7 +12,7 @@ const (
 	DefaultShardedChannelPrefix = "socket.io"
 )
 
-// DefaultShardedSubscriptionMode is the default subscription mode for the sharded adapter.
+// DefaultShardedSubscriptionMode is kept mutable for API compatibility.
 var DefaultShardedSubscriptionMode = redis.DynamicSubscriptionMode
 
 type (

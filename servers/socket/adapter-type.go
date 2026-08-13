@@ -90,8 +90,8 @@ type (
 		// To be overridden
 		Close()
 
-		// Returns the number of Socket.IO servers in the cluster
-		ServerCount() int64
+		// Returns the number of Socket.IO servers in the cluster.
+		ServerCount() (int64, error)
 
 		// Adds a socket to a list of room.
 		AddAll(SocketId, *types.Set[Room])

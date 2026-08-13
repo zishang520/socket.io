@@ -2,10 +2,15 @@ package emitter
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	rds "github.com/redis/go-redis/v9"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
@@ -33,12 +38,149 @@ func TestEmitterOptions(t *testing.T) {
 	})
 }
 
+func TestClassicEmitterNodeWire(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	redisClient := redis.NewRedisClient(context.Background(), client)
+	emit := NewEmitter(redisClient, nil, "/chat")
+
+	room := socket.Room("abcdefghijklmnopqrst")
+	channel := "socket.io#/chat#" + string(room) + "#"
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	pubsub := client.Subscribe(ctx, channel)
+	defer func() { _ = pubsub.Close() }()
+	if _, err := pubsub.Receive(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := emit.To(room).Emit("event", "value"); err != nil {
+		t.Fatal(err)
+	}
+	message, err := pubsub.ReceiveMessage(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packet redis.RedisPacket
+	if err := emit.opts.Parser().Decode([]byte(message.Payload), &packet); err != nil {
+		t.Fatal(err)
+	}
+	if packet.Uid != "emitter" || packet.Packet.Nsp != "/chat" {
+		t.Fatalf("packet = %#v", packet)
+	}
+	if !reflect.DeepEqual(packet.Opts.Rooms, []socket.Room{room}) || packet.Opts.Except == nil || packet.Opts.Flags == nil {
+		t.Fatalf("options = %#v", packet.Opts)
+	}
+}
+
+func TestClassicEmitterPreservesExplicitEmptyNamespace(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	emit := NewEmitter(redis.NewRedisClient(context.Background(), client), nil, "")
+	if emit.nsp != "" || emit.broadcastOptions.BroadcastChannel != "socket.io##" {
+		t.Fatalf("namespace = %q, channel = %q", emit.nsp, emit.broadcastOptions.BroadcastChannel)
+	}
+	if got := emit.Of("").nsp; got != "/" {
+		t.Fatalf("Of empty namespace = %q, want /", got)
+	}
+}
+
+func TestShardedOperatorKeepsConcreteType(t *testing.T) {
+	operator := MakeShardedBroadcastOperator()
+	if _, ok := operator.To("room").(*ShardedBroadcastOperator); !ok {
+		t.Fatal("To changed the sharded operator type")
+	}
+	if _, ok := operator.Except("room").(*ShardedBroadcastOperator); !ok {
+		t.Fatal("Except changed the sharded operator type")
+	}
+	emit := MakeEmitter()
+	emit.opts.SetSharded(true)
+	if _, ok := emit.To("room").(*ShardedBroadcastOperator); !ok {
+		t.Fatal("Emitter.To changed the sharded operator type")
+	}
+}
+
+func TestRedisStreamsOperatorKeepsConcreteType(t *testing.T) {
+	options := DefaultRedisStreamsEmitterOptions()
+	options.SetStreamName("events")
+	options.SetMaxLen(100)
+	operator := NewRedisStreamsBroadcastOperator(nil, "", options, nil, nil, nil)
+	result, ok := operator.To("room").Except("excluded").Volatile().Compress(false).(*RedisStreamsBroadcastOperator)
+	if !ok {
+		t.Fatal("chaining changed the Redis Streams operator type")
+	}
+	if result.opts.StreamName() != options.StreamName() || result.opts.MaxLen() != options.MaxLen() {
+		t.Fatal("chaining changed the Redis Streams options")
+	}
+	if !result.rooms.Has("room") || !result.exceptRooms.Has("excluded") {
+		t.Fatal("chaining lost room selection")
+	}
+	if !result.flags.Volatile || result.flags.Compress == nil || *result.flags.Compress {
+		t.Fatal("chaining lost broadcast flags")
+	}
+}
+
+func TestRedisStreamsEmitterNodeWire(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	options := DefaultRedisStreamsEmitterOptions()
+	options.SetStreamName("events")
+	options.SetMaxLen(100)
+	emit := NewRedisStreamsEmitter(
+		redis.NewRedisClient(context.Background(), client),
+		options,
+	).Of("chat")
+
+	if err := emit.Emit("event", []byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := client.XRange(context.Background(), "events", "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	raw := redis.RawClusterMessage(entries[0].Values)
+	if raw.Uid() != "emitter" || raw.Nsp() != "chat" {
+		t.Fatalf("raw message = %#v", raw)
+	}
+	message, err := redis.DecodeStreamMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := message.Data.(*BroadcastMessage)
+	if data.Packet.Nsp != "chat" || !reflect.DeepEqual(data.Packet.Data.([]any)[1], []byte{1, 2}) {
+		t.Fatalf("packet = %#v", data.Packet)
+	}
+}
+
+func TestRedisStreamsEmitterPreservesEmptyNamespace(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	options := DefaultRedisStreamsEmitterOptions()
+	options.SetStreamName("events")
+	emit := NewRedisStreamsEmitter(
+		redis.NewRedisClient(context.Background(), client),
+		options,
+	).Of("")
+
+	if err := emit.Emit("event"); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := client.XRange(context.Background(), "events", "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := redis.RawClusterMessage(entries[0].Values).Nsp(); got != "" {
+		t.Fatalf("namespace = %q, want empty", got)
+	}
+}
+
 func TestEmitter(t *testing.T) {
+	server := miniredis.RunT(t)
 	redisClient := redis.NewRedisClient(context.TODO(), rds.NewClient(&rds.Options{
-		Addr:     "localhost:6379",
-		Username: "",
-		Password: "root",
-		DB:       0,
+		Addr: server.Addr(),
 	}))
 
 	emit := NewEmitter(redisClient, nil)
@@ -86,9 +228,9 @@ func TestEmitter(t *testing.T) {
 	})
 
 	t.Run("ServerSideEmit", func(t *testing.T) {
-		err := emit.ServerSideEmit("false", "aaa", func(...any) {})
-		if err == nil {
-			t.Fatal("ServerSideEmit error must not be nil")
+		err := emit.ServerSideEmit("false", "aaa", func([]any, error) {})
+		if !errors.Is(err, errAcknowledgementsNotSupported) {
+			t.Fatalf("ServerSideEmit error = %v, want %v", err, errAcknowledgementsNotSupported)
 		}
 		err = emit.ServerSideEmit("false", "aaa")
 		if err != nil {
@@ -98,11 +240,9 @@ func TestEmitter(t *testing.T) {
 }
 
 func TestBroadcastOperator(t *testing.T) {
+	server := miniredis.RunT(t)
 	redisClient := redis.NewRedisClient(context.TODO(), rds.NewClient(&rds.Options{
-		Addr:     "localhost:6379",
-		Username: "",
-		Password: "root",
-		DB:       0,
+		Addr: server.Addr(),
 	}))
 
 	b := NewBroadcastOperator(redisClient, &BroadcastOptions{

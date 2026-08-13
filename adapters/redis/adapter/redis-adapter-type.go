@@ -2,7 +2,6 @@
 package adapter
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,26 +35,22 @@ type (
 		Resolve func(*types.Slice[any])
 
 		// Timeout is the timer for request timeout handling.
-		Timeout *atomic.Pointer[utils.Timer]
+		Timeout atomic.Pointer[utils.Timer]
 
 		// NumSub is the number of expected responses from other nodes.
 		NumSub int64
 
 		// MsgCount tracks the number of responses received.
-		MsgCount *atomic.Int64
+		MsgCount atomic.Int64
 
 		// Rooms accumulates room information from responses.
 		Rooms *types.Set[socket.Room]
 
-		// Sockets accumulates socket information from responses.
-		Sockets *types.Slice[*adapter.SocketResponse]
+		// Sockets accumulates socket IDs from legacy SOCKETS responses.
+		Sockets *types.Set[socket.SocketId]
 
 		// Responses accumulates generic response data.
 		Responses *types.Slice[any]
-
-		// Once ensures that the Resolve callback and cleanup are executed exactly once,
-		// preventing double invocations from both normal completion and timeout paths.
-		Once sync.Once
 	}
 
 	// RedisAdapter defines the interface for a Redis-based Socket.IO adapter.

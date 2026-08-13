@@ -104,31 +104,29 @@ func (s *sessionAwareAdapter) RestoreSession(pid PrivateSessionId, offset string
 		return nil, nil
 	}
 
-	// Find the index of the packet with the given offset
-	index := s.packets.FindIndex(func(packet *PersistedPacket) bool {
-		return packet.Id == offset
+	sessionRooms := session.Rooms.Keys()
+	var missedPackets []any
+	s.packets.DoRead(func(packets []*PersistedPacket) {
+		for index, packet := range packets {
+			if packet.Id != offset {
+				continue
+			}
+
+			missedPackets = make([]any, 0, len(packets)-index-1)
+			for _, packet := range packets[index+1:] {
+				if shouldIncludePacket(sessionRooms, packet.Opts) {
+					missedPackets = append(missedPackets, packet.Data)
+				}
+			}
+			return
+		}
 	})
 
-	if index == -1 {
+	if missedPackets == nil {
 		// the offset may be too old
 		return nil, nil
 	}
 
-	// Use a pre-allocated slice to avoid memory allocation in the loop
-	missedPackets := make([]any, 0, s.packets.Len()-index-1)
-	sessionRooms := session.Rooms.Keys()
-	// Iterate over the packets and append the data of those that should be included
-	for i := index + 1; i < s.packets.Len(); i++ {
-		packet, err := s.packets.Get(i)
-		if err != nil {
-			break
-		}
-		if shouldIncludePacket(sessionRooms, packet.Opts) {
-			missedPackets = append(missedPackets, packet.Data)
-		}
-	}
-
-	// Create a new Session object and return it
 	return &Session{
 		SessionToPersist: session.SessionToPersist,
 		MissedPackets:    missedPackets,
@@ -159,17 +157,13 @@ func (s *sessionAwareAdapter) Broadcast(packet *parser.Packet, opts *BroadcastOp
 
 func shouldIncludePacket(sessionRooms []Room, opts *BroadcastOptions) bool {
 	included := opts.Rooms.Len() == 0
-	notExcluded := true
 	for _, room := range sessionRooms {
-		if included && !notExcluded {
-			break
+		if opts.Except.Has(room) {
+			return false
 		}
 		if !included && opts.Rooms.Has(room) {
 			included = true
 		}
-		if notExcluded && opts.Except.Has(room) {
-			notExcluded = false
-		}
 	}
-	return included && notExcluded
+	return included
 }

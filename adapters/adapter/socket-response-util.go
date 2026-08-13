@@ -5,20 +5,26 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-func socketDetailsToResponses(localSockets []socket.SocketDetails) []SocketResponse {
+// SocketDetailsToResponses converts socket details to their wire representation.
+func SocketDetailsToResponses(localSockets []socket.SocketDetails) []SocketResponse {
 	responses := make([]SocketResponse, len(localSockets))
 	for i, client := range localSockets {
+		var rooms []socket.Room
+		if clientRooms := client.Rooms(); clientRooms != nil {
+			rooms = clientRooms.Keys()
+		}
 		responses[i] = SocketResponse{
 			Id:        client.Id(),
 			Handshake: client.Handshake(),
-			Rooms:     utils.NonNilSlice(client.Rooms().Keys()),
+			Rooms:     utils.NonNilSlice(rooms),
 			Data:      client.Data(),
 		}
 	}
 	return responses
 }
 
-func socketResponsesToDetailsAny(socketResponses []SocketResponse) []any {
+// SocketResponsesToDetailsAny converts wire responses to socket details stored as any values.
+func SocketResponsesToDetailsAny(socketResponses []SocketResponse) []any {
 	responses := make([]any, len(socketResponses))
 	for i := range socketResponses {
 		responses[i] = NewRemoteSocket(&socketResponses[i])
@@ -26,7 +32,8 @@ func socketResponsesToDetailsAny(socketResponses []SocketResponse) []any {
 	return responses
 }
 
-func socketDetailsToAny(localSockets []socket.SocketDetails) []any {
+// SocketDetailsToAny converts socket details to any values without changing the underlying objects.
+func SocketDetailsToAny(localSockets []socket.SocketDetails) []any {
 	responses := make([]any, len(localSockets))
 	for i, client := range localSockets {
 		responses[i] = client
@@ -34,7 +41,8 @@ func socketDetailsToAny(localSockets []socket.SocketDetails) []any {
 	return responses
 }
 
-func anySliceToSocketDetails(data []any) []socket.SocketDetails {
+// AnySliceToSocketDetails converts any values to socket details.
+func AnySliceToSocketDetails(data []any) []socket.SocketDetails {
 	responses := make([]socket.SocketDetails, len(data))
 	for i, item := range data {
 		responses[i] = utils.TryCast[socket.SocketDetails](item)

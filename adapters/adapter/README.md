@@ -71,7 +71,7 @@ type Adapter interface {
 ```golang
 type ClusterAdapter interface {
     Adapter
-    ServerCount() int
+    ServerCount() (int64, error)
     // Additional cluster-specific methods
 }
 ```

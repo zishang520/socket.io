@@ -11,6 +11,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -133,15 +134,10 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
-	// Construct the packet data
-	data := make([]any, len(args)+1)
-	data[0] = ev
-	copy(data[1:], args)
-
 	packet := &parser.Packet{
 		Type: parser.EVENT,
 		Nsp:  b.broadcastOptions.Nsp,
-		Data: data,
+		Data: utils.EventPayload(ev, args),
 	}
 	opts := adapter.EncodeOptions(&socket.BroadcastOptions{
 		Rooms:  b.rooms,

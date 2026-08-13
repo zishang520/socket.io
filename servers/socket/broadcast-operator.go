@@ -16,20 +16,6 @@ import (
 
 var broadcast_log = log.NewLog("socket.io:broadcast-operator")
 
-func eventPayload(ev string, args []any) []any {
-	data := make([]any, len(args)+1)
-	data[0] = ev
-	copy(data[1:], args)
-	return data
-}
-
-func appendAck(args []any, ack Ack) []any {
-	data := make([]any, len(args)+1)
-	copy(data, args)
-	data[len(args)] = ack
-	return data
-}
-
 // BroadcastOperator is used to broadcast events to multiple clients.
 type BroadcastOperator struct {
 	adapter     Adapter
@@ -125,7 +111,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 	// set up packet object
-	data := eventPayload(ev, args)
+	data := utils.EventPayload(ev, args)
 	data_len := len(data)
 
 	packet := &parser.Packet{
@@ -144,17 +130,17 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 		return nil
 	}
+	if b.flags.Timeout == nil {
+		err := errors.New("acknowledgement timeout must be set")
+		ack(nil, err)
+		return err
+	}
 
 	packet.Data = data[:data_len-1]
 
 	var timedOut atomic.Bool
 	responses := types.NewSlice[any]()
-	var timeout time.Duration
 	var ackOnce sync.Once
-
-	if milliseconds := b.flags.Timeout; milliseconds != nil {
-		timeout = utils.FromMilliseconds(*milliseconds)
-	}
 
 	timer := utils.SetTimeout(func() {
 		timedOut.Store(true)
@@ -175,7 +161,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 				ack(responses.All(), errors.New("operation has timed out"))
 			}
 		})
-	}, timeout)
+	}, utils.FromMilliseconds(*b.flags.Timeout))
 
 	var expectedServerCount atomic.Int64
 	expectedServerCount.Store(-1)
@@ -224,15 +210,21 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		responses.Push(slices.TryGet(clientResponse, 0))
 		checkCompleteness()
 	})
-	expectedServerCount.Store(b.adapter.ServerCount())
+	serverCount, err := b.adapter.ServerCount()
+	if err != nil {
+		broadcast_log.Debug("error while getting server count: %s", err.Error())
+		return nil
+	}
+	expectedServerCount.Store(serverCount)
 	checkCompleteness()
 	return nil
 }
 
 // EmitWithAck broadcasts an event and waits for acknowledgements from all clients.
+// Timeout must be called before this method.
 func (b *BroadcastOperator) EmitWithAck(ev string, args ...any) func(Ack) {
 	return func(ack Ack) {
-		_ = b.Emit(ev, appendAck(args, ack)...)
+		_ = b.Emit(ev, slices.AppendCopy(args, ack)...)
 	}
 }
 

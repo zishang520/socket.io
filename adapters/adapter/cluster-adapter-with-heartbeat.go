@@ -148,8 +148,8 @@ func (a *clusterAdapterWithHeartbeat) OnMessage(message *ClusterMessage, offset 
 	}
 }
 
-func (a *clusterAdapterWithHeartbeat) ServerCount() int64 {
-	return int64(a.nodesMap.Len() + 1)
+func (a *clusterAdapterWithHeartbeat) ServerCount() (int64, error) {
+	return int64(a.nodesMap.Len() + 1), nil
 }
 
 func (a *clusterAdapterWithHeartbeat) Publish(message *ClusterMessage) {
@@ -248,18 +248,18 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 			requestId := RandomId()
 
 			t := DEFAULT_TIMEOUT
-			if opts.Flags != nil && opts.Flags.Timeout != nil {
+			if opts.Flags != nil && opts.Flags.Timeout != nil && *opts.Flags.Timeout != 0 {
 				t = utils.FromMilliseconds(*opts.Flags.Timeout)
 			}
 
 			request := &CustomClusterRequest{
 				Type: FETCH_SOCKETS,
 				Resolve: func(data *types.Slice[any]) {
-					cb(anySliceToSocketDetails(data.All()), nil)
+					cb(AnySliceToSocketDetails(data.All()), nil)
 				},
 				Timeout:     new(atomic.Pointer[utils.Timer]),
 				MissingUids: types.NewSet(missingUids...),
-				Responses:   types.NewSlice(socketDetailsToAny(localSockets)...),
+				Responses:   types.NewSlice(SocketDetailsToAny(localSockets)...),
 			}
 			a.customRequests.Store(requestId, request)
 
@@ -295,7 +295,7 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 			adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
 		}
 		if request, ok := a.customRequests.Load(data.RequestId); ok {
-			request.Responses.Push(socketResponsesToDetailsAny(data.Sockets)...)
+			request.Responses.Push(SocketResponsesToDetailsAny(data.Sockets)...)
 
 			request.MissingUids.Delete(response.Uid)
 			if request.MissingUids.Len() == 0 {

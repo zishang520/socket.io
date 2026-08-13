@@ -302,7 +302,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	if SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
-	data := eventPayload(ev, args)
+	data := utils.EventPayload(ev, args)
 	data_len := len(data)
 	packet := &parser.Packet{
 		Type: parser.EVENT,
@@ -362,7 +362,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 // Return:  a `func(socket.Ack)` that will be fulfilled when all clients have acknowledged the event
 func (s *Socket) EmitWithAck(ev string, args ...any) func(Ack) {
 	return func(ack Ack) {
-		_ = s.Emit(ev, append(args, ack)...)
+		_ = s.Emit(ev, slices.AppendCopy(args, ack)...)
 	}
 }
 

@@ -77,7 +77,7 @@ type (
 	}
 )
 
-// DefaultRedisStreamsAdapterOptions returns a new RedisStreamsAdapterOptions with default values.
+// DefaultRedisStreamsAdapterOptions returns empty options; the builder applies defaults.
 func DefaultRedisStreamsAdapterOptions() *RedisStreamsAdapterOptions {
 	return &RedisStreamsAdapterOptions{}
 }

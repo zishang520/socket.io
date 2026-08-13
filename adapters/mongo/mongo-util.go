@@ -194,13 +194,9 @@ func decodeEventData(messageType adapter.MessageType, data *EventData) any {
 			Sockets:   sockets,
 		}
 	case BROADCAST_CLIENT_COUNT:
-		var clientCount uint64
-		if data.ClientCount != nil {
-			clientCount = *data.ClientCount
-		}
 		return &adapter.BroadcastClientCount{
 			RequestId:   data.RequestId,
-			ClientCount: clientCount,
+			ClientCount: utils.FromPtr(data.ClientCount),
 		}
 	default:
 		return nil

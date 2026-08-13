@@ -34,7 +34,6 @@ type (
 		NumSub    int64
 		MsgCount  *atomic.Int64
 		Rooms     *types.Set[socket.Room]
-		Sockets   *types.Slice[*adapter.SocketResponse]
 		Responses *types.Slice[any]
 
 		// Once ensures that the Resolve callback and cleanup are executed exactly once,

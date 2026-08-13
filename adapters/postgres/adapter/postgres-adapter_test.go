@@ -143,7 +143,7 @@ func TestPostgresAdapter_OnNotificationNamespace(t *testing.T) {
 	if received != 0 {
 		t.Fatal("message from another namespace must be ignored")
 	}
-	if count := a.ServerCount(); count != 1 {
+	if count, err := a.ServerCount(); err != nil || count != 1 {
 		t.Fatalf("message from another namespace changed the server count: %d", count)
 	}
 

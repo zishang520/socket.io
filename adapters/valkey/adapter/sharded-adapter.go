@@ -376,17 +376,12 @@ func (s *shardedValkeyAdapter) decodeData(messageType adapter.MessageType, rawDa
 }
 
 // ServerCount returns the number of servers subscribed to this adapter's main channel.
-func (s *shardedValkeyAdapter) ServerCount() int64 {
+func (s *shardedValkeyAdapter) ServerCount() (int64, error) {
 	result, err := s.valkeyClient.PubSubShardNumSub(s.ctx, s.channel)
 	if err != nil {
-		s.valkeyClient.Emit("error", err)
-		return 0
+		return 0, err
 	}
-
-	if count, ok := result[s.channel]; ok {
-		return count
-	}
-	return 0
+	return result[s.channel], nil
 }
 
 func (s *shardedValkeyAdapter) isDynamicMode() bool {

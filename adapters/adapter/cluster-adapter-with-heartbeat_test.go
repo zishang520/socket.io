@@ -62,8 +62,8 @@ func TestHeartbeatDoesNotTrackEmptyUid(t *testing.T) {
 	if cluster.nodesMap.Len() != 0 {
 		t.Fatal("message with empty uid was tracked as a cluster node")
 	}
-	if cluster.ServerCount() != 1 {
-		t.Fatalf("ServerCount() = %d, want 1", cluster.ServerCount())
+	if count, err := cluster.ServerCount(); err != nil || count != 1 {
+		t.Fatalf("ServerCount() = %d, %v; want 1, nil", count, err)
 	}
 }
 

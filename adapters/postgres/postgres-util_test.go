@@ -78,12 +78,7 @@ func TestAdapterDataScalarResponses(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			wireData, _ := MarshalAdapterData(test.data)
-			wire := wireData.(*PacketData[any])
-			if wire.Packet != "response" {
-				t.Fatalf("expected scalar packet, got %#v", wire.Packet)
-			}
-
-			decoded := UnmarshalAdapterData(test.messageType, wire)
+			decoded := UnmarshalAdapterData(test.messageType, wireData)
 			var packet any
 			switch value := decoded.(type) {
 			case *adapter.ServerSideEmitResponse:
@@ -219,6 +214,78 @@ func TestAdapterDataMessagePackReader(t *testing.T) {
 	localPacket := message.Data.(*adapter.BroadcastMessage).Packet.Data.([]any)
 	if data, ok := localPacket[1].([]byte); !ok || !bytes.Equal(data, []byte{1, 2, 3}) {
 		t.Fatalf("local packet was consumed: %#v", localPacket[1])
+	}
+}
+
+func TestFetchSocketsResponseBufferWireFormats(t *testing.T) {
+	authBytes := []byte{1, 2}
+	dataBytes := []byte{3, 4}
+	response := &adapter.FetchSocketsResponse{
+		RequestId: "request",
+		Sockets: []adapter.SocketResponse{{
+			Id: "socket",
+			Handshake: &socket.Handshake{
+				Auth: map[string]any{"token": authBytes},
+			},
+			Data: map[string]any{"payload": dataBytes},
+		}},
+	}
+
+	wireData, binary := MarshalAdapterData(response)
+	if binary {
+		t.Fatal("fetch sockets response must use the JSON path below the payload threshold")
+	}
+
+	jsonData, err := json.Marshal(wireData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`"rooms":[]`,
+		`"token":{"type":"Buffer","data":[1,2]}`,
+		`"payload":{"type":"Buffer","data":[3,4]}`,
+	} {
+		if !bytes.Contains(jsonData, []byte(expected)) {
+			t.Fatalf("JSON payload %s does not contain %s", jsonData, expected)
+		}
+	}
+
+	socketResponse := response.Sockets[0]
+	if got := socketResponse.Handshake.Auth["token"]; !bytes.Equal(got.([]byte), authBytes) {
+		t.Fatalf("input auth was modified: %#v", got)
+	}
+	if got := socketResponse.Data.(map[string]any)["payload"]; !bytes.Equal(got.([]byte), dataBytes) {
+		t.Fatalf("input data was modified: %#v", got)
+	}
+
+	msgpackData, err := utils.MsgPack().Encode(wireData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded EventData
+	if err := utils.MsgPack().Decode(msgpackData, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decodedSocket := (*decoded.Sockets)[0]
+	if got := decodedSocket.Handshake.Auth["token"]; !bytes.Equal(got.([]byte), authBytes) {
+		t.Fatalf("MessagePack auth = %#v, want native bytes", got)
+	}
+	if got := decodedSocket.Data.(map[string]any)["payload"]; !bytes.Equal(got.([]byte), dataBytes) {
+		t.Fatalf("MessagePack data = %#v, want native bytes", got)
+	}
+}
+
+func TestMarshalAdapterDataZeroValueBytesBuffer(t *testing.T) {
+	wireData, binary := MarshalAdapterData(&adapter.BroadcastMessage{
+		Packet: &parser.Packet{Data: []any{"event", new(types.BytesBuffer)}},
+	})
+	if !binary {
+		t.Fatal("BytesBuffer must use the attachment table")
+	}
+	payload := wireData.(*PacketData[*parser.Packet]).Packet.Data.([]any)[1]
+	data, ok := payload.([]byte)
+	if !ok || data == nil || len(data) != 0 {
+		t.Fatalf("zero-value BytesBuffer = %#v, want non-nil empty bytes", payload)
 	}
 }
 

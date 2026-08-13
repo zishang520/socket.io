@@ -10,6 +10,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // ShardedBroadcastOperator broadcasts events via Valkey Sharded Pub/Sub (SPUBLISH).
@@ -107,14 +108,10 @@ func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
 		return errors.New("broadcastOptions.Parser is not set")
 	}
 
-	data := make([]any, len(args)+1)
-	data[0] = ev
-	copy(data[1:], args)
-
 	packet := &parser.Packet{
 		Type: parser.EVENT,
 		Nsp:  b.broadcastOptions.Nsp,
-		Data: data,
+		Data: utils.EventPayload(ev, args),
 	}
 
 	opts := adapter.EncodeOptions(&socket.BroadcastOptions{

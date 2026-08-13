@@ -76,6 +76,26 @@ func TestMarshalAdapterDataUsesNodeFieldNames(t *testing.T) {
 	})
 }
 
+func TestMarshalAdapterDataNormalizesSocketRoomsWithoutMutation(t *testing.T) {
+	response := &adapter.FetchSocketsResponse{
+		RequestId: "request-1",
+		Sockets:   []adapter.SocketResponse{{Id: "socket-1"}},
+	}
+	raw := mustMarshalAdapterData(t, response)
+
+	if response.Sockets[0].Rooms != nil {
+		t.Fatal("input socket rooms were modified")
+	}
+	sockets, err := raw.Lookup("sockets").Array().Values()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sockets) != 1 {
+		t.Fatalf("unexpected sockets: %v", sockets)
+	}
+	assertMongoEmptyArray(t, sockets[0].Document().Lookup("rooms"))
+}
+
 func TestMarshalAdapterDataOmitsOptionalRequestAndPacketID(t *testing.T) {
 	raw := mustMarshalAdapterData(t, &adapter.BroadcastMessage{
 		Packet: &parser.Packet{
@@ -263,7 +283,7 @@ func TestMarshalAdapterDataUsesScalarResponses(t *testing.T) {
 			packetType: bson.TypeArray,
 		},
 		{
-			name:       "broadcast acknowledgement null",
+			name:       "broadcast acknowledgement without argument",
 			data:       &adapter.BroadcastAck{RequestId: "request-2"},
 			packetType: bson.TypeNull,
 		},

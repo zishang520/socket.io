@@ -127,6 +127,20 @@ func TestTryGetAny(t *testing.T) {
 	})
 }
 
+func TestAppendCopy(t *testing.T) {
+	values := make([]any, 2, 3)
+	values[0], values[1] = 1, 2
+	result := AppendCopy(values, 3)
+
+	if !reflect.DeepEqual(result, []any{1, 2, 3}) {
+		t.Fatalf("AppendCopy() = %v", result)
+	}
+	result[0] = 4
+	if values[0] != 1 || values[:cap(values)][2] != nil {
+		t.Fatal("AppendCopy reused the input backing array")
+	}
+}
+
 // TestGetWithDefault tests the GetWithDefault function.
 func TestGetWithDefault(t *testing.T) {
 	s := []int{10, 20, 30}

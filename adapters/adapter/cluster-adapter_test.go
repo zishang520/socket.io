@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -25,9 +26,85 @@ type ackAdapter struct {
 	args []any
 }
 
+type prototypeClusterAdapter struct {
+	ClusterAdapter
+	count         int64
+	countErr      error
+	publishCount  atomic.Int64
+	responseCount atomic.Int64
+}
+
+func (a *prototypeClusterAdapter) Publish(*ClusterMessage) {
+	a.publishCount.Add(1)
+}
+
+func (a *prototypeClusterAdapter) OnResponse(*ClusterResponse) {
+	a.responseCount.Add(1)
+}
+
+func (a *prototypeClusterAdapter) ServerCount() (int64, error) {
+	return a.count, a.countErr
+}
+
 func (a *ackAdapter) BroadcastWithAck(_ *parser.Packet, _ *socket.BroadcastOptions, clientCount func(uint64), ack socket.Ack) {
 	clientCount(1)
 	ack(a.args, nil)
+}
+
+func TestClusterAdapterUsesPrototypeDispatch(t *testing.T) {
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	cluster.Adapter = socket.NewAdapter(nsp)
+	prototype := &prototypeClusterAdapter{ClusterAdapter: cluster, count: 1}
+	cluster.Prototype(prototype)
+	cluster.Construct(nsp)
+
+	cluster.OnMessage(&ClusterMessage{
+		Uid:  "remote",
+		Nsp:  nsp.Name(),
+		Type: BROADCAST_ACK,
+	}, "")
+	if prototype.responseCount.Load() != 1 {
+		t.Fatal("OnMessage() did not dispatch the response to the prototype")
+	}
+
+	cluster.BroadcastWithAck(
+		&parser.Packet{Type: parser.EVENT},
+		&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: new(int64(1))}},
+		func(uint64) {},
+		func([]any, error) {},
+	)
+	if prototype.publishCount.Load() != 1 {
+		t.Fatal("BroadcastWithAck() did not publish through the prototype")
+	}
+}
+
+func TestClusterAdapterReturnsServerCountErrors(t *testing.T) {
+	countErr := errors.New("count failed")
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	cluster.Adapter = socket.NewAdapter(nsp)
+	cluster.Prototype(&prototypeClusterAdapter{
+		ClusterAdapter: cluster,
+		countErr:       countErr,
+	})
+	cluster.Construct(nsp)
+
+	var fetchErr error
+	cluster.FetchSockets(nil)(func(_ []socket.SocketDetails, err error) {
+		fetchErr = err
+	})
+	if !errors.Is(fetchErr, countErr) {
+		t.Fatalf("FetchSockets() error = %v, want %v", fetchErr, countErr)
+	}
+
+	err := cluster.ServerSideEmit([]any{"event", func([]any, error) {}})
+	if !errors.Is(err, countErr) {
+		t.Fatalf("ServerSideEmit() error = %v, want %v", err, countErr)
+	}
+	if cluster.requests.Len() != 0 {
+		t.Fatal("request was stored after server count failed")
+	}
 }
 
 func TestServerSideEmitResponseStoresPacketValue(t *testing.T) {
@@ -87,7 +164,7 @@ func TestClusterAckPacketWireShape(t *testing.T) {
 	}{
 		{name: "scalar", value: "response", json: `,"packet":"response"`, present: true},
 		{name: "array", value: []any{"response"}, json: `,"packet":["response"]`, present: true},
-		{name: "undefined"},
+		{name: "undefined", present: true},
 	}
 
 	for _, responseType := range responseTypes {
@@ -116,8 +193,8 @@ func TestClusterAckPacketWireShape(t *testing.T) {
 				if unmarshalErr := msgpack.Unmarshal(msgpackData, &msgpackWire); unmarshalErr != nil {
 					t.Fatal(unmarshalErr)
 				}
-				if got, present := msgpackWire["packet"]; present != packet.present || !reflect.DeepEqual(got, packet.value) {
-					t.Fatalf("MessagePack packet = %#v, %t; want %#v, %t", got, present, packet.value, packet.present)
+				if wirePacket, present := msgpackWire["packet"]; present != packet.present || !reflect.DeepEqual(wirePacket, packet.value) {
+					t.Fatalf("MessagePack packet = %#v, %t; want %#v, %t", wirePacket, present, packet.value, packet.present)
 				}
 				msgpackDecoded := responseType.decoded()
 				if unmarshalErr := msgpack.Unmarshal(msgpackData, msgpackDecoded); unmarshalErr != nil {
@@ -128,6 +205,56 @@ func TestClusterAckPacketWireShape(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestClusterMessageRequiredWireFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		value  any
+		fields []string
+	}{
+		{"cluster envelope", ClusterMessage{}, []string{"uid", "nsp", "type"}},
+		{"broadcast", BroadcastMessage{}, []string{"opts", "packet"}},
+		{"sockets join/leave", SocketsJoinLeaveMessage{}, []string{"opts", "rooms"}},
+		{"disconnect sockets", DisconnectSocketsMessage{}, []string{"opts", "close"}},
+		{"fetch sockets", FetchSocketsMessage{}, []string{"opts", "requestId"}},
+		{"fetch sockets response", FetchSocketsResponse{}, []string{"requestId", "sockets"}},
+		{"server-side emit", ServerSideEmitMessage{}, []string{"packet"}},
+		{"server-side emit response", ServerSideEmitResponse{}, []string{"requestId"}},
+		{"broadcast client count", BroadcastClientCount{}, []string{"requestId", "clientCount"}},
+		{"broadcast acknowledgement", BroadcastAck{}, []string{"requestId"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jsonData, err := json.Marshal(tt.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var jsonFields map[string]json.RawMessage
+			if err = json.Unmarshal(jsonData, &jsonFields); err != nil {
+				t.Fatal(err)
+			}
+
+			msgpackData, err := msgpack.Marshal(tt.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var msgpackFields map[string]any
+			if err = msgpack.Unmarshal(msgpackData, &msgpackFields); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, field := range tt.fields {
+				if _, ok := jsonFields[field]; !ok {
+					t.Fatalf("JSON field %q is missing", field)
+				}
+				if _, ok := msgpackFields[field]; !ok {
+					t.Fatalf("MessagePack field %q is missing", field)
+				}
+			}
+		})
 	}
 }
 
@@ -149,8 +276,8 @@ func TestServerSideEmitWithoutRemoteNodesReturnsEmptyResponses(t *testing.T) {
 	}
 }
 
-func (a *fixedServerCountAdapter) ServerCount() int64 {
-	return a.serverCount
+func (a *fixedServerCountAdapter) ServerCount() (int64, error) {
+	return a.serverCount, nil
 }
 
 type testClusterAdapter struct {
@@ -167,6 +294,32 @@ func (a *testClusterAdapter) DoPublish(*ClusterMessage) (Offset, error) {
 func (a *testClusterAdapter) DoPublishResponse(_ ServerId, response *ClusterResponse) error {
 	a.response.Store(response)
 	return nil
+}
+
+func TestClusterBroadcastAckCleanupWithoutTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+		cluster := MakeClusterAdapter().(*clusterAdapter)
+		cluster.Adapter = &ackAdapter{Adapter: socket.NewAdapter(nsp)}
+		cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
+		cluster.Construct(nsp)
+
+		cluster.BroadcastWithAck(
+			&parser.Packet{Type: parser.EVENT, Data: []any{"event"}},
+			&socket.BroadcastOptions{Flags: new(socket.BroadcastFlags)},
+			func(uint64) {},
+			func([]any, error) {},
+		)
+		if cluster.ackRequests.Len() != 1 {
+			t.Fatal("acknowledgement request was not stored")
+		}
+
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		if cluster.ackRequests.Len() != 0 {
+			t.Fatal("acknowledgement request was not removed")
+		}
+	})
 }
 
 func TestClusterBroadcastAckUsesFirstArgument(t *testing.T) {
@@ -278,31 +431,94 @@ func TestClusterBroadcastAckWrapsPacketValue(t *testing.T) {
 	}
 }
 
-func TestFetchSocketsImmediateTimeout(t *testing.T) {
+func TestFetchSocketsTimeout(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		timeout int64
+		delay   time.Duration
+	}{
+		{name: "zero uses default", delay: DEFAULT_TIMEOUT},
+		{name: "explicit timeout", timeout: 1, delay: time.Millisecond},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+				cluster := MakeClusterAdapter().(*clusterAdapter)
+				cluster.Adapter = &fixedServerCountAdapter{
+					Adapter:     socket.NewAdapter(nsp),
+					serverCount: 2,
+				}
+				cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
+				cluster.Construct(nsp)
+
+				result := make(chan error, 1)
+				cluster.FetchSockets(&socket.BroadcastOptions{
+					Flags: &socket.BroadcastFlags{Timeout: &test.timeout},
+				})(func(_ []socket.SocketDetails, err error) {
+					result <- err
+				})
+
+				time.Sleep(test.delay - time.Nanosecond)
+				synctest.Wait()
+				select {
+				case <-result:
+					t.Fatal("FetchSockets() timed out too early")
+				default:
+				}
+				if cluster.requests.Len() != 1 {
+					t.Fatal("FetchSockets() removed the request too early")
+				}
+
+				time.Sleep(time.Nanosecond)
+				synctest.Wait()
+				select {
+				case err := <-result:
+					if err == nil {
+						t.Fatal("FetchSockets() returned nil error after timeout")
+					}
+				default:
+					t.Fatal("FetchSockets() did not time out")
+				}
+				if cluster.requests.Len() != 0 {
+					t.Fatal("FetchSockets() did not remove the timed-out request")
+				}
+			})
+		})
+	}
+}
+
+func TestHeartbeatFetchSocketsZeroTimeoutUsesDefault(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
-		cluster := MakeClusterAdapter().(*clusterAdapter)
-		cluster.Adapter = &fixedServerCountAdapter{
-			Adapter:     socket.NewAdapter(nsp),
-			serverCount: 2,
-		}
+		cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
+		defer cluster.Close()
 		cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
-		cluster.Construct(nsp)
+		cluster.nodesMap.Store("remote", time.Now().UnixMilli())
 
-		var timeoutErr error
+		result := make(chan error, 1)
 		cluster.FetchSockets(&socket.BroadcastOptions{
 			Flags: &socket.BroadcastFlags{Timeout: new(int64(0))},
 		})(func(_ []socket.SocketDetails, err error) {
-			timeoutErr = err
+			result <- err
 		})
-		time.Sleep(time.Millisecond)
-		synctest.Wait()
 
-		if timeoutErr == nil {
-			t.Fatal("FetchSockets() returned nil error after timeout")
+		time.Sleep(DEFAULT_TIMEOUT - time.Nanosecond)
+		synctest.Wait()
+		select {
+		case <-result:
+			t.Fatal("FetchSockets() timed out too early")
+		default:
 		}
-		if cluster.requests.Len() != 0 {
-			t.Fatal("FetchSockets() did not remove timed-out request")
+
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		select {
+		case err := <-result:
+			if err == nil {
+				t.Fatal("FetchSockets() returned nil error after timeout")
+			}
+		default:
+			t.Fatal("FetchSockets() did not time out")
 		}
 	})
 }

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -65,9 +64,9 @@ type (
 		specificResponseChannel string
 
 		// Internal state management.
-		requests             *types.Map[string, *RedisRequest]
-		ackRequests          *types.Map[string, *AckRequest]
-		redisListeners       *types.Map[string, *rds.PubSub]
+		requests             types.Map[string, *RedisRequest]
+		ackRequests          types.Map[string, *AckRequest]
+		redisListeners       types.Map[string, *rds.PubSub]
 		friendlyErrorHandler func(...any)
 
 		ctx    context.Context
@@ -88,9 +87,6 @@ func MakeRedisAdapter() RedisAdapter {
 		Adapter: socket.MakeAdapter(),
 
 		opts:                 DefaultRedisAdapterOptions(),
-		requests:             &types.Map[string, *RedisRequest]{},
-		ackRequests:          &types.Map[string, *AckRequest]{},
-		redisListeners:       &types.Map[string, *rds.PubSub]{},
 		friendlyErrorHandler: func(...any) {},
 	}
 
@@ -144,27 +140,21 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	// Generate unique server ID
 	r.uid = adapter.ServerId(adapter.Uid2(defaultUidLength))
 
-	// Configure timeout with default fallback
-	if r.opts.GetRawRequestsTimeout() != nil {
-		r.requestsTimeout = r.opts.RequestsTimeout()
-	} else {
+	// Node.js uses `opts.requestsTimeout || 5000`.
+	r.requestsTimeout = r.opts.RequestsTimeout()
+	if r.requestsTimeout == 0 {
 		r.requestsTimeout = DefaultRequestsTimeout
 	}
 
 	r.publishOnSpecificResponseChannel = r.opts.PublishOnSpecificResponseChannel()
 
-	// Configure parser with default fallback
-	if r.opts.Parser() != nil {
-		r.parser = r.opts.Parser()
-	} else {
+	r.parser = r.opts.Parser()
+	if r.parser == nil {
 		r.parser = utils.MsgPack()
 	}
 
-	// Build channel names
-	prefix := defaultChannelPrefix
-	if r.opts.GetRawKey() != nil {
-		prefix = r.opts.Key()
-	}
+	// Node.js uses `opts.key || "socket.io"`.
+	prefix := utils.Value(r.opts.Key(), defaultChannelPrefix)
 
 	r.channel = prefix + "#" + nsp.Name() + "#"
 	r.requestChannel = prefix + "-request#" + r.Nsp().Name() + "#"
@@ -224,8 +214,8 @@ func (r *redisAdapter) handleChannelMessages(sub *rds.PubSub) {
 
 // onMessage handles broadcast messages from Redis pattern subscriptions.
 func (r *redisAdapter) onMessage(_ string, channel string, msg []byte) {
-	if len(channel) < len(r.channel) || !strings.HasPrefix(channel, r.channel) {
-		redisLog.Debug("ignore channel: shorter than expected or prefix mismatch")
+	if !strings.HasPrefix(channel, r.channel) {
+		redisLog.Debug("ignore different channel")
 		return
 	}
 
@@ -239,7 +229,7 @@ func (r *redisAdapter) onMessage(_ string, channel string, msg []byte) {
 		return
 	}
 
-	var packet *Packet
+	var packet Packet
 	if err := r.parser.Decode(msg, &packet); err != nil {
 		redisLog.Debug("error decoding message: %v", err)
 		return
@@ -268,19 +258,6 @@ func (r *redisAdapter) hasRoom(room socket.Room) bool {
 	return ok
 }
 
-func socketResponsesFromDetails(localSockets []socket.SocketDetails) []*adapter.SocketResponse {
-	socketResponses := make([]*adapter.SocketResponse, len(localSockets))
-	for i, client := range localSockets {
-		socketResponses[i] = &adapter.SocketResponse{
-			Id:        client.Id(),
-			Handshake: client.Handshake(),
-			Rooms:     client.Rooms().Keys(),
-			Data:      client.Data(),
-		}
-	}
-	return socketResponses
-}
-
 // onRequest handles inter-node requests from Redis.
 func (r *redisAdapter) onRequest(channel string, msg []byte) {
 	// Route response messages to onResponse handler
@@ -294,21 +271,20 @@ func (r *redisAdapter) onRequest(channel string, msg []byte) {
 		return
 	}
 
-	var request *Request
+	var request Request
 	// Detect message format by first byte
+	var err error
 	if len(msg) > 0 && msg[0] == '{' {
-		if err := json.Unmarshal(msg, &request); err != nil {
-			redisLog.Debug("ignoring malformed request")
-			return
-		}
+		err = json.Unmarshal(msg, &request)
 	} else {
-		if err := r.parser.Decode(msg, &request); err != nil {
-			redisLog.Debug("ignoring malformed request")
-			return
-		}
+		err = r.parser.Decode(msg, &request)
 	}
-	redisLog.Debug("received request %v", request)
-	r.handleRequest(request)
+	if err != nil {
+		redisLog.Debug("ignoring malformed request")
+		return
+	}
+	redisLog.Debug("received request type %d with id %s", request.Type, request.RequestId)
+	r.handleRequest(&request)
 }
 
 // handleRequest dispatches a request to the appropriate handler based on type.
@@ -342,14 +318,9 @@ func (r *redisAdapter) handleSocketsRequest(request *Request) {
 	}
 
 	sockets := r.Sockets(types.NewSet(request.Rooms...))
-	socketIds := sockets.Keys()
-	socketResponses := make([]*adapter.SocketResponse, len(socketIds))
-	for i, socketId := range socketIds {
-		socketResponses[i] = &adapter.SocketResponse{Id: socketId}
-	}
 	response, err := json.Marshal(&Response{
 		RequestId: request.RequestId,
-		Sockets:   socketResponses,
+		Sockets:   utils.NonNilSlice(sockets.Keys()),
 	})
 	if err != nil {
 		redisLog.Debug("Error marshaling SOCKETS response for RequestId %s: %s", request.RequestId, err.Error())
@@ -366,7 +337,7 @@ func (r *redisAdapter) handleAllRoomsRequest(request *Request) {
 
 	response, err := json.Marshal(&Response{
 		RequestId: request.RequestId,
-		Rooms:     r.Rooms().Keys(),
+		Rooms:     utils.NonNilSlice(r.Rooms().Keys()),
 	})
 	if err != nil {
 		redisLog.Debug("Error marshaling ALL_ROOMS response for RequestId %s: %s", request.RequestId, err.Error())
@@ -381,15 +352,17 @@ func (r *redisAdapter) handleRemoteJoinRequest(request *Request) {
 		r.Adapter.AddSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
 		return
 	}
-	if client, ok := r.Nsp().Sockets().Load(request.Sid); ok {
-		client.Join(request.Room)
-		response, err := json.Marshal(&Response{RequestId: request.RequestId})
-		if err != nil {
-			redisLog.Debug("Error marshaling REMOTE_JOIN response for RequestId %s: %s", request.RequestId, err.Error())
-			return
-		}
-		r.publishResponse(request, response)
+	client, ok := r.Nsp().Sockets().Load(request.Sid)
+	if !ok {
+		return
 	}
+	client.Join(request.Room)
+	response, err := json.Marshal(&Response{RequestId: request.RequestId})
+	if err != nil {
+		redisLog.Debug("Error marshaling REMOTE_JOIN response for RequestId %s: %s", request.RequestId, err.Error())
+		return
+	}
+	r.publishResponse(request, response)
 }
 
 // handleRemoteLeaveRequest handles REMOTE_LEAVE request type.
@@ -398,15 +371,17 @@ func (r *redisAdapter) handleRemoteLeaveRequest(request *Request) {
 		r.Adapter.DelSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
 		return
 	}
-	if client, ok := r.Nsp().Sockets().Load(request.Sid); ok {
-		client.Leave(request.Room)
-		response, err := json.Marshal(&Response{RequestId: request.RequestId})
-		if err != nil {
-			redisLog.Debug("Error marshaling REMOTE_LEAVE response for RequestId %s: %s", request.RequestId, err.Error())
-			return
-		}
-		r.publishResponse(request, response)
+	client, ok := r.Nsp().Sockets().Load(request.Sid)
+	if !ok {
+		return
 	}
+	client.Leave(request.Room)
+	response, err := json.Marshal(&Response{RequestId: request.RequestId})
+	if err != nil {
+		redisLog.Debug("Error marshaling REMOTE_LEAVE response for RequestId %s: %s", request.RequestId, err.Error())
+		return
+	}
+	r.publishResponse(request, response)
 }
 
 // handleRemoteDisconnectRequest handles REMOTE_DISCONNECT request type.
@@ -415,15 +390,17 @@ func (r *redisAdapter) handleRemoteDisconnectRequest(request *Request) {
 		r.Adapter.DisconnectSockets(adapter.DecodeOptions(request.Opts), request.Close)
 		return
 	}
-	if client, ok := r.Nsp().Sockets().Load(request.Sid); ok {
-		client.Disconnect(request.Close)
-		response, err := json.Marshal(&Response{RequestId: request.RequestId})
-		if err != nil {
-			redisLog.Debug("Error marshaling REMOTE_DISCONNECT response for RequestId %s: %s", request.RequestId, err.Error())
-			return
-		}
-		r.publishResponse(request, response)
+	client, ok := r.Nsp().Sockets().Load(request.Sid)
+	if !ok {
+		return
 	}
+	client.Disconnect(request.Close)
+	response, err := json.Marshal(&Response{RequestId: request.RequestId})
+	if err != nil {
+		redisLog.Debug("Error marshaling REMOTE_DISCONNECT response for RequestId %s: %s", request.RequestId, err.Error())
+		return
+	}
+	r.publishResponse(request, response)
 }
 
 // handleRemoteFetchRequest handles REMOTE_FETCH request type.
@@ -432,14 +409,14 @@ func (r *redisAdapter) handleRemoteFetchRequest(request *Request) {
 		return
 	}
 
-	r.Adapter.FetchSockets(adapter.DecodeOptions(request.Opts))(func(localSockets []socket.SocketDetails, e error) {
-		if e != nil {
-			redisLog.Debug("REMOTE_FETCH Adapter.FetchSockets error: %s", e.Error())
+	r.Adapter.FetchSockets(adapter.DecodeOptions(request.Opts))(func(localSockets []socket.SocketDetails, err error) {
+		if err != nil {
+			redisLog.Debug("REMOTE_FETCH Adapter.FetchSockets error: %s", err.Error())
 			return
 		}
 		response, err := json.Marshal(&Response{
 			RequestId: request.RequestId,
-			Sockets:   socketResponsesFromDetails(localSockets),
+			Sockets:   adapter.SocketDetailsToResponses(localSockets),
 		})
 		if err != nil {
 			redisLog.Debug("Error marshaling REMOTE_FETCH response for RequestId %s: %s", request.RequestId, err.Error())
@@ -463,25 +440,26 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 	}
 
 	// Handle with acknowledgement
-	called := &sync.Once{}
+	var called atomic.Bool
 	callback := func(args []any, _ error) {
-		called.Do(func() {
-			redisLog.Debug("calling acknowledgement with %v", args)
-			response, err := json.Marshal(&Response{
-				Type:      redis.SERVER_SIDE_EMIT,
-				RequestId: request.RequestId,
-				Data:      slices.TryGet(args, 0),
-			})
-			if err != nil {
-				redisLog.Debug("Error marshaling SERVER_SIDE_EMIT response for RequestId %s: %s", request.RequestId, err.Error())
-				return
-			}
-			if err := r.redisClient.Client.Publish(r.ctx, r.responseChannel, response).Err(); err != nil {
-				r.redisClient.Emit("error", err)
-			}
+		if !called.CompareAndSwap(false, true) {
+			return
+		}
+		redisLog.Debug("calling acknowledgement with %v", args)
+		response, err := json.Marshal(&Response{
+			Type:      redis.SERVER_SIDE_EMIT,
+			RequestId: request.RequestId,
+			Data:      slices.TryGet(args, 0),
 		})
+		if err != nil {
+			redisLog.Debug("Error marshaling SERVER_SIDE_EMIT response for RequestId %s: %s", request.RequestId, err.Error())
+			return
+		}
+		if err := r.redisClient.Client.Publish(r.ctx, r.responseChannel, response).Err(); err != nil {
+			r.redisClient.Emit("error", err)
+		}
 	}
-	r.Nsp().OnServerSideEmit(append(request.Data, callback))
+	r.Nsp().OnServerSideEmit(slices.AppendCopy(request.Data, callback))
 }
 
 // handleBroadcastRequest handles BROADCAST request type.
@@ -498,7 +476,7 @@ func (r *redisAdapter) handleBroadcastRequest(request *Request) {
 			response, err := json.Marshal(&Response{
 				Type:        redis.BROADCAST_CLIENT_COUNT,
 				RequestId:   request.RequestId,
-				ClientCount: clientCount,
+				ClientCount: new(clientCount),
 			})
 			if err != nil {
 				redisLog.Debug("Error marshaling BROADCAST_CLIENT_COUNT response for RequestId %s: %s", request.RequestId, err.Error())
@@ -511,7 +489,7 @@ func (r *redisAdapter) handleBroadcastRequest(request *Request) {
 			response, err := r.parser.Encode(&Response{
 				Type:      redis.BROADCAST_ACK,
 				RequestId: request.RequestId,
-				Packet:    slices.TryGet(args, 0),
+				Packet:    redis.NormalizeData(slices.TryGet(args, 0)),
 			})
 			if err != nil {
 				redisLog.Debug("Error marshaling BROADCAST_ACK response for RequestId %s: %s", request.RequestId, err.Error())
@@ -536,18 +514,17 @@ func (r *redisAdapter) publishResponse(request *Request, response []byte) {
 
 // onResponse handles responses from other nodes.
 func (r *redisAdapter) onResponse(_ string, msg []byte) {
-	var response *Response
+	var response Response
 	// Detect message format by first byte
+	var err error
 	if len(msg) > 0 && msg[0] == '{' {
-		if err := json.Unmarshal(msg, &response); err != nil {
-			redisLog.Debug("ignoring malformed response")
-			return
-		}
+		err = json.Unmarshal(msg, &response)
 	} else {
-		if err := r.parser.Decode(msg, &response); err != nil {
-			redisLog.Debug("ignoring malformed response")
-			return
-		}
+		err = r.parser.Decode(msg, &response)
+	}
+	if err != nil {
+		redisLog.Debug("ignoring malformed response")
+		return
 	}
 
 	requestId := response.RequestId
@@ -555,7 +532,7 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 	if ackRequest, ok := r.ackRequests.Load(requestId); ok {
 		switch response.Type {
 		case redis.BROADCAST_CLIENT_COUNT:
-			ackRequest.ClientCountCallback(response.ClientCount)
+			ackRequest.ClientCountCallback(utils.FromPtr(response.ClientCount))
 		case redis.BROADCAST_ACK:
 			ackRequest.Ack([]any{response.Packet}, nil)
 		}
@@ -566,68 +543,86 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 		redisLog.Debug("ignoring unknown request")
 		return
 	}
-	redisLog.Debug("received response %v", response)
-	r.processResponse(request, response, requestId)
+	redisLog.Debug("received response type %d with id %s", response.Type, requestId)
+	r.processResponse(request, &response)
 }
 
 // processResponse processes a response based on request type.
-func (r *redisAdapter) processResponse(request *RedisRequest, response *Response, requestId string) {
+func (r *redisAdapter) processResponse(request *RedisRequest, response *Response) {
+	requestId := response.RequestId
 	switch request.Type {
-	case redis.SOCKETS, redis.REMOTE_FETCH:
-		if len(response.Sockets) > 0 {
-			request.Sockets.Push(response.Sockets...)
+	case redis.SOCKETS:
+		msgCount := request.MsgCount.Add(1)
+		socketsPayload, ok := response.Sockets.(json.RawMessage)
+		if !ok {
+			return
 		}
-		if request.MsgCount.Add(1) == request.NumSub {
-			request.Once.Do(func() {
-				utils.ClearTimeout(request.Timeout.Load())
-				if request.Resolve != nil {
-					socketResponses := request.Sockets.All()
-					socketDetails := make([]any, len(socketResponses))
-					for i, client := range socketResponses {
-						socketDetails[i] = socket.SocketDetails(adapter.NewRemoteSocket(client))
-					}
-					request.Resolve(types.NewSlice(socketDetails...))
-				}
-				r.requests.Delete(requestId)
-			})
+		var socketIds []socket.SocketId
+		if err := json.Unmarshal(socketsPayload, &socketIds); err != nil || socketIds == nil {
+			return
+		}
+		request.Sockets.Add(socketIds...)
+		if msgCount != request.NumSub || !r.requests.CompareAndDelete(requestId, request) {
+			return
+		}
+		utils.ClearTimeout(request.Timeout.Load())
+		if request.Resolve == nil {
+			return
+		}
+		responses := slices.Map(request.Sockets.Keys(), func(socketId socket.SocketId) any {
+			return socketId
+		})
+		request.Resolve(types.NewSlice(responses...))
+	case redis.REMOTE_FETCH:
+		msgCount := request.MsgCount.Add(1)
+		socketsPayload, ok := response.Sockets.(json.RawMessage)
+		if !ok {
+			return
+		}
+		var sockets []adapter.SocketResponse
+		if err := json.Unmarshal(socketsPayload, &sockets); err != nil || sockets == nil {
+			return
+		}
+		if len(sockets) > 0 {
+			request.Responses.Push(adapter.SocketResponsesToDetailsAny(sockets)...)
+		}
+		if msgCount != request.NumSub || !r.requests.CompareAndDelete(requestId, request) {
+			return
+		}
+		utils.ClearTimeout(request.Timeout.Load())
+		if request.Resolve != nil {
+			request.Resolve(request.Responses)
 		}
 	case redis.ALL_ROOMS:
-		if len(response.Rooms) > 0 {
-			request.Rooms.Add(response.Rooms...)
+		msgCount := request.MsgCount.Add(1)
+		if response.Rooms == nil {
+			return
 		}
-		if request.MsgCount.Add(1) == request.NumSub {
-			request.Once.Do(func() {
-				utils.ClearTimeout(request.Timeout.Load())
-				if request.Resolve != nil {
-					rooms := request.Rooms.Keys()
-					values := make([]any, len(rooms))
-					for i, room := range rooms {
-						values[i] = room
-					}
-					request.Resolve(types.NewSlice(values...))
-				}
-				r.requests.Delete(requestId)
-			})
+		request.Rooms.Add(response.Rooms...)
+		if msgCount != request.NumSub || !r.requests.CompareAndDelete(requestId, request) {
+			return
+		}
+		utils.ClearTimeout(request.Timeout.Load())
+		if request.Resolve != nil {
+			request.Resolve(nil)
 		}
 	case redis.REMOTE_JOIN, redis.REMOTE_LEAVE, redis.REMOTE_DISCONNECT:
-		request.Once.Do(func() {
-			utils.ClearTimeout(request.Timeout.Load())
-			if request.Resolve != nil {
-				request.Resolve(nil)
-			}
-			r.requests.Delete(requestId)
-		})
+		if !r.requests.CompareAndDelete(requestId, request) {
+			return
+		}
+		utils.ClearTimeout(request.Timeout.Load())
+		if request.Resolve != nil {
+			request.Resolve(nil)
+		}
 	case redis.SERVER_SIDE_EMIT:
-		request.Responses.Push(response.Data)
-		redisLog.Debug("serverSideEmit: got %d responses out of %d", request.Responses.Len(), request.NumSub)
-		if int64(request.Responses.Len()) == request.NumSub {
-			request.Once.Do(func() {
-				utils.ClearTimeout(request.Timeout.Load())
-				if request.Resolve != nil {
-					request.Resolve(request.Responses)
-				}
-				r.requests.Delete(requestId)
-			})
+		responseCount := request.Responses.Push(response.Data)
+		redisLog.Debug("serverSideEmit: got %d responses out of %d", responseCount, request.NumSub)
+		if int64(responseCount) != request.NumSub || !r.requests.CompareAndDelete(requestId, request) {
+			return
+		}
+		utils.ClearTimeout(request.Timeout.Load())
+		if request.Resolve != nil {
+			request.Resolve(request.Responses)
 		}
 	default:
 		redisLog.Debug("ignoring unknown request type: %d", request.Type)
@@ -640,24 +635,25 @@ func (r *redisAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOp
 	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
 
 	if !onlyLocal {
+		packetOpts := adapter.EncodeOptions(opts)
 		msg, err := r.parser.Encode(&Packet{
 			Uid:    r.Uid(),
 			Packet: packet,
-			Opts:   adapter.EncodeOptions(opts),
+			Opts:   packetOpts,
 		})
-		if err == nil {
-			channel := r.channel
-			// Optimize channel routing for single-room broadcasts
-			if opts != nil && opts.Rooms != nil {
-				rooms := opts.Rooms.Keys()
-				if len(rooms) == 1 {
-					channel = channel + string(rooms[0]) + "#"
-				}
-			}
-			redisLog.Debug("publishing message to channel %s", channel)
-			if err := r.redisClient.Client.Publish(r.ctx, channel, msg).Err(); err != nil {
-				r.redisClient.Emit("error", err)
-			}
+		if err != nil {
+			r.redisClient.Emit("error", err)
+			return
+		}
+
+		channel := r.channel
+		// Optimize channel routing for single-room broadcasts
+		if len(packetOpts.Rooms) == 1 {
+			channel = channel + string(packetOpts.Rooms[0]) + "#"
+		}
+		redisLog.Debug("publishing message to channel %s", channel)
+		if err := r.redisClient.Client.Publish(r.ctx, channel, msg).Err(); err != nil {
+			r.redisClient.Emit("error", err)
 		}
 	}
 	r.Adapter.Broadcast(packet, opts)
@@ -670,41 +666,48 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 
 	if !onlyLocal {
 		requestId := adapter.Uid2(defaultUidLength)
-		if message, err := r.parser.Encode(&Request{
+		message, err := r.parser.Encode(&Request{
 			Uid:       r.uid,
 			RequestId: requestId,
 			Type:      redis.BROADCAST,
 			Packet:    packet,
 			Opts:      adapter.EncodeOptions(opts),
-		}); err == nil {
-			if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
-				r.redisClient.Emit("error", err)
-			}
+		})
+		if err != nil {
+			r.redisClient.Emit("error", err)
+			return
+		}
 
-			r.ackRequests.Store(requestId, &AckRequest{
-				ClientCountCallback: clientCountCallback,
-				Ack:                 ack,
-			})
+		ackRequest := &AckRequest{
+			ClientCountCallback: clientCountCallback,
+			Ack:                 ack,
+		}
+		r.ackRequests.Store(requestId, ackRequest)
 
-			// Calculate cleanup timeout
-			timeout := adapter.DEFAULT_TIMEOUT
-			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-				timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
-			}
-			// Clean up ackRequests after timeout
-			utils.SetTimeout(func() {
-				r.ackRequests.Delete(requestId)
-			}, timeout)
+		var timeout time.Duration
+		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
+			timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
+		}
+		utils.SetTimeout(func() {
+			r.ackRequests.CompareAndDelete(requestId, ackRequest)
+		}, timeout)
+
+		if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
+			r.redisClient.Emit("error", err)
 		}
 	}
 	r.Adapter.BroadcastWithAck(packet, opts, clientCountCallback, ack)
 }
 
-// AllRooms returns all rooms across all cluster nodes, using time.AfterFunc and sync.Once for timeout safety.
+// AllRooms returns all rooms across all cluster nodes.
 func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 	return func(cb func(*types.Set[socket.Room], error)) {
 		localRooms := types.NewSet(r.Rooms().Keys()...)
-		numSub := r.ServerCount()
+		numSub, err := r.ServerCount()
+		if err != nil {
+			cb(nil, err)
+			return
+		}
 		redisLog.Debug(`waiting for %d responses to "allRooms" request`, numSub)
 		// Return local rooms if this is the only server
 		if numSub <= 1 {
@@ -720,34 +723,21 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 			return
 		}
 
-		timeout := utils.SetTimeout(func() {
-			if request, ok := r.requests.Load(requestId); ok {
-				request.Once.Do(func() {
-					cb(nil, errors.New("timeout reached while waiting for allRooms response"))
-					r.requests.Delete(requestId)
-				})
-			}
-		}, r.requestsTimeout)
-
-		r.requests.Store(requestId, &RedisRequest{
+		request := &RedisRequest{
 			Type:   redis.ALL_ROOMS,
 			NumSub: numSub,
-			Resolve: func(data *types.Slice[any]) {
-				values := data.All()
-				rooms := make([]socket.Room, len(values))
-				for i, room := range values {
-					rooms[i] = utils.TryCast[socket.Room](room)
-				}
-				cb(types.NewSet(rooms...), nil)
+			Resolve: func(*types.Slice[any]) {
+				cb(localRooms, nil)
 			},
-			Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
-				t.Store(timeout)
-			}),
-			MsgCount: utils.Tap(&atomic.Int64{}, func(c *atomic.Int64) {
-				c.Store(1) // Count self
-			}),
 			Rooms: localRooms,
-		})
+		}
+		request.MsgCount.Store(1) // Count self
+		r.requests.Store(requestId, request)
+		request.Timeout.Store(utils.SetTimeout(func() {
+			if r.requests.CompareAndDelete(requestId, request) {
+				cb(nil, errors.New("timeout reached while waiting for allRooms response"))
+			}
+		}, r.requestsTimeout))
 
 		if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
 			r.redisClient.Emit("error", err)
@@ -755,7 +745,7 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 	}
 }
 
-// FetchSockets retrieves sockets across all cluster nodes, using sync.Once to ensure callback consistency.
+// FetchSockets retrieves sockets across all cluster nodes.
 func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
 	return func(cb func([]socket.SocketDetails, error)) {
 		r.Adapter.FetchSockets(opts)(func(localSockets []socket.SocketDetails, _ error) {
@@ -765,7 +755,11 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				return
 			}
 
-			numSub := r.ServerCount()
+			numSub, err := r.ServerCount()
+			if err != nil {
+				cb(nil, err)
+				return
+			}
 			redisLog.Debug(`waiting for %d responses to "fetchSockets" request`, numSub)
 
 			// Return local sockets if this is the only server
@@ -782,34 +776,21 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				return
 			}
 
-			timeout := utils.SetTimeout(func() {
-				if request, ok := r.requests.Load(requestId); ok {
-					request.Once.Do(func() {
-						cb(nil, errors.New("timeout reached while waiting for fetchSockets response"))
-						r.requests.Delete(requestId)
-					})
-				}
-			}, r.requestsTimeout)
-
-			r.requests.Store(requestId, &RedisRequest{
+			request := &RedisRequest{
 				Type:   redis.REMOTE_FETCH,
 				NumSub: numSub,
 				Resolve: func(data *types.Slice[any]) {
-					values := data.All()
-					sockets := make([]socket.SocketDetails, len(values))
-					for i, value := range values {
-						sockets[i] = utils.TryCast[socket.SocketDetails](value)
-					}
-					cb(sockets, nil)
+					cb(adapter.AnySliceToSocketDetails(data.All()), nil)
 				},
-				Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
-					t.Store(timeout)
-				}),
-				MsgCount: utils.Tap(&atomic.Int64{}, func(c *atomic.Int64) {
-					c.Store(1) // Count self
-				}),
-				Sockets: types.NewSlice(socketResponsesFromDetails(localSockets)...),
-			})
+				Responses: types.NewSlice(adapter.SocketDetailsToAny(localSockets)...),
+			}
+			request.MsgCount.Store(1) // Count self
+			r.requests.Store(requestId, request)
+			request.Timeout.Store(utils.SetTimeout(func() {
+				if r.requests.CompareAndDelete(requestId, request) {
+					cb(nil, errors.New("timeout reached while waiting for fetchSockets response"))
+				}
+			}, r.requestsTimeout))
 
 			if err := r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
 				r.redisClient.Emit("error", err)
@@ -872,13 +853,11 @@ func (r *redisAdapter) DisconnectSockets(opts *socket.BroadcastOptions, close bo
 // ServerSideEmit emits a packet to all servers in the cluster.
 // If the last argument is a socket.Ack callback, it waits for acknowledgements from other servers.
 func (r *redisAdapter) ServerSideEmit(packet []any) error {
-	if len(packet) == 0 {
-		return errors.New("packet cannot be empty")
-	}
-
 	// Check if acknowledgement is requested
-	if ack, withAck := packet[len(packet)-1].(socket.Ack); withAck {
-		return r.serverSideEmitWithAck(packet[:len(packet)-1], ack)
+	if len(packet) > 0 {
+		if ack, withAck := packet[len(packet)-1].(socket.Ack); withAck {
+			return r.serverSideEmitWithAck(packet[:len(packet)-1], ack)
+		}
 	}
 
 	message, err := json.Marshal(&Request{Uid: r.uid, Type: redis.SERVER_SIDE_EMIT, Data: packet})
@@ -891,7 +870,11 @@ func (r *redisAdapter) ServerSideEmit(packet []any) error {
 
 // serverSideEmitWithAck emits a packet and waits for acknowledgements from other servers.
 func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error {
-	numSub := r.ServerCount() - 1 // Exclude self
+	serverCount, err := r.ServerCount()
+	if err != nil {
+		return err
+	}
+	numSub := serverCount - 1 // Exclude self
 	redisLog.Debug(`waiting for %d responses to "serverSideEmit" request`, numSub)
 	// No other servers to wait for
 	if numSub <= 0 {
@@ -906,41 +889,27 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 		return fmt.Errorf("failed to marshal serverSideEmitWithAck request: %w", err)
 	}
 
-	timeout := utils.SetTimeout(func() {
-		if request, ok := r.requests.Load(requestId); ok {
-			request.Once.Do(func() {
-				ack(request.Responses.All(), fmt.Errorf("timeout reached: only %d responses received out of %d", request.Responses.Len(), request.NumSub))
-				r.requests.Delete(requestId)
-			})
-		}
-	}, r.requestsTimeout)
-
-	r.requests.Store(requestId, &RedisRequest{
+	request := &RedisRequest{
 		Type:   redis.SERVER_SIDE_EMIT,
 		NumSub: numSub,
-		Timeout: utils.Tap(&atomic.Pointer[utils.Timer]{}, func(t *atomic.Pointer[utils.Timer]) {
-			t.Store(timeout)
-		}),
 		Resolve: func(data *types.Slice[any]) {
 			ack(data.All(), nil)
 		},
 		Responses: types.NewSlice[any](),
-	})
+	}
+	r.requests.Store(requestId, request)
+	request.Timeout.Store(utils.SetTimeout(func() {
+		if r.requests.CompareAndDelete(requestId, request) {
+			ack(request.Responses.All(), fmt.Errorf("timeout reached: only %d responses received out of %d", request.Responses.Len(), request.NumSub))
+		}
+	}, r.requestsTimeout))
 
 	return r.redisClient.Client.Publish(r.ctx, r.requestChannel, message).Err()
 }
 
 // ServerCount returns the number of servers subscribed to the request channel.
-func (r *redisAdapter) ServerCount() int64 {
-	result, err := r.redisClient.Client.PubSubNumSub(r.ctx, r.requestChannel).Result()
-	if err != nil {
-		r.redisClient.Emit("error", err)
-		return 0
-	}
-	if count, ok := result[r.requestChannel]; ok {
-		return count
-	}
-	return 0
+func (r *redisAdapter) ServerCount() (int64, error) {
+	return pubSubNumSub(r.ctx, r.redisClient.Client, false, r.requestChannel)
 }
 
 // Close cleans up Redis subscriptions and listeners.

@@ -31,7 +31,7 @@ func BenchmarkSocketDetailsToResponses(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		socketDetailsToResponses(details)
+		SocketDetailsToResponses(details)
 	}
 }
 

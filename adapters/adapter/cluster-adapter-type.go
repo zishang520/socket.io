@@ -24,10 +24,10 @@ type (
 
 	// ClusterMessage contains common fields for all cluster messages.
 	ClusterMessage struct {
-		Uid  ServerId    `json:"uid,omitempty" msgpack:"uid,omitempty"`
-		Nsp  string      `json:"nsp,omitempty" msgpack:"nsp,omitempty"`
-		Type MessageType `json:"type,omitempty" msgpack:"type,omitempty"`
-		Data any         `json:"data,omitempty" msgpack:"data,omitempty"` // Data will hold the specific message data for different types
+		Uid  ServerId    `json:"uid" msgpack:"uid"`
+		Nsp  string      `json:"nsp" msgpack:"nsp"`
+		Type MessageType `json:"type" msgpack:"type"`
+		Data any         `json:"data,omitzero" msgpack:"data,omitempty"`
 	}
 
 	// PacketOptions represents the options for broadcasting messages.
@@ -39,33 +39,33 @@ type (
 
 	// BroadcastMessage is a message for broadcasting.
 	BroadcastMessage struct {
-		Opts      *PacketOptions `json:"opts,omitempty" msgpack:"opts,omitempty"`
-		Packet    *parser.Packet `json:"packet,omitempty" msgpack:"packet,omitempty"`
+		Opts      *PacketOptions `json:"opts" msgpack:"opts"`
+		Packet    *parser.Packet `json:"packet" msgpack:"packet"`
 		RequestId *string        `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
 	}
 
 	// SocketsJoinLeaveMessage is a message for joining or leaving sockets.
 	SocketsJoinLeaveMessage struct {
-		Opts  *PacketOptions `json:"opts,omitempty" msgpack:"opts,omitempty"`
-		Rooms []socket.Room  `json:"rooms,omitempty" msgpack:"rooms,omitempty"`
+		Opts  *PacketOptions `json:"opts" msgpack:"opts"`
+		Rooms []socket.Room  `json:"rooms" msgpack:"rooms"`
 	}
 
 	// DisconnectSocketsMessage is a message for disconnecting sockets.
 	DisconnectSocketsMessage struct {
-		Opts  *PacketOptions `json:"opts,omitempty" msgpack:"opts,omitempty"`
-		Close bool           `json:"close,omitempty" msgpack:"close,omitempty"`
+		Opts  *PacketOptions `json:"opts" msgpack:"opts"`
+		Close bool           `json:"close" msgpack:"close"`
 	}
 
 	// FetchSocketsMessage is a message for fetching sockets.
 	FetchSocketsMessage struct {
-		Opts      *PacketOptions `json:"opts,omitempty" msgpack:"opts,omitempty"`
-		RequestId string         `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
+		Opts      *PacketOptions `json:"opts" msgpack:"opts"`
+		RequestId string         `json:"requestId" msgpack:"requestId"`
 	}
 
 	// ServerSideEmitMessage is a message for server-side emit.
 	ServerSideEmitMessage struct {
 		RequestId *string `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		Packet    []any   `json:"packet,omitempty" msgpack:"packet,omitempty"`
+		Packet    []any   `json:"packet" msgpack:"packet"`
 	}
 
 	// ClusterRequest represents a cluster request.
@@ -83,34 +83,34 @@ type (
 
 	// SocketResponse represents a socket response.
 	SocketResponse struct {
-		Id        socket.SocketId   `json:"id,omitempty" msgpack:"id,omitempty"`
-		Handshake *socket.Handshake `json:"handshake,omitempty" msgpack:"handshake,omitempty"`
+		Id        socket.SocketId   `json:"id" msgpack:"id"`
+		Handshake *socket.Handshake `json:"handshake" msgpack:"handshake"`
 		Rooms     []socket.Room     `json:"rooms" msgpack:"rooms"`
-		Data      any               `json:"data,omitempty" msgpack:"data,omitempty"`
+		Data      any               `json:"data" msgpack:"data"`
 	}
 
 	// FetchSocketsResponse represents a response for fetching sockets.
 	FetchSocketsResponse struct {
-		RequestId string           `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
+		RequestId string           `json:"requestId" msgpack:"requestId"`
 		Sockets   []SocketResponse `json:"sockets" msgpack:"sockets"`
 	}
 
 	// ServerSideEmitResponse represents a response for server-side emit.
 	ServerSideEmitResponse struct {
-		RequestId string `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		Packet    any    `json:"packet,omitempty" msgpack:"packet,omitempty"`
+		RequestId string `json:"requestId" msgpack:"requestId"`
+		Packet    any    `json:"packet,omitzero" msgpack:"packet"`
 	}
 
 	// BroadcastClientCount represents a broadcast client count.
 	BroadcastClientCount struct {
-		RequestId   string `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		ClientCount uint64 `json:"clientCount,omitempty" msgpack:"clientCount,omitempty"`
+		RequestId   string `json:"requestId" msgpack:"requestId"`
+		ClientCount uint64 `json:"clientCount" msgpack:"clientCount"`
 	}
 
 	// BroadcastAck represents a broadcast acknowledgment.
 	BroadcastAck struct {
-		RequestId string `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
-		Packet    any    `json:"packet,omitempty" msgpack:"packet,omitempty"`
+		RequestId string `json:"requestId" msgpack:"requestId"`
+		Packet    any    `json:"packet,omitzero" msgpack:"packet"`
 	}
 
 	// ClusterAckRequest represents a cluster acknowledgment request.

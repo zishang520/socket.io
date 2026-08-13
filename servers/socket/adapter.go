@@ -92,8 +92,8 @@ func (a *adapter) Close() {
 }
 
 // ServerCount returns the number of Socket.IO servers in the cluster.
-func (a *adapter) ServerCount() int64 {
-	return 1
+func (a *adapter) ServerCount() (int64, error) {
+	return 1, nil
 }
 
 // AddAll adds a socket to a list of rooms.
@@ -111,8 +111,7 @@ func (a *adapter) AddAll(id SocketId, rooms *types.Set[Room]) {
 		if !ok {
 			a.Emit("create-room", room)
 		}
-		if !ids.Has(id) {
-			ids.Add(id)
+		if ids.Add(id) {
 			a.Emit("join-room", room, id)
 		}
 	}
@@ -131,10 +130,8 @@ func (a *adapter) _del(room Room, id SocketId) {
 		if ids.Delete(id) {
 			a.Emit("leave-room", room, id)
 		}
-		if ids.Len() == 0 {
-			if _, ok := a.rooms.LoadAndDelete(room); ok {
-				a.Emit("delete-room", room)
-			}
+		if ids.Len() == 0 && a.rooms.CompareAndDelete(room, ids) {
+			a.Emit("delete-room", room)
 		}
 	}
 }
