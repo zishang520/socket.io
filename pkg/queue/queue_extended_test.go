@@ -90,6 +90,41 @@ func TestQueue_TryCloseAndEnqueue(t *testing.T) {
 	}
 }
 
+func TestQueue_ReleasesTasksOnClose(t *testing.T) {
+	q := New()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	q.Enqueue(func() {
+		close(started)
+		<-release
+	})
+	<-started
+
+	for range 2048 {
+		q.Enqueue(func() {})
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		q.Close()
+		close(closed)
+	}()
+
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Queue did not close")
+	}
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if got := cap(q.tasks); got != 0 {
+		t.Fatalf("Queue retained task backing array after close: cap=%d", got)
+	}
+}
+
 func TestQueue_SizeEmpty(t *testing.T) {
 	q := New()
 	defer q.Close()
