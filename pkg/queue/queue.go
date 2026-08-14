@@ -11,31 +11,19 @@ import (
 
 var queueLog = log.NewLog("engine:events")
 
-const initialQueueCapacity = 1 << 10
-
-// Queue serializes function execution through a single goroutine.
-// It uses an unbounded slice backed by a condition variable to ensure
-// Enqueue never blocks the caller.
+// Queue serializes function execution through at most one worker goroutine.
+// The worker is started on demand and exits when the queue becomes idle.
 type Queue struct {
 	mu           sync.Mutex
-	cond         *sync.Cond
 	tasks        []func()
-	head         int
-	size         int
+	running      bool
 	shuttingDown bool
 	done         chan struct{}
 }
 
-// New creates a new Queue and starts the internal consumer goroutine.
+// New creates a new Queue. Its worker starts with the first task.
 func New() *Queue {
-	q := &Queue{
-		tasks: make([]func(), initialQueueCapacity),
-		done:  make(chan struct{}),
-	}
-	q.cond = sync.NewCond(&q.mu)
-
-	go q.loop()
-	return q
+	return &Queue{done: make(chan struct{})}
 }
 
 // Enqueue adds a task to the queue for sequential execution.
@@ -46,92 +34,50 @@ func (q *Queue) Enqueue(task func()) {
 	}
 
 	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	if q.shuttingDown {
+		q.mu.Unlock()
 		return
 	}
 
-	q.push(task)
-	q.cond.Signal()
+	if !q.running {
+		q.running = true
+		q.mu.Unlock()
+		go q.loop(task)
+		return
+	}
+
+	q.tasks = append(q.tasks, task)
+	q.mu.Unlock()
 }
 
 // Size returns the number of pending tasks in the queue.
 func (q *Queue) Size() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return q.size
+	return len(q.tasks)
 }
 
-// loop is the main consumer goroutine.
-func (q *Queue) loop() {
-	defer func() {
-		q.mu.Lock()
-		q.tasks = nil
-		q.mu.Unlock()
-		close(q.done)
-	}()
-
+// loop drains the queue and exits as soon as it becomes idle.
+func (q *Queue) loop(task func()) {
 	for {
-		task, ok := q.get()
-		if !ok {
-			// Queue is empty and shutting down
+		q.execute(task)
+
+		q.mu.Lock()
+		if len(q.tasks) == 0 {
+			q.tasks = nil
+			q.running = false
+			if q.shuttingDown {
+				close(q.done)
+			}
+			q.mu.Unlock()
 			return
 		}
-		q.execute(task)
+
+		task = q.tasks[0]
+		q.tasks[0] = nil
+		q.tasks = q.tasks[1:]
+		q.mu.Unlock()
 	}
-}
-
-// get safely retrieves the next task from the queue, blocking if necessary.
-func (q *Queue) get() (func(), bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	for q.size == 0 && !q.shuttingDown {
-		q.cond.Wait()
-	}
-
-	if q.size == 0 && q.shuttingDown {
-		return nil, false
-	}
-
-	return q.pop(), true
-}
-
-func (q *Queue) push(task func()) {
-	if q.size == len(q.tasks) {
-		q.grow()
-	}
-
-	// The ring capacity starts at a power of two and only doubles, so masking
-	// avoids an integer division on every enqueue/dequeue operation.
-	tail := (q.head + q.size) & (len(q.tasks) - 1)
-	q.tasks[tail] = task
-	q.size++
-}
-
-func (q *Queue) pop() func() {
-	task := q.tasks[q.head]
-	q.tasks[q.head] = nil
-	q.head = (q.head + 1) & (len(q.tasks) - 1)
-	q.size--
-
-	if q.size == 0 {
-		q.head = 0
-		if len(q.tasks) > initialQueueCapacity {
-			q.tasks = make([]func(), initialQueueCapacity)
-		}
-	}
-
-	return task
-}
-
-func (q *Queue) grow() {
-	next := make([]func(), len(q.tasks)*2)
-	n := copy(next, q.tasks[q.head:])
-	copy(next[n:], q.tasks[:q.head])
-	q.tasks = next
-	q.head = 0
 }
 
 // execute runs the task with built-in panic recovery.
@@ -147,11 +93,7 @@ func (q *Queue) execute(task func()) {
 // Close shuts down the Queue gracefully.
 // It waits for all previously enqueued tasks to complete before returning.
 func (q *Queue) Close() {
-	q.mu.Lock()
-	q.shuttingDown = true
-	q.cond.Broadcast()
-	q.mu.Unlock()
-
+	q.shutdown()
 	<-q.done
 }
 
@@ -164,8 +106,17 @@ func (q *Queue) IsShuttingDown() bool {
 
 // TryClose shuts down the Queue without waiting for completion.
 func (q *Queue) TryClose() {
+	q.shutdown()
+}
+
+func (q *Queue) shutdown() {
 	q.mu.Lock()
-	q.shuttingDown = true
-	q.cond.Broadcast()
+	if !q.shuttingDown {
+		q.shuttingDown = true
+		if !q.running {
+			q.tasks = nil
+			close(q.done)
+		}
+	}
 	q.mu.Unlock()
 }

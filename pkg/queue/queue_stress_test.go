@@ -10,7 +10,7 @@ import (
 // BenchmarkQueue_Enqueue_SingleProducer measures the throughput of Enqueue
 // from a single producer goroutine.
 func BenchmarkQueue_Enqueue_SingleProducer(b *testing.B) {
-	q := New() // Ensure buffer can hold all tasks to avoid blocking the test runner
+	q := New()
 	defer q.Close()
 
 	var counter atomic.Uint64
@@ -65,6 +65,31 @@ func BenchmarkQueue_Concurrent_Producers(b *testing.B) {
 	})
 	wg.Wait()
 	q.TryClose()
+}
+
+// BenchmarkQueue_IdleRestart measures the cost of scheduling isolated tasks
+// after the previous worker has exited.
+func BenchmarkQueue_IdleRestart(b *testing.B) {
+	q := New()
+	defer q.Close()
+
+	done := make(chan struct{}, 1)
+	task := func() { done <- struct{}{} }
+
+	b.ResetTimer()
+	for range b.N {
+		q.Enqueue(task)
+		<-done
+		for {
+			q.mu.Lock()
+			running := q.running
+			q.mu.Unlock()
+			if !running {
+				break
+			}
+			runtime.Gosched()
+		}
+	}
 }
 
 // TestQueue_Stress tests the queue under high concurrent load to ensure
