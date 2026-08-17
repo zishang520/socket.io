@@ -6,7 +6,9 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	rds "github.com/redis/go-redis/v9"
 	baseadapter "github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
@@ -84,7 +86,9 @@ func TestClassicBroadcastStopsOnEncodeError(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
 			local := &recordingLocalAdapter{Adapter: socket.NewAdapter(nsp)}
-			client := redis.NewRedisClient(context.Background(), nil)
+			goRedisClient := rds.NewClient(&rds.Options{Addr: "unused"})
+			t.Cleanup(func() { _ = goRedisClient.Close() })
+			client := mustRedisClient(t, context.Background(), goRedisClient)
 			var emitted error
 			if err := client.On("error", func(args ...any) {
 				emitted, _ = args[0].(error)
@@ -112,6 +116,33 @@ func TestClassicBroadcastStopsOnEncodeError(t *testing.T) {
 	}
 }
 
+func TestClassicBroadcastWithAckUsesDefaultTimeout(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	redisClient := mustRedisClient(t, context.Background(), client)
+	if err := redisClient.On("error", func(...any) {}); err != nil {
+		t.Fatal(err)
+	}
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	redisAdapter := NewRedisAdapter(nsp, redisClient, nil).(*redisAdapter)
+	t.Cleanup(func() {
+		redisAdapter.Close()
+		_ = client.Close()
+	})
+
+	redisAdapter.BroadcastWithAck(
+		&parser.Packet{Type: parser.EVENT, Data: []any{"event"}},
+		nil,
+		func(uint64) {},
+		func([]any, error) {},
+	)
+	time.Sleep(20 * time.Millisecond)
+
+	if redisAdapter.ackRequests.Len() != 1 {
+		t.Fatal("acknowledgement request expired before the default timeout")
+	}
+}
+
 func TestClassicServerCountErrorsAreReturned(t *testing.T) {
 	countErr := errors.New("count failed")
 	client := rds.NewClient(&rds.Options{Addr: "unused"})
@@ -120,7 +151,7 @@ func TestClassicServerCountErrorsAreReturned(t *testing.T) {
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
 	adapter := MakeRedisAdapter().(*redisAdapter)
 	adapter.Adapter = socket.NewAdapter(nsp)
-	adapter.redisClient = redis.NewRedisClient(context.Background(), client)
+	adapter.redisClient = mustRedisClient(t, context.Background(), client)
 	adapter.ctx = context.Background()
 	adapter.requestChannel = "socket.io-request#/#"
 
@@ -163,6 +194,29 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 		}
 		if got, want := string(data), `{"requestId":"request","sockets":[]}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("missing socket IDs", func(t *testing.T) {
+		adapter := MakeRedisAdapter().(*redisAdapter)
+		request := &RedisRequest{
+			Type:    redis.SOCKETS,
+			NumSub:  1,
+			Sockets: types.NewSet[socket.SocketId](),
+		}
+		resolved := false
+		request.Resolve = func(values *types.Slice[any]) {
+			resolved = values != nil && values.Len() == 0
+		}
+		adapter.requests.Store("request", request)
+
+		adapter.onResponse("", []byte(`{"requestId":"request"}`))
+
+		if !resolved {
+			t.Fatal("missing SOCKETS payload did not resolve the request")
+		}
+		if _, ok := adapter.requests.Load("request"); ok {
+			t.Fatal("completed SOCKETS request was not deleted")
 		}
 	})
 
@@ -231,6 +285,50 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})
+
+	t.Run("missing socket details", func(t *testing.T) {
+		adapter := MakeRedisAdapter().(*redisAdapter)
+		request := &RedisRequest{
+			Type:      redis.REMOTE_FETCH,
+			NumSub:    1,
+			Responses: types.NewSlice[any](),
+		}
+		resolved := false
+		request.Resolve = func(values *types.Slice[any]) {
+			resolved = values != nil && values.Len() == 0
+		}
+		adapter.requests.Store("request", request)
+
+		adapter.onResponse("", []byte(`{"requestId":"request"}`))
+
+		if !resolved {
+			t.Fatal("missing REMOTE_FETCH payload did not resolve the request")
+		}
+		if _, ok := adapter.requests.Load("request"); ok {
+			t.Fatal("completed REMOTE_FETCH request was not deleted")
+		}
+	})
+}
+
+func TestRedisAdapterMissingRoomsResponseCompletesRequest(t *testing.T) {
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	request := &RedisRequest{
+		Type:   redis.ALL_ROOMS,
+		NumSub: 1,
+		Rooms:  types.NewSet[socket.Room](),
+	}
+	resolved := false
+	request.Resolve = func(*types.Slice[any]) { resolved = true }
+	adapter.requests.Store("request", request)
+
+	adapter.onResponse("", []byte(`{"requestId":"request"}`))
+
+	if !resolved {
+		t.Fatal("missing ALL_ROOMS payload did not resolve the request")
+	}
+	if _, ok := adapter.requests.Load("request"); ok {
+		t.Fatal("completed ALL_ROOMS request was not deleted")
+	}
 }
 
 func TestRequestOptionFlags(t *testing.T) {

@@ -2,7 +2,9 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,38 +16,141 @@ import (
 	clusteradapter "github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 type shardedPubSubRecorder struct {
 	mu           sync.Mutex
-	subscribers  map[string]*miniredisserver.Peer
+	subscribers  map[string]map[*miniredisserver.Peer]struct{}
+	attempts     map[string]int
+	reject       map[string]int
+	rejectUnsub  map[string]int
 	single       int
 	batched      int
 	disconnectAt int
 	disconnected bool
-	rejectUnsub  bool
 }
 
-func (r *shardedPubSubRecorder) subscribe(channels []string) bool {
+func newShardedPubSubRecorder(t *testing.T, disconnectAt int) (*miniredis.Miniredis, *shardedPubSubRecorder) {
+	t.Helper()
+	server := miniredis.RunT(t)
+	recorder := &shardedPubSubRecorder{
+		subscribers:  make(map[string]map[*miniredisserver.Peer]struct{}),
+		attempts:     make(map[string]int),
+		reject:       make(map[string]int),
+		rejectUnsub:  make(map[string]int),
+		disconnectAt: disconnectAt,
+	}
+	if err := server.Server().Register("SSUBSCRIBE", recorder.handleSubscribe); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Server().Register("SUNSUBSCRIBE", recorder.handleUnsubscribe); err != nil {
+		t.Fatal(err)
+	}
+	return server, recorder
+}
+
+func (r *shardedPubSubRecorder) handleSubscribe(peer *miniredisserver.Peer, _ string, channels []string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if len(channels) != 1 {
 		r.batched++
-		return false
+		r.mu.Unlock()
+		peer.WriteError("CROSSSLOT Keys in request don't hash to the same slot")
+		return
 	}
-
+	channel := channels[0]
 	r.single++
-	if r.single == r.disconnectAt && !r.disconnected {
-		r.disconnected = true
-		return true
+	r.attempts[channel]++
+	if r.reject[channel] > 0 {
+		r.reject[channel]--
+		r.mu.Unlock()
+		peer.WriteError("TRYAGAIN injected subscription failure")
+		return
 	}
-	return false
+	disconnect := r.single == r.disconnectAt && !r.disconnected
+	if disconnect {
+		r.disconnected = true
+	}
+	peers := r.subscribers[channel]
+	if peers == nil {
+		peers = make(map[*miniredisserver.Peer]struct{})
+		r.subscribers[channel] = peers
+	}
+	peers[peer] = struct{}{}
+	r.mu.Unlock()
+
+	peer.Block(func(writer *miniredisserver.Writer) {
+		writer.WritePushLen(3)
+		writer.WriteBulk("ssubscribe")
+		writer.WriteBulk(channel)
+		writer.WriteInt(1)
+	})
+	peer.Flush()
+	if disconnect {
+		peer.Close()
+	}
 }
 
-func (r *shardedPubSubRecorder) activate(channel string, peer *miniredisserver.Peer) {
+func (r *shardedPubSubRecorder) handleUnsubscribe(peer *miniredisserver.Peer, _ string, channels []string) {
+	for _, channel := range channels {
+		r.mu.Lock()
+		if r.rejectUnsub[channel] > 0 {
+			r.rejectUnsub[channel]--
+			r.mu.Unlock()
+			peer.WriteError("NOPERM injected unsubscribe failure")
+			return
+		}
+		r.mu.Unlock()
+		r.remove(channel, peer)
+		peer.Block(func(writer *miniredisserver.Writer) {
+			writer.WritePushLen(3)
+			writer.WriteBulk("sunsubscribe")
+			writer.WriteBulk(channel)
+			writer.WriteInt(0)
+		})
+	}
+	peer.Flush()
+}
+
+func (r *shardedPubSubRecorder) remove(channel string, peer *miniredisserver.Peer) {
 	r.mu.Lock()
-	r.subscribers[channel] = peer
+	if peers := r.subscribers[channel]; peers != nil {
+		delete(peers, peer)
+		if len(peers) == 0 {
+			delete(r.subscribers, channel)
+		}
+	}
 	r.mu.Unlock()
+}
+
+func (r *shardedPubSubRecorder) rejectNext(channel string) {
+	r.mu.Lock()
+	r.reject[channel]++
+	r.mu.Unlock()
+}
+
+func (r *shardedPubSubRecorder) rejectNextUnsubscribe(channel string) {
+	r.mu.Lock()
+	r.rejectUnsub[channel]++
+	r.mu.Unlock()
+}
+
+func (r *shardedPubSubRecorder) activePeers(channel string) []*miniredisserver.Peer {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var active []*miniredisserver.Peer
+	for peer := range r.subscribers[channel] {
+		if !peer.Closed() {
+			active = append(active, peer)
+		}
+	}
+	return active
+}
+
+func (r *shardedPubSubRecorder) attemptCount(channel string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.attempts[channel]
 }
 
 func (r *shardedPubSubRecorder) counts() (single, batched int) {
@@ -54,128 +159,63 @@ func (r *shardedPubSubRecorder) counts() (single, batched int) {
 	return r.single, r.batched
 }
 
-func (r *shardedPubSubRecorder) ready(channels ...string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, channel := range channels {
-		peer := r.subscribers[channel]
-		if peer == nil || peer.Closed() {
-			return false
-		}
+func (r *shardedPubSubRecorder) publish(channel string, payload []byte) int {
+	peers := r.activePeers(channel)
+	for _, peer := range peers {
+		peer.Block(func(writer *miniredisserver.Writer) {
+			writer.WritePushLen(3)
+			writer.WriteBulk("smessage")
+			writer.WriteBulk(channel)
+			writer.WriteBulk(string(payload))
+		})
+		peer.Flush()
 	}
-	return true
+	return len(peers)
 }
 
-func (r *shardedPubSubRecorder) rejectNextUnsubscribe() {
-	r.mu.Lock()
-	r.rejectUnsub = true
-	r.mu.Unlock()
-}
-
-func (r *shardedPubSubRecorder) unsubscribe() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.rejectUnsub {
+func (r *shardedPubSubRecorder) pushSunsubscribe(channel string) bool {
+	peers := r.activePeers(channel)
+	if len(peers) == 0 {
 		return false
 	}
-	r.rejectUnsub = false
-	return true
-}
-
-func (r *shardedPubSubRecorder) deactivate(channel string, peer *miniredisserver.Peer) {
-	r.mu.Lock()
-	if r.subscribers[channel] == peer {
-		delete(r.subscribers, channel)
-	}
-	r.mu.Unlock()
-}
-
-func (r *shardedPubSubRecorder) publish(channel string, payload []byte) bool {
-	r.mu.Lock()
-	peer := r.subscribers[channel]
-	r.mu.Unlock()
-	if peer == nil || peer.Closed() {
-		return false
-	}
-
+	peer := peers[0]
+	r.remove(channel, peer)
 	peer.Block(func(writer *miniredisserver.Writer) {
 		writer.WritePushLen(3)
-		writer.WriteBulk("smessage")
+		writer.WriteBulk("sunsubscribe")
 		writer.WriteBulk(channel)
-		writer.WriteBulk(string(payload))
+		writer.WriteInt(0)
 	})
 	peer.Flush()
 	return true
 }
 
-func newShardedTestAdapter(t *testing.T, disconnectAt int) (*shardedRedisAdapter, *shardedPubSubRecorder) {
-	t.Helper()
-
-	server := miniredis.RunT(t)
-	recorder := &shardedPubSubRecorder{
-		subscribers:  make(map[string]*miniredisserver.Peer),
-		disconnectAt: disconnectAt,
-	}
-	if err := server.Server().Register("SSUBSCRIBE", func(peer *miniredisserver.Peer, _ string, channels []string) {
-		disconnect := recorder.subscribe(channels)
-		if len(channels) != 1 {
-			peer.WriteError("CROSSSLOT Keys in request don't hash to the same slot")
-			return
-		}
-
-		peer.Block(func(writer *miniredisserver.Writer) {
-			writer.WritePushLen(3)
-			writer.WriteBulk("ssubscribe")
-			writer.WriteBulk(channels[0])
-			writer.WriteInt(1)
-		})
-		peer.Flush()
-		recorder.activate(channels[0], peer)
-		if disconnect {
-			peer.Close()
-		}
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := server.Server().Register("SUNSUBSCRIBE", func(peer *miniredisserver.Peer, _ string, channels []string) {
-		if recorder.unsubscribe() {
-			peer.WriteError("CROSSSLOT Keys in request don't hash to the same slot")
-			return
-		}
-		for _, channel := range channels {
-			peer.Block(func(writer *miniredisserver.Writer) {
-				writer.WritePushLen(3)
-				writer.WriteBulk("sunsubscribe")
-				writer.WriteBulk(channel)
-				writer.WriteInt(0)
-			})
-			recorder.deactivate(channel, peer)
-		}
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	cluster := rds.NewClusterClient(&rds.ClusterOptions{Addrs: []string{server.Addr()}})
-	ctx, cancel := context.WithCancel(context.Background())
-	shardedAdapter := MakeShardedRedisAdapter().(*shardedRedisAdapter)
-	shardedAdapter.redisClient = redis.NewRedisClient(ctx, cluster)
-	shardedAdapter.ctx = ctx
-	shardedAdapter.cancel = cancel
-	shardedAdapter.ClusterAdapter.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
-	t.Cleanup(func() {
-		shardedAdapter.Close()
-		_ = cluster.Close()
-	})
-	return shardedAdapter, recorder
+func waitForShardedState(t *testing.T, check func() bool) {
+	waitForShardedStateWithin(t, 5*time.Second, check)
 }
 
-func shardedServerSideEmitPayload(t *testing.T, event, value string) []byte {
+func waitForShardedStateWithin(t *testing.T, timeout time.Duration, check func() bool) {
+	t.Helper()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for !check() {
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatal("timed out waiting for sharded Pub/Sub state")
+		}
+	}
+}
+
+func shardedServerSideEmitPayload(t *testing.T, nsp string) []byte {
 	t.Helper()
 	payload, err := redis.EncodeClusterMessage(&clusteradapter.ClusterMessage{
 		Uid:  "remote",
-		Nsp:  "/test",
+		Nsp:  nsp,
 		Type: clusteradapter.SERVER_SIDE_EMIT,
-		Data: &clusteradapter.ServerSideEmitMessage{Packet: []any{event, value}},
+		Data: &clusteradapter.ServerSideEmitMessage{Packet: []any{"probe", "value"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -183,262 +223,508 @@ func shardedServerSideEmitPayload(t *testing.T, event, value string) []byte {
 	return payload
 }
 
-func dynamicSubscriptionState(s *shardedRedisAdapter) (nodes, channels, references int) {
-	s.dynamicMu.Lock()
-	defer s.dynamicMu.Unlock()
-	for _, entry := range s.nodePubSubs {
-		references += entry.refCount
-	}
-	return len(s.nodePubSubs), len(s.chanToAddr), references
-}
+func TestShardedBuilderSharesSubscriberAcrossNamespaces(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	socketServer := socket.NewServer(nil, nil)
+	builder := &ShardedRedisAdapterBuilder{Redis: redisClient}
 
-func waitForShardedState(t *testing.T, check func() bool) {
-	t.Helper()
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
-	for !check() {
-		select {
-		case <-ticker.C:
-		case <-timer.C:
-			t.Fatal("timed out waiting for sharded subscription state")
+	const count = 12
+	adapters := make([]*shardedRedisAdapter, 0, count)
+	for i := range count {
+		nsp := socket.NewNamespace(socketServer, fmt.Sprintf("/nsp-%d", i))
+		adapters = append(adapters, builder.New(nsp).(*shardedRedisAdapter))
+	}
+	waitForShardedState(t, func() bool {
+		for _, current := range adapters {
+			if len(recorder.activePeers(current.channel)) != 1 || len(recorder.activePeers(current.response)) != 1 {
+				return false
+			}
+		}
+		return true
+	})
+
+	var sharedPeer *miniredisserver.Peer
+	for _, current := range adapters {
+		for _, channel := range []string{current.channel, current.response} {
+			peers := recorder.activePeers(channel)
+			if len(peers) != 1 {
+				t.Fatalf("channel %q has %d subscribers, want 1", channel, len(peers))
+			}
+			if sharedPeer == nil {
+				sharedPeer = peers[0]
+			} else if sharedPeer != peers[0] {
+				t.Fatal("namespaces did not reuse the standalone subscriber connection")
+			}
 		}
 	}
+
+	adapters[0].Close()
+	if sharedPeer.Closed() {
+		t.Fatal("closing one namespace closed the shared subscriber")
+	}
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(adapters[0].channel)) == 0 &&
+			len(recorder.activePeers(adapters[1].channel)) == 1
+	})
+	for _, current := range adapters[1:] {
+		current.Close()
+	}
+	waitForShardedState(t, sharedPeer.Closed)
 }
 
-func TestShardedDynamicSubscriptionsRecoverAfterCrossSlotReconnect(t *testing.T) {
-	shardedAdapter, recorder := newShardedTestAdapter(t, 2)
-	channels := []string{"socket.io#/#room{one}#", "socket.io#/#room{two}#"}
-	var errorCount atomic.Int64
-	var emittedError atomic.Value
-	if err := shardedAdapter.redisClient.On("error", func(args ...any) {
-		errorCount.Add(1)
-		if len(args) != 0 {
-			emittedError.Store(args[0])
+func TestShardedBuilderKeepsSocketServersIndependent(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	builder := &ShardedRedisAdapterBuilder{Redis: redisClient}
+	first := builder.New(socket.NewNamespace(socket.NewServer(nil, nil), "/same")).(*shardedRedisAdapter)
+	second := builder.New(socket.NewNamespace(socket.NewServer(nil, nil), "/same")).(*shardedRedisAdapter)
+	defer second.Close()
+
+	waitForShardedState(t, func() bool { return len(recorder.activePeers(first.channel)) == 2 })
+	first.Close()
+	waitForShardedState(t, func() bool { return len(recorder.activePeers(second.channel)) == 1 })
+}
+
+func TestNewShardedRedisAdapterSharesSubscriber(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	socketServer := socket.NewServer(nil, nil)
+	first := NewShardedRedisAdapter(socket.NewNamespace(socketServer, "/first"), redisClient, nil).(*shardedRedisAdapter)
+	second := NewShardedRedisAdapter(socket.NewNamespace(socketServer, "/second"), redisClient, nil).(*shardedRedisAdapter)
+	t.Cleanup(first.Close)
+	t.Cleanup(second.Close)
+
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(first.channel)) == 1 &&
+			len(recorder.activePeers(first.response)) == 1 &&
+			len(recorder.activePeers(second.channel)) == 1 &&
+			len(recorder.activePeers(second.response)) == 1
+	})
+
+	sharedPeer := recorder.activePeers(first.channel)[0]
+	for _, channel := range []string{first.response, second.channel, second.response} {
+		if recorder.activePeers(channel)[0] != sharedPeer {
+			t.Fatal("direct constructors did not reuse the subscriber connection")
 		}
-	}); err != nil {
-		t.Fatal(err)
 	}
 
-	received := make(chan any, len(channels)*2)
-	if err := shardedAdapter.Nsp().On("probe", func(args ...any) {
-		received <- args[0]
-	}); err != nil {
-		t.Fatal(err)
+	first.Close()
+	if sharedPeer.Closed() {
+		t.Fatal("closing one adapter closed the shared subscriber")
+	}
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(first.channel)) == 0 &&
+			len(recorder.activePeers(second.channel)) == 1
+	})
+	second.Close()
+	waitForShardedState(t, sharedPeer.Closed)
+}
+
+func TestShardedBuildersShareSubscriber(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	socketServer := socket.NewServer(nil, nil)
+	first := (&ShardedRedisAdapterBuilder{Redis: redisClient}).New(
+		socket.NewNamespace(socketServer, "/first"),
+	).(*shardedRedisAdapter)
+	second := (&ShardedRedisAdapterBuilder{Redis: redisClient}).New(
+		socket.NewNamespace(socketServer, "/second"),
+	).(*shardedRedisAdapter)
+	t.Cleanup(first.Close)
+	t.Cleanup(second.Close)
+
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(first.channel)) == 1 &&
+			len(recorder.activePeers(second.channel)) == 1
+	})
+	if recorder.activePeers(first.channel)[0] != recorder.activePeers(second.channel)[0] {
+		t.Fatal("builders did not reuse the subscriber connection")
+	}
+}
+
+func TestShardedAdaptersKeepRedisClientsIndependent(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	firstClient := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	secondClient := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = firstClient.Close() })
+	t.Cleanup(func() { _ = secondClient.Close() })
+	socketServer := socket.NewServer(nil, nil)
+	first := NewShardedRedisAdapter(
+		socket.NewNamespace(socketServer, "/first"),
+		mustRedisClient(t, context.Background(), firstClient),
+		nil,
+	).(*shardedRedisAdapter)
+	second := NewShardedRedisAdapter(
+		socket.NewNamespace(socketServer, "/second"),
+		mustRedisClient(t, context.Background(), secondClient),
+		nil,
+	).(*shardedRedisAdapter)
+	t.Cleanup(first.Close)
+	t.Cleanup(second.Close)
+
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(first.channel)) == 1 &&
+			len(recorder.activePeers(second.channel)) == 1 &&
+			len(recorder.activePeers(first.response)) == 1 &&
+			len(recorder.activePeers(second.response)) == 1
+	})
+	firstPeer := recorder.activePeers(first.response)[0]
+	secondPeer := recorder.activePeers(second.response)[0]
+	if firstPeer == secondPeer {
+		t.Fatal("different Redis clients reused the subscriber connection")
 	}
 
-	for _, channel := range channels {
-		shardedAdapter.subscribeNode(channel)
+	first.Close()
+	waitForShardedState(t, func() bool {
+		return firstPeer.Closed() &&
+			!secondPeer.Closed() &&
+			len(recorder.activePeers(second.channel)) == 1
+	})
+}
+
+func TestShardedSubscriberRetainsDesiredChannelAfterFailure(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := t.Context()
+	pubSub := newShardedPubSub(ctx, client, nil)
+	defer pubSub.Close()
+	channel := "socket.io#/#retry#"
+	recorder.rejectNext(channel)
+	subscription := pubSub.newSubscription(func([]byte, string) {})
+	subscription.Subscribe(channel)
+	if err := pubSub.flush(ctx); err != nil {
+		t.Fatal(err)
 	}
 
 	waitForShardedState(t, func() bool {
-		shardedAdapter.dynamicMu.Lock()
-		recovered := !shardedAdapter.recovering && len(shardedAdapter.nodePubSubs) == 1 && len(shardedAdapter.chanToAddr) == 2
-		shardedAdapter.dynamicMu.Unlock()
-		single, batched := recorder.counts()
-		return recovered && single >= 4 && batched >= 1 && recorder.ready(channels...)
+		return recorder.attemptCount(channel) >= 2 && len(recorder.activePeers(channel)) == 1
 	})
+}
 
-	for i, channel := range channels {
-		value := fmt.Sprintf("value-%d", i)
-		payload := shardedServerSideEmitPayload(t, "probe", value)
-		if !recorder.publish(channel, payload) {
-			t.Fatalf("recovered subscription %q is unavailable", channel)
+func TestShardedSubscriberFansOutSharedChannel(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	pubSub := newShardedPubSub(context.Background(), client, nil)
+	defer pubSub.Close()
+	channel := "socket.io#/#shared#"
+	received := make(chan string, 3)
+	first := pubSub.newSubscription(func([]byte, string) { received <- "first" })
+	second := pubSub.newSubscription(func([]byte, string) { received <- "second" })
+	first.Subscribe(channel)
+	second.Subscribe(channel)
+	if err := pubSub.flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForShardedState(t, func() bool { return len(recorder.activePeers(channel)) == 1 })
+
+	recorder.publish(channel, []byte("one"))
+	seen := map[string]bool{}
+	for range 2 {
+		select {
+		case handler := <-received:
+			seen[handler] = true
+		case <-time.After(time.Second):
+			t.Fatal("shared channel was not fanned out")
 		}
 	}
+	if !seen["first"] || !seen["second"] {
+		t.Fatalf("handlers = %#v", seen)
+	}
 
-	values := make(map[any]struct{}, len(channels))
+	first.Close()
+	recorder.publish(channel, []byte("two"))
+	select {
+	case handler := <-received:
+		if handler != "second" {
+			t.Fatalf("closed handler %q received the message", handler)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("remaining handler did not receive the message")
+	}
+}
+
+func TestShardedSubscriberRecoversAfterUnsubscribeError(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	pubSub := newShardedPubSub(context.Background(), client, nil)
+	defer pubSub.Close()
+	removed := "socket.io#/#removed#"
+	remaining := "socket.io#/#remaining#"
+	received := make(chan struct{}, 1)
+	subscription := pubSub.newSubscription(func([]byte, string) { received <- struct{}{} })
+	subscription.Subscribe(removed)
+	subscription.Subscribe(remaining)
+	if err := pubSub.flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(removed)) == 1 && len(recorder.activePeers(remaining)) == 1
+	})
+
+	recorder.rejectNextUnsubscribe(removed)
+	subscription.Unsubscribe(removed)
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(removed)) == 0 && len(recorder.activePeers(remaining)) == 1
+	})
+	if delivered := recorder.publish(remaining, []byte("payload")); delivered != 1 {
+		t.Fatalf("remaining channel delivered to %d subscribers", delivered)
+	}
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("remaining channel did not recover")
+	}
+}
+
+func TestShardedSubscriptionIsIdempotentAndClosed(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	pubSub := newShardedPubSub(context.Background(), client, nil)
+	defer pubSub.Close()
+	channel := "socket.io#/#once#"
+	subscription := pubSub.newSubscription(func([]byte, string) {})
+	subscription.Subscribe(channel)
+	subscription.Subscribe(channel)
+	if err := pubSub.flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForShardedState(t, func() bool { return len(recorder.activePeers(channel)) == 1 })
+	if attempts := recorder.attemptCount(channel); attempts != 1 {
+		t.Fatalf("SSUBSCRIBE attempts = %d, want 1", attempts)
+	}
+
+	subscription.Close()
+	waitForShardedState(t, func() bool { return len(recorder.activePeers(channel)) == 0 })
+	subscription.Subscribe("socket.io#/#after-close#")
+	if err := pubSub.flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if attempts := recorder.attemptCount("socket.io#/#after-close#"); attempts != 0 {
+		t.Fatalf("closed subscription attempted %d new subscriptions", attempts)
+	}
+}
+
+func TestShardedSubscriptionChangesDoNotWaitForRedis(t *testing.T) {
+	dialStarted := make(chan struct{})
+	releaseDial := make(chan struct{})
+	var started sync.Once
+	var dials atomic.Int64
+	client := rds.NewClient(&rds.Options{
+		Addr:       "unreachable",
+		MaxRetries: -1,
+		Dialer: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			dials.Add(1)
+			started.Do(func() { close(dialStarted) })
+			select {
+			case <-releaseDial:
+				return nil, errors.New("injected dial failure")
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	pubSub := newShardedPubSub(ctx, client, nil)
+	subscription := pubSub.newSubscription(func([]byte, string) {})
+	subscription.Subscribe("first")
+	select {
+	case <-dialStarted:
+	case <-time.After(time.Second):
+		t.Fatal("subscription did not start dialing")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		for i := range 64 {
+			subscription.Subscribe(fmt.Sprintf("channel-%d", i))
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("subscription change waited for Redis I/O")
+	}
+
+	close(releaseDial)
+	flushCtx, stopFlush := context.WithTimeout(context.Background(), time.Second)
+	if err := pubSub.flush(flushCtx); err != nil {
+		t.Fatal(err)
+	}
+	stopFlush()
+	if attempts := dials.Load(); attempts != 1 {
+		t.Fatalf("Redis outage caused %d dials for one owner", attempts)
+	}
+	cancel()
+	pubSub.Close()
+	_ = client.Close()
+}
+
+func TestShardedSubscriberRecoversCrossSlotReconnect(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 2)
+	cluster := rds.NewClusterClient(&rds.ClusterOptions{Addrs: []string{server.Addr()}})
+	t.Cleanup(func() { _ = cluster.Close() })
+	ctx := t.Context()
+	pubSub := newShardedPubSub(ctx, cluster, nil)
+	defer pubSub.Close()
+	received := make(chan string, 2)
+	subscription := pubSub.newSubscription(func(_ []byte, channel string) { received <- channel })
+	channels := []string{"socket.io#/#room{one}#", "socket.io#/#room{two}#"}
+	for _, channel := range channels {
+		subscription.Subscribe(channel)
+	}
+	if err := pubSub.flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForShardedStateWithin(t, 750*time.Millisecond, func() bool {
+		single, batched := recorder.counts()
+		return single >= 4 && batched >= 1 &&
+			len(recorder.activePeers(channels[0])) == 1 && len(recorder.activePeers(channels[1])) == 1
+	})
+	for _, channel := range channels {
+		if delivered := recorder.publish(channel, []byte("payload")); delivered != 1 {
+			t.Fatalf("channel %q delivered to %d subscribers", channel, delivered)
+		}
+	}
+	seen := make(map[string]struct{}, len(channels))
 	for range channels {
 		select {
-		case value := <-received:
-			values[value] = struct{}{}
+		case channel := <-received:
+			seen[channel] = struct{}{}
 		case <-time.After(time.Second):
 			t.Fatal("recovered subscription did not receive a message")
 		}
 	}
-	if len(values) != len(channels) {
-		t.Fatalf("received values = %#v, want one value from each channel", values)
-	}
-	select {
-	case value := <-received:
-		t.Fatalf("received duplicate value %#v", value)
-	case <-time.After(20 * time.Millisecond):
-	}
-	if count := errorCount.Load(); count != 0 {
-		t.Fatalf("recoverable connection error was emitted %d time(s): %v", count, emittedError.Load())
+	if len(seen) != len(channels) {
+		t.Fatalf("received channels = %#v", seen)
 	}
 }
 
-func TestShardedDynamicSubscriptionsRecoverAfterUnsubscribeError(t *testing.T) {
-	shardedAdapter, recorder := newShardedTestAdapter(t, 0)
-	channels := []string{"socket.io#/#room{one}#", "socket.io#/#room{two}#"}
-	for _, channel := range channels {
-		shardedAdapter.subscribeNode(channel)
-	}
-
-	var errorCount atomic.Int64
-	if err := shardedAdapter.redisClient.On("error", func(...any) {
-		errorCount.Add(1)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	received := make(chan any, 1)
-	if err := shardedAdapter.Nsp().On("unsubscribe-probe", func(args ...any) {
-		received <- args[0]
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	recorder.rejectNextUnsubscribe()
-	shardedAdapter.unsubscribeNode(channels[0])
-	waitForShardedState(t, func() bool {
-		nodes, channelCount, references := dynamicSubscriptionState(shardedAdapter)
-		single, _ := recorder.counts()
-		return nodes == 1 && channelCount == 1 && references == 1 && single >= 3 && recorder.ready(channels[1])
+func TestShardedSubscriberFollowsServerSunsubscribe(t *testing.T) {
+	first, firstRecorder := newShardedPubSubRecorder(t, 0)
+	second, secondRecorder := newShardedPubSubRecorder(t, 0)
+	var moved atomic.Bool
+	cluster := rds.NewClusterClient(&rds.ClusterOptions{
+		Addrs: []string{first.Addr(), second.Addr()},
+		ClusterSlots: func(context.Context) ([]rds.ClusterSlot, error) {
+			addr := first.Addr()
+			if moved.Load() {
+				addr = second.Addr()
+			}
+			return []rds.ClusterSlot{{Start: 0, End: 16383, Nodes: []rds.ClusterNode{{Addr: addr}}}}, nil
+		},
 	})
-
-	if recorder.publish(channels[0], shardedServerSideEmitPayload(t, "unsubscribe-probe", "removed")) {
-		t.Fatal("removed channel remained subscribed")
+	t.Cleanup(func() { _ = cluster.Close() })
+	ctx := t.Context()
+	pubSub := newShardedPubSub(ctx, cluster, nil)
+	defer pubSub.Close()
+	channel := "socket.io#/#moved#"
+	received := make(chan struct{}, 1)
+	subscription := pubSub.newSubscription(func([]byte, string) { received <- struct{}{} })
+	subscription.Subscribe(channel)
+	if err := pubSub.flush(ctx); err != nil {
+		t.Fatal(err)
 	}
-	if !recorder.publish(channels[1], shardedServerSideEmitPayload(t, "unsubscribe-probe", "remaining")) {
-		t.Fatal("remaining channel was not restored")
+	waitForShardedState(t, func() bool { return len(firstRecorder.activePeers(channel)) == 1 })
+
+	moved.Store(true)
+	if !firstRecorder.pushSunsubscribe(channel) {
+		t.Fatal("initial subscription is unavailable")
+	}
+	waitForShardedStateWithin(t, 750*time.Millisecond, func() bool {
+		return len(firstRecorder.activePeers(channel)) == 0 && len(secondRecorder.activePeers(channel)) == 1
+	})
+	if delivered := secondRecorder.publish(channel, []byte("payload")); delivered != 1 {
+		t.Fatalf("moved channel delivered to %d subscribers", delivered)
 	}
 	select {
-	case value := <-received:
-		if value != "remaining" {
-			t.Fatalf("received value = %#v, want remaining", value)
-		}
+	case <-received:
 	case <-time.After(time.Second):
-		t.Fatal("remaining channel did not receive a message")
-	}
-	if count := errorCount.Load(); count != 0 {
-		t.Fatalf("recoverable unsubscribe error was emitted %d time(s)", count)
+		t.Fatal("moved subscription did not receive a message")
 	}
 }
 
-func TestShardedDynamicSubscriptionsReuseAndReleaseNode(t *testing.T) {
-	shardedAdapter, _ := newShardedTestAdapter(t, 0)
-	channels := []string{"socket.io#/#room{one}#", "socket.io#/#room{two}#"}
-	for _, channel := range channels {
-		shardedAdapter.subscribeNode(channel)
-	}
+func TestShardedResponseChannelCollisionDispatchesOnce(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	opts := DefaultShardedRedisAdapterOptions()
+	opts.SetSubscriptionMode(redis.DynamicPrivateSubscriptionMode)
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/collision")
+	current := NewShardedRedisAdapter(nsp, redisClient, opts).(*shardedRedisAdapter)
+	defer current.Close()
 
-	if nodes, channelCount, references := dynamicSubscriptionState(shardedAdapter); nodes != 1 || channelCount != 2 || references != 2 {
-		t.Fatalf("subscription state = (%d nodes, %d channels, %d references), want (1, 2, 2)", nodes, channelCount, references)
-	}
-
-	shardedAdapter.unsubscribeNode(channels[0])
-	if nodes, channelCount, references := dynamicSubscriptionState(shardedAdapter); nodes != 1 || channelCount != 1 || references != 1 {
-		t.Fatalf("subscription state = (%d nodes, %d channels, %d references), want (1, 1, 1)", nodes, channelCount, references)
-	}
-
-	shardedAdapter.unsubscribeNode(channels[1])
-	if nodes, channelCount, references := dynamicSubscriptionState(shardedAdapter); nodes != 0 || channelCount != 0 || references != 0 {
-		t.Fatalf("subscription state = (%d nodes, %d channels, %d references), want empty", nodes, channelCount, references)
-	}
-}
-
-func TestShardedDynamicSubscribeFailureLeavesNoState(t *testing.T) {
-	ring := rds.NewRing(&rds.RingOptions{
-		Addrs:              map[string]string{"node": "127.0.0.1:0"},
-		MaxRetries:         -1,
-		DialTimeout:        time.Millisecond,
-		DialerRetries:      1,
-		DialerRetryTimeout: time.Millisecond,
-	})
-	t.Cleanup(func() { _ = ring.Close() })
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	t.Cleanup(cancel)
-
-	shardedAdapter := MakeShardedRedisAdapter().(*shardedRedisAdapter)
-	shardedAdapter.redisClient = redis.NewRedisClient(ctx, ring)
-	shardedAdapter.ctx = ctx
-	shardedAdapter.cancel = cancel
-	var errorCount atomic.Int64
-	if err := shardedAdapter.redisClient.On("error", func(...any) {
-		errorCount.Add(1)
-	}); err != nil {
+	received := make(chan struct{}, 2)
+	if err := nsp.On("probe", func(...any) { received <- struct{}{} }); err != nil {
 		t.Fatal(err)
 	}
-
-	shardedAdapter.subscribeNode("socket.io#/#room#")
-	shardedAdapter.dynamicMu.Lock()
-	nodes := len(shardedAdapter.nodePubSubs)
-	channels := len(shardedAdapter.chanToAddr)
-	desired := len(shardedAdapter.dynamicChannels)
-	shardedAdapter.dynamicMu.Unlock()
-	if nodes != 0 || channels != 0 || desired != 0 {
-		t.Fatalf("failed subscription retained state: nodes=%d channels=%d desired=%d", nodes, channels, desired)
+	current.AddAll("sid", types.NewSet(socket.Room(current.Uid())))
+	if err := current.pubSub.flush(current.ctx); err != nil {
+		t.Fatal(err)
 	}
-	if count := errorCount.Load(); count != 1 {
-		t.Fatalf("error count = %d, want 1", count)
+	waitForShardedState(t, func() bool { return len(recorder.activePeers(current.response)) == 1 })
+
+	payload := shardedServerSideEmitPayload(t, "/collision")
+	if delivered := recorder.publish(current.response, payload); delivered != 1 {
+		t.Fatalf("delivered to %d subscribers, want 1", delivered)
 	}
-}
-
-func TestShardedDynamicSubscriptionIsIdempotent(t *testing.T) {
-	shardedAdapter, _ := newShardedTestAdapter(t, 0)
-	const channel = "socket.io#/#room{one}#"
-
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Go(func() {
-			shardedAdapter.subscribeNode(channel)
-		})
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("colliding channel message was not dispatched")
 	}
-	wg.Wait()
-
-	if nodes, channels, references := dynamicSubscriptionState(shardedAdapter); nodes != 1 || channels != 1 || references != 1 {
-		t.Fatalf("subscription state = (%d nodes, %d channels, %d references), want (1, 1, 1)", nodes, channels, references)
-	}
-}
-
-func TestShardedClosePreventsNewDynamicSubscriptions(t *testing.T) {
-	shardedAdapter, _ := newShardedTestAdapter(t, 0)
-	shardedAdapter.subscribeNode("socket.io#/#room{one}#")
-	shardedAdapter.Close()
-	shardedAdapter.subscribeNode("socket.io#/#room{two}#")
-	shardedAdapter.Close()
-
-	if nodes, channels, references := dynamicSubscriptionState(shardedAdapter); nodes != 0 || channels != 0 || references != 0 {
-		t.Fatal("Close allowed a new dynamic subscription")
+	select {
+	case <-received:
+		t.Fatal("colliding channel message was dispatched twice")
+	case <-time.After(20 * time.Millisecond):
 	}
 }
 
 func TestShardedRedisAdapterComputeChannel(t *testing.T) {
-	const channel = "socket.io#/#"
+	current := MakeShardedRedisAdapter().(*shardedRedisAdapter)
+	current.channel = "socket.io#/#"
+	current.opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
+	room := socket.Room("room")
 
-	tests := []struct {
-		name      string
-		mode      redis.SubscriptionMode
-		rooms     []socket.Room
-		requestId *string
-		want      string
-	}{
-		{name: "static", mode: redis.StaticSubscriptionMode, rooms: []socket.Room{"room"}, want: channel},
-		{name: "dynamic public room", mode: redis.DynamicSubscriptionMode, rooms: []socket.Room{"room"}, want: channel + "room#"},
-		{name: "dynamic socket room", mode: redis.DynamicSubscriptionMode, rooms: []socket.Room{"12345678901234567890"}, want: channel},
-		{name: "dynamic private socket room", mode: redis.DynamicPrivateSubscriptionMode, rooms: []socket.Room{"12345678901234567890"}, want: channel + "12345678901234567890#"},
-		{name: "multiple rooms", mode: redis.DynamicPrivateSubscriptionMode, rooms: []socket.Room{"room1", "room2"}, want: channel},
-		{name: "broadcast with ack", mode: redis.DynamicPrivateSubscriptionMode, rooms: []socket.Room{"room"}, requestId: new("request"), want: channel},
+	message := &clusteradapter.ClusterMessage{
+		Type: clusteradapter.BROADCAST,
+		Data: &clusteradapter.BroadcastMessage{Opts: &clusteradapter.PacketOptions{Rooms: []socket.Room{room}}},
+	}
+	if got := current.computeChannel(message); got != "socket.io#/#room#" {
+		t.Fatalf("dynamic channel = %q", got)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := MakeShardedRedisAdapter().(*shardedRedisAdapter)
-			s.channel = channel
-			s.opts.SetSubscriptionMode(tt.mode)
+	requestID := "request"
+	message.Data.(*clusteradapter.BroadcastMessage).RequestId = &requestID
+	if got := current.computeChannel(message); got != current.channel {
+		t.Fatalf("acknowledged broadcast channel = %q", got)
+	}
+}
 
-			message := &clusteradapter.ClusterMessage{
-				Type: clusteradapter.BROADCAST,
-				Data: &clusteradapter.BroadcastMessage{
-					Opts:      &clusteradapter.PacketOptions{Rooms: tt.rooms},
-					RequestId: tt.requestId,
-				},
-			}
-			if got := s.computeChannel(message); got != tt.want {
-				t.Fatalf("computeChannel() = %q, want %q", got, tt.want)
-			}
-		})
+func BenchmarkShardedPubSubDispatch(b *testing.B) {
+	var received atomic.Uint64
+	pubSub := &shardedPubSub{routes: map[string]shardedRoute{
+		"channel": {first: &shardedSubscription{handler: func([]byte, string) { received.Add(1) }}},
+	}}
+	payload := []byte("payload")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		pubSub.dispatch("channel", payload)
 	}
 }

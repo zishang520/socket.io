@@ -182,5 +182,5 @@ func (b *ShardedBroadcastOperator) publishMessage(message *adapter.ClusterMessag
 		return err
 	}
 	emitterLog.Debug("publishing message to channel %s via SPUBLISH", channel)
-	return b.redisClient.Client.SPublish(b.redisClient.Context, channel, payload).Err()
+	return b.redisClient.Client().SPublish(b.redisClient.Context(), channel, payload).Err()
 }

@@ -38,10 +38,20 @@ func TestEmitterOptions(t *testing.T) {
 	})
 }
 
+func mustRedisClient(t *testing.T, client rds.UniversalClient) *redis.RedisClient {
+	t.Helper()
+
+	redisClient, err := redis.NewRedisClient(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return redisClient
+}
+
 func TestClassicEmitterNodeWire(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
-	redisClient := redis.NewRedisClient(context.Background(), client)
+	redisClient := mustRedisClient(t, client)
 	emit := NewEmitter(redisClient, nil, "/chat")
 
 	room := socket.Room("abcdefghijklmnopqrst")
@@ -76,7 +86,7 @@ func TestClassicEmitterNodeWire(t *testing.T) {
 func TestClassicEmitterPreservesExplicitEmptyNamespace(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
-	emit := NewEmitter(redis.NewRedisClient(context.Background(), client), nil, "")
+	emit := NewEmitter(mustRedisClient(t, client), nil, "")
 	if emit.nsp != "" || emit.broadcastOptions.BroadcastChannel != "socket.io##" {
 		t.Fatalf("namespace = %q, channel = %q", emit.nsp, emit.broadcastOptions.BroadcastChannel)
 	}
@@ -127,7 +137,7 @@ func TestRedisStreamsEmitterNodeWire(t *testing.T) {
 	options.SetStreamName("events")
 	options.SetMaxLen(100)
 	emit := NewRedisStreamsEmitter(
-		redis.NewRedisClient(context.Background(), client),
+		mustRedisClient(t, client),
 		options,
 	).Of("chat")
 
@@ -161,7 +171,7 @@ func TestRedisStreamsEmitterPreservesEmptyNamespace(t *testing.T) {
 	options := DefaultRedisStreamsEmitterOptions()
 	options.SetStreamName("events")
 	emit := NewRedisStreamsEmitter(
-		redis.NewRedisClient(context.Background(), client),
+		mustRedisClient(t, client),
 		options,
 	).Of("")
 
@@ -179,7 +189,7 @@ func TestRedisStreamsEmitterPreservesEmptyNamespace(t *testing.T) {
 
 func TestEmitter(t *testing.T) {
 	server := miniredis.RunT(t)
-	redisClient := redis.NewRedisClient(context.TODO(), rds.NewClient(&rds.Options{
+	redisClient := mustRedisClient(t, rds.NewClient(&rds.Options{
 		Addr: server.Addr(),
 	}))
 
@@ -241,7 +251,7 @@ func TestEmitter(t *testing.T) {
 
 func TestBroadcastOperator(t *testing.T) {
 	server := miniredis.RunT(t)
-	redisClient := redis.NewRedisClient(context.TODO(), rds.NewClient(&rds.Options{
+	redisClient := mustRedisClient(t, rds.NewClient(&rds.Options{
 		Addr: server.Addr(),
 	}))
 

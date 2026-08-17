@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"reflect"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	rds "github.com/redis/go-redis/v9"
@@ -18,10 +20,56 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+type xrangeRecorder struct {
+	mu   sync.Mutex
+	args [][]any
+}
+
+type xreadRecorder struct {
+	streams chan string
+}
+
+func (*xrangeRecorder) DialHook(next rds.DialHook) rds.DialHook { return next }
+
+func (h *xrangeRecorder) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
+	return func(ctx context.Context, cmd rds.Cmder) error {
+		if cmd.Name() == "xrange" {
+			h.mu.Lock()
+			h.args = append(h.args, append([]any(nil), cmd.Args()...))
+			h.mu.Unlock()
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (*xrangeRecorder) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
+	return next
+}
+
+func (*xreadRecorder) DialHook(next rds.DialHook) rds.DialHook { return next }
+
+func (h *xreadRecorder) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
+	return func(ctx context.Context, cmd rds.Cmder) error {
+		if args := cmd.Args(); cmd.Name() == "xread" && len(args) >= 3 {
+			if stream, ok := args[len(args)-2].(string); ok {
+				select {
+				case h.streams <- stream:
+				default:
+				}
+			}
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (*xreadRecorder) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
+	return next
+}
+
 func TestRedisStreamsAdapterBuilderAppliesDefaults(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
-	redisClient := rediswire.NewRedisClient(context.Background(), client)
+	redisClient := mustRedisClient(t, context.Background(), client)
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
 
 	streamAdapter := (&RedisStreamsAdapterBuilder{Redis: redisClient}).New(nsp).(*redisStreamsAdapter)
@@ -38,62 +86,451 @@ func TestRedisStreamsAdapterBuilderAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestRedisStreamsAdapterPreservesExplicitEmptyAndZeroOptions(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	opts := DefaultRedisStreamsAdapterOptions()
+	opts.SetStreamName("")
+	opts.SetStreamCount(0)
+	opts.SetChannelPrefix("")
+	opts.SetMaxLen(0)
+	opts.SetReadCount(0)
+	opts.SetBlockTimeInMs(0)
+	opts.SetSessionKeyPrefix("")
+
+	streamAdapter := NewRedisStreamsAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/explicit"),
+		mustRedisClient(t, ctx, client),
+		opts,
+	).(*redisStreamsAdapter)
+	t.Cleanup(streamAdapter.Close)
+
+	if streamAdapter.opts.StreamName() != "" || streamAdapter.opts.StreamCount() != 0 ||
+		streamAdapter.opts.ChannelPrefix() != "" || streamAdapter.opts.MaxLen() != 0 ||
+		streamAdapter.opts.ReadCount() != 0 || streamAdapter.opts.BlockTimeInMs() != 0 ||
+		streamAdapter.opts.SessionKeyPrefix() != "" {
+		t.Fatalf("explicit options were replaced: %+v", streamAdapter.opts)
+	}
+}
+
+func TestRedisStreamsCleanupReleasesPollerAndAllowsClose(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	builder := &RedisStreamsAdapterBuilder{Redis: redisClient}
+	streamAdapter := builder.New(socket.NewNamespace(socket.NewServer(nil, nil), "/cleanup")).(*redisStreamsAdapter)
+	poller := streamAdapter.streamPoller
+
+	called := false
+	streamAdapter.Cleanup(func() {
+		called = true
+		streamAdapter.Close()
+	})
+	done := make(chan struct{})
+	go func() {
+		streamAdapter.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reentrant Close deadlocked")
+	}
+	if !called {
+		t.Fatal("cleanup callback was not called")
+	}
+	if poller.ctx.Err() == nil {
+		t.Fatal("public cleanup prevented the stream poller from being released")
+	}
+}
+
 func TestRedisStreamsAdapterBuilderLifecycle(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
-	redisClient := rediswire.NewRedisClient(context.Background(), client)
-	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	socketServer := socket.NewServer(nil, nil)
+	nsp := socket.NewNamespace(socketServer, "/test")
 	builder := &RedisStreamsAdapterBuilder{Redis: redisClient}
 
 	first := builder.New(nsp).(*redisStreamsAdapter)
 	second := builder.New(nsp).(*redisStreamsAdapter)
+	poller := first.streamPoller
+	if second.streamPoller != poller {
+		t.Fatal("adapters for the same server did not share a stream poller")
+	}
 	first.Close()
 
-	if current, ok := builder.namespaceToAdapters.Load(nsp.Name()); !ok || current != second {
+	if current, ok := poller.adapters.Load(nsp.Name()); !ok || current != second {
 		t.Fatal("closing the replaced adapter removed the active adapter")
 	}
-	builder.mu.Lock()
-	active := builder.cancel != nil
-	builder.mu.Unlock()
-	if !active {
+	if poller.ctx.Err() != nil {
 		t.Fatal("polling stopped while an adapter was active")
 	}
 
-	otherNsp := socket.NewNamespace(socket.NewServer(nil, nil), "/other")
+	otherNsp := socket.NewNamespace(socketServer, "/other")
 	other := builder.New(otherNsp).(*redisStreamsAdapter)
+	if other.streamPoller != poller {
+		t.Fatal("namespaces for the same server did not share a stream poller")
+	}
 	second.Close()
-	if builder.namespaceToAdapters.Len() != 1 {
+	if poller.adapters.Len() != 1 {
 		t.Fatal("polling stopped before the last adapter closed")
 	}
-	builder.mu.Lock()
-	active = builder.cancel != nil
-	builder.mu.Unlock()
-	if !active {
+	if poller.ctx.Err() != nil {
 		t.Fatal("polling stopped before the last adapter closed")
 	}
 
 	other.Close()
-	builder.mu.Lock()
-	active = builder.cancel != nil
-	builder.mu.Unlock()
-	if active || builder.namespaceToAdapters.Len() != 0 {
+	if poller.ctx.Err() == nil || poller.adapters.Len() != 0 {
 		t.Fatal("polling did not stop after the last adapter closed")
 	}
 
 	third := builder.New(nsp).(*redisStreamsAdapter)
-	builder.mu.Lock()
-	active = builder.cancel != nil
-	builder.mu.Unlock()
-	if !active {
+	if third.streamPoller == poller {
+		t.Fatal("a stopped stream poller was reused")
+	}
+	if third.streamPoller.ctx.Err() != nil {
 		t.Fatal("polling did not restart for a new adapter")
 	}
 	third.Close()
 }
 
-func TestRestoreSessionReturnsEmptyMissedPackets(t *testing.T) {
+func TestRedisStreamsPollerSharedAcrossConstructors(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
-	redisClient := rediswire.NewRedisClient(context.Background(), client)
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	socketServer := socket.NewServer(nil, nil)
+
+	direct := NewRedisStreamsAdapter(
+		socket.NewNamespace(socketServer, "/direct"), redisClient, nil,
+	).(*redisStreamsAdapter)
+	first := (&RedisStreamsAdapterBuilder{Redis: redisClient}).New(
+		socket.NewNamespace(socketServer, "/first"),
+	).(*redisStreamsAdapter)
+	second := (&RedisStreamsAdapterBuilder{Redis: redisClient}).New(
+		socket.NewNamespace(socketServer, "/second"),
+	).(*redisStreamsAdapter)
+	t.Cleanup(direct.Close)
+	t.Cleanup(first.Close)
+	t.Cleanup(second.Close)
+
+	if direct.streamPoller != first.streamPoller || direct.streamPoller != second.streamPoller {
+		t.Fatal("direct constructor and separate builders did not share a stream poller")
+	}
+}
+
+func TestRedisStreamsPollerIsolation(t *testing.T) {
+	server := miniredis.RunT(t)
+	firstClient := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	secondClient := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() {
+		_ = firstClient.Close()
+		_ = secondClient.Close()
+	})
+	firstRedis := mustRedisClient(t, context.Background(), firstClient)
+	secondRedis := mustRedisClient(t, context.Background(), secondClient)
+	socketServer := socket.NewServer(nil, nil)
+
+	base := NewRedisStreamsAdapter(
+		socket.NewNamespace(socketServer, "/base"), firstRedis, nil,
+	).(*redisStreamsAdapter)
+	otherServer := NewRedisStreamsAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/server"), firstRedis, nil,
+	).(*redisStreamsAdapter)
+	otherClient := NewRedisStreamsAdapter(
+		socket.NewNamespace(socketServer, "/client"), secondRedis, nil,
+	).(*redisStreamsAdapter)
+	opts := DefaultRedisStreamsAdapterOptions()
+	opts.SetReadCount(DefaultStreamReadCount + 1)
+	otherConfig := NewRedisStreamsAdapter(
+		socket.NewNamespace(socketServer, "/config"), firstRedis, opts,
+	).(*redisStreamsAdapter)
+	t.Cleanup(base.Close)
+	t.Cleanup(otherServer.Close)
+	t.Cleanup(otherClient.Close)
+	t.Cleanup(otherConfig.Close)
+
+	for name, adapter := range map[string]*redisStreamsAdapter{
+		"server": otherServer,
+		"client": otherClient,
+		"config": otherConfig,
+	} {
+		if adapter.streamPoller == base.streamPoller {
+			t.Fatalf("different %s unexpectedly shared a stream poller", name)
+		}
+	}
+}
+
+func TestRedisStreamsPollerReadsComputedNegativeStream(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	recorder := &xreadRecorder{streams: make(chan string, 1)}
+	client.AddHook(recorder)
+
+	opts := DefaultRedisStreamsAdapterOptions()
+	opts.SetStreamCount(5)
+	streamAdapter := NewRedisStreamsAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/namespace-0"),
+		mustRedisClient(t, context.Background(), client),
+		opts,
+	).(*redisStreamsAdapter)
+	t.Cleanup(streamAdapter.Close)
+
+	if streamAdapter.streamName != "socket.io--3" {
+		t.Fatalf("stream name = %q, want socket.io--3", streamAdapter.streamName)
+	}
+	if stream := streamAdapter.streamPoller.key.streamName; stream != streamAdapter.streamName {
+		t.Fatalf("poller stream = %q, want %q", stream, streamAdapter.streamName)
+	}
+	select {
+	case stream := <-recorder.streams:
+		if stream != streamAdapter.streamName {
+			t.Fatalf("XREAD stream = %q, want %q", stream, streamAdapter.streamName)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("XREAD was not started")
+	}
+}
+
+func TestRedisStreamsPollerStartsOneWorkerPerStream(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	socketServer := socket.NewServer(nil, nil)
+
+	first := NewRedisStreamsAdapter(
+		socket.NewNamespace(socketServer, "/first"), redisClient, nil,
+	).(*redisStreamsAdapter)
+	second := NewRedisStreamsAdapter(
+		socket.NewNamespace(socketServer, "/second"), redisClient, nil,
+	).(*redisStreamsAdapter)
+	t.Cleanup(first.Close)
+	t.Cleanup(second.Close)
+
+	if first.streamPoller != second.streamPoller {
+		t.Fatal("adapters did not share a poller")
+	}
+	if stream := first.streamPoller.key.streamName; stream != DefaultStreamName {
+		t.Fatalf("poller stream = %q, want %q", stream, DefaultStreamName)
+	}
+}
+
+func TestRedisStreamsPollerRoutesAndStopsAfterClose(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	socketServer := socket.NewServer(nil, nil)
+	builder := &RedisStreamsAdapterBuilder{Redis: redisClient}
+
+	firstNsp := socket.NewNamespace(socketServer, "/first")
+	secondNsp := socket.NewNamespace(socketServer, "/second")
+	first := builder.New(firstNsp).(*redisStreamsAdapter)
+	second := builder.New(secondNsp).(*redisStreamsAdapter)
+	t.Cleanup(first.Close)
+	t.Cleanup(second.Close)
+
+	received := make(chan string, 8)
+	if err := firstNsp.On("probe", func(...any) { received <- "first" }); err != nil {
+		t.Fatal(err)
+	}
+	if err := secondNsp.On("probe", func(...any) { received <- "second" }); err != nil {
+		t.Fatal(err)
+	}
+
+	publish := func(nsp string) {
+		t.Helper()
+		message, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+			Uid:  "remote",
+			Nsp:  nsp,
+			Type: adapter.SERVER_SIDE_EMIT,
+			Data: &adapter.ServerSideEmitMessage{Packet: []any{"probe"}},
+		}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rediswire.XAdd(redisClient, first.streamName, message, first.opts.MaxLen()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		publish(firstNsp.Name())
+		select {
+		case target := <-received:
+			if target != "first" {
+				t.Fatalf("message routed to %s namespace, want first", target)
+			}
+			goto polling
+		case <-time.After(10 * time.Millisecond):
+			if time.Now().After(deadline) {
+				t.Fatal("stream poller did not receive a message")
+			}
+		}
+	}
+
+polling:
+	first.Close()
+	publish(firstNsp.Name())
+	publish(secondNsp.Name())
+
+	select {
+	case target := <-received:
+		if target != "second" {
+			t.Fatalf("closed namespace received a message: %s", target)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shared stream poller stopped with an active namespace")
+	}
+	select {
+	case target := <-received:
+		t.Fatalf("unexpected extra delivery to %s namespace", target)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestRedisStreamsShardedBuilderSharesSubscriber(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	opts := DefaultRedisStreamsAdapterOptions()
+	opts.SetUseShardedPubSub(true)
+	builder := &RedisStreamsAdapterBuilder{Redis: redisClient, Opts: opts}
+	socketServer := socket.NewServer(nil, nil)
+	firstNsp := socket.NewNamespace(socketServer, "/first")
+	secondNsp := socket.NewNamespace(socketServer, "/second")
+	first := builder.New(firstNsp).(*redisStreamsAdapter)
+	second := builder.New(secondNsp).(*redisStreamsAdapter)
+
+	channels := []string{
+		first.publicChannel,
+		first.publicChannel + string(first.Uid()) + "#",
+		second.publicChannel,
+		second.publicChannel + string(second.Uid()) + "#",
+	}
+	waitForShardedState(t, func() bool {
+		for _, channel := range channels {
+			if len(recorder.activePeers(channel)) != 1 {
+				return false
+			}
+		}
+		return true
+	})
+	peer := recorder.activePeers(channels[0])[0]
+	for _, channel := range channels[1:] {
+		if recorder.activePeers(channel)[0] != peer {
+			t.Fatal("Streams namespaces did not share the sharded subscriber")
+		}
+	}
+
+	received := make(chan struct{}, 1)
+	if err := secondNsp.On("probe", func(...any) { received <- struct{}{} }); err != nil {
+		t.Fatal(err)
+	}
+	payload := shardedServerSideEmitPayload(t, "/second")
+	if delivered := recorder.publish(second.publicChannel, payload); delivered != 1 {
+		t.Fatalf("delivered to %d subscribers, want 1", delivered)
+	}
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("shared Streams subscriber did not route the message")
+	}
+
+	first.Close()
+	if peer.Closed() {
+		t.Fatal("closing one Streams namespace closed the shared subscriber")
+	}
+	second.Close()
+	waitForShardedState(t, peer.Closed)
+}
+
+func TestShardedAdaptersShareSubscriberAcrossTypes(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, context.Background(), client)
+	socketServer := socket.NewServer(nil, nil)
+
+	shardedNsp := socket.NewNamespace(socketServer, "/sharded")
+	sharded := NewShardedRedisAdapter(shardedNsp, redisClient, nil).(*shardedRedisAdapter)
+	streamOpts := DefaultRedisStreamsAdapterOptions()
+	streamOpts.SetUseShardedPubSub(true)
+	streamsNsp := socket.NewNamespace(socketServer, "/streams")
+	streams := NewRedisStreamsAdapter(streamsNsp, redisClient, streamOpts).(*redisStreamsAdapter)
+	t.Cleanup(sharded.Close)
+	t.Cleanup(streams.Close)
+
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(sharded.channel)) == 1 &&
+			len(recorder.activePeers(streams.publicChannel)) == 1
+	})
+	peer := recorder.activePeers(sharded.channel)[0]
+	if recorder.activePeers(streams.publicChannel)[0] != peer {
+		t.Fatal("sharded and Streams adapters did not share the subscriber")
+	}
+
+	received := make(chan string, 3)
+	if err := shardedNsp.On("probe", func(...any) { received <- "sharded" }); err != nil {
+		t.Fatal(err)
+	}
+	if err := streamsNsp.On("probe", func(...any) { received <- "streams" }); err != nil {
+		t.Fatal(err)
+	}
+	if delivered := recorder.publish(sharded.channel, shardedServerSideEmitPayload(t, "/sharded")); delivered != 1 {
+		t.Fatalf("delivered sharded message to %d subscribers, want 1", delivered)
+	}
+	if delivered := recorder.publish(streams.publicChannel, shardedServerSideEmitPayload(t, "/streams")); delivered != 1 {
+		t.Fatalf("delivered Streams message to %d subscribers, want 1", delivered)
+	}
+
+	seen := map[string]int{}
+	for range 2 {
+		select {
+		case target := <-received:
+			seen[target]++
+		case <-time.After(time.Second):
+			t.Fatal("shared subscriber did not route both messages")
+		}
+	}
+	if seen["sharded"] != 1 || seen["streams"] != 1 {
+		t.Fatalf("messages routed to wrong namespaces: %v", seen)
+	}
+	select {
+	case target := <-received:
+		t.Fatalf("message was delivered more than once to %s", target)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	sharded.Close()
+	if peer.Closed() {
+		t.Fatal("closing the sharded adapter closed the Streams subscriber")
+	}
+	streams.Close()
+	waitForShardedState(t, peer.Closed)
+}
+
+func TestRestoreSessionReturnsEmptyMissedPackets(t *testing.T) {
+	server := miniredis.RunT(t)
+	replica := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	replicaClient := rds.NewClient(&rds.Options{Addr: replica.Addr()})
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = replicaClient.Close()
+	})
+	redisClient := mustRedisClientWithSub(t, context.Background(), client, replicaClient)
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
 	streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
 	streamAdapter.ClusterAdapter.Construct(nsp)
@@ -132,7 +569,153 @@ func TestRestoreSessionReturnsEmptyMissedPackets(t *testing.T) {
 	}
 }
 
-func TestRestoreSessionUsesSubClientForStreamReads(t *testing.T) {
+func TestRedisStreamsRecoveryClientRoutesToStreamOwner(t *testing.T) {
+	const stream = "stream"
+	ctx := context.Background()
+
+	t.Run("standalone", func(t *testing.T) {
+		server := miniredis.RunT(t)
+		client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+		t.Cleanup(func() { _ = client.Close() })
+		streamAdapter := &redisStreamsAdapter{
+			redisClient: mustRedisClient(t, ctx, client),
+			streamName:  stream,
+		}
+
+		got, err := streamAdapter.recoveryClient()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != client {
+			t.Fatal("standalone recovery did not use the write client")
+		}
+	})
+
+	t.Run("cluster master", func(t *testing.T) {
+		master := miniredis.RunT(t)
+		replica := miniredis.RunT(t)
+		cluster := rds.NewClusterClient(&rds.ClusterOptions{
+			Addrs:    []string{master.Addr()},
+			ReadOnly: true,
+			ClusterSlots: func(context.Context) ([]rds.ClusterSlot, error) {
+				return []rds.ClusterSlot{{
+					Start: 0,
+					End:   16383,
+					Nodes: []rds.ClusterNode{{Addr: master.Addr()}, {Addr: replica.Addr()}},
+				}}, nil
+			},
+		})
+		t.Cleanup(func() { _ = cluster.Close() })
+		streamAdapter := &redisStreamsAdapter{
+			redisClient: mustRedisClient(t, ctx, cluster),
+			streamName:  stream,
+		}
+
+		want, err := cluster.MasterForKey(ctx, stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := streamAdapter.recoveryClient()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("recovery client = %T, want cluster master %s", got, want.Options().Addr)
+		}
+	})
+
+}
+
+func TestCollectMissedPacketsUsesBoundedPages(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	recorder := &xrangeRecorder{}
+	client.AddHook(recorder)
+	ctx := context.Background()
+	pipe := client.Pipeline()
+	for range restoreSessionPageSize + 1 {
+		pipe.XAdd(ctx, &rds.XAddArgs{
+			Stream: DefaultStreamName,
+			Values: map[string]any{"nsp": "/other"},
+		})
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+	streamAdapter.ClusterAdapter.Construct(nsp)
+	streamAdapter.redisClient = mustRedisClient(t, ctx, client)
+	streamAdapter.streamName = DefaultStreamName
+
+	if err := streamAdapter.collectMissedPackets(client, &socket.Session{}, "0-0"); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.args) != 2 {
+		t.Fatalf("XRANGE calls = %d, want 2", len(recorder.args))
+	}
+	for _, args := range recorder.args {
+		if len(args) < 6 || args[len(args)-2] != "count" || args[len(args)-1] != int64(restoreSessionPageSize) {
+			t.Fatalf("XRANGE args = %#v, want COUNT %d", args, restoreSessionPageSize)
+		}
+	}
+}
+
+func TestCollectMissedPacketsSkipsVolatileBroadcasts(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+
+	add := func(id, event string, volatile bool) {
+		message, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+			Uid:  "remote",
+			Nsp:  "/test",
+			Type: adapter.BROADCAST,
+			Data: &adapter.BroadcastMessage{
+				Packet: &parser.Packet{Type: parser.EVENT, Data: []any{event}},
+				Opts: &adapter.PacketOptions{Flags: &socket.BroadcastFlags{
+					WriteOptions: socket.WriteOptions{Volatile: volatile},
+				}},
+			},
+		}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.XAdd(ctx, &rds.XAddArgs{
+			Stream: "stream",
+			ID:     id,
+			Values: map[string]any(message),
+		}).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("1-0", "volatile", true)
+	add("2-0", "durable", false)
+
+	streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+	streamAdapter.ClusterAdapter.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
+	streamAdapter.redisClient = mustRedisClient(t, ctx, client)
+	streamAdapter.streamName = "stream"
+	session := &socket.Session{
+		SessionToPersist: &socket.SessionToPersist{Rooms: types.NewSet[socket.Room]()},
+		MissedPackets:    []any{},
+	}
+
+	if err := streamAdapter.collectMissedPackets(client, session, "0-0"); err != nil {
+		t.Fatal(err)
+	}
+	want := []any{[]any{"durable", "2-0"}}
+	if !reflect.DeepEqual(session.MissedPackets, want) {
+		t.Fatalf("missed packets = %#v, want %#v", session.MissedPackets, want)
+	}
+}
+
+func TestRestoreSessionUsesWriteClientForStreamReads(t *testing.T) {
 	writeServer := miniredis.RunT(t)
 	readServer := miniredis.RunT(t)
 	writeClient := rds.NewClient(&rds.Options{Addr: writeServer.Addr()})
@@ -143,7 +726,7 @@ func TestRestoreSessionUsesSubClientForStreamReads(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	redisClient := rediswire.NewRedisClientWithSub(ctx, writeClient, readClient)
+	redisClient := mustRedisClientWithSub(t, ctx, writeClient, readClient)
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
 	streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
 	streamAdapter.ClusterAdapter.Construct(nsp)
@@ -164,6 +747,15 @@ func TestRestoreSessionUsesSubClientForStreamReads(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err = writeClient.XAdd(ctx, &rds.XAddArgs{
+		Stream: "stream",
+		ID:     "1-0",
+		Values: map[string]any{"uid": "node", "nsp": "/test", "type": "1"},
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a replica that has received the offset but not the subsequent
+	// broadcast yet. Recovery must read the authoritative write-side stream.
 	if err = readClient.XAdd(ctx, &rds.XAddArgs{
 		Stream: "stream",
 		ID:     "1-0",
@@ -183,7 +775,7 @@ func TestRestoreSessionUsesSubClientForStreamReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = readClient.XAdd(ctx, &rds.XAddArgs{
+	if err = writeClient.XAdd(ctx, &rds.XAddArgs{
 		Stream: "stream",
 		ID:     "2-0",
 		Values: map[string]any(wireMessage),

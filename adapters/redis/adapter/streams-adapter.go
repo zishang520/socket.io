@@ -20,6 +20,7 @@ import (
 	rds "github.com/redis/go-redis/v9"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
@@ -38,6 +39,7 @@ var (
 const (
 	// restoreSessionMaxXRangeCalls limits the number of XRANGE calls during session restoration.
 	restoreSessionMaxXRangeCalls = 100
+	restoreSessionPageSize       = 1000
 )
 
 // hashCode computes a hash code for the given string, matching the Node.js implementation.
@@ -80,72 +82,62 @@ func isEphemeral(message *adapter.ClusterMessage) bool {
 }
 
 // RedisStreamsAdapterBuilder creates Redis Streams adapters for Socket.IO namespaces.
-// It manages the shared polling loops and PUB/SUB subscriptions across all namespace adapters.
 type RedisStreamsAdapterBuilder struct {
 	// Redis is the Redis client used for stream operations.
 	Redis *redis.RedisClient
 	// Opts contains configuration options for the streams adapter.
 	Opts RedisStreamsAdapterOptionsInterface
-
-	namespaceToAdapters types.Map[string, RedisStreamsAdapter]
-	mu                  sync.Mutex
-	cancel              context.CancelFunc
-}
-
-// startPolling continuously reads messages from a Redis stream and dispatches them.
-func (sb *RedisStreamsAdapterBuilder) startPolling(ctx context.Context, client rds.UniversalClient, streamName string, options RedisStreamsAdapterOptionsInterface) {
-	readArgs := &rds.XReadArgs{
-		Streams: []string{streamName},
-		ID:      "$",
-		Count:   options.ReadCount(),
-		Block:   utils.FromMilliseconds(options.BlockTimeInMs()),
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		response, err := client.XRead(ctx, readArgs).Result()
-
-		if err != nil {
-			if errors.Is(err, rds.Nil) || errors.Is(err, context.Canceled) {
-				continue
-			}
-			redisStreamsLog.Debug("error reading from stream: %s", err.Error())
-			time.Sleep(time.Second)
-			continue
-		}
-
-		if len(response) == 0 {
-			continue
-		}
-
-		// Process each message in the stream
-		for _, entry := range response[0].Messages {
-			redisStreamsLog.Debug("processing entry %s", entry.ID)
-
-			message := RawClusterMessage(entry.Values)
-			if nsp := message.Nsp(); nsp != "" {
-				if adapter, exists := sb.namespaceToAdapters.Load(nsp); exists {
-					if err := adapter.OnRawMessage(message, entry.ID); err != nil {
-						redisStreamsLog.Debug("error processing message: %s", err.Error())
-					}
-				}
-			}
-
-			readArgs.ID = entry.ID
-		}
-	}
 }
 
 // New creates a new Redis Streams adapter for the given namespace.
 // This method implements the socket.AdapterBuilder interface.
 func (sb *RedisStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
-	name := nsp.Name()
-	options := DefaultRedisStreamsAdapterOptions().Assign(sb.Opts)
+	return NewRedisStreamsAdapter(nsp, sb.Redis, sb.Opts)
+}
+
+// redisStreamsAdapter implements the RedisStreamsAdapter interface using Redis Streams
+// with PUB/SUB for ephemeral messages, matching the Node.js implementation.
+type redisStreamsAdapter struct {
+	adapter.ClusterAdapter
+
+	redisClient *redis.RedisClient
+	opts        *RedisStreamsAdapterOptions
+	cleanupFunc atomic.Pointer[types.Callable]
+
+	streamName    string // The specific stream for this namespace
+	publicChannel string // PUB/SUB channel for ephemeral messages
+
+	pubSub             *redisPubSub
+	pubSubSubscription *redisSubscription
+	shardedPubSub      *shardedPubSub
+	subscription       *shardedSubscription
+	streamPoller       *redisStreamsPoller
+	server             *socket.Server
+
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+}
+
+// MakeRedisStreamsAdapter creates a new uninitialized redisStreamsAdapter.
+// Call Construct() to complete initialization before use.
+func MakeRedisStreamsAdapter() RedisStreamsAdapter {
+	a := &redisStreamsAdapter{
+		ClusterAdapter: adapter.MakeClusterAdapter(),
+		opts:           DefaultRedisStreamsAdapterOptions(),
+	}
+
+	a.Prototype(a)
+
+	return a
+}
+
+// NewRedisStreamsAdapter creates and initializes a new Redis Streams adapter.
+func NewRedisStreamsAdapter(nsp socket.Namespace, client *redis.RedisClient, opts any) RedisStreamsAdapter {
+	options := DefaultRedisStreamsAdapterOptions()
+	if provided, ok := opts.(RedisStreamsAdapterOptionsInterface); ok {
+		options.Assign(provided)
+	}
 	if options.GetRawStreamName() == nil {
 		options.SetStreamName(DefaultStreamName)
 	}
@@ -168,88 +160,16 @@ func (sb *RedisStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 		options.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
 	}
 	if options.GetRawHeartbeatInterval() == nil {
-		options.SetHeartbeatInterval(5_000 * time.Millisecond)
+		options.SetHeartbeatInterval(5 * time.Second)
 	}
 	if options.GetRawHeartbeatTimeout() == nil {
 		options.SetHeartbeatTimeout(10_000)
 	}
 
-	adapterInstance := NewRedisStreamsAdapter(nsp, sb.Redis, options)
-
-	sb.mu.Lock()
-	sb.namespaceToAdapters.Store(name, adapterInstance)
-	if sb.cancel == nil {
-		ctx, cancel := context.WithCancel(sb.Redis.Context)
-		sb.cancel = cancel
-		if streamCount := options.StreamCount(); streamCount <= 1 {
-			go sb.startPolling(ctx, sb.Redis.Sub(), options.StreamName(), options)
-		} else {
-			for i := range streamCount {
-				streamName := options.StreamName() + "-" + strconv.Itoa(i)
-				go sb.startPolling(ctx, sb.Redis.Sub(), streamName, options)
-			}
-		}
-	}
-	sb.mu.Unlock()
-
-	// Register cleanup callback
-	adapterInstance.Cleanup(func() {
-		sb.mu.Lock()
-		defer sb.mu.Unlock()
-
-		if !sb.namespaceToAdapters.CompareAndDelete(name, adapterInstance) || sb.namespaceToAdapters.Len() != 0 {
-			return
-		}
-
-		if sb.cancel != nil {
-			sb.cancel()
-		}
-		sb.cancel = nil
-	})
-
-	return adapterInstance
-}
-
-// redisStreamsAdapter implements the RedisStreamsAdapter interface using Redis Streams
-// with PUB/SUB for ephemeral messages, matching the Node.js implementation.
-type redisStreamsAdapter struct {
-	adapter.ClusterAdapter
-
-	redisClient *redis.RedisClient
-	opts        *RedisStreamsAdapterOptions
-	cleanupFunc atomic.Pointer[types.Callable]
-
-	streamName    string // The specific stream for this namespace
-	publicChannel string // PUB/SUB channel for ephemeral messages
-
-	pubsub        *rds.PubSub // public and, in classic mode, private subscription
-	privatePubSub *rds.PubSub // private subscription in sharded mode
-
-	ctx    context.Context
-	cancel context.CancelFunc
-}
-
-// MakeRedisStreamsAdapter creates a new uninitialized redisStreamsAdapter.
-// Call Construct() to complete initialization before use.
-func MakeRedisStreamsAdapter() RedisStreamsAdapter {
-	a := &redisStreamsAdapter{
-		ClusterAdapter: adapter.MakeClusterAdapter(),
-		opts:           DefaultRedisStreamsAdapterOptions(),
-	}
-
-	a.Prototype(a)
-
-	return a
-}
-
-// NewRedisStreamsAdapter creates and initializes a new Redis Streams adapter.
-func NewRedisStreamsAdapter(nsp socket.Namespace, client *redis.RedisClient, opts any) RedisStreamsAdapter {
 	a := MakeRedisStreamsAdapter()
-
 	a.SetRedis(client)
-	a.SetOpts(opts)
+	a.SetOpts(options)
 	a.Construct(nsp)
-
 	return a
 }
 
@@ -270,7 +190,8 @@ func (r *redisStreamsAdapter) SetOpts(opts any) {
 func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	r.ClusterAdapter.Construct(nsp)
 
-	r.ctx, r.cancel = context.WithCancel(r.redisClient.Context)
+	r.ctx, r.cancel = context.WithCancel(r.redisClient.Context())
+	r.server = nsp.Server()
 
 	// Each namespace is routed to a specific stream to ensure ordering
 	r.streamName = computeStreamName(nsp.Name(), r.opts)
@@ -281,36 +202,30 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 
 	// Subscribe to both public and private channels for PUB/SUB messages
 	if r.opts.UseShardedPubSub() {
-		r.pubsub = r.redisClient.Sub().SSubscribe(r.ctx, r.publicChannel)
-		r.privatePubSub = r.redisClient.Sub().SSubscribe(r.ctx, privateChannel)
-		go r.handlePubSubMessages(r.privatePubSub)
+		r.shardedPubSub = acquireShardedPubSub(r.server, r.redisClient)
+		r.subscription = r.shardedPubSub.newSubscription(r.onPubSubMessage)
+		r.subscription.Subscribe(r.publicChannel)
+		r.subscription.Subscribe(privateChannel)
+		_ = r.shardedPubSub.flush(r.ctx)
 	} else {
-		r.pubsub = r.redisClient.Sub().Subscribe(r.ctx, r.publicChannel, privateChannel)
+		r.pubSub = acquireRedisPubSub(r.server, r.redisClient)
+		r.pubSubSubscription = r.pubSub.newSubscription(r.onPubSubMessage)
+		r.pubSubSubscription.Subscribe(r.publicChannel, privateChannel)
+		_ = r.pubSub.flush(r.ctx)
 	}
-	go r.handlePubSubMessages(r.pubsub)
+	r.streamPoller = acquireRedisStreamsPoller(r)
 }
 
-// handlePubSubMessages listens for PUB/SUB messages (ephemeral messages and responses).
-func (r *redisStreamsAdapter) handlePubSubMessages(pubsub *rds.PubSub) {
-	defer func() { _ = pubsub.Close() }()
-	for {
-		msg, err := pubsub.ReceiveMessage(r.ctx)
-		if err != nil {
-			if errors.Is(err, rds.ErrClosed) || r.ctx.Err() != nil {
-				return
-			}
-			redisStreamsLog.Debug("error receiving PUB/SUB message: %s", err.Error())
-			continue
-		}
-
-		message, err := redis.UnmarshalClusterMessage([]byte(msg.Payload))
-		if err != nil {
-			redisStreamsLog.Debug("invalid PUB/SUB message format: %s", err.Error())
-			continue
-		}
-
-		r.OnMessage(message, "")
+func (r *redisStreamsAdapter) onPubSubMessage(payload []byte, _ string) {
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return
 	}
+	message, err := redis.UnmarshalClusterMessage(payload)
+	if err != nil {
+		redisStreamsLog.Debug("invalid PUB/SUB message format: %s", err.Error())
+		return
+	}
+	r.OnMessage(message, "")
 }
 
 // DoPublish publishes a cluster message.
@@ -326,9 +241,9 @@ func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 			return "", fmt.Errorf("failed to encode ephemeral message: %w", err)
 		}
 		if r.opts.UseShardedPubSub() {
-			return "", r.redisClient.Client.SPublish(r.ctx, r.publicChannel, payload).Err()
+			return "", r.redisClient.Client().SPublish(r.ctx, r.publicChannel, payload).Err()
 		}
-		return "", r.redisClient.Client.Publish(r.ctx, r.publicChannel, payload).Err()
+		return "", r.redisClient.Client().Publish(r.ctx, r.publicChannel, payload).Err()
 	}
 
 	// Durable messages are sent via Redis Streams
@@ -354,15 +269,15 @@ func (r *redisStreamsAdapter) DoPublishResponse(requesterUid adapter.ServerId, r
 		return fmt.Errorf("failed to encode response: %w", err)
 	}
 	if r.opts.UseShardedPubSub() {
-		return r.redisClient.Client.SPublish(r.ctx, responseChannel, payload).Err()
+		return r.redisClient.Client().SPublish(r.ctx, responseChannel, payload).Err()
 	}
-	return r.redisClient.Client.Publish(r.ctx, responseChannel, payload).Err()
+	return r.redisClient.Client().Publish(r.ctx, responseChannel, payload).Err()
 }
 
 // ServerCount returns the number of servers connected to the cluster,
 // determined by the number of PUB/SUB subscribers on the public channel.
 func (r *redisStreamsAdapter) ServerCount() (int64, error) {
-	return pubSubNumSub(r.ctx, r.redisClient.Client, r.opts.UseShardedPubSub(), r.publicChannel)
+	return pubSubNumSub(r.ctx, r.redisClient.Sub(), r.opts.UseShardedPubSub(), r.publicChannel)
 }
 
 // Cleanup registers a cleanup callback to be called when the adapter is closed.
@@ -376,20 +291,34 @@ func (r *redisStreamsAdapter) Cleanup(cleanup func()) {
 
 // Close releases resources and invokes the registered cleanup callback.
 func (r *redisStreamsAdapter) Close() {
-	defer r.cancel()
-
-	if r.pubsub != nil {
-		_ = r.pubsub.Close()
+	var cleanup func()
+	r.closeOnce.Do(func() {
+		if r.cancel != nil {
+			r.cancel()
+		}
+		if r.pubSubSubscription != nil {
+			r.pubSubSubscription.Close()
+		}
+		if r.pubSub != nil {
+			releaseRedisPubSub(r.server, r.redisClient, r.pubSub)
+		}
+		if r.subscription != nil {
+			r.subscription.Close()
+		}
+		if r.shardedPubSub != nil {
+			releaseShardedPubSub(r.server, r.redisClient, r.shardedPubSub)
+		}
+		if r.streamPoller != nil {
+			releaseRedisStreamsPoller(r.streamPoller, r)
+		}
+		if callback := r.cleanupFunc.Swap(nil); callback != nil {
+			cleanup = *callback
+		}
+		r.ClusterAdapter.Close()
+	})
+	if cleanup != nil {
+		cleanup()
 	}
-	if r.privatePubSub != nil {
-		_ = r.privatePubSub.Close()
-	}
-
-	if cleanup := r.cleanupFunc.Swap(nil); cleanup != nil {
-		(*cleanup)()
-	}
-
-	r.ClusterAdapter.Close()
 }
 
 // OnRawMessage processes a raw message from the Redis stream.
@@ -419,13 +348,27 @@ func (r *redisStreamsAdapter) PersistSession(session *socket.SessionToPersist) {
 
 	ttl := utils.FromMilliseconds(r.Nsp().Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration())
 
-	if err := r.redisClient.Client.Set(
-		r.redisClient.Context,
+	if err := r.redisClient.Client().Set(
+		r.redisClient.Context(),
 		sessionKey,
 		base64.StdEncoding.EncodeToString(data),
 		ttl,
 	).Err(); err != nil {
 		r.redisClient.Emit("error", err)
+	}
+}
+
+// recoveryClient returns the write-side owner of this adapter's stream. Recovery
+// reads must not use SubClient: it may be a replica and lag behind the XADD that
+// produced the client's offset.
+func (r *redisStreamsAdapter) recoveryClient() (rds.Cmdable, error) {
+	switch client := r.redisClient.Client().(type) {
+	case *rds.ClusterClient:
+		return client.MasterForKey(r.redisClient.Context(), r.streamName)
+	default:
+		// Opaque UniversalClient implementations cannot expose their topology;
+		// their write client must provide primary-consistent stream reads.
+		return client, nil
 	}
 }
 
@@ -440,13 +383,18 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 		return nil, errors.New("invalid offset format")
 	}
 
+	streamClient, err := r.recoveryClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve stream owner: %w", err)
+	}
+
 	sessionKey := r.opts.SessionKeyPrefix() + string(pid)
 
 	// Use MULTI GET DEL for compatibility with Redis versions before 6.2.
-	pipeline := r.redisClient.Client.TxPipeline()
-	sessionCmd := pipeline.Get(r.redisClient.Context, sessionKey)
-	pipeline.Del(r.redisClient.Context, sessionKey)
-	_, err := pipeline.Exec(r.redisClient.Context)
+	pipeline := r.redisClient.Client().TxPipeline()
+	sessionCmd := pipeline.Get(r.redisClient.Context(), sessionKey)
+	pipeline.Del(r.redisClient.Context(), sessionKey)
+	_, err = pipeline.Exec(r.redisClient.Context())
 	if err != nil && !errors.Is(err, rds.Nil) {
 		return nil, fmt.Errorf("failed to retrieve session: %w", err)
 	}
@@ -457,7 +405,7 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	}
 
 	// Verify the offset exists in the stream
-	offsets, err := r.redisClient.Sub().XRange(r.redisClient.Context, r.streamName, offset, offset).Result()
+	offsets, err := streamClient.XRange(r.redisClient.Context(), r.streamName, offset, offset).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify offset: %w", err)
 	}
@@ -480,7 +428,7 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	redisStreamsLog.Debug("found session: %+v", session)
 
 	// Collect missed packets from the stream
-	if err := r.collectMissedPackets(session, offset); err != nil {
+	if err := r.collectMissedPackets(streamClient, session, offset); err != nil {
 		return nil, err
 	}
 
@@ -489,15 +437,16 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 
 // collectMissedPackets iterates through the Redis stream to find packets
 // that the session missed during disconnection.
-func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offset string) error {
+func (r *redisStreamsAdapter) collectMissedPackets(client rds.Cmdable, session *socket.Session, offset string) error {
 	broadcastTypeStr := strconv.Itoa(int(adapter.BROADCAST))
 
 	for range restoreSessionMaxXRangeCalls {
-		entries, err := r.redisClient.Sub().XRange(
-			r.redisClient.Context,
+		entries, err := client.XRangeN(
+			r.redisClient.Context(),
 			r.streamName,
 			r.nextOffset(offset),
 			"+",
+			restoreSessionPageSize,
 		).Result()
 
 		if err != nil {
@@ -517,15 +466,21 @@ func (r *redisStreamsAdapter) collectMissedPackets(session *socket.Session, offs
 					return err
 				}
 				data, ok := message.Data.(*adapter.BroadcastMessage)
-				if !ok || data.Packet == nil {
+				if !ok || data.Packet == nil || data.Opts == nil {
 					return errors.New("invalid broadcast message")
 				}
-				if r.shouldIncludePacket(session.Rooms, data.Opts) {
+				recoverable := data.Packet.Type == parser.EVENT && data.Packet.Id == nil &&
+					(data.Opts.Flags == nil || !data.Opts.Flags.Volatile)
+				if recoverable && r.shouldIncludePacket(session.Rooms, data.Opts) {
 					packetData := slices.AppendCopy(utils.TryCast[[]any](data.Packet.Data), entry.ID)
 					session.MissedPackets = append(session.MissedPackets, packetData)
 				}
 			}
 			offset = entry.ID
+		}
+
+		if len(entries) < restoreSessionPageSize {
+			break
 		}
 	}
 

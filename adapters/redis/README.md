@@ -21,6 +21,20 @@ go get github.com/zishang520/socket.io/adapters/redis/v3
 - Custom Redis configuration
 - Event emission across servers
 
+## Supported Redis deployments
+
+The adapter supports standalone Redis, Redis Sentinel, and Redis Cluster through
+go-redis `*redis.Client` and `*redis.ClusterClient` instances.
+
+go-redis `*redis.Ring` is not supported. Ring is client-side sharding across
+independent Redis servers and does not provide the Pub/Sub routing semantics
+required by the adapter.
+
+Create clients with `NewRedisClient` or `NewRedisClientWithSub`. Both
+constructors return an error for invalid configurations, and the resulting
+client configuration is immutable. Use `Client()`, `Sub()`, and `Context()` to
+access it.
+
 ## How to use
 
 Basic usage example:
@@ -43,12 +57,15 @@ import (
 
 func main() {
     // Initialize Redis client
-    redisClient := redis.NewRedisClient(context.TODO(), rds.NewClient(&rds.Options{
+    redisClient, err := redis.NewRedisClient(context.TODO(), rds.NewClient(&rds.Options{
         Addr:     "127.0.0.1:6379",
         Username: "",
         Password: "",
         DB:       0,
     }))
+    if err != nil {
+        panic(err)
+    }
 
     // Redis error handling
     redisClient.On("error", func(a ...any) {

@@ -48,8 +48,12 @@ func TestXAddAlwaysIncludesMaxLen(t *testing.T) {
 	client := rds.NewClient(&rds.Options{Addr: "unused"})
 	hook := new(xaddHook)
 	client.AddHook(hook)
+	redisClient, err := NewRedisClient(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	offset, err := XAdd(NewRedisClient(context.Background(), client), "stream", RawClusterMessage{
+	offset, err := XAdd(redisClient, "stream", RawClusterMessage{
 		"uid":  "emitter",
 		"nsp":  "/",
 		"type": "3",

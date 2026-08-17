@@ -138,7 +138,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		channel += string(opts.Rooms[0]) + "#"
 	}
 	emitterLog.Debug("publishing message to channel %s", channel)
-	return b.redisClient.Client.Publish(b.redisClient.Context, channel, payload).Err()
+	return b.redisClient.Client().Publish(b.redisClient.Context(), channel, payload).Err()
 }
 
 func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
@@ -192,5 +192,5 @@ func (b *BroadcastOperator) publishRequest(request *redis.RedisRequest) error {
 	if err != nil {
 		return err
 	}
-	return b.redisClient.Client.Publish(b.redisClient.Context, b.broadcastOptions.RequestChannel, payload).Err()
+	return b.redisClient.Client().Publish(b.redisClient.Context(), b.broadcastOptions.RequestChannel, payload).Err()
 }

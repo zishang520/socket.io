@@ -377,7 +377,7 @@ func XAdd(client *RedisClient, stream string, message RawClusterMessage, maxLen 
 			args = append(args, field, value)
 		}
 	}
-	return client.Client.Do(client.Context, args...).Text()
+	return client.Client().Do(client.Context(), args...).Text()
 }
 
 func marshalSocketResponses(sockets []adapter.SocketResponse, jsonFormat bool) ([]adapter.SocketResponse, bool) {
