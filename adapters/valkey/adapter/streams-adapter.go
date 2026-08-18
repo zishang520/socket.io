@@ -147,7 +147,7 @@ func (sb *ValkeyStreamsAdapterBuilder) New(nsp socket.Namespace) socket.Adapter 
 	sb.namespaceToAdapters.Store(nsp.Name(), adapterInstance)
 
 	if sb.polling.CompareAndSwap(false, true) {
-		ctx, cancelFunc := context.WithCancel(sb.Valkey.Context)
+		ctx, cancelFunc := context.WithCancel(sb.Valkey.Context())
 		sb.cancelFunc.Store(cancelFunc)
 
 		if options.StreamCount() <= 1 {
@@ -219,7 +219,7 @@ func (r *valkeyStreamsAdapter) SetOpts(opts any) {
 func (r *valkeyStreamsAdapter) Construct(nsp socket.Namespace) {
 	r.ClusterAdapter.Construct(nsp)
 
-	r.ctx, r.cancel = context.WithCancel(r.valkeyClient.Context)
+	r.ctx, r.cancel = context.WithCancel(r.valkeyClient.Context())
 
 	// Each namespace is routed to a specific stream to ensure ordering
 	r.streamName = computeStreamName(nsp.Name(), r.opts)
@@ -286,7 +286,7 @@ func (r *valkeyStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapt
 	// Durable messages are sent via Valkey Streams
 	encoded := r.encode(message)
 	entryID, err := r.valkeyClient.XAdd(
-		r.valkeyClient.Context,
+		r.valkeyClient.Context(),
 		r.streamName,
 		r.opts.MaxLen(),
 		encoded,
@@ -475,7 +475,7 @@ func (r *valkeyStreamsAdapter) PersistSession(session *socket.SessionToPersist) 
 	ttl := time.Duration(r.Nsp().Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration()) * time.Millisecond
 
 	if err := r.valkeyClient.Set(
-		r.valkeyClient.Context,
+		r.valkeyClient.Context(),
 		sessionKey,
 		base64.StdEncoding.EncodeToString(data),
 		ttl,
@@ -494,7 +494,7 @@ func (r *valkeyStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offse
 
 	sessionKey := r.opts.SessionKeyPrefix() + string(pid)
 
-	rawSession, err := r.valkeyClient.GetDel(r.valkeyClient.Context, sessionKey)
+	rawSession, err := r.valkeyClient.GetDel(r.valkeyClient.Context(), sessionKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve session: %w", err)
 	}
@@ -502,7 +502,7 @@ func (r *valkeyStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offse
 		return nil, errors.New("session not found")
 	}
 
-	offsets, err := r.valkeyClient.XRange(r.valkeyClient.Context, r.streamName, offset, offset)
+	offsets, err := r.valkeyClient.XRange(r.valkeyClient.Context(), r.streamName, offset, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify offset: %w", err)
 	}
@@ -531,7 +531,7 @@ func (r *valkeyStreamsAdapter) collectMissedPackets(session *socket.Session, off
 
 	for range restoreSessionMaxXRangeCalls {
 		entries, err := r.valkeyClient.XRange(
-			r.valkeyClient.Context,
+			r.valkeyClient.Context(),
 			r.streamName,
 			r.nextOffset(offset),
 			"+",

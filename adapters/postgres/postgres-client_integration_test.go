@@ -41,7 +41,7 @@ func integrationClientWithMaxConns(t *testing.T, maxConns int32) (*PostgresClien
 		pool.Close()
 		t.Fatalf("PostgreSQL is unavailable: %v", err)
 	}
-	client := NewPostgresClient(context.Background(), pool)
+	client := mustNewPostgresClient(t, context.Background(), pool)
 	t.Cleanup(func() {
 		client.Close()
 		pool.Close()
@@ -52,11 +52,11 @@ func integrationClientWithMaxConns(t *testing.T, maxConns int32) (*PostgresClien
 func TestPostgresClientSingleConnectionPool(t *testing.T) {
 	client, _ := integrationClientWithMaxConns(t, 1)
 	channel := fmt.Sprintf("socket_io_go_single_%d", time.Now().UnixNano())
-	if err := client.Listen(client.Context, channel); err != nil {
+	if err := client.Listen(client.Context(), channel); err != nil {
 		t.Fatalf("Listen() failed: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(client.Context, 3*time.Second)
+	ctx, cancel := context.WithTimeout(client.Context(), 3*time.Second)
 	defer cancel()
 	if err := client.Notify(ctx, channel, "single"); err != nil {
 		t.Fatalf("Notify() with MaxConns=1 failed: %v", err)
@@ -106,7 +106,7 @@ func TestPostgresClientRepeatedListenWhileConnecting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := NewPostgresClient(context.Background(), pool)
+	client := mustNewPostgresClient(t, context.Background(), pool)
 	t.Cleanup(func() {
 		client.Close()
 		pool.Close()
@@ -114,7 +114,7 @@ func TestPostgresClientRepeatedListenWhileConnecting(t *testing.T) {
 
 	channel := fmt.Sprintf("socket_io_go_connecting_%d", time.Now().UnixNano())
 	client.listenerChannels.Add(channel)
-	ctx, cancel := context.WithTimeout(client.Context, 5*time.Second)
+	ctx, cancel := context.WithTimeout(client.Context(), 5*time.Second)
 	defer cancel()
 	waitResult := make(chan error, 1)
 	go func() {
@@ -163,14 +163,14 @@ func TestPostgresClientDynamicChannels(t *testing.T) {
 	client, _ := integrationClient(t)
 	channelA := fmt.Sprintf("socket_io_go_a_%d", time.Now().UnixNano())
 	channelB := fmt.Sprintf("socket_io_go_b_%d", time.Now().UnixNano())
-	if err := client.Listen(client.Context, channelA); err != nil {
+	if err := client.Listen(client.Context(), channelA); err != nil {
 		t.Fatalf("Listen(%q) failed: %v", channelA, err)
 	}
 
 	for i := range 20 {
 		result := make(chan error, 1)
 		go func() {
-			notification, err := client.WaitForNotification(client.Context)
+			notification, err := client.WaitForNotification(client.Context())
 			if err == nil && (notification == nil || notification.Channel != channelA) {
 				err = fmt.Errorf("unexpected notification: %#v", notification)
 			}
@@ -180,14 +180,14 @@ func TestPostgresClientDynamicChannels(t *testing.T) {
 
 		var err error
 		if i%2 == 0 {
-			err = client.Listen(client.Context, channelB)
+			err = client.Listen(client.Context(), channelB)
 		} else {
-			err = client.Unlisten(client.Context, channelB)
+			err = client.Unlisten(client.Context(), channelB)
 		}
 		if err != nil {
 			t.Fatalf("updating second channel failed: %v", err)
 		}
-		if err := client.Notify(client.Context, channelA, fmt.Sprintf("%d", i)); err != nil {
+		if err := client.Notify(client.Context(), channelA, fmt.Sprintf("%d", i)); err != nil {
 			t.Fatalf("Notify() failed: %v", err)
 		}
 
@@ -205,10 +205,10 @@ func TestPostgresClientDynamicChannels(t *testing.T) {
 func TestPostgresClientLastUnlistenReleasesListener(t *testing.T) {
 	client, _ := integrationClient(t)
 	channel := fmt.Sprintf("socket_io_go_unlisten_%d", time.Now().UnixNano())
-	if err := client.Listen(client.Context, channel); err != nil {
+	if err := client.Listen(client.Context(), channel); err != nil {
 		t.Fatalf("Listen() failed: %v", err)
 	}
-	if err := client.Unlisten(client.Context, channel); err != nil {
+	if err := client.Unlisten(client.Context(), channel); err != nil {
 		t.Fatalf("Unlisten() failed: %v", err)
 	}
 
@@ -223,13 +223,13 @@ func TestPostgresClientLastUnlistenReleasesListener(t *testing.T) {
 func TestPostgresClientConcurrentClose(t *testing.T) {
 	client, _ := integrationClient(t)
 	channel := fmt.Sprintf("socket_io_go_close_%d", time.Now().UnixNano())
-	if err := client.Listen(client.Context, channel); err != nil {
+	if err := client.Listen(client.Context(), channel); err != nil {
 		t.Fatalf("Listen() failed: %v", err)
 	}
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := client.WaitForNotification(client.Context)
+		_, err := client.WaitForNotification(client.Context())
 		result <- err
 	}()
 	waitForListenerWait(t, client)
@@ -248,11 +248,11 @@ func TestPostgresClientConcurrentClose(t *testing.T) {
 func TestPostgresClientWaitTimeoutKeepsListener(t *testing.T) {
 	client, _ := integrationClient(t)
 	channel := fmt.Sprintf("socket_io_go_timeout_%d", time.Now().UnixNano())
-	if err := client.Listen(client.Context, channel); err != nil {
+	if err := client.Listen(client.Context(), channel); err != nil {
 		t.Fatalf("Listen() failed: %v", err)
 	}
 
-	waitCtx, cancel := context.WithTimeout(client.Context, time.Millisecond)
+	waitCtx, cancel := context.WithTimeout(client.Context(), time.Millisecond)
 	defer cancel()
 	if _, err := client.WaitForNotification(waitCtx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("WaitForNotification() returned %v", err)
@@ -265,10 +265,10 @@ func TestPostgresClientWaitTimeoutKeepsListener(t *testing.T) {
 		t.Fatal("a caller timeout discarded the listener connection")
 	}
 
-	if err := client.Notify(client.Context, channel, "after-timeout"); err != nil {
+	if err := client.Notify(client.Context(), channel, "after-timeout"); err != nil {
 		t.Fatal(err)
 	}
-	waitCtx, cancel = context.WithTimeout(client.Context, 3*time.Second)
+	waitCtx, cancel = context.WithTimeout(client.Context(), 3*time.Second)
 	defer cancel()
 	notification, err := client.WaitForNotification(waitCtx)
 	if err != nil {
@@ -299,29 +299,29 @@ func waitForListenerWait(t *testing.T, client *PostgresClient) {
 func TestPostgresClientReconnectRestoresChannels(t *testing.T) {
 	client, pool := integrationClient(t)
 	channel := fmt.Sprintf("socket_io_go_reconnect_%d", time.Now().UnixNano())
-	if err := client.Listen(client.Context, channel); err != nil {
+	if err := client.Listen(client.Context(), channel); err != nil {
 		t.Fatalf("Listen() failed: %v", err)
 	}
 
 	client.listenerMu.Lock()
 	pid := client.listenerConn.PgConn().PID()
 	client.listenerMu.Unlock()
-	if _, err := pool.Exec(client.Context, "SELECT pg_terminate_backend($1)", pid); err != nil {
+	if _, err := pool.Exec(client.Context(), "SELECT pg_terminate_backend($1)", pid); err != nil {
 		t.Fatalf("terminating listener failed: %v", err)
 	}
 
-	waitCtx, cancel := context.WithTimeout(client.Context, 3*time.Second)
+	waitCtx, cancel := context.WithTimeout(client.Context(), 3*time.Second)
 	defer cancel()
 	if _, err := client.WaitForNotification(waitCtx); err == nil {
 		t.Fatal("expected the terminated listener to return an error")
 	}
-	if err := client.Listen(client.Context, channel); err != nil {
+	if err := client.Listen(client.Context(), channel); err != nil {
 		t.Fatalf("repeated Listen() did not reconnect: %v", err)
 	}
 
 	result := make(chan error, 1)
 	go func() {
-		notification, err := client.WaitForNotification(client.Context)
+		notification, err := client.WaitForNotification(client.Context())
 		if err == nil && (notification == nil || notification.Channel != channel) {
 			err = fmt.Errorf("unexpected notification: %#v", notification)
 		}
@@ -342,7 +342,7 @@ func TestPostgresClientReconnectRestoresChannels(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	if err := client.Notify(client.Context, channel, "restored"); err != nil {
+	if err := client.Notify(client.Context(), channel, "restored"); err != nil {
 		t.Fatalf("Notify() failed: %v", err)
 	}
 	select {

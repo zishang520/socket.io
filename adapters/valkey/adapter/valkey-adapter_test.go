@@ -57,7 +57,11 @@ func canceledValkeyClient(t *testing.T) (*valkey.ValkeyClient, context.Context) 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	return valkey.NewValkeyClient(ctx, client), ctx
+	valkeyClient, err := valkey.NewValkeyClient(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return valkeyClient, ctx
 }
 
 func TestServerCountReturnsValkeyErrors(t *testing.T) {

@@ -26,6 +26,7 @@ go get github.com/zishang520/socket.io/adapters/valkey/v3
 ```go
 import (
     "context"
+    "log"
 
     vk "github.com/valkey-io/valkey-go"
     io "github.com/zishang520/socket.io/servers/socket/v3"
@@ -40,7 +41,10 @@ if err != nil {
     log.Fatal(err)
 }
 
-valkeyClient := valkey.NewValkeyClient(context.Background(), client)
+valkeyClient, err := valkey.NewValkeyClient(context.Background(), client)
+if err != nil {
+    log.Fatal(err)
+}
 
 server := io.NewServer(nil, nil)
 server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
@@ -67,7 +71,10 @@ an existing connection pool instead of creating a second one:
 // existing client created elsewhere in your application
 existingClient := myAppValkeyClient
 
-valkeyClient := valkey.NewValkeyClient(ctx, existingClient)
+valkeyClient, err := valkey.NewValkeyClient(ctx, existingClient)
+if err != nil {
+    log.Fatal(err)
+}
 server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
 ```
 
@@ -79,14 +86,21 @@ Socket.IO server:
 ```go
 import (
     "context"
+    "log"
 
     vk "github.com/valkey-io/valkey-go"
     valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
     "github.com/zishang520/socket.io/adapters/valkey/v3/emitter"
 )
 
-client, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"localhost:6379"}})
-valkeyClient := valkey.NewValkeyClient(context.Background(), client)
+client, err := vk.NewClient(vk.ClientOption{InitAddress: []string{"localhost:6379"}})
+if err != nil {
+    log.Fatal(err)
+}
+valkeyClient, err := valkey.NewValkeyClient(context.Background(), client)
+if err != nil {
+    log.Fatal(err)
+}
 
 e := emitter.NewEmitter(valkeyClient, nil)
 e.To("room1").Emit("hello", "world")

@@ -6,12 +6,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/zishang520/socket.io/adapters/postgres/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
 func TestPostgresAdapterBuilderStartListeningStopsWhenClientClosed(t *testing.T) {
-	client := postgres.NewPostgresClient(context.Background(), nil)
+	pool, err := pgxpool.New(t.Context(), "postgres://localhost/socket_io_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	client := mustNewPostgresClient(t, context.Background(), pool)
 	client.Close()
 
 	options := DefaultPostgresAdapterOptions()
@@ -48,7 +52,7 @@ func TestPostgresAdapterBuilderStopsCleanupWithListener(t *testing.T) {
 	}
 	pool.Close()
 
-	client := postgres.NewPostgresClient(t.Context(), pool)
+	client := mustNewPostgresClient(t, t.Context(), pool)
 	client.Close()
 	options := DefaultPostgresAdapterOptions()
 	options.SetCleanupInterval(1)
@@ -68,7 +72,12 @@ func TestPostgresAdapterBuilderStopsCleanupWithListener(t *testing.T) {
 }
 
 func TestPostgresAdapterBuilderSerializesListenerGenerations(t *testing.T) {
-	client := postgres.NewPostgresClient(context.Background(), nil)
+	pool, err := pgxpool.New(t.Context(), "postgres://localhost/socket_io_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	client := mustNewPostgresClient(t, context.Background(), pool)
 	client.Close()
 	previousDone := make(chan struct{})
 	builder := &PostgresAdapterBuilder{

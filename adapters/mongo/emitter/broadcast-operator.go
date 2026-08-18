@@ -179,7 +179,7 @@ func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 
 	emitterLog.Debug("publishing message to collection")
 
-	_, err := b.mongoClient.Collection.InsertOne(b.mongoClient.Context, event)
+	_, err := b.mongoClient.Collection().InsertOne(b.mongoClient.Context(), event)
 	return err
 }
 

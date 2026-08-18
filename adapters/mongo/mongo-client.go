@@ -5,10 +5,14 @@ package mongo
 
 import (
 	"context"
+	"errors"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
+
+// ErrMongoCollectionRequired is returned when no MongoDB collection is provided.
+var ErrMongoCollectionRequired = errors.New("mongo: collection is required")
 
 // MongoClient wraps a mongo.Collection and provides context management
 // and event emitting capabilities for the Socket.IO MongoDB adapter.
@@ -17,17 +21,24 @@ import (
 // Documents are inserted for publishing and Change Streams are used for subscribing.
 //
 // The client supports error event emission, which allows higher-level components
-// to handle MongoDB-related errors gracefully.
+// to handle MongoDB-related errors gracefully. Its collection and context are
+// immutable after construction. The zero value is not usable; create clients
+// with NewMongoClient.
 type MongoClient struct {
 	types.EventEmitter
 
-	// Collection is the MongoDB collection used for pub/sub communication.
-	// All adapter events are stored as documents in this collection.
-	Collection *mongo.Collection
+	collection *mongo.Collection
+	ctx        context.Context
+}
 
-	// Context is the context used for MongoDB operations.
-	// This context controls the lifecycle of subscriptions and operations.
-	Context context.Context
+// Collection returns the MongoDB collection used for pub/sub communication.
+func (m *MongoClient) Collection() *mongo.Collection {
+	return m.collection
+}
+
+// Context returns the context controlling MongoDB operations and subscriptions.
+func (m *MongoClient) Context() context.Context {
+	return m.ctx
 }
 
 // NewMongoClient creates a new MongoClient with the given context and MongoDB collection.
@@ -39,21 +50,25 @@ type MongoClient struct {
 //     The collection should be either a capped collection or have a TTL index.
 //
 // Returns:
-//   - A pointer to the initialized MongoClient instance.
+//   - A pointer to the initialized MongoClient instance, or an error when the
+//     configuration is invalid.
 //
 // Example:
 //
 //	client, _ := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
 //	collection := client.Database("mydb").Collection("socket.io-adapter-events")
-//	mongoClient := NewMongoClient(context.Background(), collection)
-func NewMongoClient(ctx context.Context, collection *mongo.Collection) *MongoClient {
+//	mongoClient, err := NewMongoClient(context.Background(), collection)
+func NewMongoClient(ctx context.Context, collection *mongo.Collection) (*MongoClient, error) {
+	if collection == nil {
+		return nil, ErrMongoCollectionRequired
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	return &MongoClient{
 		EventEmitter: types.NewEventEmitter(),
-		Collection:   collection,
-		Context:      ctx,
-	}
+		collection:   collection,
+		ctx:          ctx,
+	}, nil
 }

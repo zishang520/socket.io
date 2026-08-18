@@ -149,7 +149,7 @@ func (e *Emitter) ServerSideEmit(args ...any) error {
 		if err != nil {
 			return err
 		}
-		return e.valkeyClient.SPublish(e.valkeyClient.Context, e.broadcastOptions.BroadcastChannel, msg)
+		return e.valkeyClient.SPublish(e.valkeyClient.Context(), e.broadcastOptions.BroadcastChannel, msg)
 	}
 
 	request, err := json.Marshal(&Request{
@@ -161,7 +161,7 @@ func (e *Emitter) ServerSideEmit(args ...any) error {
 		return err
 	}
 
-	return e.valkeyClient.Publish(e.valkeyClient.Context, e.broadcastOptions.RequestChannel, request)
+	return e.valkeyClient.Publish(e.valkeyClient.Context(), e.broadcastOptions.RequestChannel, request)
 }
 
 func (e *Emitter) newBroadcastOperator() BroadcastOperatorInterface {

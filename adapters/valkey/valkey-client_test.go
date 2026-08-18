@@ -2,6 +2,7 @@ package valkey_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,6 +11,10 @@ import (
 	valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
+
+type embeddedValkeyClient struct {
+	vk.Client
+}
 
 // newMiniValkeyClient starts an in-memory Redis server (miniredis) and returns
 // a ValkeyClient connected to it. The server is cleaned up when the test ends.
@@ -24,7 +29,11 @@ func newMiniValkeyClient(t *testing.T) *valkey.ValkeyClient {
 		t.Fatalf("failed to connect to miniredis: %v", err)
 	}
 	t.Cleanup(func() { client.Close() })
-	return valkey.NewValkeyClient(context.Background(), client)
+	valkeyClient, err := valkey.NewValkeyClient(context.Background(), client)
+	if err != nil {
+		t.Fatalf("NewValkeyClient: %v", err)
+	}
+	return valkeyClient
 }
 
 // --- Constructor tests ---
@@ -34,9 +43,26 @@ func TestNewValkeyClient(t *testing.T) {
 	if vc == nil {
 		t.Fatal("expected non-nil ValkeyClient")
 	}
-	if vc.Client == nil {
-		t.Fatal("expected non-nil Client field")
+	if vc.Client() == nil {
+		t.Fatal("expected non-nil Client")
 	}
+}
+
+func TestNewValkeyClient_RequiresClient(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		client, err := valkey.NewValkeyClient(context.Background(), nil)
+		if client != nil || !errors.Is(err, valkey.ErrValkeyClientRequired) {
+			t.Fatalf("NewValkeyClient() = (%v, %v), want (nil, ErrValkeyClientRequired)", client, err)
+		}
+	})
+
+	t.Run("typed nil", func(t *testing.T) {
+		var rawClient *embeddedValkeyClient
+		client, err := valkey.NewValkeyClient(context.Background(), rawClient)
+		if client != nil || !errors.Is(err, valkey.ErrValkeyClientRequired) {
+			t.Fatalf("NewValkeyClient() = (%v, %v), want (nil, ErrValkeyClientRequired)", client, err)
+		}
+	})
 }
 
 func TestNewValkeyClient_NilContext(t *testing.T) {
@@ -51,8 +77,11 @@ func TestNewValkeyClient_NilContext(t *testing.T) {
 	t.Cleanup(func() { client.Close() })
 
 	//nolint:staticcheck
-	vc := valkey.NewValkeyClient(nil, client)
-	if vc.Context == nil {
+	vc, err := valkey.NewValkeyClient(nil, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vc.Context() == nil {
 		t.Fatal("expected non-nil Context when nil was passed")
 	}
 }
@@ -78,16 +107,16 @@ func TestNewValkeyClientWithSub(t *testing.T) {
 		}
 		t.Cleanup(func() { subClient.Close() })
 
-		vc := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+		vc, err := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+		if err != nil {
+			t.Fatal(err)
+		}
 
 		if vc == nil {
 			t.Fatal("expected non-nil ValkeyClient")
 		}
-		if vc.Client != pubClient {
+		if vc.Client() != pubClient {
 			t.Fatal("expected Client to be pubClient")
-		}
-		if vc.SubClient != subClient {
-			t.Fatal("expected SubClient to be subClient")
 		}
 		if vc.Sub() != subClient {
 			t.Fatal("Sub() should return SubClient when set")
@@ -115,9 +144,35 @@ func TestNewValkeyClientWithSub(t *testing.T) {
 		t.Cleanup(func() { subClient.Close() })
 
 		//nolint:staticcheck
-		vc := valkey.NewValkeyClientWithSub(nil, pubClient, subClient)
-		if vc.Context == nil {
+		vc, err := valkey.NewValkeyClientWithSub(nil, pubClient, subClient)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if vc.Context() == nil {
 			t.Fatal("expected non-nil Context when nil was passed")
+		}
+	})
+
+	t.Run("nil sub client uses primary", func(t *testing.T) {
+		primary := &embeddedValkeyClient{}
+		vc, err := valkey.NewValkeyClientWithSub(context.Background(), primary, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if vc.Client() != primary || vc.Sub() != primary {
+			t.Fatal("expected the primary client for reads and writes")
+		}
+	})
+
+	t.Run("typed nil sub client uses primary", func(t *testing.T) {
+		primary := &embeddedValkeyClient{}
+		var subClient *embeddedValkeyClient
+		vc, err := valkey.NewValkeyClientWithSub(context.Background(), primary, subClient)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if vc.Client() != primary || vc.Sub() != primary {
+			t.Fatal("expected the primary client for reads and writes")
 		}
 	})
 }
@@ -145,7 +200,10 @@ func TestValkeyClient_Sub(t *testing.T) {
 		}
 		t.Cleanup(func() { subClient.Close() })
 
-		vc := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+		vc, err := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if vc.Sub() != subClient {
 			t.Fatal("Sub() should return SubClient")
 		}
@@ -153,18 +211,15 @@ func TestValkeyClient_Sub(t *testing.T) {
 
 	t.Run("falls back to Client when SubClient is nil", func(t *testing.T) {
 		vc := newMiniValkeyClient(t)
-		if vc.Sub() != vc.Client {
+		if vc.Sub() != vc.Client() {
 			t.Fatal("Sub() should fall back to Client when SubClient is nil")
 		}
 	})
 
-	t.Run("backward compatibility with NewValkeyClient", func(t *testing.T) {
+	t.Run("NewValkeyClient uses the primary client", func(t *testing.T) {
 		vc := newMiniValkeyClient(t)
-		if vc.SubClient != nil {
-			t.Fatal("SubClient should be nil when using NewValkeyClient")
-		}
-		if vc.Sub() != vc.Client {
-			t.Fatal("Sub() should return Client when SubClient is nil")
+		if vc.Sub() != vc.Client() {
+			t.Fatal("Sub() should return Client")
 		}
 	})
 }
@@ -174,7 +229,7 @@ func TestValkeyClient_Sub(t *testing.T) {
 func TestValkeyPubSub_Close(t *testing.T) {
 	vc := newMiniValkeyClient(t)
 
-	pubsub := vc.Subscribe(vc.Context, "test-channel")
+	pubsub := vc.Subscribe(vc.Context(), "test-channel")
 	if closeErr := pubsub.Close(); closeErr != nil {
 		t.Fatalf("expected no error on Close, got %v", closeErr)
 	}
@@ -193,7 +248,7 @@ func TestValkeyPubSub_Close(t *testing.T) {
 
 func TestValkeyClient_PubSub(t *testing.T) {
 	vc := newMiniValkeyClient(t)
-	ctx := vc.Context
+	ctx := vc.Context()
 
 	channel := "sio:test:pubsub"
 	pubsub := vc.Subscribe(ctx, channel)
@@ -228,7 +283,7 @@ func TestValkeyClient_PubSub(t *testing.T) {
 
 func TestValkeyPubSub_Unsubscribe_PerChannel(t *testing.T) {
 	vc := newMiniValkeyClient(t)
-	ctx := vc.Context
+	ctx := vc.Context()
 
 	ch1 := "sio:test:unsub:ch1"
 	ch2 := "sio:test:unsub:ch2"
@@ -263,7 +318,7 @@ func TestValkeyPubSub_Unsubscribe_PerChannel(t *testing.T) {
 
 func TestValkeyPubSub_Unsubscribe_NoMessagesOnUnsubbed(t *testing.T) {
 	vc := newMiniValkeyClient(t)
-	ctx := vc.Context
+	ctx := vc.Context()
 
 	ch1 := "sio:test:unsub2:ch1"
 	ch2 := "sio:test:unsub2:ch2"
@@ -303,7 +358,7 @@ func TestValkeyPubSub_Unsubscribe_NoMessagesOnUnsubbed(t *testing.T) {
 
 func TestValkeyPubSub_PSubscribe_And_PUnsubscribe(t *testing.T) {
 	vc := newMiniValkeyClient(t)
-	ctx := vc.Context
+	ctx := vc.Context()
 
 	pubsub := vc.PSubscribe(ctx, "sio:test:punsub:*")
 	defer pubsub.Close() //nolint:errcheck
@@ -374,8 +429,11 @@ func TestValkeyPubSub_WithSubClient(t *testing.T) {
 	}
 	t.Cleanup(func() { subClient.Close() })
 
-	vc := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
-	ctx := vc.Context
+	vc, err := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := vc.Context()
 
 	channel := "sio:test:subclient:pubsub"
 	pubsub := vc.Subscribe(ctx, channel)
@@ -410,7 +468,7 @@ func TestValkeyPubSub_WithSubClient(t *testing.T) {
 
 func TestValkeyClient_SetGetDel(t *testing.T) {
 	vc := newMiniValkeyClient(t)
-	ctx := vc.Context
+	ctx := vc.Context()
 
 	key := "sio:test:setget"
 
@@ -437,7 +495,7 @@ func TestValkeyClient_SetGetDel(t *testing.T) {
 
 func TestValkeyClient_XAddXRange(t *testing.T) {
 	vc := newMiniValkeyClient(t)
-	ctx := vc.Context
+	ctx := vc.Context()
 	stream := "sio:test:stream"
 
 	entryID, err := vc.XAdd(ctx, stream, 1000, map[string]any{"uid": "test", "nsp": "/"})

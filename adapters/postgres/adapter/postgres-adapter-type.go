@@ -96,14 +96,14 @@ func (pb *PostgresAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	var listenerCtx context.Context
 	var previousDone, listenerDone chan struct{}
 	if pb.cancel == nil {
-		listenerCtx, pb.cancel = context.WithCancel(pb.Postgres.Context)
+		listenerCtx, pb.cancel = context.WithCancel(pb.Postgres.Context())
 		previousDone = pb.listenerDone
 		listenerDone = make(chan struct{})
 		pb.listenerDone = listenerDone
 	}
 	pb.mu.Unlock()
 
-	if err := pb.Postgres.Listen(pb.Postgres.Context, channel); err != nil {
+	if err := pb.Postgres.Listen(pb.Postgres.Context(), channel); err != nil {
 		postgresLog.Debug("failed to listen on channel %s: %s", channel, err.Error())
 	}
 	if listenerCtx != nil {
@@ -131,7 +131,7 @@ func (pb *PostgresAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 			}
 			pb.cancel = nil
 		}
-		err := pb.Postgres.Unlisten(pb.Postgres.Context, channel)
+		err := pb.Postgres.Unlisten(pb.Postgres.Context(), channel)
 		pb.mu.Unlock()
 
 		if err != nil {

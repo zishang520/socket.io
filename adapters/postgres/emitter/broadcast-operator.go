@@ -188,7 +188,7 @@ func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 		return b.publishWithAttachment(&wireMessage)
 	}
 
-	return b.postgresClient.Notify(b.postgresClient.Context, channel, string(payload))
+	return b.postgresClient.Notify(b.postgresClient.Context(), channel, string(payload))
 }
 
 // publishWithAttachment msgpack-encodes the full ClusterMessage, stores it in the
@@ -201,7 +201,7 @@ func (b *BroadcastOperator) publishWithAttachment(message *adapter.ClusterMessag
 	}
 
 	id, err := b.postgresClient.InsertAttachment(
-		b.postgresClient.Context,
+		b.postgresClient.Context(),
 		b.broadcastOptions.TableName,
 		payload,
 	)
@@ -219,7 +219,7 @@ func (b *BroadcastOperator) publishWithAttachment(message *adapter.ClusterMessag
 		return err
 	}
 
-	return b.postgresClient.Notify(b.postgresClient.Context, b.broadcastOptions.BroadcastChannel, string(notification))
+	return b.postgresClient.Notify(b.postgresClient.Context(), b.broadcastOptions.BroadcastChannel, string(notification))
 }
 
 // SocketsJoin makes all matching socket instances join the specified rooms.

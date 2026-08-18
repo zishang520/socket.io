@@ -145,7 +145,7 @@ func (a *unixAdapter) DoPublishResponse(requesterUid adapter.ServerId, response 
 // broadcast sends a message to all peer Unix Domain Socket listeners.
 // It discovers peers by scanning the socket directory for matching listener paths.
 func (a *unixAdapter) broadcast(payload []byte) error {
-	socketPath := a.unixClient.SocketPath
+	socketPath := a.unixClient.SocketPath()
 	dir := filepath.Dir(socketPath)
 	base := filepath.Base(socketPath)
 	prefix := base + "."

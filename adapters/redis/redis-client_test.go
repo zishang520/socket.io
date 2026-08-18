@@ -144,6 +144,12 @@ func TestRedisClientRequiresPrimaryClient(t *testing.T) {
 	if !errors.Is(err, ErrRedisClientRequired) {
 		t.Fatalf("error = %v, want %v", err, ErrRedisClientRequired)
 	}
+
+	var typedNil *rds.Client
+	client, err = NewRedisClient(context.Background(), typedNil)
+	if client != nil || !errors.Is(err, ErrRedisClientRequired) {
+		t.Fatalf("typed nil client = (%v, %v), want (nil, ErrRedisClientRequired)", client, err)
+	}
 }
 
 func TestRedisClientRejectsRing(t *testing.T) {
@@ -241,6 +247,18 @@ func TestRedisClient_Sub(t *testing.T) {
 
 		if rc.Sub() != client {
 			t.Fatal("Sub() should fall back to Client when SubClient is nil")
+		}
+	})
+
+	t.Run("falls back to Client when SubClient is typed nil", func(t *testing.T) {
+		client := rds.NewClient(&rds.Options{Addr: "localhost:6379"})
+		defer func() { _ = client.Close() }()
+		var subClient *rds.Client
+
+		rc := mustNewRedisClientWithSub(t, context.Background(), client, subClient)
+
+		if rc.Sub() != client {
+			t.Fatal("Sub() should fall back to Client when SubClient is typed nil")
 		}
 	})
 

@@ -109,7 +109,7 @@ func (mb *MongoAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	opts.SetUid(mb.uid)
 	var ctx context.Context
 	if mb.cancel == nil {
-		ctx, mb.cancel = context.WithCancel(mb.Mongo.Context)
+		ctx, mb.cancel = context.WithCancel(mb.Mongo.Context())
 	}
 	adapterInstance := NewMongoAdapter(nsp, mb.Mongo, opts)
 	mb.adapters.Store(name, adapterInstance)
@@ -155,7 +155,7 @@ func (mb *MongoAdapterBuilder) initChangeStream(ctx context.Context) {
 			watchOptions.SetResumeAfter(resumeToken)
 		}
 
-		changeStream, err := mb.Mongo.Collection.Watch(ctx, mongod.Pipeline{
+		changeStream, err := mb.Mongo.Collection().Watch(ctx, mongod.Pipeline{
 			{{Key: "$match", Value: bson.D{
 				{Key: "fullDocument.uid", Value: bson.D{{Key: "$ne", Value: uid}}},
 			}}},

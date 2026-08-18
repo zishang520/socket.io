@@ -115,7 +115,7 @@ func (r *valkeyAdapter) Parser() valkey.Parser { return r.parser }
 func (r *valkeyAdapter) Construct(nsp socket.Namespace) {
 	r.Adapter.Construct(nsp)
 
-	r.ctx, r.cancel = context.WithCancel(r.valkeyClient.Context)
+	r.ctx, r.cancel = context.WithCancel(r.valkeyClient.Context())
 
 	r.uid = adapter.ServerId(adapter.Uid2(defaultUidLength))
 

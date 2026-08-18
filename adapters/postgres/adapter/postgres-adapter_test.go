@@ -15,6 +15,15 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+func mustNewPostgresClient(t *testing.T, ctx context.Context, pool *pgxpool.Pool) *postgres.PostgresClient {
+	t.Helper()
+	client, err := postgres.NewPostgresClient(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
 func TestNotificationMessage_Marshal(t *testing.T) {
 	t.Run("with attachment", func(t *testing.T) {
 		msg := &NotificationMessage{
@@ -77,7 +86,7 @@ func TestNewPostgresAdapterDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := postgres.NewPostgresClient(ctx, pool)
+	client := mustNewPostgresClient(t, ctx, pool)
 	t.Cleanup(func() {
 		client.Close()
 		pool.Close()
@@ -118,7 +127,7 @@ func TestPostgresAdapter_OnNotificationNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := postgres.NewPostgresClient(ctx, pool)
+	client := mustNewPostgresClient(t, ctx, pool)
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
 	a := NewPostgresAdapter(nsp, client, nil).(*postgresAdapter)
 	t.Cleanup(func() {

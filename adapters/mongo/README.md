@@ -55,7 +55,10 @@ func main() {
 
     collection := client.Database("mydb").Collection("socket.io-adapter-events")
 
-    mongoClient := mgclient.NewMongoClient(context.TODO(), collection)
+    mongoClient, err := mgclient.NewMongoClient(context.TODO(), collection)
+    if err != nil {
+        panic(err)
+    }
 
     io := socket.NewServer(nil, nil)
     io.SetAdapter(&mgadapter.MongoAdapterBuilder{
@@ -101,7 +104,10 @@ func main() {
 
     collection := client.Database("mydb").Collection("socket.io-adapter-events")
 
-    mongoClient := mgclient.NewMongoClient(context.TODO(), collection)
+    mongoClient, err := mgclient.NewMongoClient(context.TODO(), collection)
+    if err != nil {
+        panic(err)
+    }
 
     emitter := mgemitter.NewEmitter(mongoClient, nil)
     emitter.Emit("hello", "world")

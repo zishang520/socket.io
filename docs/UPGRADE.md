@@ -146,6 +146,41 @@ var s types.Atomic[string]
 
 </details>
 
+<details>
+<summary>Adapter Client Constructors and Accessors</summary>
+
+Redis, Valkey, MongoDB, PostgreSQL, and Unix adapter clients now validate their
+required dependencies during construction. Their constructors return an error,
+and connection details are immutable after construction and exposed through
+read-only accessor methods.
+
+**Likelihood Of Impact: High (if constructing adapter clients directly)**
+
+```go
+// Before
+redisClient := redis.NewRedisClient(ctx, client)
+mongoClient := mongo.NewMongoClient(ctx, collection)
+postgresClient := postgres.NewPostgresClient(ctx, pool)
+valkeyClient := valkey.NewValkeyClient(ctx, client)
+unixClient := unix.NewUnixClient(ctx, socketPath)
+
+// After
+redisClient, err := redis.NewRedisClient(ctx, client)
+mongoClient, err := mongo.NewMongoClient(ctx, collection)
+postgresClient, err := postgres.NewPostgresClient(ctx, pool)
+valkeyClient, err := valkey.NewValkeyClient(ctx, client)
+unixClient, err := unix.NewUnixClient(ctx, socketPath)
+```
+
+Direct field access must be replaced with accessors:
+
+- Redis and Valkey: `Client()`, `Sub()`, `Context()`
+- MongoDB: `Collection()`, `Context()`
+- PostgreSQL: `Pool()`, `Context()`
+- Unix: `SocketPath()`, `Context()`
+
+</details>
+
 ### Medium Impact Changes
 
 <details>
@@ -591,7 +626,10 @@ import (
 )
 
 client, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"localhost:6379"}})
-valkeyClient := valkey.NewValkeyClient(context.Background(), client)
+valkeyClient, err := valkey.NewValkeyClient(context.Background(), client)
+if err != nil {
+    panic(err)
+}
 server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
 ```
 
@@ -600,7 +638,10 @@ server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
 ```go
 pubClient, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"master:6379"}})
 subClient, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"replica:6380"}})
-valkeyClient := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+valkeyClient, err := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+if err != nil {
+    panic(err)
+}
 server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
 ```
 

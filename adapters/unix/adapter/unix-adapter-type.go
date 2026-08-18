@@ -81,7 +81,7 @@ func (ub *UnixAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	// Start listening if not already
 	if ub.listening.CompareAndSwap(false, true) {
 		// Create a unique listener path for this server node
-		listenerPath := ub.Unix.SocketPath + "." + string(adapterInstance.(adapter.ClusterAdapter).Uid())
+		listenerPath := ub.Unix.SocketPath() + "." + string(adapterInstance.(adapter.ClusterAdapter).Uid())
 		if err := ub.Unix.Listen(listenerPath); err != nil {
 			ub.Unix.Emit("error", err)
 		}
@@ -105,7 +105,7 @@ func (ub *UnixAdapterBuilder) startListening() {
 	for {
 		n, _, err := ub.Unix.ReadMessage(buf)
 		if err != nil {
-			if ub.Unix.Context.Err() != nil {
+			if ub.Unix.Context().Err() != nil {
 				return // Context canceled, stop listening
 			}
 			ub.Unix.Emit("error", err)

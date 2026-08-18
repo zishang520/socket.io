@@ -139,7 +139,7 @@ func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
 
 	emitterLog.Debug("publishing message to channel %s via SPUBLISH", channel)
 
-	return b.valkeyClient.SPublish(b.valkeyClient.Context, channel, msg)
+	return b.valkeyClient.SPublish(b.valkeyClient.Context(), channel, msg)
 }
 
 func (b *ShardedBroadcastOperator) computeChannel() string {
@@ -211,5 +211,5 @@ func (b *ShardedBroadcastOperator) publishMessage(message *ClusterMessage) error
 
 	emitterLog.Debug("publishing message of type %v to %s via SPUBLISH", message.Type, b.broadcastOptions.BroadcastChannel)
 
-	return b.valkeyClient.SPublish(b.valkeyClient.Context, b.broadcastOptions.BroadcastChannel, msg)
+	return b.valkeyClient.SPublish(b.valkeyClient.Context(), b.broadcastOptions.BroadcastChannel, msg)
 }

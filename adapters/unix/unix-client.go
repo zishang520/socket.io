@@ -8,6 +8,7 @@ package unix
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -18,6 +19,9 @@ import (
 // maxMessageSize is the maximum allowed message size (10 MB).
 // This prevents malicious or corrupted length headers from causing excessive memory allocation.
 const maxMessageSize = 10 << 20
+
+// ErrUnixSocketPathRequired is returned when no Unix socket base path is provided.
+var ErrUnixSocketPathRequired = errors.New("unix: socket path is required")
 
 // peerConn wraps a persistent connection to a peer with its own mutex
 // to ensure atomic framed writes when multiple goroutines send concurrently.
@@ -42,16 +46,13 @@ type receivedMessage struct {
 // accepted in background goroutines and delivered through an internal message queue.
 //
 // The client supports error event emission, which allows higher-level components
-// to handle Unix socket-related errors gracefully.
+// to handle Unix socket-related errors gracefully. The zero value is not usable;
+// create clients with NewUnixClient.
 type UnixClient struct {
 	types.EventEmitter
 
-	// SocketPath is the base path of the Unix Domain Socket used for communication.
-	SocketPath string
-
-	// Context controls the lifecycle of the client.
-	// When canceled, all operations will be terminated.
-	Context context.Context
+	socketPath string
+	ctx        context.Context
 
 	mu           sync.Mutex
 	listener     net.Listener
@@ -82,12 +83,16 @@ type UnixClient struct {
 //   - socketPath: The path to the shared Unix Domain Socket used for broadcasting messages.
 //
 // Returns:
-//   - A pointer to the initialized UnixClient instance.
+//   - A pointer to the initialized UnixClient instance, or an error when the
+//     socket path is empty.
 //
 // Example:
 //
-//	client := NewUnixClient(context.Background(), "/tmp/socket.io.sock")
-func NewUnixClient(ctx context.Context, socketPath string) *UnixClient {
+//	client, err := NewUnixClient(context.Background(), "/tmp/socket.io.sock")
+func NewUnixClient(ctx context.Context, socketPath string) (*UnixClient, error) {
+	if socketPath == "" {
+		return nil, ErrUnixSocketPathRequired
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -96,14 +101,20 @@ func NewUnixClient(ctx context.Context, socketPath string) *UnixClient {
 
 	return &UnixClient{
 		EventEmitter: types.NewEventEmitter(),
-		SocketPath:   socketPath,
-		Context:      ctx,
+		socketPath:   socketPath,
+		ctx:          ctx,
 		cancel:       cancel,
 		peers:        make(map[string]*peerConn),
 		activeConns:  make(map[net.Conn]struct{}),
 		msgCh:        make(chan *receivedMessage, 256),
-	}
+	}, nil
 }
+
+// SocketPath returns the base Unix socket path used for peer discovery.
+func (c *UnixClient) SocketPath() string { return c.socketPath }
+
+// Context returns the context controlling Unix socket operations.
+func (c *UnixClient) Context() context.Context { return c.ctx }
 
 // Listen starts accepting stream connections on the given Unix socket path.
 // Incoming connections are handled in background goroutines, with messages
@@ -143,7 +154,7 @@ func (c *UnixClient) acceptLoop() {
 		conn, err := c.listener.Accept()
 		if err != nil {
 			select {
-			case <-c.Context.Done():
+			case <-c.ctx.Done():
 				return
 			default:
 				return // listener was closed
@@ -191,7 +202,7 @@ func (c *UnixClient) handleConn(conn net.Conn, mode unixSocketMode) {
 
 		select {
 		case c.msgCh <- &receivedMessage{data: data, addr: addr}:
-		case <-c.Context.Done():
+		case <-c.ctx.Done():
 			return
 		}
 	}
@@ -217,8 +228,8 @@ func (c *UnixClient) ReadMessage(buf []byte) (int, net.Addr, error) {
 		}
 		n := copy(buf, msg.data)
 		return n, msg.addr, nil
-	case <-c.Context.Done():
-		return 0, nil, c.Context.Err()
+	case <-c.ctx.Done():
+		return 0, nil, c.ctx.Err()
 	}
 }
 
@@ -230,8 +241,8 @@ func (c *UnixClient) ReadMessage(buf []byte) (int, net.Addr, error) {
 //   - targetPath: The path of the target Unix Domain Socket.
 //   - payload: The message payload bytes.
 func (c *UnixClient) Send(targetPath string, payload []byte) error {
-	if c.Context.Err() != nil {
-		return c.Context.Err()
+	if c.ctx.Err() != nil {
+		return c.ctx.Err()
 	}
 
 	pc := c.getOrCreatePeer(targetPath)

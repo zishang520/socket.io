@@ -214,7 +214,7 @@ func (a *mongoAdapter) prepareDocument(document *ClusterMessage) (*mongo.Adapter
 }
 
 func (a *mongoAdapter) insertDocument(document *mongo.AdapterEvent) (adapter.Offset, error) {
-	result, err := a.mongoCollection.Collection.InsertOne(a.mongoCollection.Context, document)
+	result, err := a.mongoCollection.Collection().InsertOne(a.mongoCollection.Context(), document)
 	if err != nil {
 		return "", err
 	}
@@ -719,7 +719,7 @@ func (a *mongoAdapter) RestoreSession(pid socket.PrivateSessionId, offset string
 		session, sessionErr = a.findSession(pid)
 	})
 	waitGroup.Go(func() {
-		offsetErr = a.mongoCollection.Collection.FindOne(a.mongoCollection.Context, bson.D{
+		offsetErr = a.mongoCollection.Collection().FindOne(a.mongoCollection.Context(), bson.D{
 			{Key: "type", Value: mongo.BROADCAST},
 			{Key: "_id", Value: eventOffset},
 		}, options.FindOne().SetProjection(bson.D{
@@ -748,8 +748,8 @@ func (a *mongoAdapter) RestoreSession(pid socket.PrivateSessionId, offset string
 			bson.D{{Key: "data.opts.except", Value: bson.D{{Key: "$nin", Value: session.Rooms}}}},
 		}}},
 	}}}
-	cursor, err := a.mongoCollection.Collection.Find(
-		a.mongoCollection.Context,
+	cursor, err := a.mongoCollection.Collection().Find(
+		a.mongoCollection.Context(),
 		filter,
 		options.Find().SetProjection(bson.D{
 			{Key: "data.packet.data", Value: 1},
@@ -759,10 +759,10 @@ func (a *mongoAdapter) RestoreSession(pid socket.PrivateSessionId, offset string
 	if err != nil {
 		return nil, errFetchMissedPackets
 	}
-	defer func() { _ = cursor.Close(a.mongoCollection.Context) }()
+	defer func() { _ = cursor.Close(a.mongoCollection.Context()) }()
 
 	missedPackets := make([]any, 0)
-	for cursor.Next(a.mongoCollection.Context) {
+	for cursor.Next(a.mongoCollection.Context()) {
 		var event struct {
 			Data struct {
 				Packet struct {
@@ -804,14 +804,14 @@ func (a *mongoAdapter) findSession(pid socket.PrivateSessionId) (*mongo.SessionD
 
 	var result *mongod.SingleResult
 	if a.addCreatedAtField {
-		result = a.mongoCollection.Collection.FindOneAndDelete(
-			a.mongoCollection.Context,
+		result = a.mongoCollection.Collection().FindOneAndDelete(
+			a.mongoCollection.Context(),
 			filter,
 			options.FindOneAndDelete().SetProjection(projection),
 		)
 	} else {
-		result = a.mongoCollection.Collection.FindOne(
-			a.mongoCollection.Context,
+		result = a.mongoCollection.Collection().FindOne(
+			a.mongoCollection.Context(),
 			filter,
 			options.FindOne().SetProjection(projection).SetSort(bson.D{{Key: "_id", Value: -1}}),
 		)

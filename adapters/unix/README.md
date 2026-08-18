@@ -39,7 +39,10 @@ func main() {
 	ctx := context.Background()
 	socketPath := "/tmp/socket.io.sock"
 
-	client := unix.NewUnixClient(ctx, socketPath)
+	client, err := unix.NewUnixClient(ctx, socketPath)
+	if err != nil {
+		panic(err)
+	}
 
 	opts := unixadapter.DefaultUnixAdapterOptions()
 	opts.SetKey("socket.io")
@@ -81,7 +84,10 @@ func main() {
 	ctx := context.Background()
 	socketPath := "/tmp/socket.io.sock"
 
-	client := unix.NewUnixClient(ctx, socketPath)
+	client, err := unix.NewUnixClient(ctx, socketPath)
+	if err != nil {
+		panic(err)
+	}
 
 	opts := &unixemitter.EmitterOptions{}
 	opts.SetKey("socket.io")

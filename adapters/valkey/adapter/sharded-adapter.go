@@ -98,7 +98,7 @@ func (s *shardedValkeyAdapter) Construct(nsp socket.Namespace) {
 		s.opts.SetSubscriptionMode(DefaultShardedSubscriptionMode)
 	}
 
-	s.ctx, s.cancel = context.WithCancel(s.valkeyClient.Context)
+	s.ctx, s.cancel = context.WithCancel(s.valkeyClient.Context())
 
 	s.channel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
 	s.responseChannel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#" + string(s.Uid()) + "#"

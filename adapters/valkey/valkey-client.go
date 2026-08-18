@@ -14,8 +14,13 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-// ErrValkeyPubSubClosed is returned when receiving from a closed ValkeyPubSub.
-var ErrValkeyPubSubClosed = errors.New("valkey: pubsub closed")
+var (
+	// ErrValkeyClientRequired is returned when no primary Valkey client is provided.
+	ErrValkeyClientRequired = errors.New("valkey: client is required")
+
+	// ErrValkeyPubSubClosed is returned when receiving from a closed ValkeyPubSub.
+	ErrValkeyPubSubClosed = errors.New("valkey: pubsub closed")
+)
 
 // ValkeyMessage represents a single Pub/Sub message received from Valkey.
 type ValkeyMessage struct {
@@ -85,36 +90,33 @@ func (p *ValkeyPubSub) SUnsubscribe(ctx context.Context, channels ...string) err
 // ValkeyClient wraps a valkey-go client and provides context management
 // and event emitting capabilities for the Socket.IO Valkey adapter.
 //
-// The client supports read/write separation: Client is used for write operations
-// (PUBLISH, XADD, SET, etc.) and SubClient is used for read/subscribe operations
-// (SUBSCRIBE, XREAD, XRANGE, etc.). If SubClient is nil, Client is used for both.
+// The client supports read/write separation: Client() is used for write
+// operations (PUBLISH, XADD, SET, etc.) and Sub() is used for read/subscribe
+// operations (SUBSCRIBE, XREAD, XRANGE, etc.). Without a separate subscription
+// client, both methods return the primary client. Its clients and context are
+// immutable after construction. The zero value is not usable; create clients
+// with NewValkeyClient or NewValkeyClientWithSub.
 type ValkeyClient struct {
 	types.EventEmitter
 
-	// Client is the underlying Valkey client used for write operations
-	// (PUBLISH, XADD, SET, etc.) and metadata queries (PUBSUB NUMSUB).
-	Client vk.Client
-
-	// SubClient is an optional separate Valkey client used for read/subscribe
-	// operations (SUBSCRIBE, PSUBSCRIBE, SSUBSCRIBE, XREAD, XRANGE, etc.).
-	// When nil, Client is used for all operations.
-	//
-	// Using a separate client for subscriptions prevents blocking read operations
-	// from starving the write connection pool, and allows routing reads to
-	// Valkey replicas for improved scalability.
-	SubClient vk.Client
-
-	// Context is the context used for Valkey operations.
-	Context context.Context
+	client    vk.Client
+	subClient vk.Client
+	ctx       context.Context
 }
 
-// Sub returns the Valkey client to use for read/subscribe operations.
-// If SubClient is set, it is returned; otherwise Client is used as the fallback.
+// Client returns the Valkey client used for write operations.
+func (c *ValkeyClient) Client() vk.Client {
+	return c.client
+}
+
+// Sub returns the Valkey client used for read and subscription operations.
 func (c *ValkeyClient) Sub() vk.Client {
-	if c.SubClient != nil {
-		return c.SubClient
-	}
-	return c.Client
+	return c.subClient
+}
+
+// Context returns the context controlling Valkey operations and subscriptions.
+func (c *ValkeyClient) Context() context.Context {
+	return c.ctx
 }
 
 // NewValkeyClient creates a new ValkeyClient with the given context and valkey-go client.
@@ -125,19 +127,14 @@ func (c *ValkeyClient) Sub() vk.Client {
 //     When canceled, all subscriptions and pending operations will be terminated.
 //   - client: A valkey-go Client instance.
 //
+// Returns a configured ValkeyClient, or ErrValkeyClientRequired when client is nil.
+//
 // Example:
 //
 //	client, _ := valkey.NewClient(valkey.ClientOption{InitAddress: []string{"localhost:6379"}})
-//	valkeyClient := NewValkeyClient(context.Background(), client)
-func NewValkeyClient(ctx context.Context, client vk.Client) *ValkeyClient {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return &ValkeyClient{
-		EventEmitter: types.NewEventEmitter(),
-		Client:       client,
-		Context:      ctx,
-	}
+//	valkeyClient, err := NewValkeyClient(context.Background(), client)
+func NewValkeyClient(ctx context.Context, client vk.Client) (*ValkeyClient, error) {
+	return NewValkeyClientWithSub(ctx, client, nil)
 }
 
 // NewValkeyClientWithSub creates a new ValkeyClient with separate clients for read/write separation.
@@ -147,22 +144,31 @@ func NewValkeyClient(ctx context.Context, client vk.Client) *ValkeyClient {
 //   - client: The Valkey client for write operations (PUBLISH, XADD, SET, etc.)
 //     and metadata queries (PUBSUB NUMSUB).
 //   - subClient: The Valkey client for read/subscribe operations (SUBSCRIBE, XREAD, etc.).
+//     When nil, client is used for both roles.
+//
+// Returns a configured ValkeyClient, or ErrValkeyClientRequired when client is nil.
 //
 // Example:
 //
 //	pubClient, _ := valkey.NewClient(valkey.ClientOption{InitAddress: []string{"master:6379"}})
 //	subClient, _ := valkey.NewClient(valkey.ClientOption{InitAddress: []string{"replica:6380"}})
-//	valkeyClient := NewValkeyClientWithSub(context.Background(), pubClient, subClient)
-func NewValkeyClientWithSub(ctx context.Context, client, subClient vk.Client) *ValkeyClient {
+//	valkeyClient, err := NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+func NewValkeyClientWithSub(ctx context.Context, client, subClient vk.Client) (*ValkeyClient, error) {
+	if client == nil {
+		return nil, ErrValkeyClientRequired
+	}
+	if subClient == nil {
+		subClient = client
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return &ValkeyClient{
 		EventEmitter: types.NewEventEmitter(),
-		Client:       client,
-		SubClient:    subClient,
-		Context:      ctx,
-	}
+		client:       client,
+		subClient:    subClient,
+		ctx:          ctx,
+	}, nil
 }
 
 // newPubSub creates a ValkeyPubSub backed by a dedicated connection with
@@ -233,22 +239,22 @@ func (c *ValkeyClient) SSubscribe(ctx context.Context, channels ...string) *Valk
 
 // Publish publishes a message to a Valkey channel.
 func (c *ValkeyClient) Publish(ctx context.Context, channel string, message []byte) error {
-	return c.Client.Do(ctx,
-		c.Client.B().Publish().Channel(channel).Message(string(message)).Build(),
+	return c.client.Do(ctx,
+		c.client.B().Publish().Channel(channel).Message(string(message)).Build(),
 	).Error()
 }
 
 // SPublish publishes a message to a sharded Valkey channel (SPUBLISH).
 func (c *ValkeyClient) SPublish(ctx context.Context, channel string, message []byte) error {
-	return c.Client.Do(ctx,
-		c.Client.B().Spublish().Channel(channel).Message(string(message)).Build(),
+	return c.client.Do(ctx,
+		c.client.B().Spublish().Channel(channel).Message(string(message)).Build(),
 	).Error()
 }
 
 // PubSubNumSub returns the number of subscribers for each channel using PUBSUB NUMSUB.
 func (c *ValkeyClient) PubSubNumSub(ctx context.Context, channels ...string) (map[string]int64, error) {
-	resp, err := c.Client.Do(ctx,
-		c.Client.B().PubsubNumsub().Channel(channels...).Build(),
+	resp, err := c.client.Do(ctx,
+		c.client.B().PubsubNumsub().Channel(channels...).Build(),
 	).AsIntMap()
 	if err != nil {
 		return nil, err
@@ -258,8 +264,8 @@ func (c *ValkeyClient) PubSubNumSub(ctx context.Context, channels ...string) (ma
 
 // PubSubShardNumSub returns the subscriber count for sharded channels using PUBSUB SHARDNUMSUB.
 func (c *ValkeyClient) PubSubShardNumSub(ctx context.Context, channels ...string) (map[string]int64, error) {
-	resp, err := c.Client.Do(ctx,
-		c.Client.B().PubsubShardnumsub().Channel(channels...).Build(),
+	resp, err := c.client.Do(ctx,
+		c.client.B().PubsubShardnumsub().Channel(channels...).Build(),
 	).AsIntMap()
 	if err != nil {
 		return nil, err
@@ -279,8 +285,8 @@ func (c *ValkeyClient) XAdd(ctx context.Context, stream string, maxLen int64, va
 	for k, v := range values {
 		args = append(args, k, anyToString(v))
 	}
-	return c.Client.Do(ctx,
-		c.Client.B().Arbitrary(args[0]).Args(args[1:]...).Build(),
+	return c.client.Do(ctx,
+		c.client.B().Arbitrary(args[0]).Args(args[1:]...).Build(),
 	).ToString()
 }
 
@@ -330,8 +336,8 @@ func (c *ValkeyClient) XRangeN(ctx context.Context, stream, start, stop string, 
 
 // Set stores a string value at key with an expiry duration.
 func (c *ValkeyClient) Set(ctx context.Context, key, value string, expiry time.Duration) error {
-	return c.Client.Do(ctx,
-		c.Client.B().Set().Key(key).Value(value).ExSeconds(int64(expiry.Seconds())).Build(),
+	return c.client.Do(ctx,
+		c.client.B().Set().Key(key).Value(value).ExSeconds(int64(expiry.Seconds())).Build(),
 	).Error()
 }
 

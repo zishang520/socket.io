@@ -3,6 +3,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -14,19 +15,18 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
+// ErrPostgresPoolRequired is returned when no PostgreSQL connection pool is provided.
+var ErrPostgresPoolRequired = errors.New("postgres: pool is required")
+
 // PostgresClient wraps a pgxpool.Pool for the Socket.IO PostgreSQL adapter.
 //
 // The client supports a separate listener connection for LISTEN/NOTIFY operations.
 // The Pool is used for write operations (pg_notify, INSERT, DELETE, etc.)
-// and the Listener connection is used for LISTEN operations.
+// and the Listener connection is used for LISTEN operations. The zero value is
+// not usable; create clients with NewPostgresClient.
 type PostgresClient struct {
-	// Pool is the connection pool used for write operations
-	// (pg_notify, INSERT, DELETE, SELECT, etc.).
-	Pool *pgxpool.Pool
-
-	// Context is the context used for PostgreSQL operations.
-	// This context controls the lifecycle of subscriptions and operations.
-	Context context.Context
+	pool *pgxpool.Pool
+	ctx  context.Context
 
 	listenerConn        *pgx.Conn
 	listenerChannels    *types.Set[string]
@@ -38,6 +38,16 @@ type PostgresClient struct {
 	listenerOpMu        sync.Mutex // serializes access to listenerConn
 }
 
+// Pool returns the connection pool used for PostgreSQL operations.
+func (c *PostgresClient) Pool() *pgxpool.Pool {
+	return c.pool
+}
+
+// Context returns the context controlling PostgreSQL operations and subscriptions.
+func (c *PostgresClient) Context() context.Context {
+	return c.ctx
+}
+
 // NewPostgresClient creates a new PostgresClient with the given context and connection pool.
 //
 // Parameters:
@@ -46,21 +56,25 @@ type PostgresClient struct {
 //   - pool: A pgxpool.Pool instance that handles the actual PostgreSQL communication.
 //
 // Returns:
-//   - A pointer to the initialized PostgresClient instance.
+//   - A pointer to the initialized PostgresClient instance, or an error when
+//     the configuration is invalid.
 //
 // Example:
 //
 //	pool, _ := pgxpool.New(context.Background(), "postgres://user:pass@localhost:5432/db")
-//	pgClient := NewPostgresClient(context.Background(), pool)
-func NewPostgresClient(ctx context.Context, pool *pgxpool.Pool) *PostgresClient {
+//	pgClient, err := NewPostgresClient(context.Background(), pool)
+func NewPostgresClient(ctx context.Context, pool *pgxpool.Pool) (*PostgresClient, error) {
+	if pool == nil {
+		return nil, ErrPostgresPoolRequired
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return &PostgresClient{
-		Pool:             pool,
-		Context:          ctx,
+		pool:             pool,
+		ctx:              ctx,
 		listenerChannels: types.NewSet[string](),
-	}
+	}, nil
 }
 
 func sanitizeTableName(tableName string) string {
@@ -267,7 +281,7 @@ func (c *PostgresClient) openListener(ctx context.Context) (*pgx.Conn, error) {
 	}
 	c.listenerMu.Unlock()
 
-	pooledConn, err := c.Pool.Acquire(ctx)
+	pooledConn, err := c.pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to acquire listener connection: %w", err)
 	}
@@ -313,7 +327,7 @@ func (*PostgresClient) releaseListener(conn *pgx.Conn) {
 //   - channel: The notification channel name.
 //   - payload: The notification payload string.
 func (c *PostgresClient) Notify(ctx context.Context, channel, payload string) error {
-	_, err := c.Pool.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload)
+	_, err := c.pool.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload)
 	return err
 }
 
@@ -328,7 +342,7 @@ func (c *PostgresClient) EnsureTable(ctx context.Context, tableName string) erro
 		"CREATE TABLE IF NOT EXISTS %s (id bigserial UNIQUE, created_at timestamptz DEFAULT NOW(), payload bytea)",
 		sanitizeTableName(tableName),
 	)
-	_, err := c.Pool.Exec(ctx, query)
+	_, err := c.pool.Exec(ctx, query)
 	return err
 }
 
@@ -341,7 +355,7 @@ func (c *PostgresClient) EnsureTable(ctx context.Context, tableName string) erro
 func (c *PostgresClient) InsertAttachment(ctx context.Context, tableName string, payload []byte) (int64, error) {
 	var id int64
 	query := fmt.Sprintf("INSERT INTO %s (payload) VALUES ($1) RETURNING id", sanitizeTableName(tableName))
-	err := c.Pool.QueryRow(ctx, query, payload).Scan(&id)
+	err := c.pool.QueryRow(ctx, query, payload).Scan(&id)
 	return id, err
 }
 
@@ -354,7 +368,7 @@ func (c *PostgresClient) InsertAttachment(ctx context.Context, tableName string,
 func (c *PostgresClient) GetAttachment(ctx context.Context, tableName string, id int64) ([]byte, error) {
 	var payload []byte
 	query := fmt.Sprintf("SELECT payload FROM %s WHERE id = $1", sanitizeTableName(tableName))
-	err := c.Pool.QueryRow(ctx, query, id).Scan(&payload)
+	err := c.pool.QueryRow(ctx, query, id).Scan(&payload)
 	return payload, err
 }
 
@@ -370,7 +384,7 @@ func (c *PostgresClient) CleanupAttachments(ctx context.Context, tableName strin
 		sanitizeTableName(tableName),
 		cleanupIntervalMs,
 	)
-	_, err := c.Pool.Exec(ctx, query)
+	_, err := c.pool.Exec(ctx, query)
 	return err
 }
 

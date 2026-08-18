@@ -3,33 +3,45 @@ package unix
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 )
 
 func TestNewUnixClient(t *testing.T) {
 	t.Run("with valid context", func(t *testing.T) {
-		ctx := context.Background()
-		uc := &UnixClient{
-			Context:    ctx,
-			SocketPath: "/tmp/test.sock",
+		ctx, cancel := context.WithCancel(context.Background())
+		uc, err := NewUnixClient(ctx, "/tmp/test.sock")
+		if err != nil {
+			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = uc.Close() })
 
-		if uc.Context != ctx {
-			t.Fatal("Context mismatch")
-		}
-		if uc.SocketPath != "/tmp/test.sock" {
+		if uc.SocketPath() != "/tmp/test.sock" {
 			t.Fatal("SocketPath mismatch")
 		}
+		cancel()
+		<-uc.Context().Done()
 	})
 
 	t.Run("with nil context defaults to background", func(t *testing.T) {
-		uc := NewUnixClient(context.Background(), "/tmp/test.sock")
+		uc, err := NewUnixClient(nil, "/tmp/test.sock") //nolint:staticcheck // Verify the nil-context fallback.
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = uc.Close() })
 
 		if uc == nil {
 			t.Fatal("Expected non-nil UnixClient")
 		}
-		if uc.Context == nil {
+		if uc.Context() == nil {
 			t.Fatal("Expected non-nil Context (should default to Background)")
+		}
+	})
+
+	t.Run("requires socket path", func(t *testing.T) {
+		uc, err := NewUnixClient(context.Background(), "")
+		if uc != nil || !errors.Is(err, ErrUnixSocketPathRequired) {
+			t.Fatalf("NewUnixClient() = (%v, %v), want (nil, ErrUnixSocketPathRequired)", uc, err)
 		}
 	})
 }

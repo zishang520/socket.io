@@ -141,7 +141,7 @@ func (a *postgresAdapter) DoPublish(message *ClusterMessage) (offset adapter.Off
 		return "", a.publishWithAttachment(&wireMessage)
 	}
 
-	return "", a.postgresClient.Notify(a.postgresClient.Context, a.channel, string(payload))
+	return "", a.postgresClient.Notify(a.postgresClient.Context(), a.channel, string(payload))
 }
 
 // DoPublishResponse publishes a response message to the cluster.
@@ -161,7 +161,7 @@ func (a *postgresAdapter) publishWithAttachment(message *ClusterMessage) error {
 	}
 
 	id, err := a.postgresClient.InsertAttachment(
-		a.postgresClient.Context,
+		a.postgresClient.Context(),
 		a.opts.TableName(),
 		payload,
 	)
@@ -179,7 +179,7 @@ func (a *postgresAdapter) publishWithAttachment(message *ClusterMessage) error {
 		return err
 	}
 
-	return a.postgresClient.Notify(a.postgresClient.Context, a.channel, string(notification))
+	return a.postgresClient.Notify(a.postgresClient.Context(), a.channel, string(notification))
 }
 
 // OnNotification processes a raw notification payload received from PostgreSQL LISTEN/NOTIFY.
@@ -208,7 +208,7 @@ func (a *postgresAdapter) OnNotification(payload string) {
 		}
 
 		attachmentPayload, fetchErr := a.postgresClient.GetAttachment(
-			a.postgresClient.Context,
+			a.postgresClient.Context(),
 			a.opts.TableName(),
 			attachmentId,
 		)

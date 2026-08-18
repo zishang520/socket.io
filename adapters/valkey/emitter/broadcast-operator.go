@@ -149,7 +149,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 	emitterLog.Debug("publishing message to channel %s", channel)
 
-	return b.valkeyClient.Publish(b.valkeyClient.Context, channel, msg)
+	return b.valkeyClient.Publish(b.valkeyClient.Context(), channel, msg)
 }
 
 // SocketsJoin makes all matching socket instances join the specified rooms.
@@ -165,7 +165,7 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	if err != nil {
 		return err
 	}
-	return b.valkeyClient.Publish(b.valkeyClient.Context, b.broadcastOptions.RequestChannel, request)
+	return b.valkeyClient.Publish(b.valkeyClient.Context(), b.broadcastOptions.RequestChannel, request)
 }
 
 // SocketsLeave makes all matching socket instances leave the specified rooms.
@@ -181,7 +181,7 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	if err != nil {
 		return err
 	}
-	return b.valkeyClient.Publish(b.valkeyClient.Context, b.broadcastOptions.RequestChannel, request)
+	return b.valkeyClient.Publish(b.valkeyClient.Context(), b.broadcastOptions.RequestChannel, request)
 }
 
 // DisconnectSockets disconnects all matching socket instances.
@@ -197,5 +197,5 @@ func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 	if err != nil {
 		return err
 	}
-	return b.valkeyClient.Publish(b.valkeyClient.Context, b.broadcastOptions.RequestChannel, request)
+	return b.valkeyClient.Publish(b.valkeyClient.Context(), b.broadcastOptions.RequestChannel, request)
 }

@@ -10,34 +10,60 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func newTestPostgresPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool, err := pgxpool.New(t.Context(), "postgres://localhost/socket_io_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func mustNewPostgresClient(t *testing.T, ctx context.Context, pool *pgxpool.Pool) *PostgresClient {
+	t.Helper()
+	client, err := NewPostgresClient(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
 func TestNewPostgresClient(t *testing.T) {
 	t.Run("with valid context", func(t *testing.T) {
 		ctx := context.Background()
-		// We can't create a real pool in unit tests without a database,
-		// so we test the constructor behavior with nil pool
-		pc := &PostgresClient{
-			Context: ctx,
-		}
+		pool := newTestPostgresPool(t)
+		pc := mustNewPostgresClient(t, ctx, pool)
 
-		if pc.Context != ctx {
+		if pc.Context() != ctx {
 			t.Fatal("Context mismatch")
+		}
+		if pc.Pool() != pool {
+			t.Fatal("Pool mismatch")
 		}
 	})
 
 	t.Run("with nil context defaults to background", func(t *testing.T) {
-		pc := NewPostgresClient(nil, nil) //nolint:staticcheck // Verify the constructor's nil-context fallback.
+		pc := mustNewPostgresClient(t, nil, newTestPostgresPool(t)) //nolint:staticcheck // Verify the constructor's nil-context fallback.
 
-		if pc == nil {
-			t.Fatal("Expected non-nil PostgresClient")
-		}
-		if pc.Context == nil {
+		if pc.Context() == nil {
 			t.Fatal("Expected non-nil Context (should default to Background)")
+		}
+	})
+
+	t.Run("requires pool", func(t *testing.T) {
+		client, err := NewPostgresClient(context.Background(), nil)
+		if client != nil {
+			t.Fatal("expected nil PostgresClient")
+		}
+		if !errors.Is(err, ErrPostgresPoolRequired) {
+			t.Fatalf("error = %v, want %v", err, ErrPostgresPoolRequired)
 		}
 	})
 }
 
 func TestPostgresClientListenerChannels(t *testing.T) {
-	client := NewPostgresClient(context.Background(), nil)
+	client := mustNewPostgresClient(t, context.Background(), newTestPostgresPool(t))
 	client.listenerChannels.Add("socket.io#/", "socket.io#/chat")
 
 	if err := client.Unlisten(context.Background(), "socket.io#/chat"); err != nil {
@@ -49,7 +75,7 @@ func TestPostgresClientListenerChannels(t *testing.T) {
 }
 
 func TestPostgresClientCloseIsIdempotent(t *testing.T) {
-	client := NewPostgresClient(context.Background(), nil)
+	client := mustNewPostgresClient(t, context.Background(), newTestPostgresPool(t))
 	client.Close()
 	client.Close()
 
@@ -85,7 +111,7 @@ func TestPostgresClientCloseCancelsListenerAcquire(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	client := NewPostgresClient(context.Background(), pool)
+	client := mustNewPostgresClient(t, context.Background(), pool)
 	waitDone := make(chan error, 1)
 	go func() {
 		_, err := client.WaitForNotification(context.Background())

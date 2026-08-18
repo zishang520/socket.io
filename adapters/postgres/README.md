@@ -48,7 +48,10 @@ func main() {
     }
     defer pool.Close()
 
-    pgClient := postgres.NewPostgresClient(context.TODO(), pool)
+    pgClient, err := postgres.NewPostgresClient(context.TODO(), pool)
+    if err != nil {
+        panic(err)
+    }
 
     io := socket.NewServer(nil, nil)
     io.SetAdapter(&pgadapter.PostgresAdapterBuilder{
@@ -91,7 +94,10 @@ func main() {
     }
     defer pool.Close()
 
-    pgClient := postgres.NewPostgresClient(context.TODO(), pool)
+    pgClient, err := postgres.NewPostgresClient(context.TODO(), pool)
+    if err != nil {
+        panic(err)
+    }
 
     emitter := pgemitter.NewEmitter(pgClient, nil)
     emitter.Emit("hello", "world")
