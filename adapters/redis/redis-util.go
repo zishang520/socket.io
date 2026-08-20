@@ -95,6 +95,10 @@ func prepareRequest(request *RedisRequest, jsonFormat bool) redisRequest {
 		if payload.Opts != nil {
 			payload.Rooms = utils.NonNilSlice(payload.Rooms)
 		}
+	case REMOTE_DISCONNECT:
+		if payload.Close == nil {
+			payload.Close = new(false)
+		}
 	case SERVER_SIDE_EMIT:
 		payload.Data = utils.NonNilSlice(payload.Data)
 	}

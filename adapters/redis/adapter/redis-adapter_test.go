@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,6 +43,12 @@ type recordingLocalAdapter struct {
 	socket.Adapter
 	broadcasts        int
 	broadcastsWithAck int
+	adds              int
+	dels              int
+	disconnects       int
+	broadcastStarted  chan struct{}
+	broadcastRelease  chan struct{}
+	invokeClientCount bool
 }
 
 type processErrorHook struct {
@@ -49,7 +58,9 @@ type processErrorHook struct {
 func (h *processErrorHook) DialHook(next rds.DialHook) rds.DialHook { return next }
 
 func (h *processErrorHook) ProcessHook(rds.ProcessHook) rds.ProcessHook {
-	return func(context.Context, rds.Cmder) error { return h.err }
+	return func(context.Context, rds.Cmder) error {
+		return h.err
+	}
 }
 
 func (h *processErrorHook) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
@@ -57,11 +68,30 @@ func (h *processErrorHook) ProcessPipelineHook(next rds.ProcessPipelineHook) rds
 }
 
 func (a *recordingLocalAdapter) Broadcast(*parser.Packet, *socket.BroadcastOptions) {
+	if a.broadcastStarted != nil {
+		close(a.broadcastStarted)
+		<-a.broadcastRelease
+	}
 	a.broadcasts++
 }
 
-func (a *recordingLocalAdapter) BroadcastWithAck(*parser.Packet, *socket.BroadcastOptions, func(uint64), socket.Ack) {
+func (a *recordingLocalAdapter) BroadcastWithAck(_ *parser.Packet, _ *socket.BroadcastOptions, clientCountCallback func(uint64), _ socket.Ack) {
 	a.broadcastsWithAck++
+	if a.invokeClientCount {
+		clientCountCallback(0)
+	}
+}
+
+func (a *recordingLocalAdapter) AddSockets(*socket.BroadcastOptions, []socket.Room) {
+	a.adds++
+}
+
+func (a *recordingLocalAdapter) DelSockets(*socket.BroadcastOptions, []socket.Room) {
+	a.dels++
+}
+
+func (a *recordingLocalAdapter) DisconnectSockets(*socket.BroadcastOptions, bool) {
+	a.disconnects++
 }
 
 func TestClassicBroadcastStopsOnEncodeError(t *testing.T) {
@@ -116,6 +146,30 @@ func TestClassicBroadcastStopsOnEncodeError(t *testing.T) {
 	}
 }
 
+func TestClassicPublishErrorIsEmitted(t *testing.T) {
+	publishErr := errors.New("publish failed")
+	goRedisClient := rds.NewClient(&rds.Options{Addr: "unused"})
+	goRedisClient.AddHook(&processErrorHook{err: publishErr})
+	t.Cleanup(func() { _ = goRedisClient.Close() })
+	client := mustRedisClient(t, context.Background(), goRedisClient)
+	var emitted atomic.Int64
+	if err := client.On("error", func(...any) { emitted.Add(1) }); err != nil {
+		t.Fatal(err)
+	}
+
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	adapter.Adapter = socket.NewAdapter(nsp)
+	adapter.redisClient = client
+	adapter.ctx = context.Background()
+
+	adapter.publish("socket.io#/test#", []byte("message"))
+
+	if emitted.Load() != 1 {
+		t.Fatalf("error event count = %d, want 1", emitted.Load())
+	}
+}
+
 func TestClassicBroadcastWithAckUsesDefaultTimeout(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
@@ -140,6 +194,22 @@ func TestClassicBroadcastWithAckUsesDefaultTimeout(t *testing.T) {
 
 	if redisAdapter.ackRequests.Len() != 1 {
 		t.Fatal("acknowledgement request expired before the default timeout")
+	}
+}
+
+func TestClassicAckRequestFollowsAdapterContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	adapter.ctx = ctx
+	adapter.registerAckRequest("request", &AckRequest{}, time.Minute)
+
+	cancel()
+	deadline := time.Now().Add(time.Second)
+	for adapter.ackRequests.Len() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if adapter.ackRequests.Len() != 0 {
+		t.Fatal("context cancellation did not remove the acknowledgement request")
 	}
 }
 
@@ -205,18 +275,19 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 			Sockets: types.NewSet[socket.SocketId](),
 		}
 		resolved := false
-		request.Resolve = func(values *types.Slice[any]) {
-			resolved = values != nil && values.Len() == 0
-		}
+		request.Resolve = func(*types.Slice[any]) { resolved = true }
 		adapter.requests.Store("request", request)
 
-		adapter.onResponse("", []byte(`{"requestId":"request"}`))
+		adapter.onResponse([]byte(`{"requestId":"request"}`))
 
-		if !resolved {
-			t.Fatal("missing SOCKETS payload did not resolve the request")
+		if resolved {
+			t.Fatal("missing SOCKETS payload resolved the request")
 		}
-		if _, ok := adapter.requests.Load("request"); ok {
-			t.Fatal("completed SOCKETS request was not deleted")
+		if request.MsgCount.Load() != 0 {
+			t.Fatal("missing SOCKETS payload was counted")
+		}
+		if _, ok := adapter.requests.Load("request"); !ok {
+			t.Fatal("incomplete SOCKETS request was deleted")
 		}
 	})
 
@@ -294,23 +365,24 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 			Responses: types.NewSlice[any](),
 		}
 		resolved := false
-		request.Resolve = func(values *types.Slice[any]) {
-			resolved = values != nil && values.Len() == 0
-		}
+		request.Resolve = func(*types.Slice[any]) { resolved = true }
 		adapter.requests.Store("request", request)
 
-		adapter.onResponse("", []byte(`{"requestId":"request"}`))
+		adapter.onResponse([]byte(`{"requestId":"request"}`))
 
-		if !resolved {
-			t.Fatal("missing REMOTE_FETCH payload did not resolve the request")
+		if resolved {
+			t.Fatal("missing REMOTE_FETCH payload resolved the request")
 		}
-		if _, ok := adapter.requests.Load("request"); ok {
-			t.Fatal("completed REMOTE_FETCH request was not deleted")
+		if request.MsgCount.Load() != 0 {
+			t.Fatal("missing REMOTE_FETCH payload was counted")
+		}
+		if _, ok := adapter.requests.Load("request"); !ok {
+			t.Fatal("incomplete REMOTE_FETCH request was deleted")
 		}
 	})
 }
 
-func TestRedisAdapterMissingRoomsResponseCompletesRequest(t *testing.T) {
+func TestRedisAdapterMissingRoomsResponseDoesNotCompleteRequest(t *testing.T) {
 	adapter := MakeRedisAdapter().(*redisAdapter)
 	request := &RedisRequest{
 		Type:   redis.ALL_ROOMS,
@@ -321,14 +393,56 @@ func TestRedisAdapterMissingRoomsResponseCompletesRequest(t *testing.T) {
 	request.Resolve = func(*types.Slice[any]) { resolved = true }
 	adapter.requests.Store("request", request)
 
-	adapter.onResponse("", []byte(`{"requestId":"request"}`))
+	adapter.onResponse([]byte(`{"requestId":"request"}`))
 
-	if !resolved {
-		t.Fatal("missing ALL_ROOMS payload did not resolve the request")
+	if resolved {
+		t.Fatal("missing ALL_ROOMS payload resolved the request")
 	}
-	if _, ok := adapter.requests.Load("request"); ok {
-		t.Fatal("completed ALL_ROOMS request was not deleted")
+	if request.MsgCount.Load() != 0 {
+		t.Fatal("missing ALL_ROOMS payload was counted")
 	}
+	if _, ok := adapter.requests.Load("request"); !ok {
+		t.Fatal("incomplete ALL_ROOMS request was deleted")
+	}
+}
+
+func TestRedisAdapterAllRoomsMergesBeforeCompleting(t *testing.T) {
+	const responseCount = 512
+
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	request := &RedisRequest{
+		Type:   redis.ALL_ROOMS,
+		NumSub: responseCount,
+		Rooms:  types.NewSet[socket.Room](),
+	}
+	resolved := make(chan int, 1)
+	request.Resolve = func(*types.Slice[any]) {
+		resolved <- request.Rooms.Len()
+	}
+	adapter.requests.Store("request", request)
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range responseCount {
+		wg.Go(func() {
+			<-start
+			adapter.processResponse(request, &Response{
+				RequestId: "request",
+				Rooms:     []socket.Room{socket.Room(fmt.Sprintf("room-%d", i))},
+			})
+		})
+	}
+	close(start)
+
+	select {
+	case roomCount := <-resolved:
+		if roomCount != responseCount {
+			t.Fatalf("resolved with %d rooms, want %d", roomCount, responseCount)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ALL_ROOMS request did not resolve")
+	}
+	wg.Wait()
 }
 
 func TestRequestOptionFlags(t *testing.T) {
@@ -383,7 +497,7 @@ func TestRedisAdapterOnResponseSeparatesSocketPayloads(t *testing.T) {
 		}
 		adapter.requests.Store("request", request)
 
-		adapter.onResponse("", []byte(`{"requestId":"request","sockets":["one","shared"]}`))
+		adapter.onResponse([]byte(`{"requestId":"request","sockets":["one","shared"]}`))
 		if resolveCount != 0 {
 			t.Fatal("SOCKETS request resolved before all responses arrived")
 		}
@@ -391,7 +505,7 @@ func TestRedisAdapterOnResponseSeparatesSocketPayloads(t *testing.T) {
 			t.Fatal("incomplete SOCKETS request was deleted")
 		}
 
-		adapter.onResponse("", []byte(`{"requestId":"request","sockets":["two","shared"]}`))
+		adapter.onResponse([]byte(`{"requestId":"request","sockets":["two","shared"]}`))
 		if resolveCount != 1 {
 			t.Fatalf("resolve count = %d, want 1", resolveCount)
 		}
@@ -407,7 +521,7 @@ func TestRedisAdapterOnResponseSeparatesSocketPayloads(t *testing.T) {
 			t.Fatal("completed SOCKETS request was not deleted")
 		}
 
-		adapter.onResponse("", []byte(`{"requestId":"request","sockets":["late"]}`))
+		adapter.onResponse([]byte(`{"requestId":"request","sockets":["late"]}`))
 		if resolveCount != 1 {
 			t.Fatalf("late response changed resolve count to %d", resolveCount)
 		}
@@ -429,7 +543,7 @@ func TestRedisAdapterOnResponseSeparatesSocketPayloads(t *testing.T) {
 		}
 		adapter.requests.Store("request", request)
 
-		adapter.onResponse("", []byte(`{"requestId":"request","sockets":[]}`))
+		adapter.onResponse([]byte(`{"requestId":"request","sockets":[]}`))
 
 		if !resolved {
 			t.Fatal("empty SOCKETS response did not resolve the request")
@@ -452,7 +566,7 @@ func TestRedisAdapterOnResponseSeparatesSocketPayloads(t *testing.T) {
 		}
 		adapter.requests.Store("request", request)
 
-		adapter.onResponse("", []byte(`{"requestId":"request","sockets":[{"id":"one","handshake":null,"rooms":[],"data":null}]}`))
+		adapter.onResponse([]byte(`{"requestId":"request","sockets":[{"id":"one","handshake":null,"rooms":[],"data":null}]}`))
 
 		if len(resolved) != 1 {
 			t.Fatalf("resolved sockets = %#v", resolved)
@@ -479,7 +593,7 @@ func TestRedisAdapterOnResponseSeparatesSocketPayloads(t *testing.T) {
 		}
 		adapter.requests.Store("request", request)
 
-		adapter.onResponse("", []byte(`{"requestId":"request","sockets":[]}`))
+		adapter.onResponse([]byte(`{"requestId":"request","sockets":[]}`))
 
 		if !resolved {
 			t.Fatal("empty REMOTE_FETCH response did not resolve the request")
@@ -497,7 +611,7 @@ func TestRedisAdapterOnMessageAcceptsNamespaceChannel(t *testing.T) {
 	adapter.uid = "sender"
 	adapter.parser = parser
 
-	adapter.onMessage(adapter.channel+"*", adapter.channel, []byte("payload"))
+	adapter.onMessage([]byte("payload"), adapter.channel)
 
 	if !parser.decodeCalled {
 		t.Fatal("expected namespace channel message to be decoded")
@@ -521,10 +635,264 @@ func TestRedisAdapterOnResponseWrapsAckPacket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	adapter.onResponse("", payload)
+	adapter.onResponse(payload)
 
 	want := []any{[]any{"first", "second"}}
 	if !reflect.DeepEqual(response, want) {
 		t.Fatalf("acknowledgement = %#v, want %#v", response, want)
+	}
+}
+
+func TestRedisAdapterMalformedAggregateResponsesAreNotCounted(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		kind    baseadapter.MessageType
+		payload string
+	}{
+		{name: "socket IDs wrong type", kind: redis.SOCKETS, payload: `{"requestId":"request","sockets":{}}`},
+		{name: "socket IDs null", kind: redis.SOCKETS, payload: `{"requestId":"request","sockets":null}`},
+		{name: "socket details wrong type", kind: redis.REMOTE_FETCH, payload: `{"requestId":"request","sockets":"invalid"}`},
+		{name: "socket details null", kind: redis.REMOTE_FETCH, payload: `{"requestId":"request","sockets":null}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			adapter := MakeRedisAdapter().(*redisAdapter)
+			request := &RedisRequest{
+				Type:      test.kind,
+				NumSub:    1,
+				Sockets:   types.NewSet[socket.SocketId](),
+				Responses: types.NewSlice[any](),
+			}
+			resolved := false
+			request.Resolve = func(*types.Slice[any]) { resolved = true }
+			adapter.requests.Store("request", request)
+
+			adapter.onResponse([]byte(test.payload))
+
+			if resolved {
+				t.Fatal("malformed response resolved the request")
+			}
+			if request.MsgCount.Load() != 0 {
+				t.Fatalf("message count = %d, want 0", request.MsgCount.Load())
+			}
+			if _, ok := adapter.requests.Load("request"); !ok {
+				t.Fatal("request was deleted after a malformed response")
+			}
+		})
+	}
+}
+
+func TestRedisAdapterRejectsMissingBroadcastClientCount(t *testing.T) {
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	called := false
+	adapter.ackRequests.Store("request", &AckRequest{
+		ClientCountCallback: func(uint64) { called = true },
+	})
+
+	adapter.onResponse([]byte(`{"type":8,"requestId":"request"}`))
+
+	if called {
+		t.Fatal("missing clientCount payload invoked the callback")
+	}
+}
+
+func TestClassicBulkSocketOperationsRunLocallyOnce(t *testing.T) {
+	server := miniredis.RunT(t)
+	goRedisClient := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	client := mustRedisClient(t, context.Background(), goRedisClient)
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	adapter := NewRedisAdapter(nsp, client, nil).(*redisAdapter)
+	local := &recordingLocalAdapter{Adapter: socket.NewAdapter(nsp)}
+	adapter.Adapter = local
+	t.Cleanup(func() {
+		adapter.Close()
+		_ = goRedisClient.Close()
+	})
+
+	adapter.AddSockets(nil, []socket.Room{"room"})
+	adapter.DelSockets(nil, []socket.Room{"room"})
+	adapter.DisconnectSockets(nil, false)
+
+	// Allow the Redis self-loop to be delivered. It must be ignored because the
+	// local operation is now performed explicitly by the publishing adapter.
+	time.Sleep(30 * time.Millisecond)
+	if local.adds != 1 || local.dels != 1 || local.disconnects != 1 {
+		t.Fatalf("local operations = add:%d del:%d disconnect:%d, want 1 each", local.adds, local.dels, local.disconnects)
+	}
+}
+
+func TestClassicRegisterRequestTimeoutDeletesBeforeCallback(t *testing.T) {
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	request := &RedisRequest{}
+	deletedBeforeCallback := make(chan bool, 1)
+	var callbackCount atomic.Int64
+
+	adapter.registerRequest("request", request, 10*time.Millisecond, func() {
+		callbackCount.Add(1)
+		_, exists := adapter.requests.Load("request")
+		deletedBeforeCallback <- !exists
+	})
+
+	select {
+	case deleted := <-deletedBeforeCallback:
+		if !deleted {
+			t.Fatal("timeout callback ran before the pending request was deleted")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout callback was not called")
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	if callbackCount.Load() != 1 {
+		t.Fatalf("timeout callback count = %d, want 1", callbackCount.Load())
+	}
+	if adapter.requests.Len() != 0 {
+		t.Fatal("timed-out request remained pending")
+	}
+}
+
+func TestClassicFinishRequestStopsTimeout(t *testing.T) {
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	resolved := make(chan struct{}, 1)
+	var resolveCount atomic.Int64
+	var timeoutCalled atomic.Bool
+	request := &RedisRequest{
+		Type: redis.REMOTE_JOIN,
+		Resolve: func(*types.Slice[any]) {
+			resolveCount.Add(1)
+			resolved <- struct{}{}
+		},
+	}
+
+	adapter.registerRequest("request", request, 100*time.Millisecond, func() {
+		timeoutCalled.Store(true)
+	})
+	adapter.processResponse(request, &Response{RequestId: "request"})
+
+	select {
+	case <-resolved:
+	case <-time.After(time.Second):
+		t.Fatal("completed request was not resolved")
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	if resolveCount.Load() != 1 {
+		t.Fatalf("resolve callback count = %d, want 1", resolveCount.Load())
+	}
+	if timeoutCalled.Load() {
+		t.Fatal("completed request timeout callback was called")
+	}
+	if adapter.requests.Len() != 0 || request.Timeout.Load() != nil {
+		t.Fatal("completed request retained pending state")
+	}
+}
+
+func TestClassicFinishRequestResolvesOnce(t *testing.T) {
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	var resolveCount atomic.Int64
+	var timeoutCalled atomic.Bool
+	request := &RedisRequest{
+		Type: redis.REMOTE_JOIN,
+		Resolve: func(*types.Slice[any]) {
+			resolveCount.Add(1)
+		},
+	}
+	adapter.registerRequest("request", request, time.Second, func() {
+		timeoutCalled.Store(true)
+	})
+
+	const responseCount = 64
+	var wg sync.WaitGroup
+	for range responseCount {
+		wg.Go(func() {
+			adapter.processResponse(request, &Response{RequestId: "request"})
+		})
+	}
+	wg.Wait()
+
+	if resolveCount.Load() != 1 {
+		t.Fatalf("resolve callback count = %d, want 1", resolveCount.Load())
+	}
+	if timeoutCalled.Load() {
+		t.Fatal("completed request timeout callback was called")
+	}
+	if adapter.requests.Len() != 0 || request.Timeout.Load() != nil {
+		t.Fatal("completed request retained pending state")
+	}
+}
+
+func TestClassicCloseDoesNotWaitForInFlightMessage(t *testing.T) {
+	goRedisClient := rds.NewClient(&rds.Options{Addr: "unused"})
+	t.Cleanup(func() { _ = goRedisClient.Close() })
+	client := mustRedisClient(t, context.Background(), goRedisClient)
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	local := &recordingLocalAdapter{
+		Adapter:          socket.NewAdapter(nsp),
+		broadcastStarted: make(chan struct{}),
+		broadcastRelease: make(chan struct{}),
+	}
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	adapter.Adapter = local
+	adapter.redisClient = client
+	adapter.channel = "socket.io#/test#"
+	adapter.uid = "self"
+	adapter.parser = &recordingParser{packet: &Packet{
+		Uid:    "sender",
+		Packet: &parser.Packet{Type: parser.EVENT, Nsp: "/test"},
+	}}
+	messageDone := make(chan struct{})
+	go func() {
+		adapter.onMessage([]byte("payload"), adapter.channel)
+		close(messageDone)
+	}()
+	<-local.broadcastStarted
+	closed := make(chan struct{})
+	go func() {
+		adapter.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close waited for an in-flight local adapter call")
+	}
+	close(local.broadcastRelease)
+	// The already-entered local call is allowed to finish independently.
+	select {
+	case <-messageDone:
+	case <-time.After(time.Second):
+		t.Fatal("in-flight broadcast did not finish after it was released")
+	}
+	if local.broadcasts != 1 {
+		t.Fatalf("broadcast count = %d, want 1", local.broadcasts)
+	}
+}
+
+func TestClassicCloseFromSynchronousCallbackDoesNotDeadlock(t *testing.T) {
+	goRedisClient := rds.NewClient(&rds.Options{Addr: "unused"})
+	t.Cleanup(func() { _ = goRedisClient.Close() })
+	client := mustRedisClient(t, context.Background(), goRedisClient)
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	local := &recordingLocalAdapter{Adapter: socket.NewAdapter(nsp), invokeClientCount: true}
+	adapter := MakeRedisAdapter().(*redisAdapter)
+	adapter.Adapter = local
+	adapter.redisClient = client
+	adapter.ctx, adapter.cancel = context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		adapter.BroadcastWithAck(
+			&parser.Packet{Type: parser.EVENT},
+			&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Local: true}},
+			func(uint64) { adapter.Close() },
+			func([]any, error) {},
+		)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close deadlocked inside a synchronous adapter callback")
 	}
 }

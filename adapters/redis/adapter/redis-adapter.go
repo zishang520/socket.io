@@ -65,7 +65,6 @@ type (
 		broadcastSubscription *redisSubscription
 		requestSubscription   *redisSubscription
 		server                *socket.Server
-		friendlyErrorHandler  func(...any)
 
 		ctx       context.Context
 		cancel    context.CancelFunc
@@ -84,14 +83,46 @@ func (rb *RedisAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 func MakeRedisAdapter() RedisAdapter {
 	c := &redisAdapter{
 		Adapter: socket.MakeAdapter(),
-
-		opts:                 DefaultRedisAdapterOptions(),
-		friendlyErrorHandler: func(...any) {},
+		opts:    DefaultRedisAdapterOptions(),
 	}
-
 	c.Prototype(c)
 
 	return c
+}
+
+// registerRequest installs a pending request and removes it before invoking its
+// timeout callback.
+func (r *redisAdapter) registerRequest(requestId string, request *RedisRequest, timeout time.Duration, onTimeout func()) {
+	r.requests.Store(requestId, request)
+	request.Timeout.Store(utils.SetTimeout(func() {
+		if !r.requests.CompareAndDelete(requestId, request) {
+			return
+		}
+		if onTimeout != nil {
+			onTimeout()
+		}
+	}, timeout))
+}
+
+// finishRequest claims a completed request, releases its timeout and reports
+// whether its callback may be invoked.
+func (r *redisAdapter) finishRequest(requestId string, request *RedisRequest) bool {
+	if !r.requests.CompareAndDelete(requestId, request) {
+		return false
+	}
+	utils.ClearTimeout(request.Timeout.Swap(nil))
+	return request.Resolve != nil
+}
+
+// registerAckRequest installs an acknowledgement request. Its timeout is
+// derived from the adapter context, so Close also triggers cleanup.
+func (r *redisAdapter) registerAckRequest(requestId string, request *AckRequest, timeout time.Duration) {
+	r.ackRequests.Store(requestId, request)
+	timeoutCtx, cancel := context.WithTimeout(r.ctx, timeout)
+	context.AfterFunc(timeoutCtx, func() {
+		defer cancel()
+		r.ackRequests.CompareAndDelete(requestId, request)
+	})
 }
 
 // NewRedisAdapter creates and initializes a new RedisAdapter for the given namespace.
@@ -131,6 +162,12 @@ func (r *redisAdapter) PublishOnSpecificResponseChannel() bool {
 // Parser returns the parser used for encoding/decoding Redis messages.
 func (r *redisAdapter) Parser() redis.Parser { return r.parser }
 
+func (r *redisAdapter) onRedisError(...any) {
+	if r.redisClient.ListenerCount("error") == 1 {
+		redisLog.Warning("missing 'error' handler on this Redis client")
+	}
+}
+
 // Construct initializes the Redis adapter for the given namespace.
 // It sets up Redis Pub/Sub subscriptions and starts message handling goroutines.
 func (r *redisAdapter) Construct(nsp socket.Namespace) {
@@ -163,21 +200,11 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	r.responseChannel = prefix + "-response#" + r.Nsp().Name() + "#"
 	r.specificResponseChannel = r.responseChannel + string(r.uid) + "#"
 
-	// Set up error handler
-	r.friendlyErrorHandler = func(...any) {
-		if r.redisClient.ListenerCount("error") == 1 {
-			redisLog.Warning("missing 'error' handler on this Redis client")
-		}
-	}
-	_ = r.redisClient.On("error", r.friendlyErrorHandler)
+	_ = r.redisClient.On("error", r.onRedisError)
 
 	r.pubSub = acquireRedisPubSub(r.server, r.redisClient)
-	r.broadcastSubscription = r.pubSub.newSubscription(func(payload []byte, channel string) {
-		r.onMessage("", channel, payload)
-	})
-	r.requestSubscription = r.pubSub.newSubscription(func(payload []byte, channel string) {
-		r.onRequest(channel, payload)
-	})
+	r.broadcastSubscription = r.pubSub.newSubscription(r.onMessage)
+	r.requestSubscription = r.pubSub.newSubscription(r.onRequest)
 	r.broadcastSubscription.PSubscribe(r.channel + "*")
 	r.requestSubscription.Subscribe(r.requestChannel, r.responseChannel, r.specificResponseChannel)
 	if err := r.pubSub.flush(r.ctx); err != nil && r.ctx.Err() == nil {
@@ -186,7 +213,7 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 }
 
 // onMessage handles broadcast messages from Redis pattern subscriptions.
-func (r *redisAdapter) onMessage(_ string, channel string, msg []byte) {
+func (r *redisAdapter) onMessage(msg []byte, channel string) {
 	if !strings.HasPrefix(channel, r.channel) {
 		redisLog.Debug("ignore different channel")
 		return
@@ -232,10 +259,10 @@ func (r *redisAdapter) hasRoom(room socket.Room) bool {
 }
 
 // onRequest handles inter-node requests from Redis.
-func (r *redisAdapter) onRequest(channel string, msg []byte) {
+func (r *redisAdapter) onRequest(msg []byte, channel string) {
 	// Route response messages to onResponse handler
 	if strings.HasPrefix(channel, r.responseChannel) {
-		r.onResponse(channel, msg)
+		r.onResponse(msg)
 		return
 	}
 	// Validate request channel
@@ -291,15 +318,10 @@ func (r *redisAdapter) handleSocketsRequest(request *Request) {
 	}
 
 	sockets := r.Sockets(types.NewSet(request.Rooms...))
-	response, err := json.Marshal(&Response{
+	r.publishJSONResponse(request, &Response{
 		RequestId: request.RequestId,
 		Sockets:   utils.NonNilSlice(sockets.Keys()),
 	})
-	if err != nil {
-		redisLog.Debug("Error marshaling SOCKETS response for RequestId %s: %s", request.RequestId, err.Error())
-		return
-	}
-	r.publishResponse(request, response)
 }
 
 // handleAllRoomsRequest handles ALL_ROOMS request type.
@@ -308,20 +330,18 @@ func (r *redisAdapter) handleAllRoomsRequest(request *Request) {
 		return
 	}
 
-	response, err := json.Marshal(&Response{
+	r.publishJSONResponse(request, &Response{
 		RequestId: request.RequestId,
 		Rooms:     utils.NonNilSlice(r.Rooms().Keys()),
 	})
-	if err != nil {
-		redisLog.Debug("Error marshaling ALL_ROOMS response for RequestId %s: %s", request.RequestId, err.Error())
-		return
-	}
-	r.publishResponse(request, response)
 }
 
 // handleRemoteJoinRequest handles REMOTE_JOIN request type.
 func (r *redisAdapter) handleRemoteJoinRequest(request *Request) {
 	if request.Opts != nil {
+		if request.Uid == r.uid {
+			return
+		}
 		r.Adapter.AddSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
 		return
 	}
@@ -330,17 +350,15 @@ func (r *redisAdapter) handleRemoteJoinRequest(request *Request) {
 		return
 	}
 	client.Join(request.Room)
-	response, err := json.Marshal(&Response{RequestId: request.RequestId})
-	if err != nil {
-		redisLog.Debug("Error marshaling REMOTE_JOIN response for RequestId %s: %s", request.RequestId, err.Error())
-		return
-	}
-	r.publishResponse(request, response)
+	r.publishJSONResponse(request, &Response{RequestId: request.RequestId})
 }
 
 // handleRemoteLeaveRequest handles REMOTE_LEAVE request type.
 func (r *redisAdapter) handleRemoteLeaveRequest(request *Request) {
 	if request.Opts != nil {
+		if request.Uid == r.uid {
+			return
+		}
 		r.Adapter.DelSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
 		return
 	}
@@ -349,31 +367,25 @@ func (r *redisAdapter) handleRemoteLeaveRequest(request *Request) {
 		return
 	}
 	client.Leave(request.Room)
-	response, err := json.Marshal(&Response{RequestId: request.RequestId})
-	if err != nil {
-		redisLog.Debug("Error marshaling REMOTE_LEAVE response for RequestId %s: %s", request.RequestId, err.Error())
-		return
-	}
-	r.publishResponse(request, response)
+	r.publishJSONResponse(request, &Response{RequestId: request.RequestId})
 }
 
 // handleRemoteDisconnectRequest handles REMOTE_DISCONNECT request type.
 func (r *redisAdapter) handleRemoteDisconnectRequest(request *Request) {
+	close := utils.FromPtr(request.Close)
 	if request.Opts != nil {
-		r.Adapter.DisconnectSockets(adapter.DecodeOptions(request.Opts), request.Close)
+		if request.Uid == r.uid {
+			return
+		}
+		r.Adapter.DisconnectSockets(adapter.DecodeOptions(request.Opts), close)
 		return
 	}
 	client, ok := r.Nsp().Sockets().Load(request.Sid)
 	if !ok {
 		return
 	}
-	client.Disconnect(request.Close)
-	response, err := json.Marshal(&Response{RequestId: request.RequestId})
-	if err != nil {
-		redisLog.Debug("Error marshaling REMOTE_DISCONNECT response for RequestId %s: %s", request.RequestId, err.Error())
-		return
-	}
-	r.publishResponse(request, response)
+	client.Disconnect(close)
+	r.publishJSONResponse(request, &Response{RequestId: request.RequestId})
 }
 
 // handleRemoteFetchRequest handles REMOTE_FETCH request type.
@@ -387,15 +399,10 @@ func (r *redisAdapter) handleRemoteFetchRequest(request *Request) {
 			redisLog.Debug("REMOTE_FETCH Adapter.FetchSockets error: %s", err.Error())
 			return
 		}
-		response, err := json.Marshal(&Response{
+		r.publishJSONResponse(request, &Response{
 			RequestId: request.RequestId,
 			Sockets:   adapter.SocketDetailsToResponses(localSockets),
 		})
-		if err != nil {
-			redisLog.Debug("Error marshaling REMOTE_FETCH response for RequestId %s: %s", request.RequestId, err.Error())
-			return
-		}
-		r.publishResponse(request, response)
 	})
 }
 
@@ -428,9 +435,7 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 			redisLog.Debug("Error marshaling SERVER_SIDE_EMIT response for RequestId %s: %s", request.RequestId, err.Error())
 			return
 		}
-		if err := r.redisClient.Client().Publish(r.ctx, r.responseChannel, response).Err(); err != nil {
-			r.redisClient.Emit("error", err)
-		}
+		r.publish(r.responseChannel, response)
 	}
 	r.Nsp().OnServerSideEmit(slices.AppendCopy(request.Data, callback))
 }
@@ -446,16 +451,11 @@ func (r *redisAdapter) handleBroadcastRequest(request *Request) {
 		adapter.DecodeOptions(request.Opts),
 		func(clientCount uint64) {
 			redisLog.Debug("waiting for %d client acknowledgements", clientCount)
-			response, err := json.Marshal(&Response{
+			r.publishJSONResponse(request, &Response{
 				Type:        redis.BROADCAST_CLIENT_COUNT,
 				RequestId:   request.RequestId,
-				ClientCount: new(clientCount),
+				ClientCount: &clientCount,
 			})
-			if err != nil {
-				redisLog.Debug("Error marshaling BROADCAST_CLIENT_COUNT response for RequestId %s: %s", request.RequestId, err.Error())
-				return
-			}
-			r.publishResponse(request, response)
 		},
 		func(args []any, _ error) {
 			redisLog.Debug("received acknowledgement with value %v", args)
@@ -473,6 +473,21 @@ func (r *redisAdapter) handleBroadcastRequest(request *Request) {
 	)
 }
 
+func (r *redisAdapter) publish(channel string, message []byte) {
+	if err := r.redisClient.Client().Publish(r.ctx, channel, message).Err(); err != nil {
+		r.redisClient.Emit("error", err)
+	}
+}
+
+func (r *redisAdapter) publishJSONResponse(request *Request, response *Response) {
+	message, err := json.Marshal(response)
+	if err != nil {
+		redisLog.Debug("Error marshaling response for request type %d with RequestId %s: %s", request.Type, request.RequestId, err.Error())
+		return
+	}
+	r.publishResponse(request, message)
+}
+
 func (r *redisAdapter) publishResponse(request *Request, response []byte) {
 	channel := r.responseChannel
 	if r.publishOnSpecificResponseChannel {
@@ -480,13 +495,11 @@ func (r *redisAdapter) publishResponse(request *Request, response []byte) {
 	}
 
 	redisLog.Debug("publishing response to channel %s", channel)
-	if err := r.redisClient.Client().Publish(r.ctx, channel, response).Err(); err != nil {
-		r.redisClient.Emit("error", err)
-	}
+	r.publish(channel, response)
 }
 
 // onResponse handles responses from other nodes.
-func (r *redisAdapter) onResponse(_ string, msg []byte) {
+func (r *redisAdapter) onResponse(msg []byte) {
 	var response Response
 	// Detect message format by first byte
 	var err error
@@ -499,15 +512,25 @@ func (r *redisAdapter) onResponse(_ string, msg []byte) {
 		redisLog.Debug("ignoring malformed response")
 		return
 	}
+	if response.RequestId == "" {
+		redisLog.Debug("ignoring response without request id")
+		return
+	}
 
 	requestId := response.RequestId
 	// Handle acknowledgement responses
 	if ackRequest, ok := r.ackRequests.Load(requestId); ok {
 		switch response.Type {
 		case redis.BROADCAST_CLIENT_COUNT:
-			ackRequest.ClientCountCallback(utils.FromPtr(response.ClientCount))
+			if response.ClientCount == nil || ackRequest.ClientCountCallback == nil {
+				redisLog.Debug("ignoring malformed broadcast client count response")
+				return
+			}
+			ackRequest.ClientCountCallback(*response.ClientCount)
 		case redis.BROADCAST_ACK:
-			ackRequest.Ack([]any{response.Packet}, nil)
+			if ackRequest.Ack != nil {
+				ackRequest.Ack([]any{response.Packet}, nil)
+			}
 		}
 		return
 	}
@@ -525,23 +548,19 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 	requestId := response.RequestId
 	switch request.Type {
 	case redis.SOCKETS:
-		msgCount := request.MsgCount.Add(1)
-		if response.Sockets != nil {
-			socketsPayload, ok := response.Sockets.(json.RawMessage)
-			if !ok {
-				return
-			}
-			var socketIds []socket.SocketId
-			if err := json.Unmarshal(socketsPayload, &socketIds); err != nil {
-				return
-			}
-			request.Sockets.Add(socketIds...)
-		}
-		if msgCount != request.NumSub || !r.requests.CompareAndDelete(requestId, request) {
+		socketsPayload, ok := response.Sockets.(json.RawMessage)
+		if !ok {
+			redisLog.Debug("ignoring SOCKETS response without a sockets payload")
 			return
 		}
-		utils.ClearTimeout(request.Timeout.Load())
-		if request.Resolve == nil {
+		var socketIds []socket.SocketId
+		if err := json.Unmarshal(socketsPayload, &socketIds); err != nil || socketIds == nil {
+			redisLog.Debug("ignoring malformed SOCKETS response")
+			return
+		}
+		request.Sockets.Add(socketIds...)
+		msgCount := request.MsgCount.Add(1)
+		if msgCount != request.NumSub || !r.finishRequest(requestId, request) {
 			return
 		}
 		responses := slices.Map(request.Sockets.Keys(), func(socketId socket.SocketId) any {
@@ -549,53 +568,41 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 		})
 		request.Resolve(types.NewSlice(responses...))
 	case redis.REMOTE_FETCH:
-		msgCount := request.MsgCount.Add(1)
-		if response.Sockets != nil {
-			socketsPayload, ok := response.Sockets.(json.RawMessage)
-			if !ok {
-				return
-			}
-			var sockets []adapter.SocketResponse
-			if err := json.Unmarshal(socketsPayload, &sockets); err != nil {
-				return
-			}
-			if len(sockets) > 0 {
-				request.Responses.Push(adapter.SocketResponsesToDetailsAny(sockets)...)
-			}
-		}
-		if msgCount != request.NumSub || !r.requests.CompareAndDelete(requestId, request) {
+		socketsPayload, ok := response.Sockets.(json.RawMessage)
+		if !ok {
+			redisLog.Debug("ignoring REMOTE_FETCH response without a sockets payload")
 			return
 		}
-		utils.ClearTimeout(request.Timeout.Load())
-		if request.Resolve != nil {
+		var sockets []adapter.SocketResponse
+		if err := json.Unmarshal(socketsPayload, &sockets); err != nil || sockets == nil {
+			redisLog.Debug("ignoring malformed REMOTE_FETCH response")
+			return
+		}
+		if len(sockets) > 0 {
+			request.Responses.Push(adapter.SocketResponsesToDetailsAny(sockets)...)
+		}
+		msgCount := request.MsgCount.Add(1)
+		if msgCount == request.NumSub && r.finishRequest(requestId, request) {
 			request.Resolve(request.Responses)
 		}
 	case redis.ALL_ROOMS:
-		msgCount := request.MsgCount.Add(1)
-		request.Rooms.Add(response.Rooms...)
-		if msgCount != request.NumSub || !r.requests.CompareAndDelete(requestId, request) {
+		if response.Rooms == nil {
+			redisLog.Debug("ignoring ALL_ROOMS response without a rooms payload")
 			return
 		}
-		utils.ClearTimeout(request.Timeout.Load())
-		if request.Resolve != nil {
+		request.Rooms.Add(response.Rooms...)
+		msgCount := request.MsgCount.Add(1)
+		if msgCount == request.NumSub && r.finishRequest(requestId, request) {
 			request.Resolve(nil)
 		}
 	case redis.REMOTE_JOIN, redis.REMOTE_LEAVE, redis.REMOTE_DISCONNECT:
-		if !r.requests.CompareAndDelete(requestId, request) {
-			return
-		}
-		utils.ClearTimeout(request.Timeout.Load())
-		if request.Resolve != nil {
+		if r.finishRequest(requestId, request) {
 			request.Resolve(nil)
 		}
 	case redis.SERVER_SIDE_EMIT:
 		responseCount := request.Responses.Push(response.Data)
 		redisLog.Debug("serverSideEmit: got %d responses out of %d", responseCount, request.NumSub)
-		if int64(responseCount) != request.NumSub || !r.requests.CompareAndDelete(requestId, request) {
-			return
-		}
-		utils.ClearTimeout(request.Timeout.Load())
-		if request.Resolve != nil {
+		if int64(responseCount) == request.NumSub && r.finishRequest(requestId, request) {
 			request.Resolve(request.Responses)
 		}
 	default:
@@ -626,9 +633,7 @@ func (r *redisAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOp
 			channel = channel + string(packetOpts.Rooms[0]) + "#"
 		}
 		redisLog.Debug("publishing message to channel %s", channel)
-		if err := r.redisClient.Client().Publish(r.ctx, channel, msg).Err(); err != nil {
-			r.redisClient.Emit("error", err)
-		}
+		r.publish(channel, msg)
 	}
 	r.Adapter.Broadcast(packet, opts)
 }
@@ -656,19 +661,13 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 			ClientCountCallback: clientCountCallback,
 			Ack:                 ack,
 		}
-		r.ackRequests.Store(requestId, ackRequest)
-
 		timeout := adapter.DEFAULT_TIMEOUT
 		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
 			timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
 		}
-		utils.SetTimeout(func() {
-			r.ackRequests.CompareAndDelete(requestId, ackRequest)
-		}, timeout)
+		r.registerAckRequest(requestId, ackRequest, timeout)
 
-		if err := r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
-			r.redisClient.Emit("error", err)
-		}
+		r.publish(r.requestChannel, message)
 	}
 	r.Adapter.BroadcastWithAck(packet, opts, clientCountCallback, ack)
 }
@@ -706,16 +705,11 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 			Rooms: localRooms,
 		}
 		request.MsgCount.Store(1) // Count self
-		r.requests.Store(requestId, request)
-		request.Timeout.Store(utils.SetTimeout(func() {
-			if r.requests.CompareAndDelete(requestId, request) {
-				cb(nil, errors.New("timeout reached while waiting for allRooms response"))
-			}
-		}, r.requestsTimeout))
+		r.registerRequest(requestId, request, r.requestsTimeout, func() {
+			cb(nil, errors.New("timeout reached while waiting for allRooms response"))
+		})
 
-		if err := r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
-			r.redisClient.Emit("error", err)
-		}
+		r.publish(r.requestChannel, message)
 	}
 }
 
@@ -759,69 +753,52 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				Responses: types.NewSlice(adapter.SocketDetailsToAny(localSockets)...),
 			}
 			request.MsgCount.Store(1) // Count self
-			r.requests.Store(requestId, request)
-			request.Timeout.Store(utils.SetTimeout(func() {
-				if r.requests.CompareAndDelete(requestId, request) {
-					cb(nil, errors.New("timeout reached while waiting for fetchSockets response"))
-				}
-			}, r.requestsTimeout))
+			r.registerRequest(requestId, request, r.requestsTimeout, func() {
+				cb(nil, errors.New("timeout reached while waiting for fetchSockets response"))
+			})
 
-			if err := r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
-				r.redisClient.Emit("error", err)
-			}
+			r.publish(r.requestChannel, message)
 		})
 	}
 }
 
 // AddSockets adds sockets matching the options to the specified rooms across all nodes.
 func (r *redisAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socket.Room) {
-	if opts != nil && opts.Flags != nil && opts.Flags.Local {
-		r.Adapter.AddSockets(opts, rooms)
-		return
+	if opts == nil || opts.Flags == nil || !opts.Flags.Local {
+		message, err := json.Marshal(&Request{Uid: r.uid, Type: redis.REMOTE_JOIN, Opts: adapter.EncodeOptions(opts), Rooms: rooms})
+		if err != nil {
+			redisLog.Debug("Error marshaling AddSockets request: %s", err.Error())
+		} else {
+			r.publish(r.requestChannel, message)
+		}
 	}
-	message, err := json.Marshal(&Request{Uid: r.uid, Type: redis.REMOTE_JOIN, Opts: adapter.EncodeOptions(opts), Rooms: rooms})
-	if err != nil {
-		redisLog.Debug("Error marshaling AddSockets request: %s", err.Error())
-		return
-	}
-
-	if err := r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
-		r.redisClient.Emit("error", err)
-	}
+	r.Adapter.AddSockets(opts, rooms)
 }
 
 // DelSockets removes sockets matching the options from the specified rooms across all nodes.
 func (r *redisAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socket.Room) {
-	if opts != nil && opts.Flags != nil && opts.Flags.Local {
-		r.Adapter.DelSockets(opts, rooms)
-		return
+	if opts == nil || opts.Flags == nil || !opts.Flags.Local {
+		message, err := json.Marshal(&Request{Uid: r.uid, Type: redis.REMOTE_LEAVE, Opts: adapter.EncodeOptions(opts), Rooms: rooms})
+		if err != nil {
+			redisLog.Debug("Error marshaling DelSockets request: %s", err.Error())
+		} else {
+			r.publish(r.requestChannel, message)
+		}
 	}
-	message, err := json.Marshal(&Request{Uid: r.uid, Type: redis.REMOTE_LEAVE, Opts: adapter.EncodeOptions(opts), Rooms: rooms})
-	if err != nil {
-		redisLog.Debug("Error marshaling DelSockets request: %s", err.Error())
-		return
-	}
-
-	if err := r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
-		r.redisClient.Emit("error", err)
-	}
+	r.Adapter.DelSockets(opts, rooms)
 }
 
 // DisconnectSockets disconnects sockets matching the options across all nodes.
 func (r *redisAdapter) DisconnectSockets(opts *socket.BroadcastOptions, close bool) {
-	if opts != nil && opts.Flags != nil && opts.Flags.Local {
-		r.Adapter.DisconnectSockets(opts, close)
-		return
+	if opts == nil || opts.Flags == nil || !opts.Flags.Local {
+		message, err := json.Marshal(&Request{Uid: r.uid, Type: redis.REMOTE_DISCONNECT, Opts: adapter.EncodeOptions(opts), Close: &close})
+		if err != nil {
+			redisLog.Debug("Error marshaling DisconnectSockets request: %s", err.Error())
+		} else {
+			r.publish(r.requestChannel, message)
+		}
 	}
-	message, err := json.Marshal(&Request{Uid: r.uid, Type: redis.REMOTE_DISCONNECT, Opts: adapter.EncodeOptions(opts), Close: close})
-	if err != nil {
-		redisLog.Debug("Error marshaling DisconnectSockets request: %s", err.Error())
-		return
-	}
-
-	if err := r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err(); err != nil {
-		r.redisClient.Emit("error", err)
-	}
+	r.Adapter.DisconnectSockets(opts, close)
 }
 
 // ServerSideEmit emits a packet to all servers in the cluster.
@@ -871,12 +848,9 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 		},
 		Responses: types.NewSlice[any](),
 	}
-	r.requests.Store(requestId, request)
-	request.Timeout.Store(utils.SetTimeout(func() {
-		if r.requests.CompareAndDelete(requestId, request) {
-			ack(request.Responses.All(), fmt.Errorf("timeout reached: only %d responses received out of %d", request.Responses.Len(), request.NumSub))
-		}
-	}, r.requestsTimeout))
+	r.registerRequest(requestId, request, r.requestsTimeout, func() {
+		ack(request.Responses.All(), fmt.Errorf("timeout reached: only %d responses received out of %d", request.Responses.Len(), request.NumSub))
+	})
 
 	return r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err()
 }
@@ -889,20 +863,22 @@ func (r *redisAdapter) ServerCount() (int64, error) {
 // Close cleans up Redis subscriptions and listeners.
 // This should be called when the adapter is no longer needed.
 func (r *redisAdapter) Close() {
-	r.closeOnce.Do(func() {
-		if r.cancel != nil {
-			r.cancel()
-		}
-		if r.broadcastSubscription != nil {
-			r.broadcastSubscription.Close()
-		}
-		if r.requestSubscription != nil {
-			r.requestSubscription.Close()
-		}
-		if r.pubSub != nil {
-			releaseRedisPubSub(r.server, r.redisClient, r.pubSub)
-		}
-		r.redisClient.RemoveListener("error", r.friendlyErrorHandler)
-		r.Adapter.Close()
-	})
+	r.closeOnce.Do(r.close)
+}
+
+func (r *redisAdapter) close() {
+	if r.cancel != nil {
+		r.cancel()
+	}
+	if r.broadcastSubscription != nil {
+		r.broadcastSubscription.Close()
+	}
+	if r.requestSubscription != nil {
+		r.requestSubscription.Close()
+	}
+	if r.pubSub != nil {
+		releaseRedisPubSub(r.server, r.redisClient, r.pubSub)
+	}
+	r.redisClient.RemoveListener("error", r.onRedisError)
+	r.Adapter.Close()
 }

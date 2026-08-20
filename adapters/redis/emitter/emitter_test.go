@@ -14,6 +14,17 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+type encodeOnly struct {
+	called bool
+}
+
+func (e *encodeOnly) Encode(value any) ([]byte, error) {
+	e.called = true
+	return utils.MsgPack().Encode(value)
+}
+
+var _ EmitterOptionsInterface = (*EmitterOptions)(nil)
+
 func TestEmitterOptions(t *testing.T) {
 	opts := DefaultEmitterOptions()
 	opts.Assign(nil)
@@ -31,9 +42,9 @@ func TestEmitterOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("Parser", func(t *testing.T) {
-		if opts.GetRawParser() != nil {
-			t.Fatal(`DefaultEmitterOptions.GetRawParser() value must be nil`)
+	t.Run("Encoder", func(t *testing.T) {
+		if opts.GetRawEncoder() != nil {
+			t.Fatal(`DefaultEmitterOptions.GetRawEncoder() value must be nil`)
 		}
 	})
 }
@@ -72,7 +83,7 @@ func TestClassicEmitterNodeWire(t *testing.T) {
 		t.Fatal(err)
 	}
 	var packet redis.RedisPacket
-	if err := emit.opts.Parser().Decode([]byte(message.Payload), &packet); err != nil {
+	if err := utils.MsgPack().Decode([]byte(message.Payload), &packet); err != nil {
 		t.Fatal(err)
 	}
 	if packet.Uid != "emitter" || packet.Packet.Nsp != "/chat" {
@@ -83,15 +94,44 @@ func TestClassicEmitterNodeWire(t *testing.T) {
 	}
 }
 
-func TestClassicEmitterPreservesExplicitEmptyNamespace(t *testing.T) {
+func TestClassicEmitterAcceptsEncodeOnlyEncoder(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
-	emit := NewEmitter(mustRedisClient(t, client), nil, "")
+	encoder := new(encodeOnly)
+	options := DefaultEmitterOptions()
+	options.SetEncoder(encoder)
+
+	if err := NewEmitter(mustRedisClient(t, client), options).Emit("event", "value"); err != nil {
+		t.Fatal(err)
+	}
+	if !encoder.called {
+		t.Fatal("encode-only encoder was not called")
+	}
+}
+
+func TestClassicEmitterPreservesConstructorRoutingValues(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	redisClient := mustRedisClient(t, client)
+	emit := NewEmitter(redisClient, nil, "")
 	if emit.nsp != "" || emit.broadcastOptions.BroadcastChannel != "socket.io##" {
 		t.Fatalf("namespace = %q, channel = %q", emit.nsp, emit.broadcastOptions.BroadcastChannel)
 	}
 	if got := emit.Of("").nsp; got != "/" {
 		t.Fatalf("Of empty namespace = %q, want /", got)
+	}
+	if got := NewEmitter(redisClient, nil, "chat").nsp; got != "chat" {
+		t.Fatalf("direct namespace = %q, want raw chat", got)
+	}
+	if got := emit.Of("chat").nsp; got != "/chat" {
+		t.Fatalf("Of namespace = %q, want /chat", got)
+	}
+
+	options := DefaultEmitterOptions()
+	options.SetKey("")
+	emptyKeyEmitter := NewEmitter(redisClient, options)
+	if got := emptyKeyEmitter.broadcastOptions.BroadcastChannel; got != "#/#" {
+		t.Fatalf("explicit empty key channel = %q, want #/#", got)
 	}
 }
 
@@ -113,13 +153,15 @@ func TestShardedOperatorKeepsConcreteType(t *testing.T) {
 func TestRedisStreamsOperatorKeepsConcreteType(t *testing.T) {
 	options := DefaultRedisStreamsEmitterOptions()
 	options.SetStreamName("events")
+	options.SetStreamCount(5)
 	options.SetMaxLen(100)
 	operator := NewRedisStreamsBroadcastOperator(nil, "", options, nil, nil, nil)
 	result, ok := operator.To("room").Except("excluded").Volatile().Compress(false).(*RedisStreamsBroadcastOperator)
 	if !ok {
 		t.Fatal("chaining changed the Redis Streams operator type")
 	}
-	if result.opts.StreamName() != options.StreamName() || result.opts.MaxLen() != options.MaxLen() {
+	if result.opts.StreamName() != options.StreamName() || result.opts.StreamCount() != options.StreamCount() ||
+		result.opts.MaxLen() != options.MaxLen() {
 		t.Fatal("chaining changed the Redis Streams options")
 	}
 	if !result.rooms.Has("room") || !result.exceptRooms.Has("excluded") {
@@ -127,6 +169,30 @@ func TestRedisStreamsOperatorKeepsConcreteType(t *testing.T) {
 	}
 	if !result.flags.Volatile || result.flags.Compress == nil || *result.flags.Compress {
 		t.Fatal("chaining lost broadcast flags")
+	}
+}
+
+func TestRedisStreamsEmitterRoutesNamespaceToConfiguredStream(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	options := DefaultRedisStreamsEmitterOptions()
+	options.SetStreamName("events")
+	options.SetStreamCount(5)
+	emit := NewRedisStreamsEmitter(mustRedisClient(t, client), options).Of("/namespace-0")
+
+	if err := emit.Emit("event"); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := client.XRange(context.Background(), "events--3", "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries in routed stream = %d, want 1", len(entries))
+	}
+	if exists := server.Exists("events"); exists {
+		t.Fatal("message was also written to the base stream")
 	}
 }
 
@@ -259,7 +325,7 @@ func TestBroadcastOperator(t *testing.T) {
 		Nsp:              "",
 		BroadcastChannel: "",
 		RequestChannel:   "",
-		Parser:           utils.MsgPack(),
+		Encoder:          utils.MsgPack(),
 	}, nil, nil, nil)
 
 	t.Run("Emit", func(t *testing.T) {

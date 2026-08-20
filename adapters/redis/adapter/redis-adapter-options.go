@@ -4,7 +4,7 @@ package adapter
 import (
 	"time"
 
-	"github.com/zishang520/socket.io/adapters/redis/v3/emitter"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
@@ -15,10 +15,15 @@ const (
 )
 
 type (
-	// RedisAdapterOptionsInterface defines the interface for configuring RedisAdapterOptions.
-	// It extends EmitterOptionsInterface to include adapter-specific settings.
+	// RedisAdapterOptionsInterface defines the classic Redis adapter settings.
 	RedisAdapterOptionsInterface interface {
-		emitter.EmitterOptionsInterface
+		SetKey(string)
+		GetRawKey() types.Optional[string]
+		Key() string
+
+		SetParser(redis.Parser)
+		GetRawParser() types.Optional[redis.Parser]
+		Parser() redis.Parser
 
 		SetRequestsTimeout(time.Duration)
 		GetRawRequestsTimeout() types.Optional[time.Duration]
@@ -32,14 +37,16 @@ type (
 	// RedisAdapterOptions holds configuration for the Redis adapter.
 	//
 	// Fields:
+	//   - key: Redis channel prefix. Default: "socket.io".
+	//   - parser: Full encoder/decoder used for cluster messages. Default: MessagePack.
 	//   - requestsTimeout: Maximum time to wait for responses to inter-node requests.
 	//     Default: 5000ms. After this timeout, the adapter stops waiting for responses.
 	//   - publishOnSpecificResponseChannel: When true, responses are published to a
 	//     channel specific to the requesting node, reducing unnecessary message processing.
 	//     Default: false.
 	RedisAdapterOptions struct {
-		emitter.EmitterOptions
-
+		key                              types.Optional[string]
+		parser                           types.Optional[redis.Parser]
 		requestsTimeout                  types.Optional[time.Duration]
 		publishOnSpecificResponseChannel types.Optional[bool]
 	}
@@ -57,7 +64,12 @@ func (s *RedisAdapterOptions) Assign(data RedisAdapterOptionsInterface) RedisAda
 		return s
 	}
 
-	s.EmitterOptions.Assign(data)
+	if data.GetRawKey() != nil {
+		s.SetKey(data.Key())
+	}
+	if data.GetRawParser() != nil {
+		s.SetParser(data.Parser())
+	}
 
 	if data.GetRawRequestsTimeout() != nil {
 		s.SetRequestsTimeout(data.RequestsTimeout())
@@ -67,6 +79,42 @@ func (s *RedisAdapterOptions) Assign(data RedisAdapterOptionsInterface) RedisAda
 	}
 
 	return s
+}
+
+// SetKey sets the Redis channel prefix.
+func (s *RedisAdapterOptions) SetKey(key string) {
+	s.key = types.NewSome(key)
+}
+
+// GetRawKey returns the raw Optional wrapper for the key setting.
+func (s *RedisAdapterOptions) GetRawKey() types.Optional[string] {
+	return s.key
+}
+
+// Key returns the configured Redis channel prefix, or an empty string.
+func (s *RedisAdapterOptions) Key() string {
+	if s.key == nil {
+		return ""
+	}
+	return s.key.Get()
+}
+
+// SetParser sets the full encoder/decoder used by the Redis adapter.
+func (s *RedisAdapterOptions) SetParser(parser redis.Parser) {
+	s.parser = types.NewSome(parser)
+}
+
+// GetRawParser returns the raw Optional wrapper for the parser setting.
+func (s *RedisAdapterOptions) GetRawParser() types.Optional[redis.Parser] {
+	return s.parser
+}
+
+// Parser returns the configured parser, or nil if not set.
+func (s *RedisAdapterOptions) Parser() redis.Parser {
+	if s.parser == nil {
+		return nil
+	}
+	return s.parser.Get()
 }
 
 // SetRequestsTimeout sets the timeout duration for inter-node requests.

@@ -23,12 +23,12 @@ type (
 		// Key returns the Redis key prefix, or empty string if not set.
 		Key() string
 
-		// SetParser sets the parser for encoding messages.
-		SetParser(redis.Parser)
-		// GetRawParser returns the raw Optional wrapper for the parser setting.
-		GetRawParser() types.Optional[redis.Parser]
-		// Parser returns the parser, or nil if not set.
-		Parser() redis.Parser
+		// SetEncoder sets the encoder for outbound messages.
+		SetEncoder(redis.Encoder)
+		// GetRawEncoder returns the raw Optional wrapper for the encoder setting.
+		GetRawEncoder() types.Optional[redis.Encoder]
+		// Encoder returns the encoder, or nil if not set.
+		Encoder() redis.Encoder
 
 		// SetSharded enables or disables Redis sharded Pub/Sub.
 		// When enabled, uses SPUBLISH for Redis Cluster sharded Pub/Sub (Redis 7.0+).
@@ -54,9 +54,9 @@ type (
 		// Default: "socket.io"
 		key types.Optional[string]
 
-		// parser is the encoder/decoder used for serializing messages to Redis.
-		// Default: MessagePack parser
-		parser types.Optional[redis.Parser]
+		// encoder serializes outbound messages sent to Redis.
+		// Default: MessagePack encoder
+		encoder types.Optional[redis.Encoder]
 
 		// sharded enables Redis sharded Pub/Sub (SPUBLISH) for Redis Cluster mode.
 		// Set to true when using Redis Cluster with sharded Pub/Sub (Redis 7.0+).
@@ -85,8 +85,8 @@ func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 	if data.GetRawKey() != nil {
 		o.SetKey(data.Key())
 	}
-	if parser := data.Parser(); parser != nil {
-		o.SetParser(parser)
+	if data.GetRawEncoder() != nil {
+		o.SetEncoder(data.Encoder())
 	}
 	if data.GetRawSharded() != nil {
 		o.SetSharded(data.Sharded())
@@ -116,22 +116,22 @@ func (o *EmitterOptions) Key() string {
 	return o.key.Get()
 }
 
-// SetParser sets the parser for encoding messages sent to Redis.
-func (o *EmitterOptions) SetParser(parser redis.Parser) {
-	o.parser = types.NewSome(parser)
+// SetEncoder sets the encoder for messages sent to Redis.
+func (o *EmitterOptions) SetEncoder(encoder redis.Encoder) {
+	o.encoder = types.NewSome(encoder)
 }
 
-// GetRawParser returns the raw Optional wrapper for the parser setting.
-func (o *EmitterOptions) GetRawParser() types.Optional[redis.Parser] {
-	return o.parser
+// GetRawEncoder returns the raw Optional wrapper for the encoder setting.
+func (o *EmitterOptions) GetRawEncoder() types.Optional[redis.Encoder] {
+	return o.encoder
 }
 
-// Parser returns the configured parser, or nil if not set.
-func (o *EmitterOptions) Parser() redis.Parser {
-	if o.parser == nil {
+// Encoder returns the configured encoder, or nil if not set.
+func (o *EmitterOptions) Encoder() redis.Encoder {
+	if o.encoder == nil {
 		return nil
 	}
-	return o.parser.Get()
+	return o.encoder.Get()
 }
 
 // SetSharded enables or disables Redis sharded Pub/Sub.

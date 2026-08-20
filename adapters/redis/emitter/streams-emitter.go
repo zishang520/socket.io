@@ -39,6 +39,9 @@ func (e *RedisStreamsEmitter) Construct(client *redis.RedisClient, opts *RedisSt
 	if e.opts.GetRawStreamName() == nil {
 		e.opts.SetStreamName(DefaultStreamName)
 	}
+	if e.opts.GetRawStreamCount() == nil {
+		e.opts.SetStreamCount(DefaultStreamCount)
+	}
 	if e.opts.GetRawMaxLen() == nil {
 		e.opts.SetMaxLen(DefaultStreamMaxLen)
 	}

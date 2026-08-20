@@ -23,8 +23,8 @@ type (
 		// Format: "{key}-request#{nsp}#"
 		RequestChannel string
 
-		// Parser is the encoder/decoder for serializing messages.
-		Parser redis.Parser
+		// Encoder serializes outbound messages.
+		Encoder redis.Encoder
 
 		// SubscriptionMode controls how room-specific channels are computed.
 		// This should match the adapter's subscriptionMode setting.

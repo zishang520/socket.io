@@ -58,6 +58,9 @@ func (b *RedisStreamsBroadcastOperator) Construct(
 	if b.opts.GetRawStreamName() == nil {
 		b.opts.SetStreamName(DefaultStreamName)
 	}
+	if b.opts.GetRawStreamCount() == nil {
+		b.opts.SetStreamCount(DefaultStreamCount)
+	}
 	if b.opts.GetRawMaxLen() == nil {
 		b.opts.SetMaxLen(DefaultStreamMaxLen)
 	}
@@ -209,7 +212,7 @@ func (b *RedisStreamsBroadcastOperator) publishMessage(message *adapter.ClusterM
 	if err != nil {
 		return err
 	}
-	streamName := b.opts.StreamName()
+	streamName := redis.StreamNameForNamespace(b.opts.StreamName(), b.nsp, b.opts.StreamCount())
 	redisStreamsEmitterLog.Debug("publishing message %d to stream %s", message.Type, streamName)
 	_, err = redis.XAdd(b.redisClient, streamName, payload, b.opts.MaxLen())
 	return err

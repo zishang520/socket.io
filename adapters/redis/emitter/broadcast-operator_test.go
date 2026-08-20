@@ -49,8 +49,8 @@ func TestBroadcastOptions(t *testing.T) {
 		if opts.RequestChannel != "" {
 			t.Error("Expected empty RequestChannel")
 		}
-		if opts.Parser != nil {
-			t.Error("Expected nil Parser")
+		if opts.Encoder != nil {
+			t.Error("Expected nil Encoder")
 		}
 	})
 
@@ -59,7 +59,7 @@ func TestBroadcastOptions(t *testing.T) {
 			Nsp:              "/chat",
 			BroadcastChannel: "socket.io#/chat#",
 			RequestChannel:   "socket.io-request#/chat#",
-			Parser:           utils.MsgPack(),
+			Encoder:          utils.MsgPack(),
 		}
 		if opts.Nsp != "/chat" {
 			t.Errorf("Expected '/chat', got %q", opts.Nsp)
@@ -67,8 +67,8 @@ func TestBroadcastOptions(t *testing.T) {
 		if opts.BroadcastChannel != "socket.io#/chat#" {
 			t.Errorf("Expected 'socket.io#/chat#', got %q", opts.BroadcastChannel)
 		}
-		if opts.Parser == nil {
-			t.Error("Expected non-nil Parser")
+		if opts.Encoder == nil {
+			t.Error("Expected non-nil Encoder")
 		}
 	})
 }
@@ -245,7 +245,7 @@ func TestBroadcastOperator_Immutability(t *testing.T) {
 
 func TestBroadcastOperator_Emit_ReservedEvent(t *testing.T) {
 	b := MakeBroadcastOperator()
-	b.Construct(nil, &BroadcastOptions{Parser: utils.MsgPack()}, nil, nil, nil)
+	b.Construct(nil, &BroadcastOptions{Encoder: utils.MsgPack()}, nil, nil, nil)
 
 	reservedList := []string{"connect", "disconnect", "connect_error"}
 	for _, ev := range reservedList {
@@ -258,13 +258,13 @@ func TestBroadcastOperator_Emit_ReservedEvent(t *testing.T) {
 	}
 }
 
-func TestBroadcastOperator_Emit_NilParser(t *testing.T) {
+func TestBroadcastOperator_Emit_NilEncoder(t *testing.T) {
 	b := MakeBroadcastOperator()
-	b.Construct(nil, &BroadcastOptions{}, nil, nil, nil) // No parser
+	b.Construct(nil, &BroadcastOptions{}, nil, nil, nil) // No encoder
 
 	err := b.Emit("custom", "data")
 	if err == nil {
-		t.Error("Expected error when parser is nil")
+		t.Error("Expected error when encoder is nil")
 	}
 }
 
@@ -291,7 +291,7 @@ func TestEmitterOptions_Assign(t *testing.T) {
 	t.Run("assign with values", func(t *testing.T) {
 		source := DefaultEmitterOptions()
 		source.SetKey("source-key")
-		source.SetParser(utils.MsgPack())
+		source.SetEncoder(utils.MsgPack())
 
 		target := DefaultEmitterOptions()
 		target.Assign(source)
@@ -299,8 +299,8 @@ func TestEmitterOptions_Assign(t *testing.T) {
 		if target.Key() != "source-key" {
 			t.Errorf("Expected 'source-key', got %q", target.Key())
 		}
-		if target.Parser() == nil {
-			t.Error("Expected non-nil parser")
+		if target.Encoder() == nil {
+			t.Error("Expected non-nil encoder")
 		}
 	})
 
@@ -309,15 +309,15 @@ func TestEmitterOptions_Assign(t *testing.T) {
 		source.SetKey("partial-key")
 
 		target := DefaultEmitterOptions()
-		target.SetParser(utils.MsgPack())
+		target.SetEncoder(utils.MsgPack())
 		target.Assign(source)
 
 		if target.Key() != "partial-key" {
 			t.Errorf("Expected 'partial-key', got %q", target.Key())
 		}
-		// Original parser should be preserved
-		if target.Parser() == nil {
-			t.Error("Expected parser to be preserved")
+		// Original encoder should be preserved
+		if target.Encoder() == nil {
+			t.Error("Expected encoder to be preserved")
 		}
 	})
 }

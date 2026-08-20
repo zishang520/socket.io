@@ -33,7 +33,7 @@ type (
 		Opts      *adapter.PacketOptions `json:"opts,omitempty" msgpack:"opts,omitempty"`
 		Sid       socket.SocketId        `json:"sid,omitempty" msgpack:"sid,omitempty"`
 		Room      socket.Room            `json:"room,omitempty" msgpack:"room,omitempty"`
-		Close     bool                   `json:"close,omitempty" msgpack:"close,omitempty"`
+		Close     *bool                  `json:"close,omitempty" msgpack:"close,omitempty"`
 		Uid       adapter.ServerId       `json:"uid,omitempty" msgpack:"uid,omitempty"`
 		Data      []any                  `json:"data,omitzero" msgpack:"data,omitempty"`
 		Packet    *parser.Packet         `json:"packet,omitempty" msgpack:"packet,omitempty"`
@@ -54,11 +54,17 @@ type (
 	// RawClusterMessage is the flat field-value shape stored in Redis Streams.
 	RawClusterMessage map[string]any
 
-	// Parser defines the interface for encoding and decoding data for Redis communication.
+	// Encoder defines the outbound serialization contract used by Redis emitters.
 	// Implementations must be thread-safe as they may be called from multiple goroutines.
-	Parser interface {
+	Encoder interface {
 		// Encode serializes the given value into a byte slice.
 		Encode(any) ([]byte, error)
+	}
+
+	// Parser defines the encoding and decoding contract used by Redis adapters.
+	// Implementations must be thread-safe as they may be called from multiple goroutines.
+	Parser interface {
+		Encoder
 
 		// Decode deserializes the byte slice into the given value.
 		Decode([]byte, any) error

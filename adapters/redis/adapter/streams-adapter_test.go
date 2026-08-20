@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"reflect"
 	"strconv"
 	"sync"
@@ -27,6 +28,20 @@ type xrangeRecorder struct {
 
 type xreadRecorder struct {
 	streams chan string
+}
+
+type xrangeTailAppender struct {
+	client *rds.Client
+	stream string
+	id     string
+	values map[string]any
+	once   sync.Once
+	err    error
+}
+
+type xrangeNonEmptyHook struct {
+	mu    sync.Mutex
+	calls int
 }
 
 func (*xrangeRecorder) DialHook(next rds.DialHook) rds.DialHook { return next }
@@ -63,6 +78,51 @@ func (h *xreadRecorder) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
 }
 
 func (*xreadRecorder) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
+	return next
+}
+
+func (*xrangeTailAppender) DialHook(next rds.DialHook) rds.DialHook { return next }
+
+func (h *xrangeTailAppender) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
+	return func(ctx context.Context, cmd rds.Cmder) error {
+		if err := next(ctx, cmd); err != nil {
+			return err
+		}
+		if cmd.Name() == "xrange" {
+			h.once.Do(func() {
+				h.err = h.client.XAdd(ctx, &rds.XAddArgs{Stream: h.stream, ID: h.id, Values: h.values}).Err()
+			})
+		}
+		return h.err
+	}
+}
+
+func (*xrangeTailAppender) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
+	return next
+}
+
+func (*xrangeNonEmptyHook) DialHook(next rds.DialHook) rds.DialHook { return next }
+
+func (h *xrangeNonEmptyHook) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
+	return func(ctx context.Context, cmd rds.Cmder) error {
+		if cmd.Name() != "xrange" {
+			return next(ctx, cmd)
+		}
+
+		xrangeCmd, ok := cmd.(*rds.XMessageSliceCmd)
+		if !ok {
+			return next(ctx, cmd)
+		}
+		h.mu.Lock()
+		h.calls++
+		id := strconv.Itoa(h.calls) + "-0"
+		h.mu.Unlock()
+		xrangeCmd.SetVal([]rds.XMessage{{ID: id, Values: map[string]any{"nsp": "/other"}}})
+		return nil
+	}
+}
+
+func (*xrangeNonEmptyHook) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
 	return next
 }
 
@@ -655,13 +715,88 @@ func TestCollectMissedPacketsUsesBoundedPages(t *testing.T) {
 
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
-	if len(recorder.args) != 2 {
-		t.Fatalf("XRANGE calls = %d, want 2", len(recorder.args))
+	if len(recorder.args) != 3 {
+		t.Fatalf("XRANGE calls = %d, want 3", len(recorder.args))
 	}
 	for _, args := range recorder.args {
 		if len(args) < 6 || args[len(args)-2] != "count" || args[len(args)-1] != int64(restoreSessionPageSize) {
 			t.Fatalf("XRANGE args = %#v, want COUNT %d", args, restoreSessionPageSize)
 		}
+	}
+}
+
+func TestCollectMissedPacketsReadsEntriesAppendedAfterShortPage(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+
+	if err := client.XAdd(ctx, &rds.XAddArgs{
+		Stream: "stream",
+		ID:     "1-0",
+		Values: map[string]any{"nsp": "/other"},
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	wireMessage, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+		Uid:  "remote",
+		Nsp:  "/test",
+		Type: adapter.BROADCAST,
+		Data: &adapter.BroadcastMessage{
+			Packet: &parser.Packet{Type: parser.EVENT, Data: []any{"late"}},
+			Opts:   new(adapter.PacketOptions),
+		},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.AddHook(&xrangeTailAppender{
+		client: client,
+		stream: "stream",
+		id:     "2-0",
+		values: map[string]any(wireMessage),
+	})
+
+	streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+	streamAdapter.ClusterAdapter.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
+	streamAdapter.redisClient = mustRedisClient(t, ctx, client)
+	streamAdapter.streamName = "stream"
+	session := &socket.Session{
+		SessionToPersist: &socket.SessionToPersist{Rooms: types.NewSet[socket.Room]()},
+		MissedPackets:    []any{},
+	}
+
+	if err := streamAdapter.collectMissedPackets(client, session, "0-0"); err != nil {
+		t.Fatal(err)
+	}
+	want := []any{[]any{"late", "2-0"}}
+	if !reflect.DeepEqual(session.MissedPackets, want) {
+		t.Fatalf("missed packets = %#v, want %#v", session.MissedPackets, want)
+	}
+}
+
+func TestCollectMissedPacketsReturnsErrorAtReadLimit(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	hook := &xrangeNonEmptyHook{}
+	client.AddHook(hook)
+	ctx := context.Background()
+
+	streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+	streamAdapter.ClusterAdapter.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
+	streamAdapter.redisClient = mustRedisClient(t, ctx, client)
+	streamAdapter.streamName = "stream"
+
+	err := streamAdapter.collectMissedPackets(client, &socket.Session{}, "0-0")
+	if !errors.Is(err, errRestoreSessionReadLimit) {
+		t.Fatalf("error = %v, want %v", err, errRestoreSessionReadLimit)
+	}
+	hook.mu.Lock()
+	calls := hook.calls
+	hook.mu.Unlock()
+	if calls != restoreSessionMaxXRangeCalls {
+		t.Fatalf("XRANGE calls = %d, want %d", calls, restoreSessionMaxXRangeCalls)
 	}
 }
 
@@ -1248,38 +1383,13 @@ func TestDecodePubSubMessage(t *testing.T) {
 	}
 }
 
-func TestHashCode(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected int32
-	}{
-		{"/", 47},
-		{"/namespace-0", -1732195153},
-		{"/😀", 1818066},
-		{"", 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := hashCode(tt.input)
-			if result != tt.expected {
-				t.Errorf("hashCode(%q) = %d, want %d", tt.input, result, tt.expected)
-			}
-			// Ensure deterministic
-			if hashCode(tt.input) != result {
-				t.Error("hashCode is not deterministic")
-			}
-		})
-	}
-}
-
 func TestComputeStreamName(t *testing.T) {
 	t.Run("single stream", func(t *testing.T) {
 		opts := DefaultRedisStreamsAdapterOptions()
 		opts.SetStreamName("socket.io")
 		opts.SetStreamCount(1)
 
-		result := computeStreamName("/chat", opts)
+		result := rediswire.StreamNameForNamespace(opts.StreamName(), "/chat", opts.StreamCount())
 		if result != "socket.io" {
 			t.Errorf("Expected 'socket.io', got %q", result)
 		}
@@ -1290,8 +1400,8 @@ func TestComputeStreamName(t *testing.T) {
 		opts.SetStreamName("socket.io")
 		opts.SetStreamCount(4)
 
-		result := computeStreamName("/chat", opts)
-		expected := "socket.io-" + strconv.FormatInt(int64(hashCode("/chat"))%4, 10)
+		result := rediswire.StreamNameForNamespace(opts.StreamName(), "/chat", opts.StreamCount())
+		expected := "socket.io-3"
 		if result != expected {
 			t.Errorf("Expected %q, got %q", expected, result)
 		}
@@ -1302,7 +1412,7 @@ func TestComputeStreamName(t *testing.T) {
 		opts.SetStreamName("socket.io")
 		opts.SetStreamCount(5)
 
-		if result := computeStreamName("/namespace-0", opts); result != "socket.io--3" {
+		if result := rediswire.StreamNameForNamespace(opts.StreamName(), "/namespace-0", opts.StreamCount()); result != "socket.io--3" {
 			t.Errorf("Expected 'socket.io--3', got %q", result)
 		}
 	})

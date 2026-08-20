@@ -33,6 +33,10 @@ var (
 
 	// offsetRegex validates Redis stream offset format (timestamp-sequence).
 	offsetRegex = regexp.MustCompile(`^[0-9]+-[0-9]+$`)
+
+	// errRestoreSessionReadLimit is returned when recovery cannot observe the
+	// end of the stream within its bounded number of XRANGE calls.
+	errRestoreSessionReadLimit = errors.New("session recovery exceeded XRANGE call limit")
 )
 
 // Configuration constants for Redis Streams adapter.
@@ -41,33 +45,6 @@ const (
 	restoreSessionMaxXRangeCalls = 100
 	restoreSessionPageSize       = 1000
 )
-
-// hashCode computes a hash code for the given string, matching the Node.js implementation.
-// This is used to deterministically map namespaces to streams when streamCount > 1.
-func hashCode(str string) int32 {
-	var hash int32
-	for _, chr := range str {
-		if chr <= 0xffff {
-			hash = hash*31 + chr
-			continue
-		}
-		chr -= 0x10000
-		hash = hash*31 + 0xd800 + (chr >> 10)
-		hash = hash*31 + 0xdc00 + (chr & 0x3ff)
-	}
-	return hash
-}
-
-// computeStreamName determines which stream a namespace should use.
-// With streamCount=1, returns the base stream name. Otherwise, uses
-// a hash to distribute namespaces across multiple streams.
-func computeStreamName(namespaceName string, opts RedisStreamsAdapterOptionsInterface) string {
-	if opts.StreamCount() <= 1 {
-		return opts.StreamName()
-	}
-	i := int64(hashCode(namespaceName)) % int64(opts.StreamCount())
-	return opts.StreamName() + "-" + strconv.FormatInt(i, 10)
-}
 
 // isEphemeral determines whether a message should be sent via PUB/SUB instead of Streams.
 // Ephemeral messages include: broadcastWithAck, serverSideEmit, fetchSockets.
@@ -120,7 +97,6 @@ type redisStreamsAdapter struct {
 }
 
 // MakeRedisStreamsAdapter creates a new uninitialized redisStreamsAdapter.
-// Call Construct() to complete initialization before use.
 func MakeRedisStreamsAdapter() RedisStreamsAdapter {
 	a := &redisStreamsAdapter{
 		ClusterAdapter: adapter.MakeClusterAdapter(),
@@ -194,7 +170,7 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	r.server = nsp.Server()
 
 	// Each namespace is routed to a specific stream to ensure ordering
-	r.streamName = computeStreamName(nsp.Name(), r.opts)
+	r.streamName = redis.StreamNameForNamespace(r.opts.StreamName(), nsp.Name(), r.opts.StreamCount())
 
 	// Set up PUB/SUB channels matching Node.js format: prefix#nsp# and prefix#nsp#uid#
 	r.publicChannel = r.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
@@ -479,12 +455,9 @@ func (r *redisStreamsAdapter) collectMissedPackets(client rds.Cmdable, session *
 			offset = entry.ID
 		}
 
-		if len(entries) < restoreSessionPageSize {
-			break
-		}
 	}
 
-	return nil
+	return errRestoreSessionReadLimit
 }
 
 // nextOffset computes the next stream entry ID by incrementing the sequence number.

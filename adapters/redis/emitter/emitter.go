@@ -43,8 +43,8 @@ func (e *Emitter) Construct(client *redis.RedisClient, opts *EmitterOptions, nsp
 	if e.opts.GetRawKey() == nil {
 		e.opts.SetKey(DefaultEmitterKey)
 	}
-	if e.opts.Parser() == nil {
-		e.opts.SetParser(utils.MsgPack())
+	if e.opts.Encoder() == nil {
+		e.opts.SetEncoder(utils.MsgPack())
 	}
 	if len(nsps) > 0 {
 		e.nsp = nsps[0]
@@ -55,7 +55,7 @@ func (e *Emitter) Construct(client *redis.RedisClient, opts *EmitterOptions, nsp
 		Nsp:              e.nsp,
 		BroadcastChannel: key + "#" + e.nsp + "#",
 		RequestChannel:   key + "-request#" + e.nsp + "#",
-		Parser:           e.opts.Parser(),
+		Encoder:          e.opts.Encoder(),
 		SubscriptionMode: e.opts.SubscriptionMode(),
 	}
 }

@@ -84,7 +84,9 @@ func TestRedisRequestNodeWireFields(t *testing.T) {
 		{"sockets type and rooms", &RedisRequest{Type: SOCKETS}, "rooms", []any{}},
 		{"join rooms", &RedisRequest{Type: REMOTE_JOIN, Opts: new(adapter.PacketOptions)}, "rooms", []any{}},
 		{"leave rooms", &RedisRequest{Type: REMOTE_LEAVE, Opts: new(adapter.PacketOptions)}, "rooms", []any{}},
-		{"disconnect close", &RedisRequest{Type: REMOTE_DISCONNECT, Close: true}, "close", true},
+		{"disconnect close", &RedisRequest{Type: REMOTE_DISCONNECT, Close: new(true)}, "close", true},
+		{"disconnect keep transport", &RedisRequest{Type: REMOTE_DISCONNECT, Close: new(false)}, "close", false},
+		{"disconnect defaults to keeping transport", &RedisRequest{Type: REMOTE_DISCONNECT}, "close", false},
 		{"server-side emit data", &RedisRequest{Type: SERVER_SIDE_EMIT}, "data", []any{}},
 	}
 
@@ -103,6 +105,51 @@ func TestRedisRequestNodeWireFields(t *testing.T) {
 			}
 			if got := wire[tt.field]; !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("%s = %#v, want %#v", tt.field, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRedisRequestOmitsCloseForOtherTypes(t *testing.T) {
+	payload, err := json.Marshal(&RedisRequest{Type: REMOTE_JOIN})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(payload, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := wire["close"]; exists {
+		t.Fatalf("join request unexpectedly contains close: %s", payload)
+	}
+}
+
+func TestRedisRequestMsgpackClosePresence(t *testing.T) {
+	tests := []struct {
+		name        string
+		request     *RedisRequest
+		wantPresent bool
+	}{
+		{"disconnect false", &RedisRequest{Type: REMOTE_DISCONNECT, Close: new(false)}, true},
+		{"disconnect defaults to false", &RedisRequest{Type: REMOTE_DISCONNECT}, true},
+		{"other request omits close", &RedisRequest{Type: REMOTE_JOIN}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload, err := utils.MsgPack().Encode(tt.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored RedisRequest
+			if err = utils.MsgPack().Decode(payload, &restored); err != nil {
+				t.Fatal(err)
+			}
+			if got := restored.Close != nil; got != tt.wantPresent {
+				t.Fatalf("close presence = %t, want %t", got, tt.wantPresent)
+			}
+			if restored.Close != nil && *restored.Close {
+				t.Fatalf("close = true, want false")
 			}
 		})
 	}

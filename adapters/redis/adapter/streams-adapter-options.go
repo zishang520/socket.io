@@ -200,6 +200,8 @@ func (s *RedisStreamsAdapterOptions) ReadCount() int64 {
 	return s.readCount.Get()
 }
 
+// SetBlockTimeInMs sets the XREAD block duration. Values outside [1, 5000]
+// are reported through the Redis client error event and use the default at runtime.
 func (s *RedisStreamsAdapterOptions) SetBlockTimeInMs(blockTimeInMs int64) {
 	s.blockTimeInMs = types.NewSome(blockTimeInMs)
 }

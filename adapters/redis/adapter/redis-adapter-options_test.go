@@ -3,7 +3,18 @@ package adapter
 import (
 	"testing"
 	"time"
+
+	"github.com/zishang520/socket.io/adapters/redis/v3/emitter"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
+
+var _ RedisAdapterOptionsInterface = (*RedisAdapterOptions)(nil)
+
+func TestRedisAdapterOptionsDoesNotImplementEmitterOptions(t *testing.T) {
+	if _, ok := any(DefaultRedisAdapterOptions()).(emitter.EmitterOptionsInterface); ok {
+		t.Fatal("adapter options unexpectedly expose the emitter Encoder API")
+	}
+}
 
 func TestDefaultRedisAdapterOptions(t *testing.T) {
 	opts := DefaultRedisAdapterOptions()
@@ -105,6 +116,7 @@ func TestRedisAdapterOptions_Assign(t *testing.T) {
 	t.Run("assign values", func(t *testing.T) {
 		source := DefaultRedisAdapterOptions()
 		source.SetKey("source-key")
+		source.SetParser(utils.MsgPack())
 		source.SetRequestsTimeout(3 * time.Second)
 		source.SetPublishOnSpecificResponseChannel(true)
 
@@ -113,6 +125,9 @@ func TestRedisAdapterOptions_Assign(t *testing.T) {
 
 		if target.Key() != "source-key" {
 			t.Fatalf("Expected 'source-key', got %s", target.Key())
+		}
+		if target.Parser() == nil {
+			t.Fatal("Expected parser to be copied")
 		}
 		if target.RequestsTimeout() != 3*time.Second {
 			t.Fatalf("Expected 3s, got %v", target.RequestsTimeout())

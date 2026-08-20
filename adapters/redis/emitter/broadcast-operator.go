@@ -24,7 +24,7 @@ var (
 		"removeListener",
 	)
 	errAcknowledgementsNotSupported = errors.New("Acknowledgements are not supported") //nolint:staticcheck // Node.js API text
-	errParserNotSet                 = errors.New("broadcastOptions.Parser is not set")
+	errEncoderNotSet                = errors.New("broadcastOptions.Encoder is not set")
 )
 
 // BroadcastOperator publishes packets with the classic Redis emitter protocol.
@@ -111,8 +111,8 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	if reservedEvents.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
-	if b.broadcastOptions.Parser == nil {
-		return errParserNotSet
+	if b.broadcastOptions.Encoder == nil {
+		return errEncoderNotSet
 	}
 
 	opts := adapter.EncodeOptions(&socket.BroadcastOptions{
@@ -120,7 +120,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Except: b.exceptRooms,
 		Flags:  b.flags,
 	})
-	payload, err := b.broadcastOptions.Parser.Encode(&redis.RedisPacket{
+	payload, err := b.broadcastOptions.Encoder.Encode(&redis.RedisPacket{
 		Uid: adapter.EMITTER_UID,
 		Packet: &parser.Packet{
 			Type: parser.EVENT,
@@ -170,7 +170,7 @@ func (b *BroadcastOperator) DisconnectSockets(close bool) error {
 			Rooms:  b.rooms,
 			Except: b.exceptRooms,
 		}),
-		Close: close,
+		Close: new(close),
 	})
 }
 
