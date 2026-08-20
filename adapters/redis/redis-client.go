@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var (
@@ -104,13 +105,13 @@ func NewRedisClient(ctx context.Context, client redis.UniversalClient) (*RedisCl
 //	subClient := redis.NewClient(&redis.Options{Addr: "replica:6380"})
 //	redisClient, err := NewRedisClientWithSub(context.Background(), pubClient, subClient)
 func NewRedisClientWithSub(ctx context.Context, client, subClient redis.UniversalClient) (*RedisClient, error) {
-	if client == nil {
+	if utils.IsNil(client) {
 		return nil, ErrRedisClientRequired
 	}
 	if err := validateClient(client); err != nil {
 		return nil, err
 	}
-	if subClient == nil {
+	if utils.IsNil(subClient) {
 		subClient = client
 	}
 	if err := validateClient(subClient); err != nil {

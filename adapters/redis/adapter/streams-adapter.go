@@ -334,13 +334,12 @@ func (r *redisStreamsAdapter) PersistSession(session *socket.SessionToPersist) {
 	}
 }
 
-// recoveryClient returns the write-side owner of this adapter's stream. Recovery
-// reads must not use SubClient: it may be a replica and lag behind the XADD that
-// produced the client's offset.
-func (r *redisStreamsAdapter) recoveryClient() (rds.Cmdable, error) {
-	switch client := r.redisClient.Client().(type) {
+// primaryStreamClient returns the write-side owner of a stream. Reads that
+// establish a consistency boundary must not use Sub: it may be a lagging replica.
+func primaryStreamClient(ctx context.Context, redisClient *redis.RedisClient, streamName string) (rds.Cmdable, error) {
+	switch client := redisClient.Client().(type) {
 	case *rds.ClusterClient:
-		return client.MasterForKey(r.redisClient.Context(), r.streamName)
+		return client.MasterForKey(ctx, streamName)
 	default:
 		// Opaque UniversalClient implementations cannot expose their topology;
 		// their write client must provide primary-consistent stream reads.
@@ -359,7 +358,7 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 		return nil, errors.New("invalid offset format")
 	}
 
-	streamClient, err := r.recoveryClient()
+	streamClient, err := primaryStreamClient(r.redisClient.Context(), r.redisClient, r.streamName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve stream owner: %w", err)
 	}
@@ -448,8 +447,11 @@ func (r *redisStreamsAdapter) collectMissedPackets(client rds.Cmdable, session *
 				recoverable := data.Packet.Type == parser.EVENT && data.Packet.Id == nil &&
 					(data.Opts.Flags == nil || !data.Opts.Flags.Volatile)
 				if recoverable && r.shouldIncludePacket(session.Rooms, data.Opts) {
-					packetData := slices.AppendCopy(utils.TryCast[[]any](data.Packet.Data), entry.ID)
-					session.MissedPackets = append(session.MissedPackets, packetData)
+					packetData, ok := data.Packet.Data.([]any)
+					if !ok {
+						return errors.New("invalid broadcast packet data")
+					}
+					session.MissedPackets = append(session.MissedPackets, slices.AppendCopy(packetData, entry.ID))
 				}
 			}
 			offset = entry.ID

@@ -239,6 +239,48 @@ func TestRedisStreamsPollerFreezesInitialTail(t *testing.T) {
 	}
 }
 
+func TestRedisStreamsPollerFreezesWriteSideTailAndReadsFromSub(t *testing.T) {
+	writeServer := miniredis.RunT(t)
+	subServer := miniredis.RunT(t)
+	writeClient := rds.NewClient(&rds.Options{Addr: writeServer.Addr()})
+	subClient := rds.NewClient(&rds.Options{Addr: subServer.Addr()})
+	t.Cleanup(func() {
+		_ = writeClient.Close()
+		_ = subClient.Close()
+	})
+
+	ctx := context.Background()
+	for _, id := range []string{"1-0", "2-0"} {
+		if err := writeClient.XAdd(ctx, &rds.XAddArgs{
+			Stream: DefaultStreamName,
+			ID:     id,
+			Values: map[string]any{"nsp": "/split"},
+		}).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := subClient.XAdd(ctx, &rds.XAddArgs{
+		Stream: DefaultStreamName,
+		ID:     "1-0",
+		Values: map[string]any{"nsp": "/split"},
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	hook := &blockingPollerXReadHook{calls: make(chan pollerXReadCall, 1)}
+	subClient.AddHook(hook)
+	redisClient := mustRedisClientWithSub(t, ctx, writeClient, subClient)
+	current := NewRedisStreamsAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/split"), redisClient, nil,
+	).(*redisStreamsAdapter)
+	t.Cleanup(current.Close)
+
+	call := waitForPollerXRead(t, hook)
+	if call.id != "2-0" {
+		t.Fatalf("initial XREAD ID = %q, want write-side tail 2-0", call.id)
+	}
+}
+
 func TestRedisStreamsPollerFreezesHealthyTailBeforeConstructReturns(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})

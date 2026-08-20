@@ -3,6 +3,7 @@ package utils
 import (
 	"net"
 	"path"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -15,6 +16,23 @@ func Is[T any](val any) bool {
 func TryCast[T any](val any) T {
 	r, _ := val.(T)
 	return r
+}
+
+// IsNil reports whether value is nil, including an interface that contains a
+// typed nil value. Values whose kind cannot be nil are reported as non-nil.
+func IsNil(value any) bool {
+	if value == nil {
+		return true
+	}
+
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map,
+		reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 // EventPayload prepends an event name to its arguments.

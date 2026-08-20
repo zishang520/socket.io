@@ -629,7 +629,7 @@ func TestRestoreSessionReturnsEmptyMissedPackets(t *testing.T) {
 	}
 }
 
-func TestRedisStreamsRecoveryClientRoutesToStreamOwner(t *testing.T) {
+func TestPrimaryStreamClientRoutesToWriteSideOwner(t *testing.T) {
 	const stream = "stream"
 	ctx := context.Background()
 
@@ -637,12 +637,9 @@ func TestRedisStreamsRecoveryClientRoutesToStreamOwner(t *testing.T) {
 		server := miniredis.RunT(t)
 		client := rds.NewClient(&rds.Options{Addr: server.Addr()})
 		t.Cleanup(func() { _ = client.Close() })
-		streamAdapter := &redisStreamsAdapter{
-			redisClient: mustRedisClient(t, ctx, client),
-			streamName:  stream,
-		}
+		redisClient := mustRedisClient(t, ctx, client)
 
-		got, err := streamAdapter.recoveryClient()
+		got, err := primaryStreamClient(ctx, redisClient, stream)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -666,16 +663,13 @@ func TestRedisStreamsRecoveryClientRoutesToStreamOwner(t *testing.T) {
 			},
 		})
 		t.Cleanup(func() { _ = cluster.Close() })
-		streamAdapter := &redisStreamsAdapter{
-			redisClient: mustRedisClient(t, ctx, cluster),
-			streamName:  stream,
-		}
+		redisClient := mustRedisClient(t, ctx, cluster)
 
 		want, err := cluster.MasterForKey(ctx, stream)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := streamAdapter.recoveryClient()
+		got, err := primaryStreamClient(ctx, redisClient, stream)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -847,6 +841,110 @@ func TestCollectMissedPacketsSkipsVolatileBroadcasts(t *testing.T) {
 	want := []any{[]any{"durable", "2-0"}}
 	if !reflect.DeepEqual(session.MissedPackets, want) {
 		t.Fatalf("missed packets = %#v, want %#v", session.MissedPackets, want)
+	}
+}
+
+func TestCollectMissedPacketsValidatesIncludedPacketData(t *testing.T) {
+	tests := []struct {
+		name       string
+		packet     *parser.Packet
+		opts       *adapter.PacketOptions
+		wantErr    string
+		wantPacket []any
+	}{
+		{
+			name:    "missing packet",
+			opts:    new(adapter.PacketOptions),
+			wantErr: "invalid broadcast message",
+		},
+		{
+			name:    "nil data",
+			packet:  &parser.Packet{Type: parser.EVENT},
+			opts:    new(adapter.PacketOptions),
+			wantErr: "invalid broadcast packet data",
+		},
+		{
+			name:    "non-array data",
+			packet:  &parser.Packet{Type: parser.EVENT, Data: "event"},
+			opts:    new(adapter.PacketOptions),
+			wantErr: "invalid broadcast packet data",
+		},
+		{
+			name:       "empty array",
+			packet:     &parser.Packet{Type: parser.EVENT, Data: []any{}},
+			opts:       new(adapter.PacketOptions),
+			wantPacket: []any{"1-0"},
+		},
+		{
+			name:       "event array",
+			packet:     &parser.Packet{Type: parser.EVENT, Data: []any{"event", "value"}},
+			opts:       new(adapter.PacketOptions),
+			wantPacket: []any{"event", "value", "1-0"},
+		},
+		{
+			name:   "excluded malformed data",
+			packet: &parser.Packet{Type: parser.EVENT, Data: "event"},
+			opts:   &adapter.PacketOptions{Rooms: []socket.Room{"other"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := miniredis.RunT(t)
+			client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+			t.Cleanup(func() { _ = client.Close() })
+			ctx := context.Background()
+
+			message, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+				Uid:  "remote",
+				Nsp:  "/test",
+				Type: adapter.BROADCAST,
+				Data: &adapter.BroadcastMessage{Packet: tt.packet, Opts: tt.opts},
+			}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = client.XAdd(ctx, &rds.XAddArgs{
+				Stream: "stream",
+				ID:     "1-0",
+				Values: map[string]any(message),
+			}).Err(); err != nil {
+				t.Fatal(err)
+			}
+
+			streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+			streamAdapter.ClusterAdapter.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
+			streamAdapter.redisClient = mustRedisClient(t, ctx, client)
+			streamAdapter.streamName = "stream"
+			session := &socket.Session{
+				SessionToPersist: &socket.SessionToPersist{Rooms: types.NewSet(socket.Room("room"))},
+				MissedPackets:    []any{},
+			}
+
+			err = streamAdapter.collectMissedPackets(client, session, "0-0")
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				if len(session.MissedPackets) != 0 {
+					t.Fatalf("missed packets = %#v, want none", session.MissedPackets)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantPacket == nil {
+				if len(session.MissedPackets) != 0 {
+					t.Fatalf("missed packets = %#v, want none", session.MissedPackets)
+				}
+				return
+			}
+			want := []any{tt.wantPacket}
+			if !reflect.DeepEqual(session.MissedPackets, want) {
+				t.Fatalf("missed packets = %#v, want %#v", session.MissedPackets, want)
+			}
+		})
 	}
 }
 

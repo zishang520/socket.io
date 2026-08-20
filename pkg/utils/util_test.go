@@ -3,6 +3,7 @@ package utils
 import (
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestIs(t *testing.T) {
@@ -50,6 +51,48 @@ func TestTryCast(t *testing.T) {
 	intResult = TryCast[int]("test")
 	if intResult != 0 {
 		t.Errorf("Expected 0 for failed cast, got %d", intResult)
+	}
+}
+
+func TestIsNil(t *testing.T) {
+	var (
+		pointer       *int
+		channel       chan int
+		function      func()
+		mapping       map[string]int
+		slice         []int
+		unsafePointer unsafe.Pointer
+	)
+
+	tests := []struct {
+		name  string
+		value any
+		want  bool
+	}{
+		{name: "nil interface", value: nil, want: true},
+		{name: "typed nil pointer", value: pointer, want: true},
+		{name: "typed nil channel", value: channel, want: true},
+		{name: "typed nil function", value: function, want: true},
+		{name: "typed nil map", value: mapping, want: true},
+		{name: "typed nil slice", value: slice, want: true},
+		{name: "typed nil unsafe pointer", value: unsafePointer, want: true},
+		{name: "non-nil pointer", value: new(int), want: false},
+		{name: "non-nil channel", value: make(chan int), want: false},
+		{name: "non-nil function", value: func() {}, want: false},
+		{name: "non-nil map", value: map[string]int{}, want: false},
+		{name: "non-nil slice", value: []int{}, want: false},
+		{name: "integer", value: 0, want: false},
+		{name: "string", value: "", want: false},
+		{name: "struct", value: struct{}{}, want: false},
+		{name: "array", value: [1]int{}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsNil(tt.value); got != tt.want {
+				t.Fatalf("IsNil(%T) = %t, want %t", tt.value, got, tt.want)
+			}
+		})
 	}
 }
 

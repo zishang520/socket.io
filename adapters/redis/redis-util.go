@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -601,7 +600,7 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 		io.Reader
 		Bytes() []byte
 	}:
-		if isNil(data) {
+		if utils.IsNil(data) {
 			return data, false, false
 		}
 		payload := utils.NonNilSlice(value.Bytes())
@@ -610,7 +609,7 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 		}
 		return payload, true, true
 	case io.Reader:
-		if isNil(data) {
+		if utils.IsNil(data) {
 			return data, false, false
 		}
 		payload, _ := io.ReadAll(value)
@@ -660,15 +659,5 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 		return data, false, binary
 	default:
 		return data, false, false
-	}
-}
-
-func isNil(value any) bool {
-	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
 	}
 }

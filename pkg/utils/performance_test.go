@@ -2,7 +2,27 @@ package utils
 
 import "testing"
 
-var benchmarkStringSink string
+var (
+	benchmarkBoolSink   bool
+	benchmarkStringSink string
+)
+
+func BenchmarkIsNil(b *testing.B) {
+	b.Run("nil pointer", func(b *testing.B) {
+		var value *int
+		b.ReportAllocs()
+		for b.Loop() {
+			benchmarkBoolSink = IsNil(value)
+		}
+	})
+
+	b.Run("non-nil scalar", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			benchmarkBoolSink = IsNil(1)
+		}
+	})
+}
 
 func BenchmarkIsValidSID(b *testing.B) {
 	const sid = "yH8rZp1uWq3xA7cN9mK2vB4d"

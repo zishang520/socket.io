@@ -284,6 +284,10 @@ func (r *redisAdapter) onRequest(msg []byte, channel string) {
 		return
 	}
 	redisLog.Debug("received request type %d with id %s", request.Type, request.RequestId)
+	if request.Uid != "" && request.Uid == r.uid {
+		redisLog.Debug("ignore same uid")
+		return
+	}
 	r.handleRequest(&request)
 }
 
@@ -313,10 +317,6 @@ func (r *redisAdapter) handleRequest(request *Request) {
 
 // handleSocketsRequest handles SOCKETS request type.
 func (r *redisAdapter) handleSocketsRequest(request *Request) {
-	if _, ok := r.requests.Load(request.RequestId); ok {
-		return
-	}
-
 	sockets := r.Sockets(types.NewSet(request.Rooms...))
 	r.publishJSONResponse(request, &Response{
 		RequestId: request.RequestId,
@@ -326,10 +326,6 @@ func (r *redisAdapter) handleSocketsRequest(request *Request) {
 
 // handleAllRoomsRequest handles ALL_ROOMS request type.
 func (r *redisAdapter) handleAllRoomsRequest(request *Request) {
-	if _, ok := r.requests.Load(request.RequestId); ok {
-		return
-	}
-
 	r.publishJSONResponse(request, &Response{
 		RequestId: request.RequestId,
 		Rooms:     utils.NonNilSlice(r.Rooms().Keys()),
@@ -339,9 +335,6 @@ func (r *redisAdapter) handleAllRoomsRequest(request *Request) {
 // handleRemoteJoinRequest handles REMOTE_JOIN request type.
 func (r *redisAdapter) handleRemoteJoinRequest(request *Request) {
 	if request.Opts != nil {
-		if request.Uid == r.uid {
-			return
-		}
 		r.Adapter.AddSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
 		return
 	}
@@ -356,9 +349,6 @@ func (r *redisAdapter) handleRemoteJoinRequest(request *Request) {
 // handleRemoteLeaveRequest handles REMOTE_LEAVE request type.
 func (r *redisAdapter) handleRemoteLeaveRequest(request *Request) {
 	if request.Opts != nil {
-		if request.Uid == r.uid {
-			return
-		}
 		r.Adapter.DelSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
 		return
 	}
@@ -374,9 +364,6 @@ func (r *redisAdapter) handleRemoteLeaveRequest(request *Request) {
 func (r *redisAdapter) handleRemoteDisconnectRequest(request *Request) {
 	close := utils.FromPtr(request.Close)
 	if request.Opts != nil {
-		if request.Uid == r.uid {
-			return
-		}
 		r.Adapter.DisconnectSockets(adapter.DecodeOptions(request.Opts), close)
 		return
 	}
@@ -390,10 +377,6 @@ func (r *redisAdapter) handleRemoteDisconnectRequest(request *Request) {
 
 // handleRemoteFetchRequest handles REMOTE_FETCH request type.
 func (r *redisAdapter) handleRemoteFetchRequest(request *Request) {
-	if _, ok := r.requests.Load(request.RequestId); ok {
-		return
-	}
-
 	r.Adapter.FetchSockets(adapter.DecodeOptions(request.Opts))(func(localSockets []socket.SocketDetails, err error) {
 		if err != nil {
 			redisLog.Debug("REMOTE_FETCH Adapter.FetchSockets error: %s", err.Error())
@@ -408,11 +391,6 @@ func (r *redisAdapter) handleRemoteFetchRequest(request *Request) {
 
 // handleServerSideEmitRequest handles SERVER_SIDE_EMIT request type.
 func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
-	// Ignore messages from self
-	if request.Uid == r.uid {
-		redisLog.Debug("ignore same uid")
-		return
-	}
 	// No acknowledgement needed
 	if request.RequestId == "" {
 		r.Nsp().OnServerSideEmit(request.Data)
@@ -442,10 +420,6 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 
 // handleBroadcastRequest handles BROADCAST request type.
 func (r *redisAdapter) handleBroadcastRequest(request *Request) {
-	if _, ok := r.ackRequests.Load(request.RequestId); ok {
-		return
-	}
-
 	r.Adapter.BroadcastWithAck(
 		request.Packet,
 		adapter.DecodeOptions(request.Opts),
@@ -716,7 +690,11 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 // FetchSockets retrieves sockets across all cluster nodes.
 func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
 	return func(cb func([]socket.SocketDetails, error)) {
-		r.Adapter.FetchSockets(opts)(func(localSockets []socket.SocketDetails, _ error) {
+		r.Adapter.FetchSockets(opts)(func(localSockets []socket.SocketDetails, err error) {
+			if err != nil {
+				cb(nil, err)
+				return
+			}
 			// Return only local sockets if local flag is set
 			if opts != nil && opts.Flags != nil && opts.Flags.Local {
 				cb(localSockets, nil)
@@ -852,7 +830,10 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 		ack(request.Responses.All(), fmt.Errorf("timeout reached: only %d responses received out of %d", request.Responses.Len(), request.NumSub))
 	})
 
-	return r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err()
+	if err := r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err(); err != nil && r.finishRequest(requestId, request) {
+		return err
+	}
+	return nil
 }
 
 // ServerCount returns the number of servers subscribed to the request channel.

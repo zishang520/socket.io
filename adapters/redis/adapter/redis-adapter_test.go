@@ -51,19 +51,88 @@ type recordingLocalAdapter struct {
 	invokeClientCount bool
 }
 
+type requestRecordingAdapter struct {
+	socket.Adapter
+	broadcastsWithAck atomic.Int64
+	fetches           atomic.Int64
+}
+
+type fetchSocketsErrorAdapter struct {
+	socket.Adapter
+	err   error
+	calls atomic.Int64
+}
+
 type processErrorHook struct {
-	err error
+	err   error
+	calls atomic.Int64
+}
+
+type serverSideEmitPublishCall struct {
+	request Request
+	err     error
+	started chan struct{}
+	release <-chan struct{}
+}
+
+type serverSideEmitPublishHook struct {
+	channel    string
+	publishErr error
+	calls      chan *serverSideEmitPublishCall
 }
 
 func (h *processErrorHook) DialHook(next rds.DialHook) rds.DialHook { return next }
 
 func (h *processErrorHook) ProcessHook(rds.ProcessHook) rds.ProcessHook {
 	return func(context.Context, rds.Cmder) error {
+		h.calls.Add(1)
 		return h.err
 	}
 }
 
 func (h *processErrorHook) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
+	return next
+}
+
+func (h *serverSideEmitPublishHook) DialHook(next rds.DialHook) rds.DialHook { return next }
+
+func (h *serverSideEmitPublishHook) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
+	return func(ctx context.Context, cmd rds.Cmder) error {
+		switch cmd.Name() {
+		case "pubsub":
+			result, ok := cmd.(*rds.MapStringIntCmd)
+			if !ok {
+				return fmt.Errorf("unexpected PUBSUB command type %T", cmd)
+			}
+			result.SetVal(map[string]int64{h.channel: 2})
+			return nil
+		case "publish":
+			call := <-h.calls
+			args := cmd.Args()
+			if len(args) < 3 {
+				call.err = fmt.Errorf("unexpected PUBLISH arguments: %v", args)
+			} else {
+				switch payload := args[2].(type) {
+				case []byte:
+					call.err = json.Unmarshal(payload, &call.request)
+				case string:
+					call.err = json.Unmarshal([]byte(payload), &call.request)
+				default:
+					call.err = fmt.Errorf("unexpected PUBLISH payload type %T", payload)
+				}
+			}
+			close(call.started)
+			if call.release != nil {
+				<-call.release
+			}
+			return h.publishErr
+		default:
+			return next(ctx, cmd)
+		}
+	}
+}
+
+func (h *serverSideEmitPublishHook) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
 	return next
 }
 
@@ -92,6 +161,98 @@ func (a *recordingLocalAdapter) DelSockets(*socket.BroadcastOptions, []socket.Ro
 
 func (a *recordingLocalAdapter) DisconnectSockets(*socket.BroadcastOptions, bool) {
 	a.disconnects++
+}
+
+func (a *requestRecordingAdapter) BroadcastWithAck(*parser.Packet, *socket.BroadcastOptions, func(uint64), socket.Ack) {
+	a.broadcastsWithAck.Add(1)
+}
+
+func (a *requestRecordingAdapter) FetchSockets(*socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
+	return func(func([]socket.SocketDetails, error)) {
+		a.fetches.Add(1)
+	}
+}
+
+func (a *fetchSocketsErrorAdapter) FetchSockets(*socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
+	return func(cb func([]socket.SocketDetails, error)) {
+		a.calls.Add(1)
+		cb(nil, a.err)
+	}
+}
+
+func newRequestRoutingAdapter() (*redisAdapter, *requestRecordingAdapter) {
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	local := &requestRecordingAdapter{Adapter: socket.NewAdapter(nsp)}
+	current := MakeRedisAdapter().(*redisAdapter)
+	current.Adapter = local
+	current.uid = "self"
+	current.requestChannel = "socket.io-request#/test#"
+	current.responseChannel = "socket.io-response#/test#"
+	current.ctx = context.Background()
+	return current, local
+}
+
+func dispatchClassicRequest(t *testing.T, current *redisAdapter, request *Request) {
+	t.Helper()
+	payload, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.onRequest(payload, current.requestChannel)
+}
+
+func newServerSideEmitPublishAdapter(t *testing.T, timeout time.Duration, publishErr error) (*redisAdapter, *serverSideEmitPublishHook) {
+	t.Helper()
+	const requestChannel = "socket.io-request#/test#"
+	hook := &serverSideEmitPublishHook{
+		channel:    requestChannel,
+		publishErr: publishErr,
+		calls:      make(chan *serverSideEmitPublishCall, 1),
+	}
+	client := rds.NewClient(&rds.Options{Addr: "unused", MaxRetries: -1})
+	client.AddHook(hook)
+	t.Cleanup(func() { _ = client.Close() })
+
+	current := MakeRedisAdapter().(*redisAdapter)
+	current.redisClient = mustRedisClient(t, t.Context(), client)
+	current.ctx = t.Context()
+	current.uid = "self"
+	current.requestChannel = requestChannel
+	current.requestsTimeout = timeout
+	return current, hook
+}
+
+func startServerSideEmitWithAck(t *testing.T, current *redisAdapter, hook *serverSideEmitPublishHook, ack socket.Ack) (*serverSideEmitPublishCall, chan struct{}, <-chan error) {
+	t.Helper()
+	release := make(chan struct{})
+	call := &serverSideEmitPublishCall{started: make(chan struct{}), release: release}
+	hook.calls <- call
+	result := make(chan error, 1)
+	go func() {
+		result <- current.serverSideEmitWithAck([]any{"event"}, ack)
+	}()
+	select {
+	case <-call.started:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("PUBLISH was not reached")
+	}
+	if call.err != nil {
+		close(release)
+		t.Fatal(call.err)
+	}
+	return call, release, result
+}
+
+func waitServerSideEmitResult(t *testing.T, result <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(time.Second):
+		t.Fatal("serverSideEmitWithAck did not return")
+		return nil
+	}
 }
 
 func TestClassicBroadcastStopsOnEncodeError(t *testing.T) {
@@ -254,6 +415,208 @@ func TestClassicServerCountErrorsAreReturned(t *testing.T) {
 	if adapter.requests.Len() != 0 {
 		t.Fatal("request was stored after server count failed")
 	}
+}
+
+func TestClassicFetchSocketsReturnsLocalErrorWithoutRedis(t *testing.T) {
+	localErr := errors.New("local fetch failed")
+	hook := &processErrorHook{err: errors.New("unexpected Redis command")}
+	client := rds.NewClient(&rds.Options{Addr: "unused", MaxRetries: -1})
+	client.AddHook(hook)
+	t.Cleanup(func() { _ = client.Close() })
+
+	local := &fetchSocketsErrorAdapter{Adapter: socket.MakeAdapter(), err: localErr}
+	current := MakeRedisAdapter().(*redisAdapter)
+	current.Adapter = local
+	current.redisClient = mustRedisClient(t, t.Context(), client)
+	current.ctx = t.Context()
+	current.requestChannel = "socket.io-request#/test#"
+
+	var callbackCount atomic.Int64
+	var sockets []socket.SocketDetails
+	var gotErr error
+	current.FetchSockets(nil)(func(result []socket.SocketDetails, err error) {
+		callbackCount.Add(1)
+		sockets = result
+		gotErr = err
+	})
+
+	if gotErr != localErr {
+		t.Fatalf("FetchSockets() error = %v, want original %v", gotErr, localErr)
+	}
+	if sockets != nil {
+		t.Fatalf("FetchSockets() sockets = %v, want nil", sockets)
+	}
+	if got := callbackCount.Load(); got != 1 {
+		t.Fatalf("callback count = %d, want 1", got)
+	}
+	if got := local.calls.Load(); got != 1 {
+		t.Fatalf("local FetchSockets call count = %d, want 1", got)
+	}
+	if got := hook.calls.Load(); got != 0 {
+		t.Fatalf("Redis command count = %d, want 0", got)
+	}
+	if current.requests.Len() != 0 {
+		t.Fatal("local FetchSockets error registered a pending request")
+	}
+}
+
+func TestClassicServerSideEmitPublishFailureAbortsPendingRequest(t *testing.T) {
+	publishErr := errors.New("publish failed")
+	const timeout = 50 * time.Millisecond
+	current, hook := newServerSideEmitPublishAdapter(t, timeout, publishErr)
+	var ackCount atomic.Int64
+
+	call, release, result := startServerSideEmitWithAck(t, current, hook, func([]any, error) {
+		ackCount.Add(1)
+	})
+	request, ok := current.requests.Load(call.request.RequestId)
+	if !ok {
+		close(release)
+		t.Fatal("request was not pending while PUBLISH was blocked")
+	}
+	close(release)
+	if err := waitServerSideEmitResult(t, result); !errors.Is(err, publishErr) {
+		t.Fatalf("serverSideEmitWithAck() error = %v, want %v", err, publishErr)
+	}
+	if current.requests.Len() != 0 || request.Timeout.Load() != nil {
+		t.Fatal("publish failure retained pending request state")
+	}
+
+	time.Sleep(timeout + 20*time.Millisecond)
+	if got := ackCount.Load(); got != 0 {
+		t.Fatalf("acknowledgement count after publish failure = %d, want 0", got)
+	}
+	if current.requests.Len() != 0 {
+		t.Fatal("publish failure leaked a pending request")
+	}
+}
+
+func TestClassicServerSideEmitCompletionWinsPublishError(t *testing.T) {
+	publishErr := errors.New("publish failed")
+	current, hook := newServerSideEmitPublishAdapter(t, time.Second, publishErr)
+	var ackCount atomic.Int64
+	ackCalled := make(chan struct{}, 1)
+
+	call, release, result := startServerSideEmitWithAck(t, current, hook, func([]any, error) {
+		ackCount.Add(1)
+		ackCalled <- struct{}{}
+	})
+	request, ok := current.requests.Load(call.request.RequestId)
+	if !ok {
+		close(release)
+		t.Fatal("request was not pending while PUBLISH was blocked")
+	}
+	payload, err := json.Marshal(&Response{
+		Type:      redis.SERVER_SIDE_EMIT,
+		RequestId: call.request.RequestId,
+		Data:      []any{"response"},
+	})
+	if err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	current.onResponse(payload)
+	select {
+	case <-ackCalled:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("response did not complete the request")
+	}
+	close(release)
+
+	if err := waitServerSideEmitResult(t, result); err != nil {
+		t.Fatalf("serverSideEmitWithAck() error = %v, want nil after completion", err)
+	}
+	if got := ackCount.Load(); got != 1 {
+		t.Fatalf("acknowledgement count = %d, want 1", got)
+	}
+	if current.requests.Len() != 0 || request.Timeout.Load() != nil {
+		t.Fatal("completed request retained pending state")
+	}
+}
+
+func TestClassicServerSideEmitPublishErrorRacesCompletion(t *testing.T) {
+	publishErr := errors.New("publish failed")
+
+	t.Run("response", func(t *testing.T) {
+		current, hook := newServerSideEmitPublishAdapter(t, time.Second, publishErr)
+		for range 16 {
+			var ackCount atomic.Int64
+			call, release, result := startServerSideEmitWithAck(t, current, hook, func([]any, error) {
+				ackCount.Add(1)
+			})
+			request, ok := current.requests.Load(call.request.RequestId)
+			if !ok {
+				close(release)
+				t.Fatal("request was not pending while PUBLISH was blocked")
+			}
+			payload, err := json.Marshal(&Response{Type: redis.SERVER_SIDE_EMIT, RequestId: call.request.RequestId, Data: []any{"response"}})
+			if err != nil {
+				close(release)
+				t.Fatal(err)
+			}
+
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-start
+				close(release)
+			}()
+			go func() {
+				defer wg.Done()
+				<-start
+				current.onResponse(payload)
+			}()
+			close(start)
+			wg.Wait()
+
+			resultErr := waitServerSideEmitResult(t, result)
+			got := ackCount.Load()
+			if errors.Is(resultErr, publishErr) {
+				if got != 0 {
+					t.Fatalf("publish failure returned with %d acknowledgements", got)
+				}
+			} else if resultErr != nil || got != 1 {
+				t.Fatalf("completion result = (%v, %d acknowledgements), want (nil, 1)", resultErr, got)
+			}
+			if current.requests.Len() != 0 || request.Timeout.Load() != nil {
+				t.Fatal("response/publish race retained pending state")
+			}
+		}
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		const timeout = 2 * time.Millisecond
+		current, hook := newServerSideEmitPublishAdapter(t, timeout, publishErr)
+		for i := range 16 {
+			var ackCount atomic.Int64
+			call, release, result := startServerSideEmitWithAck(t, current, hook, func([]any, error) {
+				ackCount.Add(1)
+			})
+			request, _ := current.requests.Load(call.request.RequestId)
+			time.Sleep(time.Duration(i%4) * time.Millisecond)
+			close(release)
+			resultErr := waitServerSideEmitResult(t, result)
+			time.Sleep(timeout + time.Millisecond)
+
+			got := ackCount.Load()
+			if errors.Is(resultErr, publishErr) {
+				if got != 0 {
+					t.Fatalf("publish failure returned with %d timeout acknowledgements", got)
+				}
+			} else if resultErr != nil || got != 1 {
+				t.Fatalf("timeout result = (%v, %d acknowledgements), want (nil, 1)", resultErr, got)
+			}
+			if current.requests.Len() != 0 {
+				t.Fatal("timeout/publish race retained a pending request")
+			}
+			if errors.Is(resultErr, publishErr) && request != nil && request.Timeout.Load() != nil {
+				t.Fatal("publish failure retained its request timeout")
+			}
+		}
+	})
 }
 
 func TestClassicResponsePreservesRequiredValues(t *testing.T) {
@@ -718,6 +1081,91 @@ func TestClassicBulkSocketOperationsRunLocallyOnce(t *testing.T) {
 	if local.adds != 1 || local.dels != 1 || local.disconnects != 1 {
 		t.Fatalf("local operations = add:%d del:%d disconnect:%d, want 1 each", local.adds, local.dels, local.disconnects)
 	}
+}
+
+func TestClassicRequestRoutingUsesSenderUID(t *testing.T) {
+	t.Run("expired self broadcast is ignored", func(t *testing.T) {
+		current, local := newRequestRoutingAdapter()
+		current.ctx = t.Context()
+		current.registerAckRequest("request", &AckRequest{}, 0)
+
+		deadline := time.Now().Add(time.Second)
+		for current.ackRequests.Len() != 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if current.ackRequests.Len() != 0 {
+			t.Fatal("zero-timeout acknowledgement request was not deleted")
+		}
+
+		dispatchClassicRequest(t, current, &Request{
+			Uid:       current.uid,
+			Type:      redis.BROADCAST,
+			RequestId: "request",
+			Packet:    &parser.Packet{Type: parser.EVENT, Nsp: "/test", Data: []any{"event"}},
+			Opts:      baseadapter.EncodeOptions(nil),
+		})
+		if got := local.broadcastsWithAck.Load(); got != 0 {
+			t.Fatalf("self broadcast count = %d, want 0", got)
+		}
+	})
+
+	t.Run("remote broadcast request ID collision is handled", func(t *testing.T) {
+		current, local := newRequestRoutingAdapter()
+		current.ackRequests.Store("request", &AckRequest{})
+
+		dispatchClassicRequest(t, current, &Request{
+			Uid:       "remote",
+			Type:      redis.BROADCAST,
+			RequestId: "request",
+			Packet:    &parser.Packet{Type: parser.EVENT, Nsp: "/test", Data: []any{"event"}},
+			Opts:      baseadapter.EncodeOptions(nil),
+		})
+		if got := local.broadcastsWithAck.Load(); got != 1 {
+			t.Fatalf("remote broadcast count = %d, want 1", got)
+		}
+	})
+
+	t.Run("self fetch is ignored without pending state", func(t *testing.T) {
+		current, local := newRequestRoutingAdapter()
+
+		dispatchClassicRequest(t, current, &Request{
+			Uid:       current.uid,
+			Type:      redis.REMOTE_FETCH,
+			RequestId: "request",
+			Opts:      baseadapter.EncodeOptions(nil),
+		})
+		if got := local.fetches.Load(); got != 0 {
+			t.Fatalf("self fetch count = %d, want 0", got)
+		}
+	})
+
+	t.Run("remote fetch request ID collision is handled", func(t *testing.T) {
+		current, local := newRequestRoutingAdapter()
+		current.requests.Store("request", &RedisRequest{})
+
+		dispatchClassicRequest(t, current, &Request{
+			Uid:       "remote",
+			Type:      redis.REMOTE_FETCH,
+			RequestId: "request",
+			Opts:      baseadapter.EncodeOptions(nil),
+		})
+		if got := local.fetches.Load(); got != 1 {
+			t.Fatalf("remote fetch count = %d, want 1", got)
+		}
+	})
+
+	t.Run("missing sender UID is not considered self", func(t *testing.T) {
+		current, local := newRequestRoutingAdapter()
+
+		dispatchClassicRequest(t, current, &Request{
+			Type:      redis.REMOTE_FETCH,
+			RequestId: "request",
+			Opts:      baseadapter.EncodeOptions(nil),
+		})
+		if got := local.fetches.Load(); got != 1 {
+			t.Fatalf("request without UID fetch count = %d, want 1", got)
+		}
+	})
 }
 
 func TestClassicRegisterRequestTimeoutDeletesBeforeCallback(t *testing.T) {
