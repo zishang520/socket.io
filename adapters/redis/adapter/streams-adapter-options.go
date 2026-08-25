@@ -5,6 +5,7 @@ package adapter
 import (
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // Default configuration values for RedisStreamsAdapterOptions.
@@ -85,7 +86,7 @@ func DefaultRedisStreamsAdapterOptions() *RedisStreamsAdapterOptions {
 // Assign copies non-nil fields from another RedisStreamsAdapterOptionsInterface.
 // This method is useful for merging user-provided options with defaults.
 func (s *RedisStreamsAdapterOptions) Assign(data RedisStreamsAdapterOptionsInterface) RedisStreamsAdapterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return s
 	}
 
@@ -228,6 +229,8 @@ func (s *RedisStreamsAdapterOptions) SessionKeyPrefix() string {
 	return s.sessionKeyPrefix.Get()
 }
 
+// SetOnlyPlaintext skips binary-data detection when all transmitted values are
+// JSON-serializable and contain no binary data.
 func (s *RedisStreamsAdapterOptions) SetOnlyPlaintext(onlyPlaintext bool) {
 	s.onlyPlaintext = types.NewSome(onlyPlaintext)
 }

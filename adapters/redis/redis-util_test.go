@@ -30,6 +30,26 @@ func (r *closeReader) Close() error {
 	return nil
 }
 
+type plaintextReaderProbe struct {
+	*strings.Reader
+	read   bool
+	closed bool
+}
+
+func (r *plaintextReaderProbe) Read(payload []byte) (int, error) {
+	r.read = true
+	return r.Reader.Read(payload)
+}
+
+func (r *plaintextReaderProbe) Close() error {
+	r.closed = true
+	return nil
+}
+
+func (*plaintextReaderProbe) MarshalJSON() ([]byte, error) {
+	return []byte(`"value"`), nil
+}
+
 func (h *xaddHook) DialHook(next rds.DialHook) rds.DialHook { return next }
 
 func (h *xaddHook) ProcessHook(rds.ProcessHook) rds.ProcessHook {
@@ -156,7 +176,7 @@ func TestRedisRequestMsgpackClosePresence(t *testing.T) {
 }
 
 func TestRedisRequestLegacyJoinLeaveOmitsRooms(t *testing.T) {
-	for _, messageType := range []adapter.MessageType{REMOTE_JOIN, REMOTE_LEAVE} {
+	for _, messageType := range []RequestType{REMOTE_JOIN, REMOTE_LEAVE} {
 		payload, err := json.Marshal(&RedisRequest{Type: messageType, Sid: "socket", Room: "room"})
 		if err != nil {
 			t.Fatal(err)
@@ -186,6 +206,26 @@ func TestRedisRequestRejectsMissingType(t *testing.T) {
 	}
 	if err = utils.MsgPack().Decode(payload, &request); !errors.Is(err, errRedisRequestMissingType) {
 		t.Fatalf("MessagePack error = %v", err)
+	}
+}
+
+func TestRequestTypesMatchNodeProtocol(t *testing.T) {
+	requestTypes := []RequestType{
+		SOCKETS,
+		ALL_ROOMS,
+		REMOTE_JOIN,
+		REMOTE_LEAVE,
+		REMOTE_DISCONNECT,
+		REMOTE_FETCH,
+		SERVER_SIDE_EMIT,
+		BROADCAST,
+		BROADCAST_CLIENT_COUNT,
+		BROADCAST_ACK,
+	}
+	for value, requestType := range requestTypes {
+		if int(requestType) != value {
+			t.Fatalf("request type %d = %d", value, requestType)
+		}
 	}
 }
 
@@ -357,13 +397,14 @@ func TestStreamMessageCodec(t *testing.T) {
 	}
 }
 
-func TestStreamMessageOnlyPlaintextSkipsBinaryEncoding(t *testing.T) {
+func TestStreamMessageOnlyPlaintextSkipsBinaryTraversal(t *testing.T) {
+	probe := &plaintextReaderProbe{Reader: strings.NewReader("must not be read")}
 	raw, err := EncodeStreamMessage(&adapter.ClusterMessage{
 		Uid:  "node",
 		Nsp:  "/",
 		Type: adapter.BROADCAST,
 		Data: &adapter.BroadcastMessage{
-			Packet: &parser.Packet{Type: parser.EVENT, Data: []any{"event", []byte{1, 2}}},
+			Packet: &parser.Packet{Type: parser.EVENT, Data: []any{"event", probe}},
 			Opts:   new(adapter.PacketOptions),
 		},
 	}, true)
@@ -373,18 +414,23 @@ func TestStreamMessageOnlyPlaintextSkipsBinaryEncoding(t *testing.T) {
 	if !strings.HasPrefix(raw.Data(), "{") {
 		t.Fatalf("data = %q", raw.Data())
 	}
-	if !strings.Contains(raw.Data(), `"type":"Buffer","data":[1,2]`) {
-		t.Fatalf("data = %q, want Node.js Buffer JSON", raw.Data())
+	if probe.read || probe.closed {
+		t.Fatalf("plaintext payload was traversed: read=%t closed=%t", probe.read, probe.closed)
+	}
+	if !strings.Contains(raw.Data(), `"data":["event","value"]`) ||
+		!strings.Contains(raw.Data(), `"rooms":[]`) ||
+		!strings.Contains(raw.Data(), `"except":[]`) ||
+		!strings.Contains(raw.Data(), `"flags":{}`) {
+		t.Fatalf("data = %q", raw.Data())
 	}
 }
 
-func TestFetchSocketsResponseEncodingDoesNotMutateInput(t *testing.T) {
-	binary := []byte{1, 2}
-	handshake := &socket.Handshake{Auth: map[string]any{"binary": binary}}
+func TestStreamMessageOnlyPlaintextFetchSocketsWireDoesNotMutateInput(t *testing.T) {
+	handshake := &socket.Handshake{Auth: map[string]any{"role": "admin"}}
 	sockets := []adapter.SocketResponse{{
 		Id:        "socket",
 		Handshake: handshake,
-		Data:      map[string]any{"binary": binary},
+		Data:      map[string]any{"connected": true},
 	}}
 	raw, err := EncodeStreamMessage(&adapter.ClusterMessage{
 		Uid:  "node",
@@ -395,14 +441,32 @@ func TestFetchSocketsResponseEncodingDoesNotMutateInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(raw.Data(), `{"type":"Buffer","data":[1,2]}`) != 2 ||
-		!strings.Contains(raw.Data(), `"rooms":[]`) {
+	if !strings.Contains(raw.Data(), `"rooms":[]`) ||
+		!strings.Contains(raw.Data(), `"auth":{"role":"admin"}`) ||
+		!strings.Contains(raw.Data(), `"data":{"connected":true}`) {
 		t.Fatalf("data = %s", raw.Data())
 	}
 	if sockets[0].Rooms != nil || sockets[0].Handshake != handshake ||
-		!reflect.DeepEqual(sockets[0].Data, map[string]any{"binary": binary}) ||
-		!reflect.DeepEqual(handshake.Auth, map[string]any{"binary": binary}) {
+		!reflect.DeepEqual(sockets[0].Data, map[string]any{"connected": true}) ||
+		!reflect.DeepEqual(handshake.Auth, map[string]any{"role": "admin"}) {
 		t.Fatalf("input was mutated: %#v", sockets[0])
+	}
+}
+
+func TestStreamMessageOnlyPlaintextServerSideEmitWire(t *testing.T) {
+	raw, err := EncodeStreamMessage(&adapter.ClusterMessage{
+		Uid:  "node",
+		Nsp:  "/",
+		Type: adapter.SERVER_SIDE_EMIT,
+		Data: &adapter.ServerSideEmitMessage{
+			Packet: []any{"event", map[string]any{"value": "ok"}},
+		},
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw.Data(), `"packet":["event",{"value":"ok"}]`) {
+		t.Fatalf("data = %q", raw.Data())
 	}
 }
 

@@ -111,7 +111,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	if reservedEvents.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
-	if b.broadcastOptions.Encoder == nil {
+	if utils.IsNil(b.broadcastOptions.Encoder) {
 		return errEncoderNotSet
 	}
 

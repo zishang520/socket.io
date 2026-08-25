@@ -3,6 +3,7 @@ package redis
 import "strconv"
 
 // StreamNameForNamespace returns the Redis stream assigned to a namespace.
+// Counts less than two use the base stream name.
 // The hash matches the signed JavaScript implementation used by the Socket.IO
 // Redis Streams adapter, including its UTF-16 code-unit handling.
 func StreamNameForNamespace(streamName, namespaceName string, streamCount int) string {

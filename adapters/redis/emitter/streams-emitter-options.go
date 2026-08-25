@@ -1,6 +1,9 @@
 package emitter
 
-import "github.com/zishang520/socket.io/v3/pkg/types"
+import (
+	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
+)
 
 const (
 	DefaultStreamName   = "socket.io"
@@ -15,18 +18,13 @@ type (
 		GetRawStreamName() types.Optional[string]
 		StreamName() string
 
-		SetMaxLen(int64)
-		GetRawMaxLen() types.Optional[int64]
-		MaxLen() int64
-	}
-
-	// RedisStreamsEmitterShardingOptionsInterface is an optional extension for
-	// routing namespaces across multiple streams. Keeping it separate preserves
-	// compatibility with existing custom emitter options implementations.
-	RedisStreamsEmitterShardingOptionsInterface interface {
 		SetStreamCount(int)
 		GetRawStreamCount() types.Optional[int]
 		StreamCount() int
+
+		SetMaxLen(int64)
+		GetRawMaxLen() types.Optional[int64]
+		MaxLen() int64
 	}
 
 	// RedisStreamsEmitterOptions holds optional Redis Streams emitter settings.
@@ -44,14 +42,14 @@ func DefaultRedisStreamsEmitterOptions() *RedisStreamsEmitterOptions {
 
 // Assign copies explicitly set values from data.
 func (o *RedisStreamsEmitterOptions) Assign(data RedisStreamsEmitterOptionsInterface) RedisStreamsEmitterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return o
 	}
 	if data.GetRawStreamName() != nil {
 		o.SetStreamName(data.StreamName())
 	}
-	if shardingOptions, ok := data.(RedisStreamsEmitterShardingOptionsInterface); ok && shardingOptions.GetRawStreamCount() != nil {
-		o.SetStreamCount(shardingOptions.StreamCount())
+	if data.GetRawStreamCount() != nil {
+		o.SetStreamCount(data.StreamCount())
 	}
 	if data.GetRawMaxLen() != nil {
 		o.SetMaxLen(data.MaxLen())

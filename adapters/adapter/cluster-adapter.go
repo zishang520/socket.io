@@ -90,7 +90,8 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 	switch message.Type {
 	case BROADCAST:
 		data, ok := message.Data.(*BroadcastMessage)
-		if !ok {
+		if !ok || data == nil || data.Packet == nil || data.Opts == nil ||
+			data.Opts.Rooms == nil || data.Opts.Except == nil {
 			adapterLog.Debug("[%s] invalid data for BROADCAST message", c.uid)
 			return
 		}
@@ -353,7 +354,7 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 
 		var timeout time.Duration
 		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-			timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
+			timeout = utils.NormalizeTimerMilliseconds(*opts.Flags.Timeout)
 		}
 
 		// we have no way to know at this level whether the server has received an acknowledgement from each client, so we
@@ -416,7 +417,11 @@ func (c *clusterAdapter) DisconnectSockets(opts *socket.BroadcastOptions, state 
 
 func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
 	return func(callback func([]socket.SocketDetails, error)) {
-		c.Adapter.FetchSockets(opts)(func(localSockets []socket.SocketDetails, _ error) {
+		c.Adapter.FetchSockets(opts)(func(localSockets []socket.SocketDetails, err error) {
+			if err != nil {
+				callback(nil, err)
+				return
+			}
 			count, err := c.Proto().ServerCount()
 			if err != nil {
 				callback(nil, err)
@@ -433,7 +438,7 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 
 			t := DEFAULT_TIMEOUT
 			if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil && *opts.Flags.Timeout != 0 {
-				t = utils.FromMilliseconds(*opts.Flags.Timeout)
+				t = utils.NormalizeTimerMilliseconds(*opts.Flags.Timeout)
 			}
 
 			request := &ClusterRequest{

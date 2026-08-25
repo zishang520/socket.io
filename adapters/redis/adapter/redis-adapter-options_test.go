@@ -113,6 +113,14 @@ func TestRedisAdapterOptions_Assign(t *testing.T) {
 		}
 	})
 
+	t.Run("assign typed nil", func(t *testing.T) {
+		target := DefaultRedisAdapterOptions()
+		var source *RedisAdapterOptions
+		if result := target.Assign(source); result != target {
+			t.Fatal("Expected same instance when assigning typed nil")
+		}
+	})
+
 	t.Run("assign values", func(t *testing.T) {
 		source := DefaultRedisAdapterOptions()
 		source.SetKey("source-key")

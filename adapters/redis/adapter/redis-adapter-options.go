@@ -6,6 +6,7 @@ import (
 
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // Default configuration values for RedisAdapterOptions.
@@ -52,7 +53,7 @@ type (
 	}
 )
 
-// DefaultRedisAdapterOptions returns a new RedisAdapterOptions with default values.
+// DefaultRedisAdapterOptions returns raw-empty options; RedisAdapter.Construct applies defaults.
 func DefaultRedisAdapterOptions() *RedisAdapterOptions {
 	return &RedisAdapterOptions{}
 }
@@ -60,7 +61,7 @@ func DefaultRedisAdapterOptions() *RedisAdapterOptions {
 // Assign copies non-nil fields from another RedisAdapterOptionsInterface.
 // This method is useful for merging user-provided options with defaults.
 func (s *RedisAdapterOptions) Assign(data RedisAdapterOptionsInterface) RedisAdapterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return s
 	}
 

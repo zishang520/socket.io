@@ -12,6 +12,7 @@ func TestStreamNameForNamespace(t *testing.T) {
 	}{
 		{name: "single stream", streamName: "events", namespace: "/chat", streamCount: 1, want: "events"},
 		{name: "disabled sharding", streamName: "events", namespace: "/chat", streamCount: 0, want: "events"},
+		{name: "negative count", streamName: "events", namespace: "/namespace-0", streamCount: -2, want: "events"},
 		{name: "positive hash", streamName: "events", namespace: "/chat", streamCount: 5, want: "events-3"},
 		{name: "signed hash", streamName: "events", namespace: "/namespace-0", streamCount: 5, want: "events--3"},
 		{name: "UTF-16 hash", streamName: "events", namespace: "/" + string(rune(0x1f600)), streamCount: 7, want: "events-5"},

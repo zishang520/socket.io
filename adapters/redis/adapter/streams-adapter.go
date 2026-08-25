@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"regexp"
 	_slices "slices"
 	"strconv"
@@ -41,9 +43,12 @@ var (
 
 // Configuration constants for Redis Streams adapter.
 const (
-	// restoreSessionMaxXRangeCalls limits the number of XRANGE calls during session restoration.
+	// restoreSessionMaxXRangeCalls limits adapter-issued XRANGE calls while collecting missed packets.
 	restoreSessionMaxXRangeCalls = 100
 	restoreSessionPageSize       = 1000
+	// restoreSessionStreamReadAttempts bounds owner re-resolution after a
+	// recoverable stream read failure. The session claim itself is never retried.
+	restoreSessionStreamReadAttempts = 3
 )
 
 // isEphemeral determines whether a message should be sent via PUB/SUB instead of Streams.
@@ -170,7 +175,11 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	r.server = nsp.Server()
 
 	// Each namespace is routed to a specific stream to ensure ordering
-	r.streamName = redis.StreamNameForNamespace(r.opts.StreamName(), nsp.Name(), r.opts.StreamCount())
+	r.streamName = redis.StreamNameForNamespace(
+		r.opts.StreamName(),
+		nsp.Name(),
+		max(r.opts.StreamCount(), DefaultStreamCount),
+	)
 
 	// Set up PUB/SUB channels matching Node.js format: prefix#nsp# and prefix#nsp#uid#
 	r.publicChannel = r.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
@@ -347,6 +356,103 @@ func primaryStreamClient(ctx context.Context, redisClient *redis.RedisClient, st
 	}
 }
 
+func refreshPrimaryStreamClient(ctx context.Context, redisClient *redis.RedisClient, streamName string) (rds.Cmdable, error) {
+	if client, ok := redisClient.Client().(*rds.ClusterClient); ok {
+		// ForEachMaster forces ReloadOrGet before we select the owner from the
+		// refreshed topology.
+		if err := client.ForEachMaster(ctx, func(context.Context, *rds.Client) error { return nil }); err != nil {
+			return nil, err
+		}
+	}
+	return primaryStreamClient(ctx, redisClient, streamName)
+}
+
+func isRetryableStreamReadError(err error, cluster bool) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || cluster && errors.Is(err, rds.ErrClosed) {
+		return true
+	}
+
+	var networkError net.Error
+	if errors.As(err, &networkError) {
+		return true
+	}
+	_, moved := rds.IsMovedError(err)
+	return moved || rds.IsTryAgainError(err) || rds.IsClusterDownError(err) ||
+		rds.IsReadOnlyError(err) || rds.IsLoadingError(err) || rds.IsMasterDownError(err)
+}
+
+// xRangeWithRetry retries only the read. Each retry synchronously refreshes the
+// cluster topology and resolves the current stream owner. Entries are returned
+// only after a complete command succeeds, so callers can advance their cursor
+// without duplicating a partially read page.
+func (r *redisStreamsAdapter) xRangeWithRetry(
+	client rds.Cmdable,
+	start, stop string,
+	count int64,
+	readBudget *int,
+) ([]rds.XMessage, rds.Cmdable, error) {
+	var err error
+	_, cluster := r.redisClient.Client().(*rds.ClusterClient)
+	for attempt := range restoreSessionStreamReadAttempts {
+		if *readBudget == 0 {
+			return nil, client, errRestoreSessionReadLimit
+		}
+		if attempt > 0 {
+			client, err = refreshPrimaryStreamClient(r.redisClient.Context(), r.redisClient, r.streamName)
+			if err != nil {
+				if !isRetryableStreamReadError(err, cluster) {
+					return nil, client, err
+				}
+				continue
+			}
+		}
+		(*readBudget)--
+
+		entries, readErr := r.xRange(client, start, stop, count)
+		if readErr == nil {
+			return entries, client, nil
+		}
+		err = readErr
+		if !isRetryableStreamReadError(err, cluster) {
+			return nil, client, err
+		}
+	}
+
+	return nil, client, err
+}
+
+func (r *redisStreamsAdapter) xRange(client rds.Cmdable, start, stop string, count int64) ([]rds.XMessage, error) {
+	cluster, clusterReadOnly := r.redisClient.Client().(*rds.ClusterClient)
+	if !clusterReadOnly || !cluster.Options().ReadOnly || cluster.Options().ClusterSlots != nil {
+		return client.XRangeN(r.redisClient.Context(), r.streamName, start, stop, count).Result()
+	}
+
+	// MasterForKey returns a node client whose pooled connections may be in
+	// READONLY mode. Force this one read to READWRITE so a demoted master cannot
+	// silently serve stale data, then restore the configured connection mode.
+	pipeline := client.Pipeline()
+	readWrite := pipeline.Do(r.redisClient.Context(), "READWRITE")
+	entries := pipeline.XRangeN(r.redisClient.Context(), r.streamName, start, stop, count)
+	readOnly := pipeline.Do(r.redisClient.Context(), "READONLY")
+	_, execErr := pipeline.Exec(r.redisClient.Context())
+	if err := readWrite.Err(); err != nil {
+		return nil, err
+	}
+	if err := entries.Err(); err != nil {
+		return nil, err
+	}
+	if err := readOnly.Err(); err != nil {
+		return nil, err
+	}
+	if execErr != nil {
+		return nil, execErr
+	}
+	return entries.Val(), nil
+}
+
 // RestoreSession restores a session from Redis and collects missed packets.
 // It validates the offset format, retrieves the stored session, and iterates
 // through the stream to find packets the client missed during disconnection.
@@ -380,7 +486,8 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	}
 
 	// Verify the offset exists in the stream
-	offsets, err := streamClient.XRange(r.redisClient.Context(), r.streamName, offset, offset).Result()
+	readBudget := restoreSessionStreamReadAttempts
+	offsets, streamClient, err := r.xRangeWithRetry(streamClient, offset, offset, 1, &readBudget)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify offset: %w", err)
 	}
@@ -399,6 +506,12 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	if err := utils.MsgPack().Decode(rawSessionBytes, &session.SessionToPersist); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
 	}
+	if session.SessionToPersist == nil {
+		return nil, errors.New("invalid persisted session: missing session data")
+	}
+	if session.Rooms == nil {
+		session.Rooms = types.NewSet[socket.Room]()
+	}
 
 	redisStreamsLog.Debug("found session: %+v", session)
 
@@ -413,20 +526,22 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 // collectMissedPackets iterates through the Redis stream to find packets
 // that the session missed during disconnection.
 func (r *redisStreamsAdapter) collectMissedPackets(client rds.Cmdable, session *socket.Session, offset string) error {
+	readBudget := restoreSessionMaxXRangeCalls
 	broadcastTypeStr := strconv.Itoa(int(adapter.BROADCAST))
 
-	for range restoreSessionMaxXRangeCalls {
-		entries, err := client.XRangeN(
-			r.redisClient.Context(),
-			r.streamName,
+	for readBudget > 0 {
+		entries, nextClient, err := r.xRangeWithRetry(
+			client,
 			r.nextOffset(offset),
 			"+",
 			restoreSessionPageSize,
-		).Result()
+			&readBudget,
+		)
 
 		if err != nil {
 			return fmt.Errorf("failed to retrieve missed packets: %w", err)
 		}
+		client = nextClient
 		if len(entries) == 0 {
 			return nil
 		}
@@ -446,12 +561,17 @@ func (r *redisStreamsAdapter) collectMissedPackets(client rds.Cmdable, session *
 				}
 				recoverable := data.Packet.Type == parser.EVENT && data.Packet.Id == nil &&
 					(data.Opts.Flags == nil || !data.Opts.Flags.Volatile)
-				if recoverable && r.shouldIncludePacket(session.Rooms, data.Opts) {
-					packetData, ok := data.Packet.Data.([]any)
-					if !ok {
-						return errors.New("invalid broadcast packet data")
+				if recoverable {
+					if data.Opts.Rooms == nil || data.Opts.Except == nil {
+						return errors.New("invalid broadcast options: rooms and except are required")
 					}
-					session.MissedPackets = append(session.MissedPackets, slices.AppendCopy(packetData, entry.ID))
+					if r.shouldIncludePacket(session.Rooms, data.Opts) {
+						packetData, ok := data.Packet.Data.([]any)
+						if !ok {
+							return errors.New("invalid broadcast packet data")
+						}
+						session.MissedPackets = append(session.MissedPackets, slices.AppendCopy(packetData, entry.ID))
+					}
 				}
 			}
 			offset = entry.ID

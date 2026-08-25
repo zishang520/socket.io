@@ -2,8 +2,10 @@ package emitter
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
@@ -259,12 +261,21 @@ func TestBroadcastOperator_Emit_ReservedEvent(t *testing.T) {
 }
 
 func TestBroadcastOperator_Emit_NilEncoder(t *testing.T) {
-	b := MakeBroadcastOperator()
-	b.Construct(nil, &BroadcastOptions{}, nil, nil, nil) // No encoder
+	for _, tt := range []struct {
+		name    string
+		encoder redis.Encoder
+	}{
+		{name: "nil"},
+		{name: "typed nil", encoder: (*encodeOnly)(nil)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			b := MakeBroadcastOperator()
+			b.Construct(nil, &BroadcastOptions{Encoder: tt.encoder}, nil, nil, nil)
 
-	err := b.Emit("custom", "data")
-	if err == nil {
-		t.Error("Expected error when encoder is nil")
+			if err := b.Emit("custom", "data"); !errors.Is(err, errEncoderNotSet) {
+				t.Fatalf("error = %v, want %v", err, errEncoderNotSet)
+			}
+		})
 	}
 }
 
@@ -288,6 +299,14 @@ func TestNewBroadcastOperator_WithRooms(t *testing.T) {
 }
 
 func TestEmitterOptions_Assign(t *testing.T) {
+	t.Run("typed nil", func(t *testing.T) {
+		target := DefaultEmitterOptions()
+		var source *EmitterOptions
+		if result := target.Assign(source); result != target {
+			t.Fatal("Expected same instance when assigning typed nil")
+		}
+	})
+
 	t.Run("assign with values", func(t *testing.T) {
 		source := DefaultEmitterOptions()
 		source.SetKey("source-key")

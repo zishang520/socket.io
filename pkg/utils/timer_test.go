@@ -54,6 +54,35 @@ func TestTimerDelayNormalization(t *testing.T) {
 	}
 }
 
+func TestNormalizeTimerMilliseconds(t *testing.T) {
+	tests := []struct {
+		name  string
+		delay int64
+		want  time.Duration
+	}{
+		{name: "negative", delay: -1, want: time.Millisecond},
+		{name: "zero", want: time.Millisecond},
+		{name: "normal", delay: 25, want: 25 * time.Millisecond},
+		{name: "maximum", delay: maxTimerMilliseconds, want: maxTimerDuration},
+		{name: "above maximum", delay: maxTimerMilliseconds + 1, want: time.Millisecond},
+		{name: "maximum int64", delay: int64(^uint64(0) >> 1), want: time.Millisecond},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := NormalizeTimerMilliseconds(test.delay); got != test.want {
+				t.Fatalf("NormalizeTimerMilliseconds(%d) = %v, want %v", test.delay, got, test.want)
+			}
+		})
+	}
+
+	if allocations := testing.AllocsPerRun(1_000, func() {
+		_ = NormalizeTimerMilliseconds(maxTimerMilliseconds)
+	}); allocations != 0 {
+		t.Fatalf("NormalizeTimerMilliseconds allocations = %v, want 0", allocations)
+	}
+}
+
 func TestSetTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const delay = time.Second

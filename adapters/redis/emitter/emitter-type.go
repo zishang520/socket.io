@@ -29,12 +29,6 @@ type (
 		// SubscriptionMode controls how room-specific channels are computed.
 		// This should match the adapter's subscriptionMode setting.
 		SubscriptionMode redis.SubscriptionMode
-
-		// Sharded is kept for source compatibility. Operator selection is
-		// controlled by EmitterOptions.Sharded.
-		//
-		// Deprecated: configure sharded mode through EmitterOptions.
-		Sharded bool
 	}
 
 	// BroadcastOperatorInterface defines the fluent broadcast API.

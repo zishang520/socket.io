@@ -6,9 +6,29 @@ import (
 )
 
 const (
-	minTimerDuration = time.Millisecond
-	maxTimerDuration = time.Duration(1<<31-1) * time.Millisecond
+	minTimerDuration     = time.Millisecond
+	maxTimerMilliseconds = int64(1<<31 - 1)
+	maxTimerDuration     = time.Duration(maxTimerMilliseconds) * time.Millisecond
 )
+
+// NormalizeTimerDuration applies the delay bounds used by JavaScript timers.
+// Invalid delays become one millisecond; valid delays are truncated to whole
+// milliseconds.
+func NormalizeTimerDuration(delay time.Duration) time.Duration {
+	if delay < minTimerDuration || delay > maxTimerDuration {
+		return minTimerDuration
+	}
+	return delay.Truncate(time.Millisecond)
+}
+
+// NormalizeTimerMilliseconds converts a millisecond value using JavaScript
+// timer bounds without overflowing time.Duration.
+func NormalizeTimerMilliseconds(delay int64) time.Duration {
+	if delay < 1 || delay > maxTimerMilliseconds {
+		return minTimerDuration
+	}
+	return time.Duration(delay) * time.Millisecond
+}
 
 type Timer struct {
 	mu sync.Mutex
@@ -23,11 +43,7 @@ type Timer struct {
 }
 
 func newTimer(callback func(), delay time.Duration, interval bool) *Timer {
-	if delay < minTimerDuration || delay > maxTimerDuration {
-		delay = minTimerDuration
-	} else {
-		delay = delay.Truncate(time.Millisecond)
-	}
+	delay = NormalizeTimerDuration(delay)
 
 	timer := &Timer{
 		callback: callback,

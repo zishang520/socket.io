@@ -2,16 +2,17 @@
 // These message types are used for inter-node communication in a clustered Socket.IO environment.
 package redis
 
-import (
-	"github.com/zishang520/socket.io/adapters/adapter/v3"
-)
+// RequestType identifies a Classic Redis adapter request or response.
+// It is intentionally separate from the cluster protocol's MessageType: the
+// two protocols use overlapping numeric values for different operations.
+type RequestType int
 
 // Message types for Socket.IO Redis adapter inter-node communication.
 // These constants define the different operations that can be performed
 // across multiple Socket.IO server nodes using Redis as the message broker.
 const (
 	// SOCKETS requests a list of socket IDs from other nodes.
-	SOCKETS adapter.MessageType = iota
+	SOCKETS RequestType = iota
 
 	// ALL_ROOMS requests a list of all rooms from other nodes.
 	ALL_ROOMS

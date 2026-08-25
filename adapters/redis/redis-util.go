@@ -62,7 +62,7 @@ func ShouldUseDynamicChannel(mode SubscriptionMode, room socket.Room) bool {
 		mode == DynamicSubscriptionMode && utils.Utf16CountString(string(room)) != PrivateRoomIdLength
 }
 
-func requestOptions(messageType adapter.MessageType, opts *adapter.PacketOptions) *adapter.PacketOptions {
+func requestOptions(messageType RequestType, opts *adapter.PacketOptions) *adapter.PacketOptions {
 	switch messageType {
 	case REMOTE_JOIN, REMOTE_LEAVE, REMOTE_DISCONNECT, REMOTE_FETCH:
 		if opts != nil && opts.Rooms != nil && opts.Except != nil && opts.Flags == nil {
@@ -419,17 +419,77 @@ func marshalSocketResponses(sockets []adapter.SocketResponse, jsonFormat bool) (
 	return utils.NonNilSlice(normalized), binary
 }
 
-func marshalClusterData(data any, onlyPlaintext bool) (any, bool) {
+func marshalPlaintextClusterData(data any) any {
 	switch value := data.(type) {
 	case *adapter.BroadcastMessage:
-		packet, binary := marshalPacket(value.Packet, onlyPlaintext)
+		opts := wireOptions(value.Opts)
+		if opts == value.Opts {
+			return value
+		}
+		payload := *value
+		payload.Opts = opts
+		return &payload
+	case *adapter.SocketsJoinLeaveMessage:
+		payload := *value
+		payload.Opts = wireOptions(value.Opts)
+		payload.Rooms = utils.NonNilSlice(value.Rooms)
+		return &payload
+	case *adapter.DisconnectSocketsMessage:
+		payload := *value
+		payload.Opts = wireOptions(value.Opts)
+		return &payload
+	case *adapter.FetchSocketsMessage:
+		payload := *value
+		payload.Opts = wireOptions(value.Opts)
+		return &payload
+	case *adapter.FetchSocketsResponse:
+		payload := *value
+		payload.Sockets = plaintextSocketResponses(value.Sockets)
+		return &payload
+	case *adapter.ServerSideEmitMessage:
+		if value.Packet != nil {
+			return value
+		}
+		payload := *value
+		payload.Packet = []any{}
+		return &payload
+	default:
+		return data
+	}
+}
+
+func plaintextSocketResponses(sockets []adapter.SocketResponse) []adapter.SocketResponse {
+	var normalized []adapter.SocketResponse
+	for i := range sockets {
+		if sockets[i].Rooms != nil {
+			continue
+		}
+		if normalized == nil {
+			normalized = slices.Clone(sockets)
+		}
+		normalized[i].Rooms = []socket.Room{}
+	}
+	if normalized != nil {
+		return normalized
+	}
+	return utils.NonNilSlice(sockets)
+}
+
+func marshalClusterData(data any, onlyPlaintext bool) (any, bool) {
+	if onlyPlaintext {
+		return marshalPlaintextClusterData(data), false
+	}
+
+	switch value := data.(type) {
+	case *adapter.BroadcastMessage:
+		packet, binary := marshalPacket(value.Packet, false)
 		opts := wireOptions(value.Opts)
 		if packet == value.Packet && opts == value.Opts {
-			return value, !onlyPlaintext && binary
+			return value, binary
 		}
 		payload := *value
 		payload.Packet, payload.Opts = packet, opts
-		return &payload, !onlyPlaintext && binary
+		return &payload, binary
 	case *adapter.SocketsJoinLeaveMessage:
 		payload := *value
 		payload.Opts = wireOptions(value.Opts)
@@ -446,25 +506,25 @@ func marshalClusterData(data any, onlyPlaintext bool) (any, bool) {
 	case *adapter.FetchSocketsResponse:
 		payload := *value
 		var binary bool
-		payload.Sockets, binary = marshalSocketResponses(value.Sockets, onlyPlaintext)
-		return &payload, !onlyPlaintext && binary
+		payload.Sockets, binary = marshalSocketResponses(value.Sockets, false)
+		return &payload, binary
 	case *adapter.ServerSideEmitMessage:
 		payload := *value
-		packet, _, binary := marshalData(value.Packet, onlyPlaintext)
+		packet, _, binary := marshalData(value.Packet, false)
 		payload.Packet = utils.NonNilSlice(packet.([]any))
-		return &payload, !onlyPlaintext && binary
+		return &payload, binary
 	case *adapter.ServerSideEmitResponse:
 		payload := *value
-		packet, _, binary := marshalData(value.Packet, onlyPlaintext)
+		packet, _, binary := marshalData(value.Packet, false)
 		payload.Packet = packet
-		return &payload, !onlyPlaintext && binary
+		return &payload, binary
 	case *adapter.BroadcastClientCount:
 		return value, false
 	case *adapter.BroadcastAck:
 		payload := *value
-		packet, _, binary := marshalData(value.Packet, onlyPlaintext)
+		packet, _, binary := marshalData(value.Packet, false)
 		payload.Packet = packet
-		return &payload, !onlyPlaintext && binary
+		return &payload, binary
 	default:
 		return data, false
 	}

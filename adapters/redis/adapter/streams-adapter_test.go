@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,6 +43,159 @@ type xrangeTailAppender struct {
 type xrangeNonEmptyHook struct {
 	mu    sync.Mutex
 	calls int
+}
+
+type failXRangeHook struct {
+	err       error
+	failAt    int64
+	failCount int64
+	calls     atomic.Int64
+	onFail    func(int64)
+}
+
+type readWriteXRangeHook struct {
+	mu       sync.Mutex
+	commands [][]string
+}
+
+type alternatingXRangeHook struct {
+	calls atomic.Int64
+}
+
+type temporaryStreamReadError struct{}
+
+func (temporaryStreamReadError) Error() string   { return "temporary stream read failure" }
+func (temporaryStreamReadError) Timeout() bool   { return true }
+func (temporaryStreamReadError) Temporary() bool { return true }
+
+func (*alternatingXRangeHook) DialHook(next rds.DialHook) rds.DialHook { return next }
+
+func (h *alternatingXRangeHook) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
+	return func(ctx context.Context, cmd rds.Cmder) error {
+		if cmd.Name() != "xrange" {
+			return next(ctx, cmd)
+		}
+
+		call := h.calls.Add(1)
+		if call%2 != 0 {
+			return temporaryStreamReadError{}
+		}
+		cmd.(*rds.XMessageSliceCmd).SetVal([]rds.XMessage{{
+			ID:     strconv.FormatInt(call/2, 10) + "-0",
+			Values: map[string]any{"nsp": "/other"},
+		}})
+		return nil
+	}
+}
+
+func (*alternatingXRangeHook) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
+	return next
+}
+
+func (*failXRangeHook) DialHook(next rds.DialHook) rds.DialHook { return next }
+
+func (h *failXRangeHook) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
+	return func(ctx context.Context, cmd rds.Cmder) error {
+		if cmd.Name() != "xrange" {
+			return next(ctx, cmd)
+		}
+
+		call := h.calls.Add(1)
+		if call >= h.failAt && (h.failCount < 0 || call < h.failAt+h.failCount) {
+			if h.onFail != nil {
+				h.onFail(call)
+			}
+			return h.err
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (*failXRangeHook) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
+	return next
+}
+
+func (*readWriteXRangeHook) DialHook(next rds.DialHook) rds.DialHook { return next }
+
+func (*readWriteXRangeHook) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
+	return func(ctx context.Context, cmd rds.Cmder) error {
+		if cmd.Name() == "readonly" || cmd.Name() == "readwrite" {
+			cmd.(*rds.Cmd).SetVal("OK")
+			return nil
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *readWriteXRangeHook) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []rds.Cmder) error {
+		names := make([]string, len(cmds))
+		for i, cmd := range cmds {
+			names[i] = cmd.Name()
+		}
+		h.mu.Lock()
+		h.commands = append(h.commands, names)
+		h.mu.Unlock()
+
+		if len(cmds) != 3 || names[0] != "readwrite" || names[1] != "xrange" || names[2] != "readonly" {
+			return next(ctx, cmds)
+		}
+		cmds[0].(*rds.Cmd).SetVal("OK")
+		cmds[2].(*rds.Cmd).SetVal("OK")
+		return next(ctx, cmds[1:2])
+	}
+}
+
+func newRecoveryTestAdapter(redisClient *rediswire.RedisClient) *redisStreamsAdapter {
+	streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+	streamAdapter.ClusterAdapter.Construct(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
+	)
+	streamAdapter.redisClient = redisClient
+	streamAdapter.streamName = "stream"
+	streamAdapter.opts.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
+	return streamAdapter
+}
+
+func encodeRecoverySession(t *testing.T) string {
+	t.Helper()
+	payload, err := utils.MsgPack().Encode(&socket.SessionToPersist{
+		Sid:   "sid",
+		Pid:   "pid",
+		Rooms: types.NewSet(socket.Room("sid")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(payload)
+}
+
+func recoveryBroadcast(t *testing.T, event string) map[string]any {
+	t.Helper()
+	message, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+		Uid:  "remote",
+		Nsp:  "/test",
+		Type: adapter.BROADCAST,
+		Data: &adapter.BroadcastMessage{
+			Packet: &parser.Packet{Type: parser.EVENT, Data: []any{event}},
+			Opts:   new(adapter.PacketOptions),
+		},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]any(message)
+}
+
+func addRecoveryEntry(t *testing.T, client *rds.Client, id string, values map[string]any) {
+	t.Helper()
+	if err := client.XAdd(context.Background(), &rds.XAddArgs{
+		Stream: "stream",
+		ID:     id,
+		Values: values,
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (*xrangeRecorder) DialHook(next rds.DialHook) rds.DialHook { return next }
@@ -155,7 +309,7 @@ func TestRedisStreamsAdapterPreservesExplicitEmptyAndZeroOptions(t *testing.T) {
 
 	opts := DefaultRedisStreamsAdapterOptions()
 	opts.SetStreamName("")
-	opts.SetStreamCount(0)
+	opts.SetStreamCount(2)
 	opts.SetChannelPrefix("")
 	opts.SetMaxLen(0)
 	opts.SetReadCount(0)
@@ -169,11 +323,63 @@ func TestRedisStreamsAdapterPreservesExplicitEmptyAndZeroOptions(t *testing.T) {
 	).(*redisStreamsAdapter)
 	t.Cleanup(streamAdapter.Close)
 
-	if streamAdapter.opts.StreamName() != "" || streamAdapter.opts.StreamCount() != 0 ||
+	if streamAdapter.opts.StreamName() != "" || streamAdapter.opts.StreamCount() != 2 ||
 		streamAdapter.opts.ChannelPrefix() != "" || streamAdapter.opts.MaxLen() != 0 ||
 		streamAdapter.opts.ReadCount() != 0 || streamAdapter.opts.BlockTimeInMs() != 0 ||
 		streamAdapter.opts.SessionKeyPrefix() != "" {
 		t.Fatalf("explicit options were replaced: %+v", streamAdapter.opts)
+	}
+}
+
+func TestRedisStreamsAdapterRoutesNonPositiveStreamCountToBaseStream(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		raw  int
+	}{
+		{name: "zero", raw: 0},
+		{name: "negative", raw: -2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := miniredis.RunT(t)
+			client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+			t.Cleanup(func() { _ = client.Close() })
+			redisClient := mustRedisClient(t, context.Background(), client)
+			redisErrors := make(chan error, 1)
+			_ = redisClient.On("error", func(args ...any) {
+				if len(args) > 0 {
+					if err, ok := args[0].(error); ok {
+						select {
+						case redisErrors <- err:
+						default:
+						}
+					}
+				}
+			})
+
+			opts := DefaultRedisStreamsAdapterOptions()
+			opts.SetStreamCount(tt.raw)
+			streamAdapter := NewRedisStreamsAdapter(
+				socket.NewNamespace(socket.NewServer(nil, nil), "/"+tt.name+"-stream-count"),
+				redisClient,
+				opts,
+			).(*redisStreamsAdapter)
+			t.Cleanup(streamAdapter.Close)
+
+			if got := streamAdapter.opts.StreamCount(); got != tt.raw {
+				t.Fatalf("stream count = %d, want raw value %d", got, tt.raw)
+			}
+			if raw := streamAdapter.opts.GetRawStreamCount(); raw == nil || raw.Get() != tt.raw {
+				t.Fatalf("raw stream count = %v, want %d", raw, tt.raw)
+			}
+			if streamAdapter.streamName != DefaultStreamName {
+				t.Fatalf("routed stream = %q, want base stream %q", streamAdapter.streamName, DefaultStreamName)
+			}
+			select {
+			case err := <-redisErrors:
+				t.Fatalf("non-positive stream count emitted an error: %v", err)
+			default:
+			}
+		})
 	}
 }
 
@@ -599,9 +805,8 @@ func TestRestoreSessionReturnsEmptyMissedPackets(t *testing.T) {
 	streamAdapter.opts.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
 
 	session := &socket.SessionToPersist{
-		Sid:   "sid",
-		Pid:   "pid",
-		Rooms: types.NewSet[socket.Room](),
+		Sid: "sid",
+		Pid: "pid",
 	}
 	payload, err := utils.MsgPack().Encode(session)
 	if err != nil {
@@ -626,6 +831,65 @@ func TestRestoreSessionReturnsEmptyMissedPackets(t *testing.T) {
 	}
 	if restored.MissedPackets == nil || len(restored.MissedPackets) != 0 {
 		t.Fatalf("missed packets = %#v, want non-nil empty slice", restored.MissedPackets)
+	}
+	if restored.Rooms == nil || restored.Rooms.Len() != 0 {
+		t.Fatalf("rooms = %#v, want non-nil empty set", restored.Rooms)
+	}
+}
+
+func TestRestoreSessionRejectsMalformedPersistedSession(t *testing.T) {
+	tests := []struct {
+		name      string
+		session   any
+		wantError string
+	}{
+		{
+			name:      "missing session data",
+			session:   (*socket.SessionToPersist)(nil),
+			wantError: "invalid persisted session: missing session data",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := miniredis.RunT(t)
+			client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+			t.Cleanup(func() { _ = client.Close() })
+			ctx := context.Background()
+			redisClient := mustRedisClient(t, ctx, client)
+
+			payload, err := utils.MsgPack().Encode(tt.session)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = client.Set(
+				ctx,
+				DefaultSessionKeyPrefix+"pid",
+				base64.StdEncoding.EncodeToString(payload),
+				0,
+			).Err(); err != nil {
+				t.Fatal(err)
+			}
+			if err = client.XAdd(ctx, &rds.XAddArgs{
+				Stream: "stream",
+				ID:     "1-0",
+				Values: map[string]any{"uid": "node", "nsp": "/test", "type": "1"},
+			}).Err(); err != nil {
+				t.Fatal(err)
+			}
+
+			streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+			streamAdapter.ClusterAdapter.Construct(
+				socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
+			)
+			streamAdapter.redisClient = redisClient
+			streamAdapter.streamName = "stream"
+			streamAdapter.opts.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
+
+			if _, err = streamAdapter.RestoreSession("pid", "1-0"); err == nil || err.Error() != tt.wantError {
+				t.Fatalf("error = %v, want %q", err, tt.wantError)
+			}
+		})
 	}
 }
 
@@ -678,6 +942,292 @@ func TestPrimaryStreamClientRoutesToWriteSideOwner(t *testing.T) {
 		}
 	})
 
+}
+
+func TestReadOnlyClusterStreamRangeUsesPrimaryConnectionMode(t *testing.T) {
+	server := miniredis.RunT(t)
+	directClient := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = directClient.Close() })
+	addRecoveryEntry(t, directClient, "1-0", map[string]any{"nsp": "/test"})
+
+	hook := &readWriteXRangeHook{}
+	directClient.AddHook(hook)
+	cluster := rds.NewClusterClient(&rds.ClusterOptions{
+		Addrs:    []string{server.Addr()},
+		ReadOnly: true,
+	})
+	t.Cleanup(func() { _ = cluster.Close() })
+
+	ctx := context.Background()
+	redisClient := mustRedisClient(t, ctx, cluster)
+	streamAdapter := newRecoveryTestAdapter(redisClient)
+	entries, err := streamAdapter.xRange(directClient, "1-0", "1-0", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ID != "1-0" {
+		t.Fatalf("entries = %#v, want offset 1-0", entries)
+	}
+
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	if len(hook.commands) != 1 || !reflect.DeepEqual(hook.commands[0], []string{"readwrite", "xrange", "readonly"}) {
+		t.Fatalf("pipeline commands = %v, want READWRITE/XRANGE/READONLY", hook.commands)
+	}
+}
+
+func TestCustomClusterSlotsStreamRangeSkipsConnectionModeCommands(t *testing.T) {
+	server := miniredis.RunT(t)
+	directClient := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = directClient.Close() })
+	addRecoveryEntry(t, directClient, "1-0", map[string]any{"nsp": "/test"})
+
+	hook := &readWriteXRangeHook{}
+	directClient.AddHook(hook)
+	cluster := rds.NewClusterClient(&rds.ClusterOptions{
+		Addrs:    []string{server.Addr()},
+		ReadOnly: true,
+		ClusterSlots: func(context.Context) ([]rds.ClusterSlot, error) {
+			return nil, errors.New("must not resolve topology for a direct range test")
+		},
+	})
+	t.Cleanup(func() { _ = cluster.Close() })
+
+	streamAdapter := newRecoveryTestAdapter(mustRedisClient(t, context.Background(), cluster))
+	entries, err := streamAdapter.xRange(directClient, "1-0", "1-0", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ID != "1-0" {
+		t.Fatalf("entries = %#v, want offset 1-0", entries)
+	}
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	if len(hook.commands) != 0 {
+		t.Fatalf("unexpected connection-mode pipeline: %v", hook.commands)
+	}
+}
+
+func TestRestoreSessionRetriesAfterClusterOwnerMigration(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "MOVED", err: errors.New("MOVED 0 127.0.0.1:6380")},
+		{name: "READONLY", err: errors.New("READONLY You can't write against a read only replica")},
+		{name: "network", err: temporaryStreamReadError{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldMaster := miniredis.RunT(t)
+			newMaster := miniredis.RunT(t)
+			oldClient := rds.NewClient(&rds.Options{Addr: oldMaster.Addr()})
+			newClient := rds.NewClient(&rds.Options{Addr: newMaster.Addr()})
+			t.Cleanup(func() {
+				_ = oldClient.Close()
+				_ = newClient.Close()
+			})
+
+			var migrated atomic.Bool
+			hook := &failXRangeHook{
+				err:       tt.err,
+				failAt:    1,
+				failCount: 1,
+				onFail: func(int64) {
+					migrated.Store(true)
+				},
+			}
+			cluster := rds.NewClusterClient(&rds.ClusterOptions{
+				Addrs: []string{oldMaster.Addr()},
+				ClusterSlots: func(context.Context) ([]rds.ClusterSlot, error) {
+					owner := oldMaster.Addr()
+					if migrated.Load() {
+						owner = newMaster.Addr()
+					}
+					return []rds.ClusterSlot{{
+						Start: 0,
+						End:   16383,
+						Nodes: []rds.ClusterNode{{Addr: owner}},
+					}}, nil
+				},
+				NewClient: func(opts *rds.Options) *rds.Client {
+					client := rds.NewClient(opts)
+					client.AddHook(hook)
+					return client
+				},
+			})
+			t.Cleanup(func() { _ = cluster.Close() })
+
+			ctx := context.Background()
+			rawSession := encodeRecoverySession(t)
+			sessionKey := DefaultSessionKeyPrefix + "pid"
+			if err := oldClient.Set(ctx, sessionKey, rawSession, time.Minute).Err(); err != nil {
+				t.Fatal(err)
+			}
+			for _, client := range []*rds.Client{oldClient, newClient} {
+				addRecoveryEntry(t, client, "1-0", map[string]any{"nsp": "/test"})
+			}
+			addRecoveryEntry(t, newClient, "2-0", recoveryBroadcast(t, "event"))
+
+			streamAdapter := newRecoveryTestAdapter(mustRedisClient(t, ctx, cluster))
+			restored, err := streamAdapter.RestoreSession("pid", "1-0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []any{[]any{"event", "2-0"}}
+			if !reflect.DeepEqual(restored.MissedPackets, want) {
+				t.Fatalf("missed packets = %#v, want %#v", restored.MissedPackets, want)
+			}
+			if hook.calls.Load() != 4 {
+				t.Fatalf("XRANGE calls = %d, want 4", hook.calls.Load())
+			}
+			if _, err := oldClient.Get(ctx, sessionKey).Result(); !errors.Is(err, rds.Nil) {
+				t.Fatalf("claimed session still exists on old owner: %v", err)
+			}
+		})
+	}
+}
+
+func TestRestoreSessionOwnerMigrationDoesNotDuplicatePages(t *testing.T) {
+	oldMaster := miniredis.RunT(t)
+	newMaster := miniredis.RunT(t)
+	oldClient := rds.NewClient(&rds.Options{Addr: oldMaster.Addr()})
+	newClient := rds.NewClient(&rds.Options{Addr: newMaster.Addr()})
+	t.Cleanup(func() {
+		_ = oldClient.Close()
+		_ = newClient.Close()
+	})
+
+	var migrated atomic.Bool
+	hook := &failXRangeHook{
+		err:       errors.New("MOVED 0 " + newMaster.Addr()),
+		failAt:    3, // offset verification, first page, then fail on the second page
+		failCount: 1,
+		onFail: func(int64) {
+			migrated.Store(true)
+		},
+	}
+	cluster := rds.NewClusterClient(&rds.ClusterOptions{
+		Addrs: []string{oldMaster.Addr()},
+		ClusterSlots: func(context.Context) ([]rds.ClusterSlot, error) {
+			owner := oldMaster.Addr()
+			if migrated.Load() {
+				owner = newMaster.Addr()
+			}
+			return []rds.ClusterSlot{{Start: 0, End: 16383, Nodes: []rds.ClusterNode{{Addr: owner}}}}, nil
+		},
+		NewClient: func(opts *rds.Options) *rds.Client {
+			client := rds.NewClient(opts)
+			client.AddHook(hook)
+			return client
+		},
+	})
+	t.Cleanup(func() { _ = cluster.Close() })
+
+	ctx := context.Background()
+	rawSession := encodeRecoverySession(t)
+	if err := oldClient.Set(ctx, DefaultSessionKeyPrefix+"pid", rawSession, time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, client := range []*rds.Client{oldClient, newClient} {
+		addRecoveryEntry(t, client, "1-0", map[string]any{"nsp": "/test"})
+	}
+	message := recoveryBroadcast(t, "event")
+	oldPipe := oldClient.Pipeline()
+	newPipe := newClient.Pipeline()
+	for i := range restoreSessionPageSize + 1 {
+		id := strconv.Itoa(i+2) + "-0"
+		oldPipe.XAdd(ctx, &rds.XAddArgs{Stream: "stream", ID: id, Values: message})
+		newPipe.XAdd(ctx, &rds.XAddArgs{Stream: "stream", ID: id, Values: message})
+	}
+	if _, err := oldPipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newPipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	streamAdapter := newRecoveryTestAdapter(mustRedisClient(t, ctx, cluster))
+	restored, err := streamAdapter.RestoreSession("pid", "1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.MissedPackets) != restoreSessionPageSize+1 {
+		t.Fatalf("missed packets = %d, want %d", len(restored.MissedPackets), restoreSessionPageSize+1)
+	}
+	seen := make(map[string]struct{}, len(restored.MissedPackets))
+	for _, rawPacket := range restored.MissedPackets {
+		packet, ok := rawPacket.([]any)
+		if !ok || len(packet) != 2 {
+			t.Fatalf("invalid missed packet: %#v", rawPacket)
+		}
+		id, ok := packet[1].(string)
+		if !ok {
+			t.Fatalf("invalid missed packet offset: %#v", packet[1])
+		}
+		if _, duplicate := seen[id]; duplicate {
+			t.Fatalf("duplicate missed packet offset %s", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if hook.calls.Load() != 5 {
+		t.Fatalf("XRANGE calls = %d, want 5", hook.calls.Load())
+	}
+}
+
+func TestRestoreSessionKeepsOneShotClaimAfterRetryExhaustion(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	hook := &failXRangeHook{
+		err:       temporaryStreamReadError{},
+		failAt:    1,
+		failCount: -1,
+	}
+	client.AddHook(hook)
+
+	ctx := context.Background()
+	sessionKey := DefaultSessionKeyPrefix + "pid"
+	if err := client.Set(ctx, sessionKey, encodeRecoverySession(t), time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	streamAdapter := newRecoveryTestAdapter(mustRedisClient(t, ctx, client))
+
+	if _, err := streamAdapter.RestoreSession("pid", "1-0"); err == nil {
+		t.Fatal("expected stream read failure")
+	}
+	if hook.calls.Load() != restoreSessionStreamReadAttempts {
+		t.Fatalf("XRANGE calls = %d, want %d", hook.calls.Load(), restoreSessionStreamReadAttempts)
+	}
+	if _, err := client.Get(ctx, sessionKey).Result(); !errors.Is(err, rds.Nil) {
+		t.Fatalf("claimed session was restored or not deleted: %v", err)
+	}
+}
+
+func TestRetryableStreamReadErrorClassification(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		cluster bool
+		want    bool
+	}{
+		{name: "MOVED", err: errors.New("MOVED 1 127.0.0.1:6380"), cluster: true, want: true},
+		{name: "ASK", err: errors.New("ASK 1 127.0.0.1:6380"), cluster: true, want: false},
+		{name: "LOADING", err: errors.New("LOADING Redis is loading"), want: true},
+		{name: "MASTERDOWN", err: errors.New("MASTERDOWN Link with MASTER is down"), want: true},
+		{name: "CROSSSLOT", err: errors.New("CROSSSLOT Keys in request don't hash to the same slot"), cluster: true, want: false},
+		{name: "closed standalone", err: rds.ErrClosed, want: false},
+		{name: "closed cluster", err: rds.ErrClosed, cluster: true, want: true},
+		{name: "canceled", err: context.Canceled, cluster: true, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRetryableStreamReadError(tt.err, tt.cluster); got != tt.want {
+				t.Fatalf("retryable = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestCollectMissedPacketsUsesBoundedPages(t *testing.T) {
@@ -794,6 +1344,24 @@ func TestCollectMissedPacketsReturnsErrorAtReadLimit(t *testing.T) {
 	}
 }
 
+func TestCollectMissedPacketsRetriesConsumeReadLimit(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	hook := &alternatingXRangeHook{}
+	client.AddHook(hook)
+	ctx := context.Background()
+
+	streamAdapter := newRecoveryTestAdapter(mustRedisClient(t, ctx, client))
+	err := streamAdapter.collectMissedPackets(client, &socket.Session{}, "0-0")
+	if !errors.Is(err, errRestoreSessionReadLimit) {
+		t.Fatalf("error = %v, want %v", err, errRestoreSessionReadLimit)
+	}
+	if calls := hook.calls.Load(); calls != restoreSessionMaxXRangeCalls {
+		t.Fatalf("adapter-issued XRANGE calls = %d, want %d", calls, restoreSessionMaxXRangeCalls)
+	}
+}
+
 func TestCollectMissedPacketsSkipsVolatileBroadcasts(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
@@ -849,6 +1417,7 @@ func TestCollectMissedPacketsValidatesIncludedPacketData(t *testing.T) {
 		name       string
 		packet     *parser.Packet
 		opts       *adapter.PacketOptions
+		rawData    string
 		wantErr    string
 		wantPacket []any
 	}{
@@ -882,6 +1451,33 @@ func TestCollectMissedPacketsValidatesIncludedPacketData(t *testing.T) {
 			wantPacket: []any{"event", "value", "1-0"},
 		},
 		{
+			name:    "missing rooms",
+			rawData: `{"packet":{"type":2,"data":["event"]},"opts":{"except":[]}}`,
+			wantErr: "invalid broadcast options: rooms and except are required",
+		},
+		{
+			name:    "missing except",
+			rawData: `{"packet":{"type":2,"data":["event"]},"opts":{"rooms":[]}}`,
+			wantErr: "invalid broadcast options: rooms and except are required",
+		},
+		{
+			name:       "missing optional flags",
+			rawData:    `{"packet":{"type":2,"data":["event"]},"opts":{"rooms":[],"except":[]}}`,
+			wantPacket: []any{"event", "1-0"},
+		},
+		{
+			name:    "non-event with malformed options",
+			rawData: `{"packet":{"type":0},"opts":{"except":[]}}`,
+		},
+		{
+			name:    "event with id and malformed options",
+			rawData: `{"packet":{"type":2,"id":1,"data":["event"]},"opts":{"rooms":[]}}`,
+		},
+		{
+			name:    "volatile event with malformed options",
+			rawData: `{"packet":{"type":2,"data":["event"]},"opts":{"flags":{"volatile":true}}}`,
+		},
+		{
 			name:   "excluded malformed data",
 			packet: &parser.Packet{Type: parser.EVENT, Data: "event"},
 			opts:   &adapter.PacketOptions{Rooms: []socket.Room{"other"}},
@@ -903,6 +1499,9 @@ func TestCollectMissedPacketsValidatesIncludedPacketData(t *testing.T) {
 			}, false)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if tt.rawData != "" {
+				message["data"] = tt.rawData
 			}
 			if err = client.XAdd(ctx, &rds.XAddArgs{
 				Stream: "stream",
@@ -970,7 +1569,7 @@ func TestRestoreSessionUsesWriteClientForStreamReads(t *testing.T) {
 	session := &socket.SessionToPersist{
 		Sid:   "sid",
 		Pid:   "pid",
-		Rooms: types.NewSet[socket.Room](),
+		Rooms: types.NewSet(socket.Room("sid")),
 	}
 	payload, err := utils.MsgPack().Encode(session)
 	if err != nil {

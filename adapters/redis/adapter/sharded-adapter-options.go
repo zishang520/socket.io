@@ -5,6 +5,7 @@ package adapter
 import (
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // Default configuration values for ShardedRedisAdapterOptions.
@@ -38,7 +39,7 @@ type (
 	}
 )
 
-// DefaultShardedRedisAdapterOptions returns a new ShardedRedisAdapterOptions with default values.
+// DefaultShardedRedisAdapterOptions returns raw-empty options; ShardedRedisAdapter.Construct applies defaults.
 func DefaultShardedRedisAdapterOptions() *ShardedRedisAdapterOptions {
 	return &ShardedRedisAdapterOptions{}
 }
@@ -46,7 +47,7 @@ func DefaultShardedRedisAdapterOptions() *ShardedRedisAdapterOptions {
 // Assign copies non-nil fields from another ShardedRedisAdapterOptionsInterface.
 // This method is useful for merging user-provided options with defaults.
 func (s *ShardedRedisAdapterOptions) Assign(data ShardedRedisAdapterOptionsInterface) ShardedRedisAdapterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return s
 	}
 

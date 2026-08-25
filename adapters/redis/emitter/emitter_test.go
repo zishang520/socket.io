@@ -109,6 +109,22 @@ func TestClassicEmitterAcceptsEncodeOnlyEncoder(t *testing.T) {
 	}
 }
 
+func TestClassicEmitterTypedNilEncoderUsesDefault(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	options := DefaultEmitterOptions()
+	options.SetEncoder((*encodeOnly)(nil))
+
+	emit := NewEmitter(mustRedisClient(t, client), options)
+	if utils.IsNil(emit.broadcastOptions.Encoder) {
+		t.Fatal("typed nil encoder was not replaced with the default")
+	}
+	if err := emit.Emit("event", "value"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClassicEmitterPreservesConstructorRoutingValues(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})

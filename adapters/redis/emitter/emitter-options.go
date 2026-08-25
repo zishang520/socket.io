@@ -5,6 +5,7 @@ package emitter
 import (
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 const (
@@ -70,7 +71,7 @@ type (
 	}
 )
 
-// DefaultEmitterOptions creates a new EmitterOptions instance with default values.
+// DefaultEmitterOptions returns raw-empty options; Emitter.Construct applies defaults.
 func DefaultEmitterOptions() *EmitterOptions {
 	return &EmitterOptions{}
 }
@@ -78,7 +79,7 @@ func DefaultEmitterOptions() *EmitterOptions {
 // Assign copies non-nil option values from another EmitterOptionsInterface.
 // This allows merging configuration from multiple sources.
 func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return o
 	}
 

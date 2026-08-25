@@ -147,6 +147,14 @@ func TestRedisStreamsAdapterOptions_Assign(t *testing.T) {
 		}
 	})
 
+	t.Run("assign typed nil", func(t *testing.T) {
+		target := DefaultRedisStreamsAdapterOptions()
+		var source *RedisStreamsAdapterOptions
+		if result := target.Assign(source); result != target {
+			t.Fatal("Expected same instance when assigning typed nil")
+		}
+	})
+
 	t.Run("assign all fields", func(t *testing.T) {
 		source := DefaultRedisStreamsAdapterOptions()
 		source.SetStreamName("src-stream")
@@ -235,6 +243,27 @@ func TestRedisStreamsAdapterOptions_StreamCount(t *testing.T) {
 			t.Fatalf("Expected 4, got %d", opts.StreamCount())
 		}
 	})
+
+	for _, tt := range []struct {
+		name string
+		raw  int
+	}{
+		{name: "explicit zero is preserved", raw: 0},
+		{name: "negative is preserved", raw: -2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			source := DefaultRedisStreamsAdapterOptions()
+			source.SetStreamCount(tt.raw)
+			target := DefaultRedisStreamsAdapterOptions()
+			target.Assign(source)
+			if raw := target.GetRawStreamCount(); raw == nil || raw.Get() != tt.raw {
+				t.Fatalf("raw stream count = %v, want %d", raw, tt.raw)
+			}
+			if target.StreamCount() != tt.raw {
+				t.Fatalf("stream count = %d, want raw value %d", target.StreamCount(), tt.raw)
+			}
+		})
+	}
 }
 
 func TestRedisStreamsAdapterOptions_ChannelPrefix(t *testing.T) {

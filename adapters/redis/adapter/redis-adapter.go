@@ -188,7 +188,7 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	r.publishOnSpecificResponseChannel = r.opts.PublishOnSpecificResponseChannel()
 
 	r.parser = r.opts.Parser()
-	if r.parser == nil {
+	if utils.IsNil(r.parser) {
 		r.parser = utils.MsgPack()
 	}
 
@@ -420,6 +420,11 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 
 // handleBroadcastRequest handles BROADCAST request type.
 func (r *redisAdapter) handleBroadcastRequest(request *Request) {
+	if request.Uid == "" || request.RequestId == "" || request.Packet == nil || request.Opts == nil ||
+		request.Opts.Rooms == nil || request.Opts.Except == nil {
+		redisLog.Debug("ignoring malformed BROADCAST request")
+		return
+	}
 	r.Adapter.BroadcastWithAck(
 		request.Packet,
 		adapter.DecodeOptions(request.Opts),
@@ -637,7 +642,7 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 		}
 		timeout := adapter.DEFAULT_TIMEOUT
 		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-			timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
+			timeout = utils.NormalizeTimerMilliseconds(*opts.Flags.Timeout)
 		}
 		r.registerAckRequest(requestId, ackRequest, timeout)
 

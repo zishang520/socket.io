@@ -29,7 +29,7 @@ type (
 	// It extends the base RedisRequest with fields for tracking request lifecycle.
 	RedisRequest struct {
 		// Type identifies the message/request type.
-		Type adapter.MessageType
+		Type redis.RequestType
 
 		// Resolve is the callback invoked when the request completes successfully.
 		Resolve func(*types.Slice[any])

@@ -43,7 +43,7 @@ func (e *Emitter) Construct(client *redis.RedisClient, opts *EmitterOptions, nsp
 	if e.opts.GetRawKey() == nil {
 		e.opts.SetKey(DefaultEmitterKey)
 	}
-	if e.opts.Encoder() == nil {
+	if utils.IsNil(e.opts.Encoder()) {
 		e.opts.SetEncoder(utils.MsgPack())
 	}
 	if len(nsps) > 0 {

@@ -16,6 +16,8 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
+const overflowingTimerMilliseconds int64 = 18_446_744_074_709
+
 type fixedServerCountAdapter struct {
 	socket.Adapter
 	serverCount int64
@@ -23,15 +25,24 @@ type fixedServerCountAdapter struct {
 
 type ackAdapter struct {
 	socket.Adapter
-	args []any
+	args              []any
+	broadcasts        atomic.Int64
+	broadcastsWithAck atomic.Int64
+}
+
+type fetchSocketsErrorAdapter struct {
+	socket.Adapter
+	err   error
+	calls atomic.Int64
 }
 
 type prototypeClusterAdapter struct {
 	ClusterAdapter
-	count         int64
-	countErr      error
-	publishCount  atomic.Int64
-	responseCount atomic.Int64
+	count            int64
+	countErr         error
+	serverCountCalls atomic.Int64
+	publishCount     atomic.Int64
+	responseCount    atomic.Int64
 }
 
 func (a *prototypeClusterAdapter) Publish(*ClusterMessage) {
@@ -43,12 +54,25 @@ func (a *prototypeClusterAdapter) OnResponse(*ClusterResponse) {
 }
 
 func (a *prototypeClusterAdapter) ServerCount() (int64, error) {
+	a.serverCountCalls.Add(1)
 	return a.count, a.countErr
 }
 
+func (a *fetchSocketsErrorAdapter) FetchSockets(*socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
+	return func(callback func([]socket.SocketDetails, error)) {
+		a.calls.Add(1)
+		callback([]socket.SocketDetails{nil}, a.err)
+	}
+}
+
 func (a *ackAdapter) BroadcastWithAck(_ *parser.Packet, _ *socket.BroadcastOptions, clientCount func(uint64), ack socket.Ack) {
+	a.broadcastsWithAck.Add(1)
 	clientCount(1)
 	ack(a.args, nil)
+}
+
+func (a *ackAdapter) Broadcast(*parser.Packet, *socket.BroadcastOptions) {
+	a.broadcasts.Add(1)
 }
 
 func TestClusterAdapterUsesPrototypeDispatch(t *testing.T) {
@@ -79,6 +103,70 @@ func TestClusterAdapterUsesPrototypeDispatch(t *testing.T) {
 	}
 }
 
+func TestClusterRejectsMalformedBroadcastMessages(t *testing.T) {
+	validMessage := func() *BroadcastMessage {
+		requestId := "request"
+		return &BroadcastMessage{
+			Packet:    &parser.Packet{Type: parser.EVENT, Data: []any{"event"}},
+			Opts:      EncodeOptions(nil),
+			RequestId: &requestId,
+		}
+	}
+
+	tests := []struct {
+		name string
+		data func() any
+	}{
+		{name: "missing message", data: func() any { return nil }},
+		{name: "typed nil message", data: func() any { return (*BroadcastMessage)(nil) }},
+		{name: "missing packet", data: func() any {
+			data := validMessage()
+			data.Packet = nil
+			return data
+		}},
+		{name: "missing options", data: func() any {
+			data := validMessage()
+			data.Opts = nil
+			return data
+		}},
+		{name: "missing rooms", data: func() any {
+			data := validMessage()
+			data.Opts.Rooms = nil
+			return data
+		}},
+		{name: "missing except rooms", data: func() any {
+			data := validMessage()
+			data.Opts.Except = nil
+			return data
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+			local := &ackAdapter{Adapter: socket.NewAdapter(nsp)}
+			cluster := MakeClusterAdapter().(*clusterAdapter)
+			cluster.Adapter = local
+			cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
+			cluster.Construct(nsp)
+
+			cluster.OnMessage(&ClusterMessage{
+				Uid:  "remote",
+				Nsp:  nsp.Name(),
+				Type: BROADCAST,
+				Data: test.data(),
+			}, "")
+
+			if got := local.broadcasts.Load(); got != 0 {
+				t.Fatalf("local Broadcast() calls = %d, want 0", got)
+			}
+			if got := local.broadcastsWithAck.Load(); got != 0 {
+				t.Fatalf("local BroadcastWithAck() calls = %d, want 0", got)
+			}
+		})
+	}
+}
+
 func TestClusterAdapterReturnsServerCountErrors(t *testing.T) {
 	countErr := errors.New("count failed")
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
@@ -104,6 +192,93 @@ func TestClusterAdapterReturnsServerCountErrors(t *testing.T) {
 	}
 	if cluster.requests.Len() != 0 {
 		t.Fatal("request was stored after server count failed")
+	}
+}
+
+func TestClusterFetchSocketsReturnsLocalError(t *testing.T) {
+	localErr := errors.New("local fetch failed")
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	local := &fetchSocketsErrorAdapter{Adapter: socket.NewAdapter(nsp), err: localErr}
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	cluster.Adapter = local
+	transport := &prototypeClusterAdapter{ClusterAdapter: cluster, count: 2}
+	cluster.Prototype(transport)
+	cluster.Construct(nsp)
+
+	var (
+		callbackCount int
+		sockets       []socket.SocketDetails
+		gotErr        error
+	)
+	cluster.FetchSockets(nil)(func(result []socket.SocketDetails, err error) {
+		callbackCount++
+		sockets = result
+		gotErr = err
+	})
+
+	if callbackCount != 1 {
+		t.Fatalf("FetchSockets() callback count = %d, want 1", callbackCount)
+	}
+	if sockets != nil {
+		t.Fatalf("FetchSockets() sockets = %#v, want nil", sockets)
+	}
+	if gotErr != localErr {
+		t.Fatalf("FetchSockets() error = %v, want %v", gotErr, localErr)
+	}
+	if local.calls.Load() != 1 {
+		t.Fatalf("local FetchSockets() calls = %d, want 1", local.calls.Load())
+	}
+	if transport.serverCountCalls.Load() != 0 {
+		t.Fatalf("ServerCount() calls = %d, want 0", transport.serverCountCalls.Load())
+	}
+	if transport.publishCount.Load() != 0 {
+		t.Fatalf("Publish() calls = %d, want 0", transport.publishCount.Load())
+	}
+	if cluster.requests.Len() != 0 {
+		t.Fatal("request was stored after local FetchSockets() failed")
+	}
+}
+
+func TestHeartbeatFetchSocketsReturnsLocalError(t *testing.T) {
+	localErr := errors.New("local fetch failed")
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
+	defer cluster.Close()
+
+	local := &fetchSocketsErrorAdapter{Adapter: socket.NewAdapter(nsp), err: localErr}
+	cluster.ClusterAdapter.(*clusterAdapter).Adapter = local
+	transport := &testClusterAdapter{ClusterAdapter: cluster}
+	cluster.Prototype(transport)
+	cluster.nodesMap.Store("remote", time.Now().UnixMilli())
+
+	var (
+		callbackCount int
+		sockets       []socket.SocketDetails
+		gotErr        error
+	)
+	cluster.FetchSockets(nil)(func(result []socket.SocketDetails, err error) {
+		callbackCount++
+		sockets = result
+		gotErr = err
+	})
+
+	if callbackCount != 1 {
+		t.Fatalf("FetchSockets() callback count = %d, want 1", callbackCount)
+	}
+	if sockets != nil {
+		t.Fatalf("FetchSockets() sockets = %#v, want nil", sockets)
+	}
+	if gotErr != localErr {
+		t.Fatalf("FetchSockets() error = %v, want %v", gotErr, localErr)
+	}
+	if local.calls.Load() != 1 {
+		t.Fatalf("local FetchSockets() calls = %d, want 1", local.calls.Load())
+	}
+	if transport.published.Load() != 0 {
+		t.Fatalf("Publish() calls = %d, want 0", transport.published.Load())
+	}
+	if cluster.customRequests.Len() != 0 {
+		t.Fatal("request was stored after local FetchSockets() failed")
 	}
 }
 
@@ -322,6 +497,39 @@ func TestClusterBroadcastAckCleanupWithoutTimeout(t *testing.T) {
 	})
 }
 
+func TestClusterBroadcastAckNormalizesOverflowingTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+		cluster := MakeClusterAdapter().(*clusterAdapter)
+		cluster.Adapter = &ackAdapter{Adapter: socket.NewAdapter(nsp)}
+		cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
+		cluster.Construct(nsp)
+		timeout := overflowingTimerMilliseconds
+
+		cluster.BroadcastWithAck(
+			&parser.Packet{Type: parser.EVENT, Data: []any{"event"}},
+			&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: &timeout}},
+			func(uint64) {},
+			func([]any, error) {},
+		)
+		if cluster.ackRequests.Len() != 1 {
+			t.Fatal("acknowledgement request was not stored")
+		}
+
+		time.Sleep(time.Millisecond - time.Nanosecond)
+		synctest.Wait()
+		if cluster.ackRequests.Len() != 1 {
+			t.Fatal("acknowledgement request expired before one millisecond")
+		}
+
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		if cluster.ackRequests.Len() != 0 {
+			t.Fatal("overflowing acknowledgement timeout was not normalized to one millisecond")
+		}
+	})
+}
+
 func TestClusterBroadcastAckUsesFirstArgument(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -348,7 +556,11 @@ func TestClusterBroadcastAckUsesFirstArgument(t *testing.T) {
 				Uid:  "remote",
 				Nsp:  nsp.Name(),
 				Type: BROADCAST,
-				Data: &BroadcastMessage{RequestId: &requestId},
+				Data: &BroadcastMessage{
+					Packet:    &parser.Packet{Type: parser.EVENT, Data: []any{"event"}},
+					Opts:      EncodeOptions(nil),
+					RequestId: &requestId,
+				},
 			}, "")
 
 			response := transport.response.Load()
@@ -439,6 +651,7 @@ func TestFetchSocketsTimeout(t *testing.T) {
 	}{
 		{name: "zero uses default", delay: DEFAULT_TIMEOUT},
 		{name: "explicit timeout", timeout: 1, delay: time.Millisecond},
+		{name: "overflowing timeout", timeout: overflowingTimerMilliseconds, delay: time.Millisecond},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -487,40 +700,51 @@ func TestFetchSocketsTimeout(t *testing.T) {
 	}
 }
 
-func TestHeartbeatFetchSocketsZeroTimeoutUsesDefault(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
-		cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
-		defer cluster.Close()
-		cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
-		cluster.nodesMap.Store("remote", time.Now().UnixMilli())
+func TestHeartbeatFetchSocketsTimeout(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		timeout int64
+		delay   time.Duration
+	}{
+		{name: "zero uses default", delay: DEFAULT_TIMEOUT},
+		{name: "overflowing timeout", timeout: overflowingTimerMilliseconds, delay: time.Millisecond},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+				cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
+				defer cluster.Close()
+				cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
+				cluster.nodesMap.Store("remote", time.Now().UnixMilli())
 
-		result := make(chan error, 1)
-		cluster.FetchSockets(&socket.BroadcastOptions{
-			Flags: &socket.BroadcastFlags{Timeout: new(int64(0))},
-		})(func(_ []socket.SocketDetails, err error) {
-			result <- err
+				result := make(chan error, 1)
+				cluster.FetchSockets(&socket.BroadcastOptions{
+					Flags: &socket.BroadcastFlags{Timeout: &test.timeout},
+				})(func(_ []socket.SocketDetails, err error) {
+					result <- err
+				})
+
+				time.Sleep(test.delay - time.Nanosecond)
+				synctest.Wait()
+				select {
+				case <-result:
+					t.Fatal("FetchSockets() timed out too early")
+				default:
+				}
+
+				time.Sleep(time.Nanosecond)
+				synctest.Wait()
+				select {
+				case err := <-result:
+					if err == nil {
+						t.Fatal("FetchSockets() returned nil error after timeout")
+					}
+				default:
+					t.Fatal("FetchSockets() did not time out")
+				}
+			})
 		})
-
-		time.Sleep(DEFAULT_TIMEOUT - time.Nanosecond)
-		synctest.Wait()
-		select {
-		case <-result:
-			t.Fatal("FetchSockets() timed out too early")
-		default:
-		}
-
-		time.Sleep(time.Nanosecond)
-		synctest.Wait()
-		select {
-		case err := <-result:
-			if err == nil {
-				t.Fatal("FetchSockets() returned nil error after timeout")
-			}
-		default:
-			t.Fatal("FetchSockets() did not time out")
-		}
-	})
+	}
 }
 
 func TestServerSideEmitTimeoutAndResponseCallOnce(t *testing.T) {

@@ -27,7 +27,7 @@ type (
 	// RedisRequest represents a request message sent between servers via Redis.
 	// It is used for various inter-node operations such as remote joins, leaves, and fetches.
 	RedisRequest struct {
-		Type      adapter.MessageType    `json:"type" msgpack:"type"`
+		Type      RequestType            `json:"type" msgpack:"type"`
 		RequestId string                 `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
 		Rooms     []socket.Room          `json:"rooms,omitzero" msgpack:"rooms,omitempty"`
 		Opts      *adapter.PacketOptions `json:"opts,omitempty" msgpack:"opts,omitempty"`
@@ -42,13 +42,13 @@ type (
 	// RedisResponse represents a response message sent between servers via Redis.
 	// It contains the response data for various inter-node requests.
 	RedisResponse struct {
-		Type        adapter.MessageType `json:"type,omitempty" msgpack:"type,omitempty"`
-		RequestId   string              `json:"requestId" msgpack:"requestId"`
-		Rooms       []socket.Room       `json:"rooms,omitzero" msgpack:"rooms,omitempty"`
-		Sockets     any                 `json:"sockets,omitempty" msgpack:"sockets,omitempty"`
-		Data        any                 `json:"data,omitzero" msgpack:"data,omitempty"`
-		ClientCount *uint64             `json:"clientCount,omitzero" msgpack:"clientCount,omitempty"`
-		Packet      any                 `json:"packet,omitzero" msgpack:"packet,omitempty"`
+		Type        RequestType   `json:"type,omitempty" msgpack:"type,omitempty"`
+		RequestId   string        `json:"requestId" msgpack:"requestId"`
+		Rooms       []socket.Room `json:"rooms,omitzero" msgpack:"rooms,omitempty"`
+		Sockets     any           `json:"sockets,omitempty" msgpack:"sockets,omitempty"`
+		Data        any           `json:"data,omitzero" msgpack:"data,omitempty"`
+		ClientCount *uint64       `json:"clientCount,omitzero" msgpack:"clientCount,omitempty"`
+		Packet      any           `json:"packet,omitzero" msgpack:"packet,omitempty"`
 	}
 
 	// RawClusterMessage is the flat field-value shape stored in Redis Streams.

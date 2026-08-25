@@ -233,7 +233,11 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 			Flags: &socket.BroadcastFlags{
 				Local: true,
 			},
-		})(func(localSockets []socket.SocketDetails, _ error) {
+		})(func(localSockets []socket.SocketDetails, err error) {
+			if err != nil {
+				cb(nil, err)
+				return
+			}
 			if opts.Flags != nil && opts.Flags.Local {
 				cb(localSockets, nil)
 				return
@@ -249,7 +253,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 
 			t := DEFAULT_TIMEOUT
 			if opts.Flags != nil && opts.Flags.Timeout != nil && *opts.Flags.Timeout != 0 {
-				t = utils.FromMilliseconds(*opts.Flags.Timeout)
+				t = utils.NormalizeTimerMilliseconds(*opts.Flags.Timeout)
 			}
 
 			request := &CustomClusterRequest{

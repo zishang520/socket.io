@@ -47,46 +47,50 @@ import (
     "fmt"
     "os"
     "os/signal"
-    "syscall"
 
     rds "github.com/redis/go-redis/v9"
     "github.com/zishang520/socket.io/adapters/redis/v3"
     "github.com/zishang520/socket.io/adapters/redis/v3/adapter"
     "github.com/zishang520/socket.io/servers/socket/v3"
+    "github.com/zishang520/socket.io/v3/pkg/types"
 )
 
 func main() {
-    // Initialize Redis client
-    redisClient, err := redis.NewRedisClient(context.TODO(), rds.NewClient(&rds.Options{
+    rdsClient := rds.NewClient(&rds.Options{
         Addr:     "127.0.0.1:6379",
         Username: "",
         Password: "",
         DB:       0,
-    }))
+    })
+    defer func() { _ = rdsClient.Close() }()
+
+    redisClient, err := redis.NewRedisClient(context.Background(), rdsClient)
     if err != nil {
         panic(err)
     }
 
-    // Redis error handling
-    redisClient.On("error", func(a ...any) {
-        fmt.Println(a)
+    redisClient.On("error", func(args ...any) {
+        fmt.Println("Redis error:", args)
     })
 
-    // Socket.IO server configuration
     config := socket.DefaultServerOptions()
     config.SetAdapter(&adapter.RedisAdapterBuilder{
         Redis: redisClient,
-        Opts:  &adapter.RedisAdapterOptions{},
+        Opts:  adapter.DefaultRedisAdapterOptions(),
     })
 
-    // Create and configure server
-    httpServer := s.CreateServer(nil)
+    httpServer := types.NewWebServer(nil)
     io := socket.NewServer(httpServer, config)
 
-    // Handle socket connections
     io.On("connection", func(clients ...any) {
-        client := clients[0].(*socket.Socket)
-        client.On("event", func(datas ...any) {
+        if len(clients) == 0 {
+            return
+        }
+        client, ok := clients[0].(*socket.Socket)
+        if !ok {
+            return
+        }
+        client.On("event", func(data ...any) {
             // Handle your events here
         })
         client.On("disconnect", func(...any) {
@@ -94,40 +98,30 @@ func main() {
         })
     })
 
-    // Start server
     httpServer.Listen("127.0.0.1:9000", nil)
 
-    // Graceful shutdown handling
-    exit := make(chan struct{})
-    SignalC := make(chan os.Signal)
+    shutdown, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+    defer stop()
+    <-shutdown.Done()
 
-    signal.Notify(SignalC, os.Interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-    go func() {
-        for s := range SignalC {
-            switch s {
-            case os.Interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
-                close(exit)
-                return
-            }
-        }
-    }()
-
-    <-exit
-    httpServer.Close(nil)
-    os.Exit(0)
+    // Close Socket.IO, its adapters, and the attached HTTP server.
+    io.Close(nil)
 }
 ```
 
 ## Configuration Options
 
-The Redis adapter accepts the following options:
+Option values are set through the public setter methods:
 
 ```golang
-type RedisAdapterOptions struct {
-    Prefix  string // Optional prefix for Redis keys
-    // Add other available options here
-}
+options := adapter.DefaultRedisAdapterOptions()
+options.SetKey("socket.io")
+options.SetRequestsTimeout(10 * time.Second)
+options.SetPublishOnSpecificResponseChannel(true)
 ```
+
+Pass `options` as `RedisAdapterBuilder.Opts`. A custom full encoder/decoder can
+also be configured with `options.SetParser(parser)`.
 
 ## Cross-language payloads
 

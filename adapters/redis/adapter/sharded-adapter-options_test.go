@@ -103,6 +103,14 @@ func TestShardedRedisAdapterOptions_Assign(t *testing.T) {
 		}
 	})
 
+	t.Run("assign typed nil", func(t *testing.T) {
+		target := DefaultShardedRedisAdapterOptions()
+		var source *ShardedRedisAdapterOptions
+		if result := target.Assign(source); result != target {
+			t.Fatal("Expected same instance when assigning typed nil")
+		}
+	})
+
 	t.Run("assign from ShardedRedisAdapterOptions", func(t *testing.T) {
 		source := DefaultShardedRedisAdapterOptions()
 		source.SetSubscriptionMode(redis.StaticSubscriptionMode)

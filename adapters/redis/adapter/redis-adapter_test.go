@@ -18,6 +18,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 type recordingParser struct {
@@ -358,6 +359,79 @@ func TestClassicBroadcastWithAckUsesDefaultTimeout(t *testing.T) {
 	}
 }
 
+func TestRedisAdapterTypedNilOptionsAndParserUseDefaults(t *testing.T) {
+	current := MakeRedisAdapter().(*redisAdapter)
+	var typedNilOptions *RedisAdapterOptions
+	current.SetOpts(typedNilOptions)
+
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	options := DefaultRedisAdapterOptions()
+	options.SetParser((*recordingParser)(nil))
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	current = NewRedisAdapter(nsp, mustRedisClient(t, t.Context(), client), options).(*redisAdapter)
+	t.Cleanup(current.Close)
+
+	if utils.IsNil(current.Parser()) {
+		t.Fatal("typed nil parser was not replaced with the default")
+	}
+}
+
+func TestClassicBroadcastAckTimeoutNormalization(t *testing.T) {
+	tests := []struct {
+		name        string
+		timeout     int64
+		stillActive time.Duration
+	}{
+		{name: "zero"},
+		{name: "negative", timeout: -1},
+		{name: "above JavaScript maximum", timeout: 1 << 31},
+		{name: "normal", timeout: 100, stillActive: 20 * time.Millisecond},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := miniredis.RunT(t)
+			client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+			redisClient := mustRedisClient(t, t.Context(), client)
+			if err := redisClient.On("error", func(...any) {}); err != nil {
+				t.Fatal(err)
+			}
+			current := NewRedisAdapter(
+				socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
+				redisClient,
+				nil,
+			).(*redisAdapter)
+			t.Cleanup(func() {
+				current.Close()
+				_ = client.Close()
+			})
+
+			current.BroadcastWithAck(
+				&parser.Packet{Type: parser.EVENT, Data: []any{"event"}},
+				&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: &test.timeout}},
+				func(uint64) {},
+				func([]any, error) {},
+			)
+
+			if test.stillActive > 0 {
+				time.Sleep(test.stillActive)
+				if current.ackRequests.Len() != 1 {
+					t.Fatal("normal acknowledgement timeout expired too early")
+				}
+			}
+			deadline := time.Now().Add(time.Second)
+			for current.ackRequests.Len() != 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if current.ackRequests.Len() != 0 {
+				t.Fatal("acknowledgement request did not expire")
+			}
+		})
+	}
+}
+
 func TestClassicAckRequestFollowsAdapterContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	adapter := MakeRedisAdapter().(*redisAdapter)
@@ -371,6 +445,30 @@ func TestClassicAckRequestFollowsAdapterContext(t *testing.T) {
 	}
 	if adapter.ackRequests.Len() != 0 {
 		t.Fatal("context cancellation did not remove the acknowledgement request")
+	}
+}
+
+func TestClassicAckRequestFollowsAdapterClose(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	current := NewRedisAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
+		mustRedisClient(t, t.Context(), client),
+		nil,
+	).(*redisAdapter)
+	current.registerAckRequest("request", &AckRequest{}, time.Hour)
+	if current.ackRequests.Len() != 1 {
+		t.Fatal("acknowledgement request was not registered")
+	}
+
+	current.Close()
+	deadline := time.Now().Add(time.Second)
+	for current.ackRequests.Len() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if current.ackRequests.Len() != 0 {
+		t.Fatal("Close did not remove the acknowledgement request")
 	}
 }
 
@@ -818,7 +916,7 @@ func TestRequestOptionFlags(t *testing.T) {
 	encoded := baseadapter.EncodeOptions(opts)
 	for _, test := range []struct {
 		name          string
-		messageType   baseadapter.MessageType
+		messageType   redis.RequestType
 		preserveFlags bool
 	}{
 		{name: "selection", messageType: redis.REMOTE_FETCH},
@@ -1009,7 +1107,7 @@ func TestRedisAdapterOnResponseWrapsAckPacket(t *testing.T) {
 func TestRedisAdapterMalformedAggregateResponsesAreNotCounted(t *testing.T) {
 	for _, test := range []struct {
 		name    string
-		kind    baseadapter.MessageType
+		kind    redis.RequestType
 		payload string
 	}{
 		{name: "socket IDs wrong type", kind: redis.SOCKETS, payload: `{"requestId":"request","sockets":{}}`},
@@ -1055,6 +1153,44 @@ func TestRedisAdapterRejectsMissingBroadcastClientCount(t *testing.T) {
 
 	if called {
 		t.Fatal("missing clientCount payload invoked the callback")
+	}
+}
+
+func TestClassicRejectsMalformedBroadcastAckRequests(t *testing.T) {
+	validRequest := func() *Request {
+		return &Request{
+			Uid:       "remote",
+			RequestId: "request",
+			Type:      redis.BROADCAST,
+			Packet:    &parser.Packet{Type: parser.EVENT, Nsp: "/test", Data: []any{"event"}},
+			Opts:      baseadapter.EncodeOptions(nil),
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*Request)
+	}{
+		{name: "missing sender UID", mutate: func(request *Request) { request.Uid = "" }},
+		{name: "missing request ID", mutate: func(request *Request) { request.RequestId = "" }},
+		{name: "missing packet", mutate: func(request *Request) { request.Packet = nil }},
+		{name: "missing options", mutate: func(request *Request) { request.Opts = nil }},
+		{name: "missing rooms", mutate: func(request *Request) { request.Opts.Rooms = nil }},
+		{name: "missing except rooms", mutate: func(request *Request) { request.Opts.Except = nil }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			current, local := newRequestRoutingAdapter()
+			request := validRequest()
+			test.mutate(request)
+
+			current.handleBroadcastRequest(request)
+
+			if got := local.broadcastsWithAck.Load(); got != 0 {
+				t.Fatalf("local BroadcastWithAck() calls = %d, want 0", got)
+			}
+		})
 	}
 }
 
