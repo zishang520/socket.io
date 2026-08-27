@@ -101,6 +101,13 @@ func TestRedisPacket_MarshalJSON(t *testing.T) {
 		if len(arr) != 3 {
 			t.Fatalf("Expected 3 elements, got %d", len(arr))
 		}
+		packet, ok := arr[1].(map[string]any)
+		if !ok {
+			t.Fatalf("Expected packet object, got %T", arr[1])
+		}
+		if got := packet["type"]; got != float64(parser.EVENT) {
+			t.Fatalf("Expected numeric packet type %d, got %v", parser.EVENT, got)
+		}
 	})
 }
 

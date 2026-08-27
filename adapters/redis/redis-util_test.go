@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	rds "github.com/redis/go-redis/v9"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
@@ -91,6 +92,26 @@ func TestXAddAlwaysIncludesMaxLen(t *testing.T) {
 	}
 	if !reflect.DeepEqual(hook.args, want) {
 		t.Fatalf("XADD args = %#v, want %#v", hook.args, want)
+	}
+}
+
+func TestXAddContextRejectsCanceledContext(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient, err := NewRedisClient(context.Background(), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = XAddContext(ctx, redisClient, "stream", RawClusterMessage{"type": "1"}, 1)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("XAddContext() error = %v, want context.Canceled", err)
+	}
+	if length, err := client.XLen(context.Background(), "stream").Result(); err != nil || length != 0 {
+		t.Fatalf("stream length/error after canceled XAddContext = %d/%v, want 0/nil", length, err)
 	}
 }
 
@@ -493,6 +514,9 @@ func TestNormalizeEmptyBytesBuffer(t *testing.T) {
 func TestShouldUseDynamicChannelUsesUTF16Length(t *testing.T) {
 	if ShouldUseDynamicChannel(DynamicSubscriptionMode, socket.Room("abcdefghijklmnopqr😀")) {
 		t.Fatal("20 UTF-16 code units should be treated as a private room")
+	}
+	if !ShouldUseDynamicChannel(DynamicSubscriptionMode, socket.Room("abcdefghijklmnopqrstuvwx")) {
+		t.Fatal("24 UTF-16 code units should use a dynamic channel")
 	}
 	if !ShouldUseDynamicChannel(DynamicSubscriptionMode, socket.Room("abcdefghijklmnopq😀")) {
 		t.Fatal("19 UTF-16 code units should use a dynamic public channel")

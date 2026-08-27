@@ -1,7 +1,6 @@
 package adapter
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -76,7 +75,6 @@ type (
 		Expected  int64
 		Current   *atomic.Int64
 		Responses *types.Slice[any]
-		Once      sync.Once // guards against double callback invocation (timeout vs response race)
 	}
 
 	ClusterResponse = ClusterMessage

@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +13,37 @@ import (
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
+
+type pubSubShardCountHook struct {
+	channel string
+	count   int64
+	calls   atomic.Int64
+}
+
+func (h *pubSubShardCountHook) DialHook(next rds.DialHook) rds.DialHook { return next }
+
+func (h *pubSubShardCountHook) ProcessHook(next rds.ProcessHook) rds.ProcessHook {
+	return func(ctx context.Context, cmd rds.Cmder) error {
+		if cmd.Name() != "pubsub" {
+			return next(ctx, cmd)
+		}
+		args := cmd.Args()
+		if len(args) != 3 || args[1] != "shardnumsub" || args[2] != h.channel {
+			return fmt.Errorf("unexpected PUBSUB arguments: %v", args)
+		}
+		result, ok := cmd.(*rds.MapStringIntCmd)
+		if !ok {
+			return fmt.Errorf("unexpected PUBSUB command type %T", cmd)
+		}
+		h.calls.Add(1)
+		result.SetVal(map[string]int64{h.channel: h.count})
+		return nil
+	}
+}
+
+func (h *pubSubShardCountHook) ProcessPipelineHook(next rds.ProcessPipelineHook) rds.ProcessPipelineHook {
+	return next
+}
 
 func mustRedisClient(t *testing.T, ctx context.Context, client rds.UniversalClient) *redis.RedisClient {
 	t.Helper()
@@ -41,6 +73,12 @@ func waitForRedisPubSub(t *testing.T, check func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("timed out waiting for Redis Pub/Sub state")
+}
+
+func currentRedisPubSubTransport(pubSub *redisPubSub) *rds.PubSub {
+	pubSub.mu.RLock()
+	defer pubSub.mu.RUnlock()
+	return pubSub.pubSub
 }
 
 func TestRedisPubSubSharesConnectionAndRoutesHandlers(t *testing.T) {
@@ -163,12 +201,162 @@ func TestRedisPubSubRetriesFailedSubscription(t *testing.T) {
 	}
 	waitForRedisPubSub(t, func() bool {
 		counts, err := client.PubSubNumSub(context.Background(), "recover:1", "recover:2").Result()
-		return err == nil && counts["recover:1"] == 1 && counts["recover:2"] == 1
+		if err != nil || counts["recover:1"] != 1 || counts["recover:2"] != 1 {
+			return false
+		}
+		patterns, err := client.PubSubNumPat(context.Background()).Result()
+		return err == nil && patterns == 1
 	})
 	if err := client.Publish(context.Background(), "recover:2", "payload").Err(); err != nil {
 		t.Fatal(err)
 	}
 	waitForRedisPubSub(t, func() bool { return calls.Load() >= 2 })
+}
+
+func TestRedisPubSubRetriesServerRejectedSubscription(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	errors := make(chan error, 1)
+	pubSub := newRedisPubSub(context.Background(), client, func(err error) {
+		server.SetError("")
+		select {
+		case errors <- err:
+		default:
+		}
+	})
+	t.Cleanup(pubSub.Close)
+
+	received := make(chan struct{}, 1)
+	subscription := pubSub.newSubscription(func([]byte, string) { received <- struct{}{} })
+	subscription.Subscribe("warmup")
+	waitForRedisPubSub(t, func() bool {
+		counts, err := client.PubSubNumSub(context.Background(), "warmup").Result()
+		return err == nil && counts["warmup"] == 1
+	})
+
+	server.SetError("TRYAGAIN injected subscription failure")
+	subscription.Subscribe("recover:server-error")
+
+	select {
+	case <-errors:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server-side subscription failure was not observed")
+	}
+
+	waitForRedisPubSub(t, func() bool {
+		counts, err := client.PubSubNumSub(context.Background(), "recover:server-error").Result()
+		return err == nil && counts["recover:server-error"] == 1
+	})
+	if err := client.Publish(context.Background(), "recover:server-error", "payload").Err(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-received:
+	case <-time.After(3 * time.Second):
+		t.Fatal("recovered subscription did not receive a message")
+	}
+}
+
+func TestRedisPubSubDoesNotRebuildPersistentServerError(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	var errorCount atomic.Int64
+	pubSub := newRedisPubSub(context.Background(), client, func(error) {
+		errorCount.Add(1)
+	})
+	t.Cleanup(pubSub.Close)
+
+	received := make(chan struct{}, 1)
+	subscription := pubSub.newSubscription(func([]byte, string) { received <- struct{}{} })
+	subscription.Subscribe("warmup")
+	waitForRedisPubSub(t, func() bool {
+		counts, err := client.PubSubNumSub(context.Background(), "warmup").Result()
+		return err == nil && counts["warmup"] == 1
+	})
+	initial := currentRedisPubSubTransport(pubSub)
+
+	server.SetError("NOPERM persistent subscription failure")
+	subscription.Subscribe("recover:persistent-error")
+	waitForRedisPubSub(t, func() bool { return errorCount.Load() >= 1 })
+	waitForRedisPubSub(t, func() bool {
+		return currentRedisPubSubTransport(pubSub) != initial
+	})
+	replacement := currentRedisPubSubTransport(pubSub)
+
+	// The retry loop keeps reasserting the desired subscription, but a persistent
+	// Redis error must not create a new connection on every retry.
+	waitForRedisPubSub(t, func() bool { return errorCount.Load() >= 3 })
+	if current := currentRedisPubSubTransport(pubSub); current != replacement {
+		t.Fatal("persistent server error repeatedly rebuilt the Pub/Sub connection")
+	}
+	server.SetError("")
+	waitForRedisPubSub(t, func() bool {
+		counts, err := client.PubSubNumSub(context.Background(), "recover:persistent-error").Result()
+		return err == nil && counts["recover:persistent-error"] == 1
+	})
+	if err := client.Publish(context.Background(), "recover:persistent-error", "payload").Err(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-received:
+	case <-time.After(3 * time.Second):
+		t.Fatal("subscription did not recover after the persistent error cleared")
+	}
+}
+
+func TestRedisPubSubDropsServerRejectedUnsubscription(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	errors := make(chan error, 1)
+	pubSub := newRedisPubSub(context.Background(), client, func(err error) {
+		server.SetError("")
+		select {
+		case errors <- err:
+		default:
+		}
+	})
+	t.Cleanup(pubSub.Close)
+
+	subscription := pubSub.newSubscription(func([]byte, string) {})
+	subscription.Subscribe("ghost")
+	waitForRedisPubSub(t, func() bool {
+		counts, err := client.PubSubNumSub(context.Background(), "ghost").Result()
+		return err == nil && counts["ghost"] == 1
+	})
+
+	server.SetError("NOPERM injected unsubscription failure")
+	subscription.Close()
+	select {
+	case <-errors:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server-side unsubscription failure was not observed")
+	}
+	waitForRedisPubSub(t, func() bool {
+		counts, err := client.PubSubNumSub(context.Background(), "ghost").Result()
+		return err == nil && counts["ghost"] == 0
+	})
+
+	received := make(chan struct{}, 1)
+	probe := pubSub.newSubscription(func([]byte, string) { received <- struct{}{} })
+	probe.Subscribe("probe")
+	waitForRedisPubSub(t, func() bool {
+		counts, err := client.PubSubNumSub(context.Background(), "ghost", "probe").Result()
+		return err == nil && counts["ghost"] == 0 && counts["probe"] == 1
+	})
+	if err := client.Publish(context.Background(), "probe", "payload").Err(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("replacement Pub/Sub connection did not receive a message")
+	}
 }
 
 func TestRedisPubSubRemoveAfterFailedSubscribeDoesNotLeak(t *testing.T) {
@@ -234,7 +422,6 @@ func TestRedisPubSubBatchesSubscriptionChanges(t *testing.T) {
 		ctx:      ctx,
 		cancel:   cancel,
 		pubSub:   transport,
-		pattern:  transport,
 		channels: newRedisPubSubRoutes(),
 		patterns: newRedisPubSubRoutes(),
 	}
@@ -338,6 +525,9 @@ func TestRedisAdapterBuildersSharePubSubPerServer(t *testing.T) {
 			t.Fatal("namespaces on the same server did not share Pub/Sub")
 		}
 	}
+	if got := redisClient.ListenerCount("error"); got != 1 {
+		t.Fatalf("error listeners = %d, want one wrapper fallback", got)
+	}
 
 	shared := adapters[0].pubSub
 	for _, current := range adapters[:len(adapters)-1] {
@@ -356,6 +546,9 @@ func TestRedisAdapterBuildersSharePubSubPerServer(t *testing.T) {
 	shared.mu.RUnlock()
 	if !closed {
 		t.Fatal("shared Pub/Sub remained open after its last adapter")
+	}
+	if got := redisClient.ListenerCount("error"); got != 1 {
+		t.Fatalf("error listeners after close = %d, want one wrapper fallback", got)
 	}
 }
 
@@ -491,6 +684,55 @@ func TestPubSubNumSubIncludesClusterReplicas(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("cluster subscriber count = %d, want replica subscription", count)
+	}
+}
+
+func TestPubSubNumSubRoutesShardedCountToOwner(t *testing.T) {
+	first := miniredis.RunT(t)
+	second := miniredis.RunT(t)
+	const channel = "socket.io#/#"
+	var hooks sync.Map
+	cluster := rds.NewClusterClient(&rds.ClusterOptions{
+		Addrs: []string{first.Addr(), second.Addr()},
+		NewClient: func(options *rds.Options) *rds.Client {
+			client := rds.NewClient(options)
+			hook := &pubSubShardCountHook{channel: channel, count: 2}
+			client.AddHook(hook)
+			hooks.Store(client, hook)
+			return client
+		},
+		ClusterSlots: func(context.Context) ([]rds.ClusterSlot, error) {
+			return []rds.ClusterSlot{
+				{Start: 0, End: 8191, Nodes: []rds.ClusterNode{{Addr: first.Addr()}}},
+				{Start: 8192, End: 16383, Nodes: []rds.ClusterNode{{Addr: second.Addr()}}},
+			}, nil
+		},
+	})
+	t.Cleanup(func() { _ = cluster.Close() })
+	owner, err := cluster.MasterForKey(t.Context(), channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, ok := hooks.Load(owner)
+	if !ok {
+		t.Fatal("channel owner was not created through ClusterOptions.NewClient")
+	}
+	ownerHook := value.(*pubSubShardCountHook)
+
+	count, err := pubSubNumSub(t.Context(), cluster, true, channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var otherCalls int64
+	hooks.Range(func(key, value any) bool {
+		if key != owner {
+			otherCalls += value.(*pubSubShardCountHook).calls.Load()
+		}
+		return true
+	})
+	if count != 2 || ownerHook.calls.Load() != 1 || otherCalls != 0 {
+		t.Fatalf("sharded count/owner calls/other calls = %d/%d/%d, want 2/1/0",
+			count, ownerHook.calls.Load(), otherCalls)
 	}
 }
 

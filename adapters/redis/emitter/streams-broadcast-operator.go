@@ -215,7 +215,7 @@ func (b *RedisStreamsBroadcastOperator) publishMessage(message *adapter.ClusterM
 	streamName := redis.StreamNameForNamespace(
 		b.opts.StreamName(),
 		b.nsp,
-		max(b.opts.StreamCount(), DefaultStreamCount),
+		b.opts.StreamCount(),
 	)
 	redisStreamsEmitterLog.Debug("publishing message %d to stream %s", message.Type, streamName)
 	_, err = redis.XAdd(b.redisClient, streamName, payload, b.opts.MaxLen())

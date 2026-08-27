@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -373,6 +374,11 @@ func DecodeStreamMessage(rawMessage RawClusterMessage) (*adapter.ClusterMessage,
 
 // XAdd appends a Socket.IO message with the same unconditional MAXLEN clause as the Node.js implementation.
 func XAdd(client *RedisClient, stream string, message RawClusterMessage, maxLen int64) (string, error) {
+	return XAddContext(client.Context(), client, stream, message, maxLen)
+}
+
+// XAddContext appends a Socket.IO message with the given operation context.
+func XAddContext(ctx context.Context, client *RedisClient, stream string, message RawClusterMessage, maxLen int64) (string, error) {
 	args := make([]any, 0, 14)
 	args = append(args, "XADD", stream, "MAXLEN", "~", maxLen, "*")
 	for _, field := range [...]string{"uid", "nsp", "type", "data"} {
@@ -380,7 +386,7 @@ func XAdd(client *RedisClient, stream string, message RawClusterMessage, maxLen 
 			args = append(args, field, value)
 		}
 	}
-	return client.Client().Do(client.Context(), args...).Text()
+	return client.Client().Do(ctx, args...).Text()
 }
 
 func marshalSocketResponses(sockets []adapter.SocketResponse, jsonFormat bool) ([]adapter.SocketResponse, bool) {

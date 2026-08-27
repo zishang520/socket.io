@@ -20,13 +20,15 @@ func pubSubNumSub(ctx context.Context, client rds.UniversalClient, sharded bool,
 	var err error
 	switch client := client.(type) {
 	case *rds.ClusterClient:
-		// Normal Pub/Sub may be placed on any cluster node;
-		// sharded subscriptions are explicitly pinned to slot masters.
 		if sharded {
-			err = client.ForEachMaster(ctx, visit)
-		} else {
-			err = client.ForEachShard(ctx, visit)
+			master, resolveErr := client.MasterForKey(ctx, channel)
+			if resolveErr != nil {
+				return 0, resolveErr
+			}
+			return subscriberCount(ctx, master, true, channel)
 		}
+		// Normal Pub/Sub subscriptions may live on any cluster node.
+		err = client.ForEachShard(ctx, visit)
 	default:
 		return subscriberCount(ctx, client, sharded, channel)
 	}

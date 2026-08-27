@@ -9,8 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
-	"net"
+	"math"
 	"regexp"
 	_slices "slices"
 	"strconv"
@@ -46,9 +45,6 @@ const (
 	// restoreSessionMaxXRangeCalls limits adapter-issued XRANGE calls while collecting missed packets.
 	restoreSessionMaxXRangeCalls = 100
 	restoreSessionPageSize       = 1000
-	// restoreSessionStreamReadAttempts bounds owner re-resolution after a
-	// recoverable stream read failure. The session claim itself is never retried.
-	restoreSessionStreamReadAttempts = 3
 )
 
 // isEphemeral determines whether a message should be sent via PUB/SUB instead of Streams.
@@ -115,41 +111,9 @@ func MakeRedisStreamsAdapter() RedisStreamsAdapter {
 
 // NewRedisStreamsAdapter creates and initializes a new Redis Streams adapter.
 func NewRedisStreamsAdapter(nsp socket.Namespace, client *redis.RedisClient, opts any) RedisStreamsAdapter {
-	options := DefaultRedisStreamsAdapterOptions()
-	if provided, ok := opts.(RedisStreamsAdapterOptionsInterface); ok {
-		options.Assign(provided)
-	}
-	if options.GetRawStreamName() == nil {
-		options.SetStreamName(DefaultStreamName)
-	}
-	if options.GetRawStreamCount() == nil {
-		options.SetStreamCount(DefaultStreamCount)
-	}
-	if options.GetRawChannelPrefix() == nil {
-		options.SetChannelPrefix(DefaultChannelPrefix)
-	}
-	if options.GetRawMaxLen() == nil {
-		options.SetMaxLen(DefaultStreamMaxLen)
-	}
-	if options.GetRawReadCount() == nil {
-		options.SetReadCount(DefaultStreamReadCount)
-	}
-	if options.GetRawBlockTimeInMs() == nil {
-		options.SetBlockTimeInMs(DefaultBlockTimeInMs)
-	}
-	if options.GetRawSessionKeyPrefix() == nil {
-		options.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
-	}
-	if options.GetRawHeartbeatInterval() == nil {
-		options.SetHeartbeatInterval(5 * time.Second)
-	}
-	if options.GetRawHeartbeatTimeout() == nil {
-		options.SetHeartbeatTimeout(10_000)
-	}
-
 	a := MakeRedisStreamsAdapter()
 	a.SetRedis(client)
-	a.SetOpts(options)
+	a.SetOpts(opts)
 	a.Construct(nsp)
 	return a
 }
@@ -170,6 +134,27 @@ func (r *redisStreamsAdapter) SetOpts(opts any) {
 // Sets up stream name, PUB/SUB channels, and subscriptions.
 func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	r.ClusterAdapter.Construct(nsp)
+	if r.opts.GetRawStreamName() == nil {
+		r.opts.SetStreamName(DefaultStreamName)
+	}
+	if r.opts.GetRawStreamCount() == nil {
+		r.opts.SetStreamCount(DefaultStreamCount)
+	}
+	if r.opts.GetRawChannelPrefix() == nil {
+		r.opts.SetChannelPrefix(DefaultChannelPrefix)
+	}
+	if r.opts.GetRawMaxLen() == nil {
+		r.opts.SetMaxLen(DefaultStreamMaxLen)
+	}
+	if r.opts.GetRawReadCount() == nil {
+		r.opts.SetReadCount(DefaultStreamReadCount)
+	}
+	if r.opts.GetRawBlockTimeInMs() == nil {
+		r.opts.SetBlockTimeInMs(DefaultBlockTimeInMs)
+	}
+	if r.opts.GetRawSessionKeyPrefix() == nil {
+		r.opts.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
+	}
 
 	r.ctx, r.cancel = context.WithCancel(r.redisClient.Context())
 	r.server = nsp.Server()
@@ -178,7 +163,7 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	r.streamName = redis.StreamNameForNamespace(
 		r.opts.StreamName(),
 		nsp.Name(),
-		max(r.opts.StreamCount(), DefaultStreamCount),
+		r.opts.StreamCount(),
 	)
 
 	// Set up PUB/SUB channels matching Node.js format: prefix#nsp# and prefix#nsp#uid#
@@ -217,6 +202,9 @@ func (r *redisStreamsAdapter) onPubSubMessage(payload []byte, _ string) {
 // Ephemeral messages (fetchSockets, serverSideEmit, broadcastWithAck) go via PUB/SUB.
 // Durable messages (broadcast, socketsJoin, etc.) go via Redis Streams.
 func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
+	if err := r.ctx.Err(); err != nil {
+		return "", err
+	}
 	redisStreamsLog.Debug("publishing message: %+v", message)
 
 	if isEphemeral(message) {
@@ -236,7 +224,7 @@ func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 	if err != nil {
 		return "", fmt.Errorf("failed to encode stream message: %w", err)
 	}
-	entryID, err := redis.XAdd(r.redisClient, r.streamName, rawMessage, r.opts.MaxLen())
+	entryID, err := redis.XAddContext(r.ctx, r.redisClient, r.streamName, rawMessage, r.opts.MaxLen())
 
 	if err != nil {
 		return "", err
@@ -323,134 +311,41 @@ func (r *redisStreamsAdapter) OnRawMessage(rawMessage RawClusterMessage, offset 
 // the server's MaxDisconnectionDuration setting.
 func (r *redisStreamsAdapter) PersistSession(session *socket.SessionToPersist) {
 	redisStreamsLog.Debug("persisting session: %v", session)
+	if err := r.ctx.Err(); err != nil {
+		return
+	}
+
+	maxDisconnectionDuration := r.Nsp().Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration()
+	if maxDisconnectionDuration <= 0 {
+		r.redisClient.Emit("error", fmt.Errorf(
+			"redis streams: maxDisconnectionDuration must be positive: %dms",
+			maxDisconnectionDuration,
+		))
+		return
+	}
+	if maxDisconnectionDuration > math.MaxInt64/int64(time.Millisecond) {
+		r.redisClient.Emit("error", fmt.Errorf(
+			"redis streams: maxDisconnectionDuration overflows time.Duration: %dms",
+			maxDisconnectionDuration,
+		))
+		return
+	}
 
 	sessionKey := r.opts.SessionKeyPrefix() + string(session.Pid)
 	data, err := utils.MsgPack().Encode(session)
 	if err != nil {
-		redisStreamsLog.Debug("failed to encode session: %s", err.Error())
+		r.redisClient.Emit("error", fmt.Errorf("redis streams: failed to encode session: %w", err))
 		return
 	}
 
-	ttl := utils.FromMilliseconds(r.Nsp().Server().Opts().ConnectionStateRecovery().MaxDisconnectionDuration())
-
 	if err := r.redisClient.Client().Set(
-		r.redisClient.Context(),
+		r.ctx,
 		sessionKey,
 		base64.StdEncoding.EncodeToString(data),
-		ttl,
-	).Err(); err != nil {
+		time.Duration(maxDisconnectionDuration)*time.Millisecond,
+	).Err(); err != nil && r.ctx.Err() == nil {
 		r.redisClient.Emit("error", err)
 	}
-}
-
-// primaryStreamClient returns the write-side owner of a stream. Reads that
-// establish a consistency boundary must not use Sub: it may be a lagging replica.
-func primaryStreamClient(ctx context.Context, redisClient *redis.RedisClient, streamName string) (rds.Cmdable, error) {
-	switch client := redisClient.Client().(type) {
-	case *rds.ClusterClient:
-		return client.MasterForKey(ctx, streamName)
-	default:
-		// Opaque UniversalClient implementations cannot expose their topology;
-		// their write client must provide primary-consistent stream reads.
-		return client, nil
-	}
-}
-
-func refreshPrimaryStreamClient(ctx context.Context, redisClient *redis.RedisClient, streamName string) (rds.Cmdable, error) {
-	if client, ok := redisClient.Client().(*rds.ClusterClient); ok {
-		// ForEachMaster forces ReloadOrGet before we select the owner from the
-		// refreshed topology.
-		if err := client.ForEachMaster(ctx, func(context.Context, *rds.Client) error { return nil }); err != nil {
-			return nil, err
-		}
-	}
-	return primaryStreamClient(ctx, redisClient, streamName)
-}
-
-func isRetryableStreamReadError(err error, cluster bool) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || cluster && errors.Is(err, rds.ErrClosed) {
-		return true
-	}
-
-	var networkError net.Error
-	if errors.As(err, &networkError) {
-		return true
-	}
-	_, moved := rds.IsMovedError(err)
-	return moved || rds.IsTryAgainError(err) || rds.IsClusterDownError(err) ||
-		rds.IsReadOnlyError(err) || rds.IsLoadingError(err) || rds.IsMasterDownError(err)
-}
-
-// xRangeWithRetry retries only the read. Each retry synchronously refreshes the
-// cluster topology and resolves the current stream owner. Entries are returned
-// only after a complete command succeeds, so callers can advance their cursor
-// without duplicating a partially read page.
-func (r *redisStreamsAdapter) xRangeWithRetry(
-	client rds.Cmdable,
-	start, stop string,
-	count int64,
-	readBudget *int,
-) ([]rds.XMessage, rds.Cmdable, error) {
-	var err error
-	_, cluster := r.redisClient.Client().(*rds.ClusterClient)
-	for attempt := range restoreSessionStreamReadAttempts {
-		if *readBudget == 0 {
-			return nil, client, errRestoreSessionReadLimit
-		}
-		if attempt > 0 {
-			client, err = refreshPrimaryStreamClient(r.redisClient.Context(), r.redisClient, r.streamName)
-			if err != nil {
-				if !isRetryableStreamReadError(err, cluster) {
-					return nil, client, err
-				}
-				continue
-			}
-		}
-		(*readBudget)--
-
-		entries, readErr := r.xRange(client, start, stop, count)
-		if readErr == nil {
-			return entries, client, nil
-		}
-		err = readErr
-		if !isRetryableStreamReadError(err, cluster) {
-			return nil, client, err
-		}
-	}
-
-	return nil, client, err
-}
-
-func (r *redisStreamsAdapter) xRange(client rds.Cmdable, start, stop string, count int64) ([]rds.XMessage, error) {
-	cluster, clusterReadOnly := r.redisClient.Client().(*rds.ClusterClient)
-	if !clusterReadOnly || !cluster.Options().ReadOnly || cluster.Options().ClusterSlots != nil {
-		return client.XRangeN(r.redisClient.Context(), r.streamName, start, stop, count).Result()
-	}
-
-	// MasterForKey returns a node client whose pooled connections may be in
-	// READONLY mode. Force this one read to READWRITE so a demoted master cannot
-	// silently serve stale data, then restore the configured connection mode.
-	pipeline := client.Pipeline()
-	readWrite := pipeline.Do(r.redisClient.Context(), "READWRITE")
-	entries := pipeline.XRangeN(r.redisClient.Context(), r.streamName, start, stop, count)
-	readOnly := pipeline.Do(r.redisClient.Context(), "READONLY")
-	_, execErr := pipeline.Exec(r.redisClient.Context())
-	if err := readWrite.Err(); err != nil {
-		return nil, err
-	}
-	if err := entries.Err(); err != nil {
-		return nil, err
-	}
-	if err := readOnly.Err(); err != nil {
-		return nil, err
-	}
-	if execErr != nil {
-		return nil, execErr
-	}
-	return entries.Val(), nil
 }
 
 // RestoreSession restores a session from Redis and collects missed packets.
@@ -458,24 +353,26 @@ func (r *redisStreamsAdapter) xRange(client rds.Cmdable, start, stop string, cou
 // through the stream to find packets the client missed during disconnection.
 func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset string) (*socket.Session, error) {
 	redisStreamsLog.Debug("restoring session %s from offset %s", pid, offset)
+	if err := r.ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Validate offset format
 	if !offsetRegex.MatchString(offset) {
 		return nil, errors.New("invalid offset format")
 	}
 
-	streamClient, err := primaryStreamClient(r.redisClient.Context(), r.redisClient, r.streamName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve stream owner: %w", err)
-	}
+	// Recovery reads use the write-side client as a primary-consistency
+	// boundary. ClusterClient handles MOVED and ASK redirections itself.
+	streamClient := r.redisClient.Client()
 
 	sessionKey := r.opts.SessionKeyPrefix() + string(pid)
 
 	// Use MULTI GET DEL for compatibility with Redis versions before 6.2.
 	pipeline := r.redisClient.Client().TxPipeline()
-	sessionCmd := pipeline.Get(r.redisClient.Context(), sessionKey)
-	pipeline.Del(r.redisClient.Context(), sessionKey)
-	_, err = pipeline.Exec(r.redisClient.Context())
+	sessionCmd := pipeline.Get(r.ctx, sessionKey)
+	pipeline.Del(r.ctx, sessionKey)
+	_, err := pipeline.Exec(r.ctx)
 	if err != nil && !errors.Is(err, rds.Nil) {
 		return nil, fmt.Errorf("failed to retrieve session: %w", err)
 	}
@@ -486,8 +383,13 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	}
 
 	// Verify the offset exists in the stream
-	readBudget := restoreSessionStreamReadAttempts
-	offsets, streamClient, err := r.xRangeWithRetry(streamClient, offset, offset, 1, &readBudget)
+	offsets, err := streamClient.XRangeN(
+		r.ctx,
+		r.streamName,
+		offset,
+		offset,
+		1,
+	).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify offset: %w", err)
 	}
@@ -526,22 +428,23 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 // collectMissedPackets iterates through the Redis stream to find packets
 // that the session missed during disconnection.
 func (r *redisStreamsAdapter) collectMissedPackets(client rds.Cmdable, session *socket.Session, offset string) error {
-	readBudget := restoreSessionMaxXRangeCalls
 	broadcastTypeStr := strconv.Itoa(int(adapter.BROADCAST))
 
-	for readBudget > 0 {
-		entries, nextClient, err := r.xRangeWithRetry(
-			client,
+	for range restoreSessionMaxXRangeCalls {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		entries, err := client.XRangeN(
+			r.ctx,
+			r.streamName,
 			r.nextOffset(offset),
 			"+",
 			restoreSessionPageSize,
-			&readBudget,
-		)
+		).Result()
 
 		if err != nil {
 			return fmt.Errorf("failed to retrieve missed packets: %w", err)
 		}
-		client = nextClient
 		if len(entries) == 0 {
 			return nil
 		}

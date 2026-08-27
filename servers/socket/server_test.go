@@ -138,6 +138,22 @@ func TestServerSessionAwareAdapter(t *testing.T) {
 	}
 }
 
+func TestServerAppliesRecoveryDefaultsWithCustomAdapter(t *testing.T) {
+	recovery := DefaultConnectionStateRecovery()
+	opts := DefaultServerOptions()
+	opts.SetConnectionStateRecovery(recovery)
+	opts.SetAdapter(&AdapterBuilder{})
+
+	NewServer(nil, opts)
+
+	if got := recovery.MaxDisconnectionDuration(); got != DefaultMaxDisconnectionDuration {
+		t.Fatalf("MaxDisconnectionDuration = %d, want %d", got, DefaultMaxDisconnectionDuration)
+	}
+	if !recovery.SkipMiddlewares() {
+		t.Fatal("SkipMiddlewares default was not applied")
+	}
+}
+
 func TestServerBroadcastDelegation(t *testing.T) {
 	server := NewServer(nil, nil)
 

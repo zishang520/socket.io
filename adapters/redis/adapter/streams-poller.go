@@ -158,12 +158,7 @@ func releaseRedisStreamsPoller(poller *redisStreamsPoller, adapter *redisStreams
 }
 
 func (p *redisStreamsPoller) readInitialID() (string, error) {
-	// Resolve on every attempt so a retry follows Redis Cluster failover.
-	client, err := primaryStreamClient(p.ctx, p.key.client, p.key.streamName)
-	if err != nil {
-		return "", err
-	}
-	entries, err := client.XRevRangeN(p.ctx, p.key.streamName, "+", "-", 1).Result()
+	entries, err := p.key.client.Client().XRevRangeN(p.ctx, p.key.streamName, "+", "-", 1).Result()
 	if err != nil {
 		return "", err
 	}

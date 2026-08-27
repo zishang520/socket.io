@@ -136,6 +136,51 @@ func TestRedisClient_WithClusterClient(t *testing.T) {
 	})
 }
 
+func TestRedisClientRejectsReadOnlyPrimaryCluster(t *testing.T) {
+	for name, options := range map[string]*rds.ClusterOptions{
+		"read-only":        {ReadOnly: true},
+		"route by latency": {RouteByLatency: true},
+		"route randomly":   {RouteRandomly: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			options.Addrs = []string{"127.0.0.1:7000"}
+			primary := rds.NewClusterClient(options)
+			t.Cleanup(func() { _ = primary.Close() })
+
+			client, err := NewRedisClient(context.Background(), primary)
+			if client != nil {
+				t.Fatal("expected nil RedisClient")
+			}
+			if !errors.Is(err, ErrReadOnlyRedisClient) {
+				t.Fatalf("error = %v, want %v", err, ErrReadOnlyRedisClient)
+			}
+		})
+	}
+
+	write := rds.NewClusterClient(&rds.ClusterOptions{Addrs: []string{"127.0.0.1:7000"}})
+	read := rds.NewClusterClient(&rds.ClusterOptions{
+		Addrs:    []string{"127.0.0.1:7000"},
+		ReadOnly: true,
+	})
+	t.Cleanup(func() {
+		_ = write.Close()
+		_ = read.Close()
+	})
+	if _, err := NewRedisClientWithSub(context.Background(), write, read); err != nil {
+		t.Fatalf("read-only subscription client was rejected: %v", err)
+	}
+}
+
+func TestRedisClientOwnsSingleErrorFallback(t *testing.T) {
+	client := rds.NewClient(&rds.Options{Addr: "127.0.0.1:6379"})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustNewRedisClient(t, context.Background(), client)
+
+	if got := redisClient.ListenerCount("error"); got != 1 {
+		t.Fatalf("error listeners = %d, want fallback listener", got)
+	}
+}
+
 func TestRedisClientRequiresPrimaryClient(t *testing.T) {
 	client, err := NewRedisClient(context.Background(), nil)
 	if client != nil {

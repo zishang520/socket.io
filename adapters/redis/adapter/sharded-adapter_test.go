@@ -17,6 +17,7 @@ import (
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 type shardedPubSubRecorder struct {
@@ -391,6 +392,58 @@ func TestShardedAdaptersKeepRedisClientsIndependent(t *testing.T) {
 	})
 }
 
+// Regression test for the read/write separation requested in
+// https://github.com/zishang520/socket.io/issues/141.
+func TestShardedAdapterSeparatesSubscriptionAndPublishClients(t *testing.T) {
+	writeServer := miniredis.RunT(t)
+	published := make(chan string, 1)
+	if err := writeServer.Server().Register("SPUBLISH", func(peer *miniredisserver.Peer, _ string, args []string) {
+		if len(args) != 2 {
+			peer.WriteError("ERR invalid SPUBLISH arguments")
+			return
+		}
+		published <- args[0]
+		peer.WriteInt(1)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	subServer, recorder := newShardedPubSubRecorder(t, 0)
+	writeClient := rds.NewClient(&rds.Options{Addr: writeServer.Addr()})
+	subClient := rds.NewClient(&rds.Options{Addr: subServer.Addr()})
+	t.Cleanup(func() {
+		_ = writeClient.Close()
+		_ = subClient.Close()
+	})
+
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/split")
+	current := NewShardedRedisAdapter(
+		nsp,
+		mustRedisClientWithSub(t, t.Context(), writeClient, subClient),
+		nil,
+	).(*shardedRedisAdapter)
+	t.Cleanup(current.Close)
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(current.channel)) == 1 && len(recorder.activePeers(current.response)) == 1
+	})
+
+	if _, err := current.DoPublish(&clusteradapter.ClusterMessage{
+		Uid:  current.Uid(),
+		Nsp:  nsp.Name(),
+		Type: clusteradapter.SERVER_SIDE_EMIT,
+		Data: &clusteradapter.ServerSideEmitMessage{Packet: []any{"event"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case channel := <-published:
+		if channel != current.channel {
+			t.Fatalf("published channel = %q, want %q", channel, current.channel)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("write client did not receive SPUBLISH")
+	}
+}
+
 func TestShardedSubscriberRetainsDesiredChannelAfterFailure(t *testing.T) {
 	server, recorder := newShardedPubSubRecorder(t, 0)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
@@ -595,6 +648,9 @@ func TestShardedSubscriberRecoversCrossSlotReconnect(t *testing.T) {
 		return single >= 4 && batched >= 1 &&
 			len(recorder.activePeers(channels[0])) == 1 && len(recorder.activePeers(channels[1])) == 1
 	})
+	if recorder.activePeers(channels[0])[0] != recorder.activePeers(channels[1])[0] {
+		t.Fatal("channels owned by the same master did not reuse one subscriber connection")
+	}
 	for _, channel := range channels {
 		if delivered := recorder.publish(channel, []byte("payload")); delivered != 1 {
 			t.Fatalf("channel %q delivered to %d subscribers", channel, delivered)
@@ -658,6 +714,94 @@ func TestShardedSubscriberFollowsServerSunsubscribe(t *testing.T) {
 	}
 }
 
+func TestShardedAuditFollowsOwnerMove(t *testing.T) {
+	first, firstRecorder := newShardedPubSubRecorder(t, 0)
+	second, secondRecorder := newShardedPubSubRecorder(t, 0)
+	var moved atomic.Bool
+	cluster := rds.NewClusterClient(&rds.ClusterOptions{
+		Addrs: []string{first.Addr(), second.Addr()},
+		ClusterSlots: func(context.Context) ([]rds.ClusterSlot, error) {
+			addr := first.Addr()
+			if moved.Load() {
+				addr = second.Addr()
+			}
+			return []rds.ClusterSlot{{Start: 0, End: 16383, Nodes: []rds.ClusterNode{{Addr: addr}}}}, nil
+		},
+	})
+	t.Cleanup(func() { _ = cluster.Close() })
+	channel := "socket.io#/#silent-move#"
+	received := make(chan struct{}, 1)
+	current := &shardedPubSub{
+		ctx:      t.Context(),
+		client:   cluster,
+		routes:   make(map[string]shardedRoute),
+		dirty:    map[string]struct{}{channel: {}},
+		events:   make(chan shardedPubSubEvent, 2),
+		errors:   make(chan error, 1),
+		pools:    make(map[shardedPoolKey]*shardedPool),
+		channels: make(map[string]*shardedPool),
+	}
+	subscription := current.newSubscription(func([]byte, string) { received <- struct{}{} })
+	current.routes[channel] = shardedRoute{first: subscription}
+	t.Cleanup(current.closePools)
+	if failed := current.reconcile(true); failed {
+		t.Fatal("initial subscription failed")
+	}
+	waitForShardedState(t, func() bool { return len(firstRecorder.activePeers(channel)) == 1 })
+
+	moved.Store(true)
+	if failed := current.restore(); failed {
+		t.Fatal("owner audit failed")
+	}
+	waitForShardedState(t, func() bool {
+		return len(firstRecorder.activePeers(channel)) == 0 && len(secondRecorder.activePeers(channel)) == 1
+	})
+	if delivered := secondRecorder.publish(channel, []byte("payload")); delivered != 1 {
+		t.Fatalf("moved channel delivered to %d subscribers", delivered)
+	}
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("silently moved subscription did not receive a message")
+	}
+}
+
+func TestShardedRestoreReconcilesAfterAuditFailure(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	cluster := rds.NewClusterClient(&rds.ClusterOptions{
+		ClusterSlots: func(context.Context) ([]rds.ClusterSlot, error) {
+			return nil, errors.New("topology unavailable")
+		},
+	})
+	t.Cleanup(func() { _ = cluster.Close() })
+	channel := "stale"
+	key := shardedPoolKey{node: client}
+	pool := &shardedPool{
+		key:      key,
+		pubSub:   client.SSubscribe(t.Context()),
+		channels: map[string]struct{}{channel: {}},
+	}
+	current := &shardedPubSub{
+		ctx:      t.Context(),
+		client:   cluster,
+		routes:   make(map[string]shardedRoute),
+		dirty:    map[string]struct{}{channel: {}},
+		errors:   make(chan error, 1),
+		pools:    map[shardedPoolKey]*shardedPool{key: pool},
+		channels: map[string]*shardedPool{channel: pool},
+	}
+	t.Cleanup(current.closePools)
+
+	if failed := current.restore(); !failed {
+		t.Fatal("restore did not report the audit failure")
+	}
+	if current.channels[channel] != nil {
+		t.Fatal("audit failure prevented reconciliation of a removed channel")
+	}
+}
+
 func TestShardedResponseChannelCollisionDispatchesOnce(t *testing.T) {
 	server, recorder := newShardedPubSubRecorder(t, 0)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
@@ -673,11 +817,24 @@ func TestShardedResponseChannelCollisionDispatchesOnce(t *testing.T) {
 	if err := nsp.On("probe", func(...any) { received <- struct{}{} }); err != nil {
 		t.Fatal(err)
 	}
+	waitForShardedState(t, func() bool { return len(recorder.activePeers(current.response)) == 1 })
 	current.AddAll("sid", types.NewSet(socket.Room(current.Uid())))
+	current.Del("sid", socket.Room(current.Uid()))
 	if err := current.pubSub.flush(current.ctx); err != nil {
 		t.Fatal(err)
 	}
-	waitForShardedState(t, func() bool { return len(recorder.activePeers(current.response)) == 1 })
+	message := &clusteradapter.ClusterMessage{
+		Type: clusteradapter.BROADCAST,
+		Data: &clusteradapter.BroadcastMessage{
+			Opts: &clusteradapter.PacketOptions{Rooms: []socket.Room{socket.Room(current.Uid())}},
+		},
+	}
+	if channel := current.computeChannel(message); channel != current.response {
+		t.Fatalf("UID room channel = %q, want response channel %q", channel, current.response)
+	}
+	if peers := recorder.activePeers(current.response); len(peers) != 1 {
+		t.Fatalf("response channel subscribers = %d, want 1", len(peers))
+	}
 
 	payload := shardedServerSideEmitPayload(t, "/collision")
 	if delivered := recorder.publish(current.response, payload); delivered != 1 {
@@ -692,6 +849,71 @@ func TestShardedResponseChannelCollisionDispatchesOnce(t *testing.T) {
 	case <-received:
 		t.Fatal("colliding channel message was dispatched twice")
 	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestShardedRedisAdapterRoutesDefaultAndLegacySocketRooms(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 0)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, t.Context(), client)
+	receiverOpts := DefaultShardedRedisAdapterOptions()
+	receiverOpts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
+	receiver := NewShardedRedisAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/private-room"),
+		redisClient,
+		receiverOpts,
+	).(*shardedRedisAdapter)
+	t.Cleanup(receiver.Close)
+	publisherOpts := DefaultShardedRedisAdapterOptions()
+	publisherOpts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
+	publisher := NewShardedRedisAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/private-room"),
+		redisClient,
+		publisherOpts,
+	).(*shardedRedisAdapter)
+	t.Cleanup(publisher.Close)
+
+	sid := socket.SocketId(utils.Base64Id().GenerateId())
+	room := socket.Room(sid)
+	publicRoom := socket.Room("abcdefghijklmnopqrst")
+	legacySID := socket.SocketId("yH8rZp1uWq3xA7cN9mK2vB4d")
+	legacyRoom := socket.Room(legacySID)
+	receiver.AddAll(sid, types.NewSet(room, publicRoom))
+	receiver.AddAll(legacySID, types.NewSet(legacyRoom))
+	if err := receiver.pubSub.flush(receiver.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.pubSub.flush(publisher.ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForShardedState(t, func() bool {
+		return len(recorder.activePeers(receiver.dynamicChannel(legacyRoom))) == 1
+	})
+	if peers := recorder.activePeers(receiver.dynamicChannel(room)); len(peers) != 0 {
+		t.Fatalf("default Socket.IO room has %d dynamic subscribers, want 0", len(peers))
+	}
+	if peers := recorder.activePeers(receiver.dynamicChannel(publicRoom)); len(peers) != 0 {
+		t.Fatalf("20-character public room has %d dynamic subscribers, want 0", len(peers))
+	}
+
+	message := &clusteradapter.ClusterMessage{
+		Type: clusteradapter.BROADCAST,
+		Data: &clusteradapter.BroadcastMessage{
+			Opts: &clusteradapter.PacketOptions{Rooms: []socket.Room{room}},
+		},
+	}
+	if channel := publisher.computeChannel(message); channel != publisher.channel {
+		t.Fatalf("default Socket.IO room channel = %q, want %q", channel, publisher.channel)
+	}
+	message.Data.(*clusteradapter.BroadcastMessage).Opts.Rooms[0] = legacyRoom
+	channel := publisher.computeChannel(message)
+	want := publisher.dynamicChannel(legacyRoom)
+	if channel != want {
+		t.Fatalf("legacy Socket.IO room channel = %q, want %q", channel, want)
+	}
+	if delivered := recorder.publish(channel, []byte("invalid")); delivered != 1 {
+		t.Fatalf("remote private room broadcast delivered to %d subscribers, want 1", delivered)
 	}
 }
 

@@ -7,17 +7,24 @@ import (
 	"errors"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var (
+	redisClientLog = log.NewLog("socket.io-redis")
+
 	// ErrRedisClientRequired is returned when no primary Redis client is provided.
 	ErrRedisClientRequired = errors.New("redis: client is required")
 
 	// ErrUnsupportedRedisClient is returned when a go-redis Ring is configured.
 	// Socket.IO supports standalone, Sentinel, and Redis Cluster deployments.
 	ErrUnsupportedRedisClient = errors.New("redis: *redis.Ring is not supported")
+
+	// ErrReadOnlyRedisClient is returned when the primary Redis Cluster client
+	// may route consistency-sensitive reads to replicas.
+	ErrReadOnlyRedisClient = errors.New("redis: primary cluster client must not enable read-only routing")
 )
 
 // RedisClient wraps a Redis UniversalClient and provides context management
@@ -25,10 +32,10 @@ var (
 // built-in clients are *redis.Client for standalone and Sentinel deployments
 // and *redis.ClusterClient for Redis Cluster. *redis.Ring is not supported.
 //
-// The client supports read/write separation: Client() is used for write
-// operations (PUBLISH, XADD, SET, etc.) and Sub() is used for reads and
-// subscriptions (SUBSCRIBE, XREAD, XRANGE, etc.). Without a separate
-// subscription client, both methods return the primary client.
+// The client supports read/write separation: Client() is used for writes and
+// primary-consistent stream reads, while Sub() is used for subscriptions,
+// blocking XREAD calls, and subscriber counts. Without a separate subscription
+// client, both methods return the primary client.
 //
 // The client supports error event emission, which allows higher-level components
 // to handle Redis-related errors gracefully. Its Redis clients and context are
@@ -41,12 +48,12 @@ type RedisClient struct {
 	ctx       context.Context
 }
 
-// Client returns the Redis client used for write operations.
+// Client returns the Redis client used for writes and primary-consistent reads.
 func (r *RedisClient) Client() redis.UniversalClient {
 	return r.client
 }
 
-// Sub returns the Redis client used for read and subscription operations.
+// Sub returns the Redis client used for subscriptions and blocking reads.
 func (r *RedisClient) Sub() redis.UniversalClient {
 	return r.subClient
 }
@@ -61,6 +68,12 @@ func validateClient(client redis.UniversalClient) error {
 		return ErrUnsupportedRedisClient
 	}
 	return nil
+}
+
+func (r *RedisClient) onError(...any) {
+	if r.ListenerCount("error") == 1 {
+		redisClientLog.Warning("missing 'error' handler on this Redis client")
+	}
 }
 
 // NewRedisClient creates a new RedisClient with the given context and Redis universal client.
@@ -90,9 +103,8 @@ func NewRedisClient(ctx context.Context, client redis.UniversalClient) (*RedisCl
 //
 // Parameters:
 //   - ctx: The context that controls the lifecycle of Redis operations.
-//   - client: The Redis client for write operations (PUBLISH, XADD, SET, etc.)
-//     and metadata queries (PUBSUB NUMSUB).
-//   - subClient: The Redis client for read/subscribe operations (SUBSCRIBE, XREAD, etc.).
+//   - client: The primary Redis client for writes and consistency-sensitive reads.
+//   - subClient: The Redis client for subscriptions, XREAD, and PUBSUB NUMSUB.
 //     Both clients should connect to the same Redis deployment.
 //
 // Returns:
@@ -111,6 +123,9 @@ func NewRedisClientWithSub(ctx context.Context, client, subClient redis.Universa
 	if err := validateClient(client); err != nil {
 		return nil, err
 	}
+	if cluster, ok := client.(*redis.ClusterClient); ok && cluster.Options().ReadOnly {
+		return nil, ErrReadOnlyRedisClient
+	}
 	if utils.IsNil(subClient) {
 		subClient = client
 	}
@@ -121,10 +136,12 @@ func NewRedisClientWithSub(ctx context.Context, client, subClient redis.Universa
 		ctx = context.Background()
 	}
 
-	return &RedisClient{
+	redisClient := &RedisClient{
 		EventEmitter: types.NewEventEmitter(),
 		client:       client,
 		subClient:    subClient,
 		ctx:          ctx,
-	}, nil
+	}
+	_ = redisClient.On("error", redisClient.onError)
+	return redisClient, nil
 }

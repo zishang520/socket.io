@@ -457,18 +457,134 @@ func (a *fixedServerCountAdapter) ServerCount() (int64, error) {
 
 type testClusterAdapter struct {
 	ClusterAdapter
-	published atomic.Int64
-	response  atomic.Pointer[ClusterResponse]
+	published  atomic.Int64
+	response   atomic.Pointer[ClusterResponse]
+	publishErr error
+	onPublish  func(*ClusterMessage)
 }
 
-func (a *testClusterAdapter) DoPublish(*ClusterMessage) (Offset, error) {
+func (a *testClusterAdapter) DoPublish(message *ClusterMessage) (Offset, error) {
 	a.published.Add(1)
-	return "", nil
+	if a.onPublish != nil {
+		a.onPublish(message)
+	}
+	return "", a.publishErr
 }
 
 func (a *testClusterAdapter) DoPublishResponse(_ ServerId, response *ClusterResponse) error {
 	a.response.Store(response)
 	return nil
+}
+
+func newClusterPublishTestAdapter(t *testing.T, publishErr error) (*clusterAdapter, *testClusterAdapter) {
+	t.Helper()
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	cluster.Adapter = &fixedServerCountAdapter{
+		Adapter:     socket.NewAdapter(nsp),
+		serverCount: 2,
+	}
+	transport := &testClusterAdapter{ClusterAdapter: cluster, publishErr: publishErr}
+	cluster.Prototype(transport)
+	cluster.Construct(nsp)
+	return cluster, transport
+}
+
+func TestClusterServerSideEmitReturnsPublishError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		publishErr := errors.New("publish failed")
+		cluster, _ := newClusterPublishTestAdapter(t, publishErr)
+
+		if err := cluster.ServerSideEmit([]any{"event"}); !errors.Is(err, publishErr) {
+			t.Fatalf("ServerSideEmit() error = %v, want %v", err, publishErr)
+		}
+
+		var ackCalls atomic.Int64
+		if err := cluster.ServerSideEmit([]any{"event", func([]any, error) {
+			ackCalls.Add(1)
+		}}); !errors.Is(err, publishErr) {
+			t.Fatalf("ServerSideEmit() with ack error = %v, want %v", err, publishErr)
+		}
+		if cluster.requests.Len() != 0 {
+			t.Fatal("request was retained after publish failed")
+		}
+
+		time.Sleep(DEFAULT_TIMEOUT)
+		synctest.Wait()
+		if ackCalls.Load() != 0 {
+			t.Fatalf("acknowledgement calls = %d, want 0", ackCalls.Load())
+		}
+	})
+}
+
+func TestClusterServerSideEmitCompletionWinsPublishError(t *testing.T) {
+	publishErr := errors.New("publish failed")
+	cluster, transport := newClusterPublishTestAdapter(t, publishErr)
+
+	ackStarted := make(chan struct{})
+	releaseAck := make(chan struct{})
+	ackResult := make(chan []any, 1)
+	transport.onPublish = func(message *ClusterMessage) {
+		data, ok := message.Data.(*ServerSideEmitMessage)
+		if !ok || data.RequestId == nil {
+			return
+		}
+		go cluster.OnResponse(&ClusterResponse{
+			Type: SERVER_SIDE_EMIT_RESPONSE,
+			Data: &ServerSideEmitResponse{
+				RequestId: *data.RequestId,
+				Packet:    "response",
+			},
+		})
+		<-ackStarted
+	}
+
+	returned := make(chan error, 1)
+	go func() {
+		returned <- cluster.ServerSideEmit([]any{"event", func(args []any, err error) {
+			if err != nil {
+				t.Errorf("unexpected acknowledgement error: %v", err)
+			}
+			close(ackStarted)
+			<-releaseAck
+			ackResult <- args
+		}})
+	}()
+
+	var err error
+	select {
+	case err = <-returned:
+	case <-time.After(time.Second):
+		close(releaseAck)
+		t.Fatal("ServerSideEmit() blocked on the acknowledgement callback")
+	}
+	close(releaseAck)
+	responses := <-ackResult
+	if err != nil {
+		t.Fatalf("ServerSideEmit() error = %v, want nil after response completed", err)
+	}
+	if len(responses) != 1 || responses[0] != "response" {
+		t.Fatalf("acknowledgement = %#v, want [response]", responses)
+	}
+	if cluster.requests.Len() != 0 {
+		t.Fatal("completed request was retained")
+	}
+}
+
+func TestClusterFetchSocketsReturnsPublishError(t *testing.T) {
+	publishErr := errors.New("publish failed")
+	cluster, _ := newClusterPublishTestAdapter(t, publishErr)
+
+	var gotErr error
+	cluster.FetchSockets(nil)(func(_ []socket.SocketDetails, err error) {
+		gotErr = err
+	})
+	if !errors.Is(gotErr, publishErr) {
+		t.Fatalf("FetchSockets() error = %v, want %v", gotErr, publishErr)
+	}
+	if cluster.requests.Len() != 0 {
+		t.Fatal("request was retained after publish failed")
+	}
 }
 
 func TestClusterBroadcastAckCleanupWithoutTimeout(t *testing.T) {

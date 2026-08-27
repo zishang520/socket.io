@@ -103,6 +103,12 @@ npm install socket.io-client@^4.0.0
 - Test all client connections after upgrade
 - Ensure backward compatibility strategy if gradual rollout is needed
 
+Newly generated default Engine.IO session IDs, Socket.IO socket IDs, and
+connection-state recovery private IDs now use the same 20-character format as
+the Node.js server. Accordingly, `utils.Base64Id().GenerateId()` returns 20
+instead of 24 characters. Existing restored IDs are not rewritten; continue to
+treat IDs as opaque strings because legacy or custom IDs may use another length.
+
 </details>
 
 <details>
@@ -178,6 +184,19 @@ Direct field access must be replaced with accessors:
 - MongoDB: `Collection()`, `Context()`
 - PostgreSQL: `Pool()`, `Context()`
 - Unix: `SocketPath()`, `Context()`
+
+A go-redis `*redis.ClusterClient` passed as the primary Redis client must not
+enable `ReadOnly`, `RouteByLatency`, or `RouteRandomly`; construction now
+returns `redis.ErrReadOnlyRedisClient`. Pass a primary-routed client first and,
+if needed, a read-only client as `subClient` to `NewRedisClientWithSub`.
+
+The Redis module now uses go-redis v9.22.0. Applications that rely on go-redis
+defaults inherit its new read/write timeouts, retry backoff, cluster reload
+interval, and TCP keep-alive settings; explicitly configured values are unchanged.
+This release also adds methods to the go-redis `UniversalClient` and `Cmdable`
+interfaces. Custom clients that implement either interface directly must add
+those methods; official clients and wrappers that embed the interface are
+unaffected.
 
 </details>
 
@@ -434,7 +453,7 @@ import (
     "github.com/zishang520/socket.io/adapters/redis/v3/adapter"
 )
 
-opts := adapter.NewShardedRedisAdapterOptions()
+opts := adapter.DefaultShardedRedisAdapterOptions()
 opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
 ```
 
@@ -458,10 +477,39 @@ opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
 The `EmitterOptions` now supports sharded Pub/Sub configuration:
 
 ```go
-emitterOpts := emitter.NewEmitterOptions()
+emitterOpts := emitter.DefaultEmitterOptions()
 emitterOpts.SetSharded(true)
 emitterOpts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
 ```
+</details>
+
+<details>
+<summary>Redis Emitter Parser Renamed to Encoder</summary>
+
+The classic (non-sharded) Redis emitter's custom codec now requires only the
+outbound `redis.Encoder` interface. Sharded mode continues to use its fixed
+cluster-message codec.
+
+**Likelihood Of Impact: Medium (if using a custom Redis emitter parser)**
+
+Rename `SetParser`, `GetRawParser`, and `Parser` calls to `SetEncoder`,
+`GetRawEncoder`, and `Encoder`. The `BroadcastOptions.Parser` field is now
+`BroadcastOptions.Encoder`. Existing implementations with an `Encode` method
+already satisfy the narrower interface.
+
+</details>
+
+<details>
+<summary>Classic Redis RequestType Separation</summary>
+
+Classic Redis request/response codes now use `redis.RequestType` instead of the
+cluster adapter's `adapter.MessageType`. The numeric wire values are unchanged;
+the separate Go type prevents the two protocols' overlapping values from being
+mixed accidentally.
+
+Code that explicitly stored `redis.SOCKETS` through `redis.BROADCAST_ACK` in an
+`adapter.MessageType` variable must change that variable to `redis.RequestType`
+or convert deliberately at an API boundary.
 </details>
 
 ### Low Impact Changes
@@ -1257,7 +1305,7 @@ import (
     "github.com/zishang520/socket.io/adapters/redis/v3/adapter"
 )
 
-opts := adapter.NewShardedRedisAdapterOptions()
+opts := adapter.DefaultShardedRedisAdapterOptions()
 opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
 ```
 
@@ -1279,7 +1327,7 @@ opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
 **Emitter options extended:**
 
 ```go
-emitterOpts := emitter.NewEmitterOptions()
+emitterOpts := emitter.DefaultEmitterOptions()
 emitterOpts.SetSharded(true)
 emitterOpts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
 ```

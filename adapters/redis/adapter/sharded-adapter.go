@@ -198,13 +198,8 @@ func (s *shardedRedisAdapter) isDynamicMode() bool {
 }
 
 func (s *shardedRedisAdapter) shouldUseASeparateNamespace(room socket.Room) bool {
-	_, private := s.Sids().Load(socket.SocketId(room))
-	switch s.opts.SubscriptionMode() {
-	case redis.DynamicSubscriptionMode:
-		return !private
-	case redis.DynamicPrivateSubscriptionMode:
-		return true
-	default:
+	if room == socket.Room(s.Uid()) {
 		return false
 	}
+	return redis.ShouldUseDynamicChannel(s.opts.SubscriptionMode(), room)
 }

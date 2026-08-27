@@ -149,20 +149,21 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 	}
 	s.encoder = s._parser.NewEncoder()
 	s.opts = opts
+	connectionStateRecovery := opts.ConnectionStateRecovery()
+	if connectionStateRecovery != nil {
+		if connectionStateRecovery.GetRawMaxDisconnectionDuration() == nil {
+			connectionStateRecovery.SetMaxDisconnectionDuration(DefaultMaxDisconnectionDuration)
+		}
+		if connectionStateRecovery.GetRawSkipMiddlewares() == nil {
+			connectionStateRecovery.SetSkipMiddlewares(true)
+		}
+	}
 	if adapter := opts.Adapter(); adapter != nil {
 		s.SetAdapter(adapter)
+	} else if connectionStateRecovery != nil {
+		s.SetAdapter(&SessionAwareAdapterBuilder{})
 	} else {
-		if connectionStateRecovery := opts.ConnectionStateRecovery(); connectionStateRecovery != nil {
-			if connectionStateRecovery.GetRawMaxDisconnectionDuration() == nil {
-				connectionStateRecovery.SetMaxDisconnectionDuration(DefaultMaxDisconnectionDuration)
-			}
-			if connectionStateRecovery.GetRawSkipMiddlewares() == nil {
-				connectionStateRecovery.SetSkipMiddlewares(true)
-			}
-			s.SetAdapter(&SessionAwareAdapterBuilder{})
-		} else {
-			s.SetAdapter(&AdapterBuilder{})
-		}
+		s.SetAdapter(&AdapterBuilder{})
 	}
 	s.sockets = s.Of("/", nil)
 

@@ -1,14 +1,29 @@
 package adapter
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
+
+func newHeartbeatPublishTestAdapter(t *testing.T, publishErr error) *clusterAdapterWithHeartbeat {
+	t.Helper()
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := MakeClusterAdapterWithHeartbeat().(*clusterAdapterWithHeartbeat)
+	cluster.ClusterAdapter.(*clusterAdapter).Adapter = socket.NewAdapter(nsp)
+	transport := &testClusterAdapter{ClusterAdapter: cluster, publishErr: publishErr}
+	cluster.Prototype(transport)
+	cluster.Construct(nsp)
+	cluster.nodesMap.Store("remote", time.Now().UnixMilli())
+	return cluster
+}
 
 func TestHeartbeatServerSideEmitResponseStoresScalarPacket(t *testing.T) {
 	cluster := MakeClusterAdapterWithHeartbeat().(*clusterAdapterWithHeartbeat)
@@ -48,6 +63,76 @@ func TestHeartbeatServerSideEmitWithoutRemoteNodesReturnsEmptyResponses(t *testi
 	}
 	if responses == nil || len(responses) != 0 {
 		t.Fatalf("acknowledgement responses = %#v, want non-nil empty slice", responses)
+	}
+}
+
+func TestHeartbeatRegisterRequestReconcilesRemovedNode(t *testing.T) {
+	cluster := MakeClusterAdapterWithHeartbeat().(*clusterAdapterWithHeartbeat)
+	const uid ServerId = "node"
+	cluster.nodesMap.Store(uid, 1)
+	missingUids := types.NewSet(cluster.nodesMap.Keys()...)
+	cluster.removeNode(uid)
+
+	var calls atomic.Int64
+	request := &CustomClusterRequest{
+		Resolve:     func(*types.Slice[any]) { calls.Add(1) },
+		Timeout:     new(atomic.Pointer[utils.Timer]),
+		MissingUids: missingUids,
+		Responses:   types.NewSlice[any](),
+	}
+	if cluster.registerRequest("request", request) {
+		t.Fatal("request remained pending for a removed node")
+	}
+	if calls.Load() != 1 || cluster.customRequests.Len() != 0 || request.MissingUids.Len() != 0 {
+		t.Fatalf("Resolve()/pending/missing = %d/%d/%d, want 1/0/0", calls.Load(), cluster.customRequests.Len(), request.MissingUids.Len())
+	}
+}
+
+func TestHeartbeatServerSideEmitReturnsPublishError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		publishErr := errors.New("publish failed")
+		cluster := newHeartbeatPublishTestAdapter(t, publishErr)
+		defer cluster.Close()
+
+		if err := cluster.ServerSideEmit([]any{"event"}); !errors.Is(err, publishErr) {
+			t.Fatalf("ServerSideEmit() error = %v, want %v", err, publishErr)
+		}
+		if cluster.heartbeatTimer.Load() == nil {
+			t.Fatal("heartbeat was not scheduled for the failed publish")
+		}
+
+		var ackCalls atomic.Int64
+		if err := cluster.ServerSideEmit([]any{"event", func([]any, error) {
+			ackCalls.Add(1)
+		}}); !errors.Is(err, publishErr) {
+			t.Fatalf("ServerSideEmit() with ack error = %v, want %v", err, publishErr)
+		}
+		if cluster.customRequests.Len() != 0 {
+			t.Fatal("request was retained after publish failed")
+		}
+
+		time.Sleep(DEFAULT_TIMEOUT)
+		synctest.Wait()
+		if ackCalls.Load() != 0 {
+			t.Fatalf("acknowledgement calls = %d, want 0", ackCalls.Load())
+		}
+	})
+}
+
+func TestHeartbeatFetchSocketsReturnsPublishError(t *testing.T) {
+	publishErr := errors.New("publish failed")
+	cluster := newHeartbeatPublishTestAdapter(t, publishErr)
+	defer cluster.Close()
+
+	var gotErr error
+	cluster.FetchSockets(nil)(func(_ []socket.SocketDetails, err error) {
+		gotErr = err
+	})
+	if !errors.Is(gotErr, publishErr) {
+		t.Fatalf("FetchSockets() error = %v, want %v", gotErr, publishErr)
+	}
+	if cluster.customRequests.Len() != 0 {
+		t.Fatal("request was retained after publish failed")
 	}
 }
 

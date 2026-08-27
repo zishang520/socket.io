@@ -93,6 +93,5 @@ const (
 	DefaultSubscriptionMode = DynamicSubscriptionMode
 )
 
-// PrivateRoomIdLength is the length of a socket ID used to identify private rooms.
-// Private rooms (socket IDs) have exactly this length.
+// PrivateRoomIdLength is the length of a Node.js Socket.IO socket ID.
 const PrivateRoomIdLength = 20

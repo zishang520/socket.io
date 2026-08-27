@@ -10,7 +10,7 @@ import (
 )
 
 type base64Id struct {
-	sequenceNumber atomic.Uint64
+	sequenceNumber atomic.Uint32
 }
 
 var bid = &base64Id{}
@@ -20,11 +20,10 @@ func Base64Id() *base64Id {
 }
 
 func (b *base64Id) GenerateId() string {
-	r := make([]byte, 18)
-	// Read fills b with cryptographically secure random bytes. It never returns an
-	// error, and always fills b entirely.
-	_, _ = rand.Read(r)
-	binary.BigEndian.PutUint64(r[10:], b.sequenceNumber.Add(1)-1)
+	r := make([]byte, 15)
+	sequence := uint32(b.sequenceNumber.Add(1) - 1)
+	binary.BigEndian.PutUint32(r[11:], sequence)
+	_, _ = rand.Read(r[:12])
 	return base64.RawURLEncoding.EncodeToString(r)
 }
 

@@ -87,7 +87,7 @@ type redisPubSubRoute struct {
 type redisPubSubRoutes struct {
 	handlers           map[string]redisPubSubRoute
 	dirty              map[string]struct{}
-	active             map[string]struct{} // owned by run
+	active             map[string]struct{} // protected by redisPubSub.mu
 	subscribeScratch   []string            // owned by run
 	unsubscribeScratch []string            // owned by run
 }
@@ -106,8 +106,8 @@ func newRedisPubSubRoutes() redisPubSubRoutes {
 type redisPubSub struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
+	client  rds.UniversalClient
 	pubSub  *rds.PubSub
-	pattern *rds.PubSub
 	onError func(error)
 
 	mu       sync.RWMutex
@@ -124,6 +124,7 @@ func newRedisPubSub(parent context.Context, client rds.UniversalClient, onError 
 	p := &redisPubSub{
 		ctx:      ctx,
 		cancel:   cancel,
+		client:   client,
 		onError:  onError,
 		channels: newRedisPubSubRoutes(),
 		patterns: newRedisPubSubRoutes(),
@@ -131,10 +132,80 @@ func newRedisPubSub(parent context.Context, client rds.UniversalClient, onError 
 		barriers: make(chan chan struct{}),
 	}
 	p.pubSub = client.Subscribe(ctx)
-	p.pattern = p.pubSub
-	go receiveRedisMessages(p.ctx, p.pubSub, p.dispatchMessage, p.report)
+	go p.receive(p.pubSub)
 	go p.run()
 	return p
+}
+
+func (p *redisPubSub) receive(pubSub *rds.PubSub) {
+	recovering := false
+	for {
+		value, err := pubSub.Receive(p.ctx)
+		if err == nil {
+			switch value := value.(type) {
+			case *rds.Message:
+				p.dispatchMessage(value)
+			case *rds.Subscription:
+				p.mu.RLock()
+				recovered := value.Count == len(p.channels.handlers)+len(p.patterns.handlers)
+				p.mu.RUnlock()
+				if recovered {
+					recovering = false
+				}
+			}
+			continue
+		}
+		if p.ctx.Err() != nil || errors.Is(err, rds.ErrClosed) {
+			return
+		}
+		var redisErr rds.Error
+		serverError := errors.As(err, &redisErr)
+		p.report(err)
+
+		// go-redis reconnects network failures on the existing PubSub. A rejected
+		// subscription command leaves its local channel set out of sync with
+		// Redis, so replace the connection once and rebuild the desired state.
+		// Further errors in the same recovery cycle retry on that replacement;
+		// otherwise a persistent NOPERM would rebuild once per second.
+		if !serverError || recovering {
+			timer := time.NewTimer(redisPubSubRetryDelay)
+			select {
+			case <-timer.C:
+			case <-p.ctx.Done():
+				timer.Stop()
+				return
+			}
+		}
+		if !serverError {
+			continue
+		}
+
+		p.mu.Lock()
+		if p.closed || p.pubSub != pubSub {
+			p.mu.Unlock()
+			return
+		}
+		replacement := pubSub
+		if !recovering {
+			replacement = p.client.Subscribe(p.ctx)
+			p.pubSub = replacement
+		}
+		for _, routes := range []*redisPubSubRoutes{&p.channels, &p.patterns} {
+			clear(routes.active)
+			for key := range routes.handlers {
+				routes.dirty[key] = struct{}{}
+			}
+		}
+		desired := len(p.channels.handlers) + len(p.patterns.handlers)
+		p.mu.Unlock()
+		rebuilt := replacement != pubSub
+		if rebuilt {
+			_ = pubSub.Close()
+			pubSub = replacement
+			recovering = desired != 0
+		}
+		p.signal()
+	}
 }
 
 func (p *redisPubSub) newSubscription(handler redisMessageHandler) *redisSubscription {
@@ -306,27 +377,31 @@ func (p *redisPubSub) reconcileBatch(routes *redisPubSubRoutes, pattern, subscri
 		return false
 	}
 
-	pubSub, err := p.subscriber(pattern)
-	commandSent := err == nil
-	if err == nil {
-		switch {
-		case pattern && subscribe:
-			err = pubSub.PSubscribe(p.ctx, keys...)
-		case pattern:
-			err = pubSub.PUnsubscribe(p.ctx, keys...)
-		case subscribe:
-			err = pubSub.Subscribe(p.ctx, keys...)
-		default:
-			err = pubSub.Unsubscribe(p.ctx, keys...)
-		}
+	p.mu.RLock()
+	pubSub := p.pubSub
+	p.mu.RUnlock()
+	var err error
+	switch {
+	case pattern && subscribe:
+		err = pubSub.PSubscribe(p.ctx, keys...)
+	case pattern:
+		err = pubSub.PUnsubscribe(p.ctx, keys...)
+	case subscribe:
+		err = pubSub.Subscribe(p.ctx, keys...)
+	default:
+		err = pubSub.Unsubscribe(p.ctx, keys...)
 	}
 
-	if subscribe && commandSent {
+	if subscribe {
 		// go-redis records every channel even when the write fails, so a later
 		// removal must still send UNSUBSCRIBE.
-		for _, key := range keys {
-			routes.active[key] = struct{}{}
+		p.mu.Lock()
+		if p.pubSub == pubSub {
+			for _, key := range keys {
+				routes.active[key] = struct{}{}
+			}
 		}
+		p.mu.Unlock()
 	}
 	if err != nil {
 		p.markDirty(routes, keys)
@@ -334,51 +409,13 @@ func (p *redisPubSub) reconcileBatch(routes *redisPubSubRoutes, pattern, subscri
 		return true
 	}
 	if !subscribe {
+		p.mu.Lock()
 		for _, key := range keys {
 			delete(routes.active, key)
 		}
+		p.mu.Unlock()
 	}
 	return false
-}
-
-func (p *redisPubSub) subscriber(pattern bool) (*rds.PubSub, error) {
-	p.mu.RLock()
-	pubSub := p.pubSub
-	if pattern {
-		pubSub = p.pattern
-	}
-	closed := p.closed
-	p.mu.RUnlock()
-	if pubSub != nil {
-		return pubSub, nil
-	}
-	if !closed {
-		return nil, errors.New("redis: Pub/Sub connection is not initialized")
-	}
-	return nil, rds.ErrClosed
-}
-
-func receiveRedisMessages(ctx context.Context, pubSub *rds.PubSub, onMessage func(*rds.Message), onError func(error)) {
-	for {
-		message, err := pubSub.ReceiveMessage(ctx)
-		if err == nil {
-			onMessage(message)
-			continue
-		}
-		if ctx.Err() != nil || errors.Is(err, rds.ErrClosed) {
-			return
-		}
-		if onError != nil {
-			onError(err)
-		}
-		timer := time.NewTimer(redisPubSubRetryDelay)
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		}
-	}
 }
 
 func (p *redisPubSub) dispatchMessage(message *rds.Message) {
@@ -424,14 +461,11 @@ func (p *redisPubSub) Close() {
 		p.closed = true
 		p.channels.handlers = nil
 		p.patterns.handlers = nil
-		pubSub, pattern := p.pubSub, p.pattern
+		pubSub := p.pubSub
 		p.mu.Unlock()
 		p.cancel()
 		if pubSub != nil {
 			_ = pubSub.Close()
-		}
-		if pattern != nil && pattern != pubSub {
-			_ = pattern.Close()
 		}
 	})
 }

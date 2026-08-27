@@ -9,13 +9,31 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	rds "github.com/redis/go-redis/v9"
+	clusteradapter "github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 type encodeOnly struct {
 	called bool
+}
+
+type recordingShardedClient struct {
+	rds.UniversalClient
+	channel string
+	payload any
+	calls   int
+}
+
+func (c *recordingShardedClient) SPublish(ctx context.Context, channel string, payload any) *rds.IntCmd {
+	c.channel = channel
+	c.payload = payload
+	c.calls++
+	cmd := rds.NewIntCmd(ctx)
+	cmd.SetVal(1)
+	return cmd
 }
 
 func (e *encodeOnly) Encode(value any) ([]byte, error) {
@@ -163,6 +181,51 @@ func TestShardedOperatorKeepsConcreteType(t *testing.T) {
 	emit.opts.SetSharded(true)
 	if _, ok := emit.To("room").(*ShardedBroadcastOperator); !ok {
 		t.Fatal("Emitter.To changed the sharded operator type")
+	}
+}
+
+// Regression test for https://github.com/zishang520/socket.io/issues/136.
+func TestShardedEmitterUsesSPublishWithClusterMessage(t *testing.T) {
+	client := &recordingShardedClient{UniversalClient: rds.NewClient(new(rds.Options))}
+	t.Cleanup(func() { _ = client.Close() })
+	options := DefaultEmitterOptions()
+	options.SetSharded(true)
+
+	if err := NewEmitter(mustRedisClient(t, client), options).Emit("event", "value"); err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 1 || client.channel != "socket.io#/#" {
+		t.Fatalf("SPUBLISH calls/channel = %d/%q, want 1/socket.io#/#", client.calls, client.channel)
+	}
+	payload, ok := client.payload.([]byte)
+	if !ok {
+		t.Fatalf("SPUBLISH payload type = %T, want []byte", client.payload)
+	}
+	message, err := redis.UnmarshalClusterMessage(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, ok := message.Data.(*clusteradapter.BroadcastMessage)
+	if message.Uid != "emitter" || message.Nsp != "/" || message.Type != clusteradapter.BROADCAST || !ok ||
+		data.Packet == nil || data.Packet.Type != parser.EVENT ||
+		!reflect.DeepEqual(data.Packet.Data, []any{"event", "value"}) {
+		t.Fatalf("cluster message = %#v, data = %#v", message, message.Data)
+	}
+}
+
+func TestShardedEmitterUsesCommonChannelForDefaultSocketRoom(t *testing.T) {
+	client := &recordingShardedClient{UniversalClient: rds.NewClient(new(rds.Options))}
+	t.Cleanup(func() { _ = client.Close() })
+	options := DefaultEmitterOptions()
+	options.SetSharded(true)
+	room := socket.Room(utils.Base64Id().GenerateId())
+
+	if err := NewEmitter(mustRedisClient(t, client), options).To(room).Emit("event"); err != nil {
+		t.Fatal(err)
+	}
+	want := "socket.io#/#"
+	if client.channel != want {
+		t.Fatalf("SPUBLISH channel = %q, want %q", client.channel, want)
 	}
 }
 

@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
-	github.com/redis/go-redis/v9 v9.21.0
+	github.com/redis/go-redis/v9 v9.22.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zishang520/socket.io/adapters/adapter/v3 v3.0.4
 	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.4

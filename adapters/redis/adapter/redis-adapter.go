@@ -162,12 +162,6 @@ func (r *redisAdapter) PublishOnSpecificResponseChannel() bool {
 // Parser returns the parser used for encoding/decoding Redis messages.
 func (r *redisAdapter) Parser() redis.Parser { return r.parser }
 
-func (r *redisAdapter) onRedisError(...any) {
-	if r.redisClient.ListenerCount("error") == 1 {
-		redisLog.Warning("missing 'error' handler on this Redis client")
-	}
-}
-
 // Construct initializes the Redis adapter for the given namespace.
 // It sets up Redis Pub/Sub subscriptions and starts message handling goroutines.
 func (r *redisAdapter) Construct(nsp socket.Namespace) {
@@ -199,8 +193,6 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	r.requestChannel = prefix + "-request#" + r.Nsp().Name() + "#"
 	r.responseChannel = prefix + "-response#" + r.Nsp().Name() + "#"
 	r.specificResponseChannel = r.responseChannel + string(r.uid) + "#"
-
-	_ = r.redisClient.On("error", r.onRedisError)
 
 	r.pubSub = acquireRedisPubSub(r.server, r.redisClient)
 	r.broadcastSubscription = r.pubSub.newSubscription(r.onMessage)
@@ -413,7 +405,7 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 			redisLog.Debug("Error marshaling SERVER_SIDE_EMIT response for RequestId %s: %s", request.RequestId, err.Error())
 			return
 		}
-		r.publish(r.responseChannel, response)
+		_ = r.publish(r.responseChannel, response)
 	}
 	r.Nsp().OnServerSideEmit(slices.AppendCopy(request.Data, callback))
 }
@@ -452,10 +444,12 @@ func (r *redisAdapter) handleBroadcastRequest(request *Request) {
 	)
 }
 
-func (r *redisAdapter) publish(channel string, message []byte) {
-	if err := r.redisClient.Client().Publish(r.ctx, channel, message).Err(); err != nil {
+func (r *redisAdapter) publish(channel string, message []byte) error {
+	err := r.redisClient.Client().Publish(r.ctx, channel, message).Err()
+	if err != nil {
 		r.redisClient.Emit("error", err)
 	}
+	return err
 }
 
 func (r *redisAdapter) publishJSONResponse(request *Request, response *Response) {
@@ -474,7 +468,7 @@ func (r *redisAdapter) publishResponse(request *Request, response []byte) {
 	}
 
 	redisLog.Debug("publishing response to channel %s", channel)
-	r.publish(channel, response)
+	_ = r.publish(channel, response)
 }
 
 // onResponse handles responses from other nodes.
@@ -527,16 +521,21 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 	requestId := response.RequestId
 	switch request.Type {
 	case redis.SOCKETS:
-		socketsPayload, ok := response.Sockets.(json.RawMessage)
-		if !ok {
-			redisLog.Debug("ignoring SOCKETS response without a sockets payload")
-			return
-		}
 		var socketIds []socket.SocketId
-		if err := json.Unmarshal(socketsPayload, &socketIds); err != nil || socketIds == nil {
-			redisLog.Debug("ignoring malformed SOCKETS response")
-			return
+		if response.Sockets != nil {
+			socketsPayload, ok := response.Sockets.(json.RawMessage)
+			if !ok {
+				redisLog.Debug("ignoring malformed SOCKETS response")
+				return
+			}
+			if err := json.Unmarshal(socketsPayload, &socketIds); err != nil || socketIds == nil {
+				redisLog.Debug("ignoring malformed SOCKETS response")
+				return
+			}
 		}
+		// Go adapters before the wire-format refactor omitted empty slices due to
+		// omitempty. Treat an absent field as an empty legacy response so rolling
+		// upgrades do not time out; an explicit null or another type is malformed.
 		request.Sockets.Add(socketIds...)
 		msgCount := request.MsgCount.Add(1)
 		if msgCount != request.NumSub || !r.finishRequest(requestId, request) {
@@ -547,16 +546,20 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 		})
 		request.Resolve(types.NewSlice(responses...))
 	case redis.REMOTE_FETCH:
-		socketsPayload, ok := response.Sockets.(json.RawMessage)
-		if !ok {
-			redisLog.Debug("ignoring REMOTE_FETCH response without a sockets payload")
-			return
-		}
 		var sockets []adapter.SocketResponse
-		if err := json.Unmarshal(socketsPayload, &sockets); err != nil || sockets == nil {
-			redisLog.Debug("ignoring malformed REMOTE_FETCH response")
-			return
+		if response.Sockets != nil {
+			socketsPayload, ok := response.Sockets.(json.RawMessage)
+			if !ok {
+				redisLog.Debug("ignoring malformed REMOTE_FETCH response")
+				return
+			}
+			if err := json.Unmarshal(socketsPayload, &sockets); err != nil || sockets == nil {
+				redisLog.Debug("ignoring malformed REMOTE_FETCH response")
+				return
+			}
 		}
+		// Older Go peers omitted an empty sockets field. Missing therefore means
+		// an empty legacy response, while explicit null and invalid types do not.
 		if len(sockets) > 0 {
 			request.Responses.Push(adapter.SocketResponsesToDetailsAny(sockets)...)
 		}
@@ -565,10 +568,6 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 			request.Resolve(request.Responses)
 		}
 	case redis.ALL_ROOMS:
-		if response.Rooms == nil {
-			redisLog.Debug("ignoring ALL_ROOMS response without a rooms payload")
-			return
-		}
 		request.Rooms.Add(response.Rooms...)
 		msgCount := request.MsgCount.Add(1)
 		if msgCount == request.NumSub && r.finishRequest(requestId, request) {
@@ -612,7 +611,7 @@ func (r *redisAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOp
 			channel = channel + string(packetOpts.Rooms[0]) + "#"
 		}
 		redisLog.Debug("publishing message to channel %s", channel)
-		r.publish(channel, msg)
+		_ = r.publish(channel, msg)
 	}
 	r.Adapter.Broadcast(packet, opts)
 }
@@ -646,7 +645,7 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 		}
 		r.registerAckRequest(requestId, ackRequest, timeout)
 
-		r.publish(r.requestChannel, message)
+		_ = r.publish(r.requestChannel, message)
 	}
 	r.Adapter.BroadcastWithAck(packet, opts, clientCountCallback, ack)
 }
@@ -688,7 +687,9 @@ func (r *redisAdapter) AllRooms() func(func(*types.Set[socket.Room], error)) {
 			cb(nil, errors.New("timeout reached while waiting for allRooms response"))
 		})
 
-		r.publish(r.requestChannel, message)
+		if err := r.publish(r.requestChannel, message); err != nil && r.finishRequest(requestId, request) {
+			cb(nil, err)
+		}
 	}
 }
 
@@ -740,7 +741,9 @@ func (r *redisAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 				cb(nil, errors.New("timeout reached while waiting for fetchSockets response"))
 			})
 
-			r.publish(r.requestChannel, message)
+			if err := r.publish(r.requestChannel, message); err != nil && r.finishRequest(requestId, request) {
+				cb(nil, err)
+			}
 		})
 	}
 }
@@ -752,7 +755,7 @@ func (r *redisAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socket.
 		if err != nil {
 			redisLog.Debug("Error marshaling AddSockets request: %s", err.Error())
 		} else {
-			r.publish(r.requestChannel, message)
+			_ = r.publish(r.requestChannel, message)
 		}
 	}
 	r.Adapter.AddSockets(opts, rooms)
@@ -765,7 +768,7 @@ func (r *redisAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socket.
 		if err != nil {
 			redisLog.Debug("Error marshaling DelSockets request: %s", err.Error())
 		} else {
-			r.publish(r.requestChannel, message)
+			_ = r.publish(r.requestChannel, message)
 		}
 	}
 	r.Adapter.DelSockets(opts, rooms)
@@ -778,7 +781,7 @@ func (r *redisAdapter) DisconnectSockets(opts *socket.BroadcastOptions, close bo
 		if err != nil {
 			redisLog.Debug("Error marshaling DisconnectSockets request: %s", err.Error())
 		} else {
-			r.publish(r.requestChannel, message)
+			_ = r.publish(r.requestChannel, message)
 		}
 	}
 	r.Adapter.DisconnectSockets(opts, close)
@@ -865,6 +868,5 @@ func (r *redisAdapter) close() {
 	if r.pubSub != nil {
 		releaseRedisPubSub(r.server, r.redisClient, r.pubSub)
 	}
-	r.redisClient.RemoveListener("error", r.onRedisError)
 	r.Adapter.Close()
 }

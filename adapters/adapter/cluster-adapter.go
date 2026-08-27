@@ -56,6 +56,15 @@ func NewClusterAdapter(nsp socket.Namespace) ClusterAdapter {
 	return c
 }
 
+// finishClusterRequest atomically claims a pending request and releases its timeout.
+func finishClusterRequest[T any](requests *types.Map[string, *T], requestId string, request *T, timeout *atomic.Pointer[utils.Timer]) bool {
+	if !requests.CompareAndDelete(requestId, request) {
+		return false
+	}
+	utils.ClearTimeout(timeout.Swap(nil))
+	return true
+}
+
 // Uid returns the unique server identifier.
 func (c *clusterAdapter) Uid() ServerId {
 	return c.uid
@@ -259,12 +268,9 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		if request, ok := c.requests.Load(data.RequestId); ok {
 			request.Responses.Push(SocketResponsesToDetailsAny(data.Sockets)...)
 
-			if request.Current.Add(1) == request.Expected {
-				request.Once.Do(func() {
-					utils.ClearTimeout(request.Timeout.Load())
-					request.Resolve(request.Responses)
-					c.requests.Delete(data.RequestId)
-				})
+			if request.Current.Add(1) == request.Expected &&
+				finishClusterRequest(&c.requests, data.RequestId, request, request.Timeout) {
+				request.Resolve(request.Responses)
 			}
 		}
 
@@ -281,12 +287,9 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 		if request, ok := c.requests.Load(data.RequestId); ok {
 			request.Responses.Push(data.Packet)
 
-			if request.Current.Add(1) == request.Expected {
-				request.Once.Do(func() {
-					utils.ClearTimeout(request.Timeout.Load())
-					request.Resolve(request.Responses)
-					c.requests.Delete(data.RequestId)
-				})
+			if request.Current.Add(1) == request.Expected &&
+				finishClusterRequest(&c.requests, data.RequestId, request, request.Timeout) {
+				request.Resolve(request.Responses)
 			}
 		}
 	default:
@@ -454,21 +457,22 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 			c.requests.Store(requestId, request)
 
 			request.Timeout.Store(utils.SetTimeout(func() {
-				if storedRequest, ok := c.requests.Load(requestId); ok {
-					storedRequest.Once.Do(func() {
-						callback(nil, fmt.Errorf("timeout reached: only %d responses received out of %d", storedRequest.Current.Load(), storedRequest.Expected))
-						c.requests.Delete(requestId)
-					})
+				if !finishClusterRequest(&c.requests, requestId, request, request.Timeout) {
+					return
 				}
+				callback(nil, fmt.Errorf("timeout reached: only %d responses received out of %d", request.Current.Load(), request.Expected))
 			}, t))
 
-			c.Publish(&ClusterMessage{
+			_, publishErr := c.PublishAndReturnOffset(&ClusterMessage{
 				Type: FETCH_SOCKETS,
 				Data: &FetchSocketsMessage{
 					Opts:      EncodeOptions(opts),
 					RequestId: requestId,
 				},
 			})
+			if publishErr != nil && finishClusterRequest(&c.requests, requestId, request, request.Timeout) {
+				callback(nil, publishErr)
+			}
 		})
 	}
 }
@@ -481,13 +485,13 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 
 	ack, withAck := packet[packetLen-1].(socket.Ack)
 	if !withAck {
-		c.Publish(&ClusterMessage{
+		_, err := c.PublishAndReturnOffset(&ClusterMessage{
 			Type: SERVER_SIDE_EMIT,
 			Data: &ServerSideEmitMessage{
 				Packet: packet,
 			},
 		})
-		return nil
+		return err
 	}
 
 	count, err := c.Proto().ServerCount()
@@ -519,24 +523,25 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 	c.requests.Store(requestId, request)
 
 	request.Timeout.Store(utils.SetTimeout(func() {
-		if storedRequest, ok := c.requests.Load(requestId); ok {
-			storedRequest.Once.Do(func() {
-				ack(
-					storedRequest.Responses.All(),
-					fmt.Errorf(`timeout reached: only %d responses received out of %d`, storedRequest.Current.Load(), storedRequest.Expected),
-				)
-				c.requests.Delete(requestId)
-			})
+		if !finishClusterRequest(&c.requests, requestId, request, request.Timeout) {
+			return
 		}
+		ack(
+			request.Responses.All(),
+			fmt.Errorf(`timeout reached: only %d responses received out of %d`, request.Current.Load(), request.Expected),
+		)
 	}, DEFAULT_TIMEOUT))
 
-	c.Publish(&ClusterMessage{
+	_, err = c.PublishAndReturnOffset(&ClusterMessage{
 		Type: SERVER_SIDE_EMIT,
 		Data: &ServerSideEmitMessage{
 			RequestId: new(requestId), // the presence of this attribute defines whether an acknowledgement is needed
 			Packet:    packet[:packetLen-1],
 		},
 	})
+	if err != nil && finishClusterRequest(&c.requests, requestId, request, request.Timeout) {
+		return err
+	}
 	return nil
 }
 

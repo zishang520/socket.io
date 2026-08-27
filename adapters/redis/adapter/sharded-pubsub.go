@@ -380,10 +380,9 @@ func (s *shardedPubSub) run() {
 }
 
 func (s *shardedPubSub) restore() bool {
-	if s.auditOwners() {
-		return true
-	}
-	return s.reconcile(true)
+	auditFailed := s.auditOwners()
+	reconcileFailed := s.reconcile(true)
+	return auditFailed || reconcileFailed
 }
 
 func (s *shardedPubSub) receiveBackoff(now time.Time) time.Duration {
@@ -580,13 +579,15 @@ func (s *shardedPubSub) closePools() {
 }
 
 func (s *shardedPubSub) auditOwners() bool {
-	if client, ok := s.client.(*rds.ClusterClient); ok {
-		if err := client.ForEachMaster(s.ctx, func(ctx context.Context, _ *rds.Client) error {
-			return ctx.Err()
-		}); err != nil {
-			s.report(err)
-			return true
-		}
+	client, ok := s.client.(*rds.ClusterClient)
+	if !ok {
+		return false
+	}
+	if err := client.ForEachMaster(s.ctx, func(ctx context.Context, _ *rds.Client) error {
+		return ctx.Err()
+	}); err != nil {
+		s.report(err)
+		return true
 	}
 	for _, pool := range s.pools {
 		for channel := range pool.channels {

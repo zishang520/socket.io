@@ -78,7 +78,7 @@ type (
 	}
 )
 
-// DefaultRedisStreamsAdapterOptions returns empty options; NewRedisStreamsAdapter applies defaults.
+// DefaultRedisStreamsAdapterOptions returns empty options; RedisStreamsAdapter.Construct applies defaults.
 func DefaultRedisStreamsAdapterOptions() *RedisStreamsAdapterOptions {
 	return &RedisStreamsAdapterOptions{}
 }

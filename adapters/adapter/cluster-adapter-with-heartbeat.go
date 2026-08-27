@@ -152,9 +152,32 @@ func (a *clusterAdapterWithHeartbeat) ServerCount() (int64, error) {
 	return int64(a.nodesMap.Len() + 1), nil
 }
 
-func (a *clusterAdapterWithHeartbeat) Publish(message *ClusterMessage) {
+func (a *clusterAdapterWithHeartbeat) publishAndReturnOffset(message *ClusterMessage) (Offset, error) {
 	a.scheduleHeartbeat()
-	a.ClusterAdapter.Publish(message)
+	return a.PublishAndReturnOffset(message)
+}
+
+// registerRequest reconciles nodes removed after the request took its snapshot.
+func (a *clusterAdapterWithHeartbeat) registerRequest(requestId string, request *CustomClusterRequest) bool {
+	a.customRequests.Store(requestId, request)
+	for _, uid := range request.MissingUids.Keys() {
+		if _, ok := a.nodesMap.Load(uid); !ok {
+			request.MissingUids.Delete(uid)
+		}
+	}
+	if request.MissingUids.Len() == 0 {
+		if finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
+			request.Resolve(request.Responses)
+		}
+	}
+	stored, ok := a.customRequests.Load(requestId)
+	return ok && stored == request
+}
+
+func (a *clusterAdapterWithHeartbeat) Publish(message *ClusterMessage) {
+	if _, err := a.publishAndReturnOffset(message); err != nil {
+		adapterLog.Debug(`[%s] error while publishing message: %s`, a.Uid(), err.Error())
+	}
 }
 
 func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
@@ -165,13 +188,13 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 	packetLen := len(packet)
 	ack, withAck := packet[packetLen-1].(socket.Ack)
 	if !withAck {
-		a.Publish(&ClusterMessage{
+		_, err := a.publishAndReturnOffset(&ClusterMessage{
 			Type: SERVER_SIDE_EMIT,
 			Data: &ServerSideEmitMessage{
 				Packet: packet,
 			},
 		})
-		return nil
+		return err
 	}
 	missingUids := types.NewSet(a.nodesMap.Keys()...)
 	expectedResponseCount := missingUids.Len()
@@ -198,27 +221,30 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		MissingUids: missingUids,
 		Responses:   types.NewSlice[any](),
 	}
-	a.customRequests.Store(requestId, request)
+	if !a.registerRequest(requestId, request) {
+		return nil
+	}
 
 	request.Timeout.Store(utils.SetTimeout(func() {
-		if storedRequest, ok := a.customRequests.Load(requestId); ok {
-			storedRequest.Once.Do(func() {
-				ack(
-					storedRequest.Responses.All(),
-					fmt.Errorf(`timeout reached: missing %d responses`, storedRequest.MissingUids.Len()),
-				)
-				a.customRequests.Delete(requestId)
-			})
+		if !finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
+			return
 		}
+		ack(
+			request.Responses.All(),
+			fmt.Errorf(`timeout reached: missing %d responses`, request.MissingUids.Len()),
+		)
 	}, DEFAULT_TIMEOUT))
 
-	a.Publish(&ClusterMessage{
+	_, err := a.publishAndReturnOffset(&ClusterMessage{
 		Type: SERVER_SIDE_EMIT,
 		Data: &ServerSideEmitMessage{
 			RequestId: new(requestId), // the presence of this attribute defines whether an acknowledgement is needed
 			Packet:    packet[:packetLen-1],
 		},
 	})
+	if err != nil && finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
+		return err
+	}
 	return nil
 }
 
@@ -265,24 +291,27 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 				MissingUids: types.NewSet(missingUids...),
 				Responses:   types.NewSlice(SocketDetailsToAny(localSockets)...),
 			}
-			a.customRequests.Store(requestId, request)
+			if !a.registerRequest(requestId, request) {
+				return
+			}
 
 			request.Timeout.Store(utils.SetTimeout(func() {
-				if storedRequest, ok := a.customRequests.Load(requestId); ok {
-					storedRequest.Once.Do(func() {
-						cb(nil, fmt.Errorf("timeout reached: missing %d responses", storedRequest.MissingUids.Len()))
-						a.customRequests.Delete(requestId)
-					})
+				if !finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
+					return
 				}
+				cb(nil, fmt.Errorf("timeout reached: missing %d responses", request.MissingUids.Len()))
 			}, t))
 
-			a.Publish(&ClusterMessage{
+			_, publishErr := a.publishAndReturnOffset(&ClusterMessage{
 				Type: FETCH_SOCKETS,
 				Data: &FetchSocketsMessage{
 					Opts:      EncodeOptions(opts),
 					RequestId: requestId,
 				},
 			})
+			if publishErr != nil && finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
+				cb(nil, publishErr)
+			}
 		})
 	}
 }
@@ -302,12 +331,9 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 			request.Responses.Push(SocketResponsesToDetailsAny(data.Sockets)...)
 
 			request.MissingUids.Delete(response.Uid)
-			if request.MissingUids.Len() == 0 {
-				request.Once.Do(func() {
-					utils.ClearTimeout(request.Timeout.Load())
-					request.Resolve(request.Responses)
-					a.customRequests.Delete(data.RequestId)
-				})
+			if request.MissingUids.Len() == 0 &&
+				finishClusterRequest(&a.customRequests, data.RequestId, request, request.Timeout) {
+				request.Resolve(request.Responses)
 			}
 		}
 
@@ -324,12 +350,9 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 			request.Responses.Push(data.Packet)
 
 			request.MissingUids.Delete(response.Uid)
-			if request.MissingUids.Len() == 0 {
-				request.Once.Do(func() {
-					utils.ClearTimeout(request.Timeout.Load())
-					request.Resolve(request.Responses)
-					a.customRequests.Delete(data.RequestId)
-				})
+			if request.MissingUids.Len() == 0 &&
+				finishClusterRequest(&a.customRequests, data.RequestId, request, request.Timeout) {
+				request.Resolve(request.Responses)
 			}
 		}
 
@@ -349,12 +372,9 @@ func (a *clusterAdapterWithHeartbeat) removeNode(uid ServerId, expectedLastSeen 
 
 	a.customRequests.Range(func(requestId string, request *CustomClusterRequest) bool {
 		request.MissingUids.Delete(uid)
-		if request.MissingUids.Len() == 0 {
-			request.Once.Do(func() {
-				utils.ClearTimeout(request.Timeout.Load())
-				request.Resolve(request.Responses)
-				a.customRequests.Delete(requestId)
-			})
+		if request.MissingUids.Len() == 0 &&
+			finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
+			request.Resolve(request.Responses)
 		}
 		return true
 	})
