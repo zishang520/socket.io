@@ -528,6 +528,23 @@ func (s *shardedPubSub) receive(pool *shardedPool) {
 	for {
 		value, err := pool.pubSub.Receive(s.ctx)
 		if err != nil {
+			if s.ctx.Err() != nil || errors.Is(err, rds.ErrClosed) {
+				return
+			}
+			// go-redis reconnects and resubscribes standalone and Sentinel
+			// PubSubs before returning a network error. Keep that connection;
+			// Cluster pools still need rebuilding to recover from owner changes
+			// and reconnect-time CROSSSLOT errors.
+			if _, standalone := s.client.(*rds.Client); standalone && isShardedPubSubNetworkError(err) {
+				timer := time.NewTimer(shardedPubSubRetryDelay)
+				select {
+				case <-timer.C:
+				case <-s.ctx.Done():
+					timer.Stop()
+					return
+				}
+				continue
+			}
 			s.notify(shardedPubSubEvent{pool: pool, err: err})
 			return
 		}
@@ -646,11 +663,7 @@ func (s *shardedPubSub) Close() {
 }
 
 func isRecoverableShardedPubSubError(err error) bool {
-	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, rds.ErrClosed) {
-		return true
-	}
-	var networkError net.Error
-	if errors.As(err, &networkError) {
+	if err == nil || errors.Is(err, rds.ErrClosed) || isShardedPubSubNetworkError(err) {
 		return true
 	}
 	for _, prefix := range []string{"MOVED", "ASK", "CROSSSLOT", "TRYAGAIN", "CLUSTERDOWN", "READONLY"} {
@@ -659,6 +672,14 @@ func isRecoverableShardedPubSubError(err error) bool {
 		}
 	}
 	return false
+}
+
+func isShardedPubSubNetworkError(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var networkError net.Error
+	return errors.As(err, &networkError)
 }
 
 type shardedSubscription struct {

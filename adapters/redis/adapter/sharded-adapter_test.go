@@ -464,6 +464,35 @@ func TestShardedSubscriberRetainsDesiredChannelAfterFailure(t *testing.T) {
 	})
 }
 
+func TestShardedSubscriberReusesStandalonePubSubAfterNetworkError(t *testing.T) {
+	server, recorder := newShardedPubSubRecorder(t, 1)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	pubSub := newShardedPubSub(t.Context(), client, nil)
+	defer pubSub.Close()
+	channel := "socket.io#/#reconnect#"
+	received := make(chan struct{}, 1)
+	pubSub.newSubscription(func([]byte, string) { received <- struct{}{} }).Subscribe(channel)
+	if err := pubSub.flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForShardedState(t, func() bool {
+		return recorder.attemptCount(channel) == 2 && len(recorder.activePeers(channel)) == 1
+	})
+	if delivered := recorder.publish(channel, []byte("payload")); delivered != 1 {
+		t.Fatalf("reconnected channel delivered to %d subscribers", delivered)
+	}
+	select {
+	case <-received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconnected subscription did not receive a message")
+	}
+	if attempts := recorder.attemptCount(channel); attempts != 2 {
+		t.Fatalf("SSUBSCRIBE attempts = %d, want go-redis reconnect only", attempts)
+	}
+}
+
 func TestShardedSubscriberFansOutSharedChannel(t *testing.T) {
 	server, recorder := newShardedPubSubRecorder(t, 0)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})

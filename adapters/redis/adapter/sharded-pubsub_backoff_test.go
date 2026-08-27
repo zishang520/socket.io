@@ -15,22 +15,28 @@ func TestShardedPubSubBacksOffPersistentReceiveErrors(t *testing.T) {
 	tests := []struct {
 		name        string
 		reply       string
+		minAttempts int64
 		maxAttempts int64
 	}{
-		{name: "NOPERM", reply: "NOPERM shard channel is not allowed", maxAttempts: 6},
-		{name: "ASK", reply: "ASK 1234 127.0.0.1:6379", maxAttempts: 6},
-		// go-redis performs one automatic reconnect before returning a network
-		// read error, so each manager attempt can issue two SSUBSCRIBE commands.
-		{name: "connection close", maxAttempts: 12},
+		{name: "NOPERM", reply: "NOPERM shard channel is not allowed", minAttempts: 3, maxAttempts: 6},
+		{name: "ASK", reply: "ASK 1234 127.0.0.1:6379", minAttempts: 3, maxAttempts: 6},
+		{name: "connection close", minAttempts: 2, maxAttempts: 2},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := miniredis.RunT(t)
 			var attempts atomic.Int64
-			if err := server.Server().Register("SSUBSCRIBE", func(peer *miniredisserver.Peer, _ string, _ []string) {
+			if err := server.Server().Register("SSUBSCRIBE", func(peer *miniredisserver.Peer, _ string, channels []string) {
 				attempts.Add(1)
 				if tt.reply == "" {
+					peer.Block(func(writer *miniredisserver.Writer) {
+						writer.WritePushLen(3)
+						writer.WriteBulk("ssubscribe")
+						writer.WriteBulk(channels[0])
+						writer.WriteInt(1)
+					})
+					peer.Flush()
 					peer.Close()
 					return
 				}
@@ -50,8 +56,11 @@ func TestShardedPubSubBacksOffPersistentReceiveErrors(t *testing.T) {
 
 			waitForBackoffCondition(t, time.Second, func() bool { return attempts.Load() >= 2 })
 			time.Sleep(650 * time.Millisecond)
-			if got := attempts.Load(); got < 3 || got > tt.maxAttempts {
-				t.Fatalf("SSUBSCRIBE attempts after persistent %s = %d, want 3..%d", tt.name, got, tt.maxAttempts)
+			if got := attempts.Load(); got < tt.minAttempts || got > tt.maxAttempts {
+				t.Fatalf("SSUBSCRIBE attempts after persistent %s = %d, want %d..%d", tt.name, got, tt.minAttempts, tt.maxAttempts)
+			}
+			if tt.reply == "" {
+				waitForBackoffCondition(t, time.Second, func() bool { return attempts.Load() >= 3 })
 			}
 
 			closed := make(chan struct{})

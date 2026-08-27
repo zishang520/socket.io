@@ -512,6 +512,22 @@ Code that explicitly stored `redis.SOCKETS` through `redis.BROADCAST_ACK` in an
 or convert deliberately at an API boundary.
 </details>
 
+<details>
+<summary>Classic Redis Broadcast Acknowledgement Wire Format</summary>
+
+The classic Redis adapter now matches the Node.js wire protocol:
+`BROADCAST_ACK.packet` contains the first acknowledgement argument instead of
+the complete `[]any` argument list emitted by v3.0.4. Current responses also
+always include `clientCount`, including when its value is zero, while v3.0.4
+omitted the zero-valued field.
+
+Because a valid acknowledgement argument may itself be an array, the two wire
+formats cannot be distinguished safely. Clusters using cross-node
+`BroadcastWithAck` must upgrade all Go nodes together and must not mix v3.0.4
+with newer versions during a rolling upgrade. Keep the scalar format when
+interoperating with the Node.js Redis adapter.
+</details>
+
 ### Low Impact Changes
 
 <details>
