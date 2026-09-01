@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -32,9 +31,10 @@ type PostgresClient struct {
 	listenerChannels    *types.Set[string]
 	listenerOpCancel    context.CancelFunc
 	listenerCommandDone chan struct{}
+	listenerCommandGate chan struct{}
 	listenerClosed      bool
+	stopContextClose    func() bool
 	listenerMu          sync.Mutex // guards listener state
-	listenerCommandMu   sync.Mutex // preserves LISTEN/UNLISTEN order
 	listenerOpMu        sync.Mutex // serializes access to listenerConn
 }
 
@@ -43,7 +43,8 @@ func (c *PostgresClient) Pool() *pgxpool.Pool {
 	return c.pool
 }
 
-// Context returns the context controlling PostgreSQL operations and subscriptions.
+// Context returns the caller-provided context controlling PostgreSQL operations,
+// subscriptions, and adapters built from this client.
 func (c *PostgresClient) Context() context.Context {
 	return c.ctx
 }
@@ -70,11 +71,22 @@ func NewPostgresClient(ctx context.Context, pool *pgxpool.Pool) (*PostgresClient
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return &PostgresClient{
-		pool:             pool,
-		ctx:              ctx,
-		listenerChannels: types.NewSet[string](),
-	}, nil
+	client := &PostgresClient{
+		pool:                pool,
+		ctx:                 ctx,
+		listenerChannels:    types.NewSet[string](),
+		listenerCommandGate: make(chan struct{}, 1),
+	}
+	stop := context.AfterFunc(ctx, client.Close)
+	client.listenerMu.Lock()
+	if client.listenerClosed {
+		client.listenerMu.Unlock()
+		stop()
+	} else {
+		client.stopContextClose = stop
+		client.listenerMu.Unlock()
+	}
+	return client, nil
 }
 
 func sanitizeTableName(tableName string) string {
@@ -108,8 +120,12 @@ func (c *PostgresClient) updateListener(ctx context.Context, listen bool, channe
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.listenerCommandMu.Lock()
-	defer c.listenerCommandMu.Unlock()
+	select {
+	case c.listenerCommandGate <- struct{}{}:
+		defer func() { <-c.listenerCommandGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -314,7 +330,7 @@ func (c *PostgresClient) discardListener(conn *pgx.Conn) {
 }
 
 func (*PostgresClient) releaseListener(conn *pgx.Conn) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultOperationTimeout)
 	defer cancel()
 	_ = conn.Close(ctx)
 }
@@ -388,7 +404,8 @@ func (c *PostgresClient) CleanupAttachments(ctx context.Context, tableName strin
 	return err
 }
 
-// Close releases the listener connection if it was acquired.
+// Close releases the listener connection if it was acquired. It does not cancel
+// Context or close the caller-owned pool; close adapters or cancel Context first.
 func (c *PostgresClient) Close() {
 	c.listenerMu.Lock()
 	if c.listenerClosed {
@@ -396,10 +413,15 @@ func (c *PostgresClient) Close() {
 		return
 	}
 	c.listenerClosed = true
+	stopContextClose := c.stopContextClose
+	c.stopContextClose = nil
 	if c.listenerOpCancel != nil {
 		c.listenerOpCancel()
 	}
 	c.listenerMu.Unlock()
+	if stopContextClose != nil {
+		stopContextClose()
+	}
 
 	c.listenerOpMu.Lock()
 	c.listenerMu.Lock()

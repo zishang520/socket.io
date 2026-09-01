@@ -190,7 +190,7 @@ func (r *redisStreamsAdapter) onPubSubMessage(payload []byte, _ string) {
 	if r.ctx != nil && r.ctx.Err() != nil {
 		return
 	}
-	message, err := redis.UnmarshalClusterMessage(payload)
+	message, err := adapter.DecodeClusterMessage(payload)
 	if err != nil {
 		redisStreamsLog.Debug("invalid PUB/SUB message format: %s", err.Error())
 		return
@@ -202,21 +202,19 @@ func (r *redisStreamsAdapter) onPubSubMessage(payload []byte, _ string) {
 // Ephemeral messages (fetchSockets, serverSideEmit, broadcastWithAck) go via PUB/SUB.
 // Durable messages (broadcast, socketsJoin, etc.) go via Redis Streams.
 func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
-	if err := r.ctx.Err(); err != nil {
-		return "", err
-	}
+	publishCtx := r.redisClient.Context()
 	redisStreamsLog.Debug("publishing message: %+v", message)
 
 	if isEphemeral(message) {
 		// Ephemeral messages are sent via Redis PUB/SUB
-		payload, err := redis.EncodeClusterMessageMsgpack(message)
+		payload, err := adapter.EncodeClusterMessageMsgpack(message)
 		if err != nil {
 			return "", fmt.Errorf("failed to encode ephemeral message: %w", err)
 		}
 		if r.opts.UseShardedPubSub() {
-			return "", r.redisClient.Client().SPublish(r.ctx, r.publicChannel, payload).Err()
+			return "", r.redisClient.Client().SPublish(publishCtx, r.publicChannel, payload).Err()
 		}
-		return "", r.redisClient.Client().Publish(r.ctx, r.publicChannel, payload).Err()
+		return "", r.redisClient.Client().Publish(publishCtx, r.publicChannel, payload).Err()
 	}
 
 	// Durable messages are sent via Redis Streams
@@ -224,7 +222,7 @@ func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 	if err != nil {
 		return "", fmt.Errorf("failed to encode stream message: %w", err)
 	}
-	entryID, err := redis.XAddContext(r.ctx, r.redisClient, r.streamName, rawMessage, r.opts.MaxLen())
+	entryID, err := redis.XAddContext(publishCtx, r.redisClient, r.streamName, rawMessage, r.opts.MaxLen())
 
 	if err != nil {
 		return "", err
@@ -237,14 +235,14 @@ func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapte
 // This matches the Node.js implementation where responses are sent via PUB/SUB.
 func (r *redisStreamsAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) error {
 	responseChannel := r.opts.ChannelPrefix() + "#" + r.Nsp().Name() + "#" + string(requesterUid) + "#"
-	payload, err := redis.EncodeClusterMessageMsgpack(response)
+	payload, err := adapter.EncodeClusterMessageMsgpack(response)
 	if err != nil {
 		return fmt.Errorf("failed to encode response: %w", err)
 	}
 	if r.opts.UseShardedPubSub() {
-		return r.redisClient.Client().SPublish(r.ctx, responseChannel, payload).Err()
+		return r.redisClient.Client().SPublish(r.redisClient.Context(), responseChannel, payload).Err()
 	}
-	return r.redisClient.Client().Publish(r.ctx, responseChannel, payload).Err()
+	return r.redisClient.Client().Publish(r.redisClient.Context(), responseChannel, payload).Err()
 }
 
 // ServerCount returns the number of servers connected to the cluster,
@@ -266,6 +264,7 @@ func (r *redisStreamsAdapter) Cleanup(cleanup func()) {
 func (r *redisStreamsAdapter) Close() {
 	var cleanup func()
 	r.closeOnce.Do(func() {
+		r.ClusterAdapter.Close()
 		if r.cancel != nil {
 			r.cancel()
 		}
@@ -287,7 +286,6 @@ func (r *redisStreamsAdapter) Close() {
 		if callback := r.cleanupFunc.Swap(nil); callback != nil {
 			cleanup = *callback
 		}
-		r.ClusterAdapter.Close()
 	})
 	if cleanup != nil {
 		cleanup()

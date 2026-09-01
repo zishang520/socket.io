@@ -57,6 +57,19 @@ func TestEmitterOptions_Assign(t *testing.T) {
 		}
 	})
 
+	t.Run("assign typed nil", func(t *testing.T) {
+		opts := DefaultEmitterOptions()
+		opts.SetChannelPrefix("existing")
+		var source *EmitterOptions
+		result := opts.Assign(source)
+		if result != opts {
+			t.Fatal("Expected same instance when assigning typed nil")
+		}
+		if opts.ChannelPrefix() != "existing" {
+			t.Fatal("typed-nil Assign() changed the target options")
+		}
+	})
+
 	t.Run("assign all fields", func(t *testing.T) {
 		source := DefaultEmitterOptions()
 		source.SetChannelPrefix("custom-key")

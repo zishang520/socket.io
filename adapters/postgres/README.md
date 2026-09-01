@@ -52,6 +52,7 @@ func main() {
     if err != nil {
         panic(err)
     }
+    defer pgClient.Close()
 
     io := socket.NewServer(nil, nil)
     io.SetAdapter(&pgadapter.PostgresAdapterBuilder{
@@ -98,6 +99,7 @@ func main() {
     if err != nil {
         panic(err)
     }
+    defer pgClient.Close()
 
     emitter := pgemitter.NewEmitter(pgClient, nil)
     emitter.Emit("hello", "world")
@@ -141,6 +143,8 @@ The PostgreSQL adapter uses two mechanisms for inter-node communication:
 2. **Attachment Table** — Stores large payloads or binary data that exceed the NOTIFY limit
 
 Messages are serialized as JSON for direct NOTIFY, or MessagePack for attachment storage. This ensures compatibility with the Node.js `socket.io-postgres-adapter`, allowing mixed Go/Node.js deployments in the same cluster.
+
+Go adapter and emitter publish operations, incoming attachment fetches, and initial LISTEN and UNLISTEN updates use a 5-second PostgreSQL I/O deadline so an unavailable connection cannot block them indefinitely.
 
 ### Database Schema
 

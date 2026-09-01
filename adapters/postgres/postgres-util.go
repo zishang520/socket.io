@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"maps"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -140,7 +139,7 @@ func UnmarshalAdapterData(messageType adapter.MessageType, data any) any {
 	case *PacketData[*parser.Packet]:
 		return &adapter.BroadcastMessage{
 			Packet:    value.Packet,
-			Opts:      adapter.NormalizeOptions(value.Opts),
+			Opts:      value.Opts,
 			RequestId: value.RequestId,
 		}
 	case *PacketData[[]any]:
@@ -195,7 +194,7 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 		io.Reader
 		Bytes() []byte
 	}:
-		if isNil(data) {
+		if utils.IsNil(data) {
 			return data, false, false
 		}
 		payload := utils.NonNilSlice(value.Bytes())
@@ -204,7 +203,7 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 		}
 		return payload, true, true
 	case io.Reader:
-		if isNil(data) {
+		if utils.IsNil(data) {
 			return data, false, false
 		}
 		payload, _ := io.ReadAll(value)
@@ -258,37 +257,30 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 	return data, false, false
 }
 
-func isNil(value any) bool {
-	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
-}
-
 func unmarshalEventData(messageType adapter.MessageType, data *EventData) any {
 	switch messageType {
 	case adapter.SOCKETS_JOIN, adapter.SOCKETS_LEAVE:
 		return &adapter.SocketsJoinLeaveMessage{
-			Opts:  adapter.NormalizeOptions(data.Opts),
+			Opts:  data.Opts,
 			Rooms: utils.NonNilSlice(utils.FromPtr(data.Rooms)),
 		}
 	case adapter.DISCONNECT_SOCKETS:
 		return &adapter.DisconnectSocketsMessage{
-			Opts:  adapter.NormalizeOptions(data.Opts),
+			Opts:  data.Opts,
 			Close: utils.FromPtr(data.Close),
 		}
 	case adapter.FETCH_SOCKETS:
 		return &adapter.FetchSocketsMessage{
-			Opts:      adapter.NormalizeOptions(data.Opts),
+			Opts:      data.Opts,
 			RequestId: data.RequestId,
 		}
 	case adapter.FETCH_SOCKETS_RESPONSE:
+		if data.Sockets == nil {
+			return nil
+		}
 		return &adapter.FetchSocketsResponse{
 			RequestId: data.RequestId,
-			Sockets:   decodeSocketResponses(utils.FromPtr(data.Sockets)),
+			Sockets:   decodeSocketResponses(*data.Sockets),
 		}
 	case adapter.BROADCAST_CLIENT_COUNT:
 		return &adapter.BroadcastClientCount{

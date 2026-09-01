@@ -14,15 +14,6 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-var reservedEvents = types.NewSet(
-	"connect",
-	"connect_error",
-	"disconnect",
-	"disconnecting",
-	"newListener",
-	"removeListener",
-)
-
 // BroadcastOperator provides a fluent API for broadcasting events to Socket.IO clients via Valkey.
 type BroadcastOperator struct {
 	valkeyClient     *valkey.ValkeyClient
@@ -110,7 +101,7 @@ func (b *BroadcastOperator) Volatile() BroadcastOperatorInterface {
 
 // Emit broadcasts an event with the given name and arguments to all targeted clients.
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
-	if reservedEvents.Has(ev) {
+	if socket.SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 

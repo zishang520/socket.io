@@ -23,6 +23,9 @@ func TestNewMongoClient(t *testing.T) {
 		if mc.Context() != ctx {
 			t.Fatal("Context mismatch")
 		}
+		if count := mc.ListenerCount("error"); count != 1 {
+			t.Fatalf("default error listener count = %d, want 1", count)
+		}
 	})
 
 	t.Run("with nil context defaults to background", func(t *testing.T) {

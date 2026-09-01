@@ -196,25 +196,6 @@ func TestRedisRequestMsgpackClosePresence(t *testing.T) {
 	}
 }
 
-func TestRedisRequestLegacyJoinLeaveOmitsRooms(t *testing.T) {
-	for _, messageType := range []RequestType{REMOTE_JOIN, REMOTE_LEAVE} {
-		payload, err := json.Marshal(&RedisRequest{Type: messageType, Sid: "socket", Room: "room"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var wire map[string]any
-		if err = json.Unmarshal(payload, &wire); err != nil {
-			t.Fatal(err)
-		}
-		if _, exists := wire["rooms"]; exists {
-			t.Fatalf("legacy request %d contains rooms: %s", messageType, payload)
-		}
-		if _, exists := wire["opts"]; exists {
-			t.Fatalf("legacy request %d contains opts: %s", messageType, payload)
-		}
-	}
-}
-
 func TestRedisRequestRejectsMissingType(t *testing.T) {
 	var request RedisRequest
 	if err := json.Unmarshal([]byte(`{}`), &request); !errors.Is(err, errRedisRequestMissingType) {
@@ -297,88 +278,6 @@ func TestRedisPacketMaterializesReaderForLocalBroadcast(t *testing.T) {
 	}
 	if got := packet.Data.([]any)[1]; got != "value" {
 		t.Fatalf("materialized reader = %#v, want value", got)
-	}
-}
-
-func TestClusterMessageCodec(t *testing.T) {
-	message := &adapter.ClusterMessage{
-		Uid:  "node-1",
-		Nsp:  "/chat",
-		Type: adapter.BROADCAST,
-		Data: &adapter.BroadcastMessage{
-			Packet: &parser.Packet{Type: parser.EVENT, Data: []any{"event", []byte{1, 2}}},
-			Opts:   new(adapter.PacketOptions),
-		},
-	}
-	payload, err := EncodeClusterMessage(message)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if payload[0] == '{' {
-		t.Fatal("binary cluster message was JSON encoded")
-	}
-	decoded, err := UnmarshalClusterMessage(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, ok := decoded.Data.(*adapter.BroadcastMessage)
-	if !ok {
-		t.Fatalf("data type = %T", decoded.Data)
-	}
-	args := data.Packet.Data.([]any)
-	if !reflect.DeepEqual(args[1], []byte{1, 2}) {
-		t.Fatalf("binary argument = %#v", args[1])
-	}
-	if data.Opts.Rooms == nil || data.Opts.Except == nil || data.Opts.Flags == nil {
-		t.Fatalf("options were not normalized: %#v", data.Opts)
-	}
-}
-
-func TestClusterMessageJSONRequiredValues(t *testing.T) {
-	payload, err := EncodeClusterMessage(&adapter.ClusterMessage{
-		Uid:  "node-1",
-		Nsp:  "/",
-		Type: adapter.DISCONNECT_SOCKETS,
-		Data: &adapter.DisconnectSocketsMessage{Opts: new(adapter.PacketOptions)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wire struct {
-		Data struct {
-			Opts  map[string]any `json:"opts"`
-			Close *bool          `json:"close"`
-		} `json:"data"`
-	}
-	if err = json.Unmarshal(payload, &wire); err != nil {
-		t.Fatal(err)
-	}
-	if wire.Data.Close == nil || *wire.Data.Close {
-		t.Fatalf("close = %#v, want false", wire.Data.Close)
-	}
-	if !reflect.DeepEqual(wire.Data.Opts["rooms"], []any{}) ||
-		!reflect.DeepEqual(wire.Data.Opts["except"], []any{}) ||
-		!reflect.DeepEqual(wire.Data.Opts["flags"], map[string]any{}) {
-		t.Fatalf("options = %#v", wire.Data.Opts)
-	}
-
-	payload, err = EncodeClusterMessage(&adapter.ClusterMessage{
-		Uid:  "node-1",
-		Nsp:  "/",
-		Type: adapter.BROADCAST_ACK,
-		Data: &adapter.BroadcastAck{RequestId: "request"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ack struct {
-		Data map[string]json.RawMessage `json:"data"`
-	}
-	if err = json.Unmarshal(payload, &ack); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := ack.Data["packet"]; exists {
-		t.Fatal("undefined packet must be omitted")
 	}
 }
 

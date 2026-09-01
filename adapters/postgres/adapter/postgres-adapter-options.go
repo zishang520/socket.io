@@ -5,6 +5,7 @@ import (
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/postgres/v3/emitter"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // Default configuration values for PostgresAdapterOptions.
@@ -64,7 +65,7 @@ func DefaultPostgresAdapterOptions() *PostgresAdapterOptions {
 // Assign copies non-nil fields from another PostgresAdapterOptionsInterface.
 // This method is useful for merging user-provided options with defaults.
 func (s *PostgresAdapterOptions) Assign(data PostgresAdapterOptionsInterface) PostgresAdapterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return s
 	}
 

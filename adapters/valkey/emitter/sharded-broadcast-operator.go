@@ -100,7 +100,7 @@ func (b *ShardedBroadcastOperator) Volatile() BroadcastOperatorInterface {
 
 // Emit emits an event to all targeted clients using SPUBLISH.
 func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
-	if reservedEvents.Has(ev) {
+	if socket.SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 

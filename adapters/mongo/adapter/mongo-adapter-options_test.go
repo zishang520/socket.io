@@ -31,3 +31,12 @@ func TestMongoAdapterOptionsAssign(t *testing.T) {
 		t.Fatal("changeStreamOptions was not copied")
 	}
 }
+
+func TestMongoAdapterOptionsAssignIgnoresTypedNil(t *testing.T) {
+	target := DefaultMongoAdapterOptions()
+	var source *MongoAdapterOptions
+
+	if result := target.Assign(source); result != target {
+		t.Fatal("Assign() did not return the target options")
+	}
+}

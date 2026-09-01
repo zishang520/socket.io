@@ -4,6 +4,7 @@
 package adapter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -112,9 +113,11 @@ func (a *postgresAdapter) Construct(nsp socket.Namespace) {
 // header is sent via NOTIFY. This matches the Node.js adapter protocol exactly.
 // Returns an empty offset since PostgreSQL NOTIFY does not support ordered offsets.
 func (a *postgresAdapter) DoPublish(message *ClusterMessage) (offset adapter.Offset, err error) {
+	ctx, cancel := context.WithTimeout(a.postgresClient.Context(), postgres.DefaultOperationTimeout)
+	defer cancel()
 	defer func() {
 		if err != nil {
-			a.onError(err)
+			go a.onError(err)
 		}
 	}()
 
@@ -128,7 +131,7 @@ func (a *postgresAdapter) DoPublish(message *ClusterMessage) (offset adapter.Off
 
 	// Binary data always goes to attachment table (Node.js never sends binary via NOTIFY)
 	if binary {
-		return "", a.publishWithAttachment(&wireMessage)
+		return "", a.publishWithAttachment(ctx, &wireMessage)
 	}
 
 	payload, err := json.Marshal(&wireMessage)
@@ -138,10 +141,10 @@ func (a *postgresAdapter) DoPublish(message *ClusterMessage) (offset adapter.Off
 
 	// If JSON payload exceeds threshold, use attachment table
 	if len(payload) >= a.opts.PayloadThreshold() {
-		return "", a.publishWithAttachment(&wireMessage)
+		return "", a.publishWithAttachment(ctx, &wireMessage)
 	}
 
-	return "", a.postgresClient.Notify(a.postgresClient.Context(), a.channel, string(payload))
+	return "", a.postgresClient.Notify(ctx, a.channel, string(payload))
 }
 
 // DoPublishResponse publishes a response message to the cluster.
@@ -154,14 +157,14 @@ func (a *postgresAdapter) DoPublishResponse(_ adapter.ServerId, response *Cluste
 // publishWithAttachment msgpack-encodes the full ClusterMessage, stores it in the
 // attachment table, and sends a lightweight NOTIFY header with the attachment ID.
 // This matches the Node.js adapter protocol: attachments are always msgpack-encoded.
-func (a *postgresAdapter) publishWithAttachment(message *ClusterMessage) error {
+func (a *postgresAdapter) publishWithAttachment(ctx context.Context, message *ClusterMessage) error {
 	payload, err := utils.MsgPack().Encode(message)
 	if err != nil {
 		return fmt.Errorf("failed to msgpack-encode message: %w", err)
 	}
 
 	id, err := a.postgresClient.InsertAttachment(
-		a.postgresClient.Context(),
+		ctx,
 		a.opts.TableName(),
 		payload,
 	)
@@ -179,21 +182,40 @@ func (a *postgresAdapter) publishWithAttachment(message *ClusterMessage) error {
 		return err
 	}
 
-	return a.postgresClient.Notify(a.postgresClient.Context(), a.channel, string(notification))
+	return a.postgresClient.Notify(ctx, a.channel, string(notification))
 }
 
 // OnNotification processes a raw notification payload received from PostgreSQL LISTEN/NOTIFY.
 // It handles both direct JSON payloads and attachment references (msgpack-encoded in the DB).
 func (a *postgresAdapter) OnNotification(payload string) {
-	var notification NotificationMessage
-	if err := json.Unmarshal([]byte(payload), &notification); err != nil {
-		a.onError(fmt.Errorf("failed to parse notification: %w", err))
+	notification, err := parseNotification(payload)
+	if err != nil {
+		a.onError(err)
 		return
 	}
 
+	message, err := a.decodeReceivedNotification(a.postgresClient.Context(), notification)
+	if err != nil {
+		a.onError(err)
+		return
+	}
+	if message != nil && !a.isClosed.Load() {
+		a.OnMessage(message, "")
+	}
+}
+
+func parseNotification(payload string) (*NotificationMessage, error) {
+	var notification NotificationMessage
+	if err := json.Unmarshal([]byte(payload), &notification); err != nil {
+		return nil, fmt.Errorf("failed to parse notification: %w", err)
+	}
+	return &notification, nil
+}
+
+func (a *postgresAdapter) decodeReceivedNotification(ctx context.Context, notification *NotificationMessage) (*ClusterResponse, error) {
 	// Check if this is from ourselves
 	if notification.Uid == a.Uid() {
-		return
+		return nil, nil
 	}
 
 	var (
@@ -203,29 +225,28 @@ func (a *postgresAdapter) OnNotification(payload string) {
 	if notification.AttachmentId != "" {
 		attachmentId, parseErr := strconv.ParseInt(notification.AttachmentId, 10, 64)
 		if parseErr != nil {
-			a.onError(fmt.Errorf("invalid attachment ID %q: %w", notification.AttachmentId, parseErr))
-			return
+			return nil, fmt.Errorf("invalid attachment ID %q: %w", notification.AttachmentId, parseErr)
 		}
 
+		fetchCtx, cancel := context.WithTimeout(ctx, postgres.DefaultOperationTimeout)
+		defer cancel()
 		attachmentPayload, fetchErr := a.postgresClient.GetAttachment(
-			a.postgresClient.Context(),
+			fetchCtx,
 			a.opts.TableName(),
 			attachmentId,
 		)
 		if fetchErr != nil {
-			a.onError(fmt.Errorf("failed to fetch attachment %d: %w", attachmentId, fetchErr))
-			return
+			return nil, fmt.Errorf("failed to fetch attachment %d: %w", attachmentId, fetchErr)
 		}
 
 		// Attachment payloads are msgpack-encoded (matches Node.js: decode(result.rows[0].payload))
 		message, err = a.decodeMsgpack(attachmentPayload)
 	} else {
 		// Direct NOTIFY payload: decode as JSON.
-		message, err = a.decodeNotification(&notification)
+		message, err = a.decodeNotification(notification)
 	}
 	if err != nil {
-		a.onError(err)
-		return
+		return nil, err
 	}
 
 	nsp := a.Nsp().Name()
@@ -234,10 +255,10 @@ func (a *postgresAdapter) OnNotification(payload string) {
 		message.Nsp = nsp
 	}
 	if message.Nsp != nsp {
-		return
+		return nil, nil
 	}
 
-	a.OnMessage(message, "")
+	return message, nil
 }
 
 func (a *postgresAdapter) onError(err error) {
@@ -330,7 +351,7 @@ func (a *postgresAdapter) Close() {
 	if !a.isClosed.CompareAndSwap(false, true) {
 		return
 	}
-	defer a.ClusterAdapterWithHeartbeat.Close()
+	a.ClusterAdapterWithHeartbeat.Close()
 
 	if callback := a.cleanupFunc.Swap(nil); callback != nil {
 		(*callback)()

@@ -4,6 +4,7 @@ package emitter
 
 import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 const (
@@ -42,7 +43,7 @@ func DefaultEmitterOptions() *EmitterOptions {
 // Assign copies non-nil option values from another EmitterOptionsInterface.
 // This allows merging configuration from multiple sources.
 func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return o
 	}
 

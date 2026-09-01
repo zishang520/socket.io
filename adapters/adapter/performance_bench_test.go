@@ -45,7 +45,7 @@ func BenchmarkHeartbeatPublish(b *testing.B) {
 	cluster.cleanupTimer.Load().Stop()
 	b.Cleanup(cluster.Close)
 
-	message := &ClusterMessage{Type: BROADCAST}
+	message := newTestBroadcastClusterMessage()
 	cluster.Publish(message)
 	b.ReportAllocs()
 	for b.Loop() {

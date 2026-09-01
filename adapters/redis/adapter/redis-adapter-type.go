@@ -46,7 +46,7 @@ type (
 		// Rooms accumulates room information from responses.
 		Rooms *types.Set[socket.Room]
 
-		// Sockets accumulates socket IDs from legacy SOCKETS responses.
+		// Sockets accumulates socket IDs from SOCKETS responses.
 		Sockets *types.Set[socket.SocketId]
 
 		// Responses accumulates generic response data.

@@ -11,34 +11,6 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-func TestReservedEvents(t *testing.T) {
-	reserved := []string{
-		"connect",
-		"connect_error",
-		"disconnect",
-		"disconnecting",
-		"newListener",
-		"removeListener",
-	}
-
-	for _, ev := range reserved {
-		t.Run(ev, func(t *testing.T) {
-			if !reservedEvents.Has(ev) {
-				t.Errorf("Expected %q to be reserved", ev)
-			}
-		})
-	}
-
-	t.Run("non-reserved events", func(t *testing.T) {
-		nonReserved := []string{"message", "chat", "custom", ""}
-		for _, ev := range nonReserved {
-			if reservedEvents.Has(ev) {
-				t.Errorf("Expected %q to NOT be reserved", ev)
-			}
-		}
-	})
-}
-
 func TestBroadcastOptions(t *testing.T) {
 	t.Run("default values", func(t *testing.T) {
 		opts := &BroadcastOptions{}
@@ -349,9 +321,6 @@ func TestMakeEmitter(t *testing.T) {
 	}
 	if e.opts == nil {
 		t.Error("Expected non-nil opts")
-	}
-	if e.nsp != "/" {
-		t.Errorf("Expected '/', got %q", e.nsp)
 	}
 }
 

@@ -13,6 +13,15 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+func TestClusterAdapterOptionsAssignIgnoresTypedNil(t *testing.T) {
+	target := DefaultClusterAdapterOptions()
+	var source *ClusterAdapterOptions
+
+	if result := target.Assign(source); result != target {
+		t.Fatal("Assign() did not return the target options")
+	}
+}
+
 func newHeartbeatPublishTestAdapter(t *testing.T, publishErr error) *clusterAdapterWithHeartbeat {
 	t.Helper()
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
@@ -80,7 +89,7 @@ func TestHeartbeatRegisterRequestReconcilesRemovedNode(t *testing.T) {
 		MissingUids: missingUids,
 		Responses:   types.NewSlice[any](),
 	}
-	if cluster.registerRequest("request", request) {
+	if cluster.registerRequest("request", request, time.Hour, func() {}) {
 		t.Fatal("request remained pending for a removed node")
 	}
 	if calls.Load() != 1 || cluster.customRequests.Len() != 0 || request.MissingUids.Len() != 0 {
@@ -149,6 +158,109 @@ func TestHeartbeatDoesNotTrackEmptyUid(t *testing.T) {
 	}
 	if count, err := cluster.ServerCount(); err != nil || count != 1 {
 		t.Fatalf("ServerCount() = %d, %v; want 1, nil", count, err)
+	}
+}
+
+func TestHeartbeatCloseStopsPendingHeartbeatBeforeAdapterCloseCompletes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const heartbeatInterval = 10 * time.Millisecond
+
+		opts := DefaultClusterAdapterOptions()
+		opts.SetHeartbeatInterval(heartbeatInterval)
+		nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+		cluster := NewClusterAdapterWithHeartbeat(nsp, opts).(*clusterAdapterWithHeartbeat)
+		releaseClose := make(chan struct{})
+		published := make(chan MessageType, 4)
+		transport := &testClusterAdapter{
+			ClusterAdapter: cluster,
+			onPublish: func(message *ClusterMessage) {
+				published <- message.Type
+				if message.Type == ADAPTER_CLOSE {
+					<-releaseClose
+				}
+			},
+		}
+		cluster.Prototype(transport)
+
+		cluster.Publish(newTestBroadcastClusterMessage())
+		synctest.Wait()
+		if got := <-published; got != BROADCAST {
+			t.Fatalf("first published message = %d, want BROADCAST", got)
+		}
+
+		closeDone := make(chan struct{})
+		go func() {
+			cluster.Close()
+			close(closeDone)
+		}()
+		synctest.Wait()
+		if got := <-published; got != ADAPTER_CLOSE {
+			t.Fatalf("second published message = %d, want ADAPTER_CLOSE", got)
+		}
+		select {
+		case <-closeDone:
+		default:
+			t.Fatal("Close() waited for the ADAPTER_CLOSE transport publish")
+		}
+
+		time.Sleep(2 * heartbeatInterval)
+		synctest.Wait()
+		select {
+		case messageType := <-published:
+			t.Fatalf("published message %d while ADAPTER_CLOSE was blocked", messageType)
+		default:
+		}
+
+		close(releaseClose)
+		synctest.Wait()
+		select {
+		case <-closeDone:
+		default:
+			t.Fatal("Close() did not complete")
+		}
+		select {
+		case messageType := <-published:
+			t.Fatalf("published message %d after ADAPTER_CLOSE", messageType)
+		default:
+		}
+	})
+}
+
+func TestHeartbeatTransportCallbackCanCloseAdapter(t *testing.T) {
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
+	published := make(chan MessageType, 2)
+	transport := &testClusterAdapter{ClusterAdapter: cluster}
+	transport.onPublish = func(message *ClusterMessage) {
+		published <- message.Type
+		if message.Type != ADAPTER_CLOSE {
+			cluster.Close()
+		}
+	}
+	cluster.Prototype(transport)
+
+	result := make(chan error, 1)
+	go func() {
+		result <- cluster.ServerSideEmit([]any{"event"})
+	}()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("publish error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("transport callback deadlocked while closing the adapter")
+	}
+
+	for _, want := range []MessageType{SERVER_SIDE_EMIT, ADAPTER_CLOSE} {
+		select {
+		case got := <-published:
+			if got != want {
+				t.Fatalf("published message = %d, want %d", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for published message %d", want)
+		}
 	}
 }
 

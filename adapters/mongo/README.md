@@ -60,6 +60,10 @@ func main() {
         panic(err)
     }
 
+    mongoClient.On("error", func(args ...any) {
+        fmt.Println("MongoDB error:", args)
+    })
+
     io := socket.NewServer(nil, nil)
     io.SetAdapter(&mgadapter.MongoAdapterBuilder{
         Mongo: mongoClient,
@@ -80,6 +84,10 @@ func main() {
     <-exit
 }
 ```
+
+Background publish and Change Stream failures are emitted through the MongoDB
+client's `"error"` event. A warning is logged when no application error handler
+is registered.
 
 ### Emitter
 

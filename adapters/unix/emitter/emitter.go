@@ -8,79 +8,45 @@ package emitter
 import (
 	"strings"
 
-	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/unix/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
-	"github.com/zishang520/socket.io/v3/pkg/log"
 )
 
-const (
-	// emitterUID is the unique identifier for messages sent by the emitter.
-	emitterUID adapter.ServerId = "emitter"
-
-	// defaultNamespace is the default Socket.IO namespace.
-	defaultNamespace = "/"
-)
-
-// emitterLog is the logger for the emitter package.
-var emitterLog = log.NewLog("socket.io-unix-emitter")
+// defaultNamespace is the default Socket.IO namespace.
+const defaultNamespace = "/"
 
 // Emitter broadcasts messages to Socket.IO servers using Unix Domain Sockets.
 // It allows sending events to clients without running a full Socket.IO server.
 type Emitter struct {
 	unixClient       *unix.UnixClient
-	opts             *EmitterOptions
 	broadcastOptions *BroadcastOptions
-	nsp              string
 }
 
-// MakeEmitter creates a new Emitter with default options and the root namespace.
+// MakeEmitter creates an uninitialized Emitter for the root namespace.
 // Call Construct() to complete initialization before use.
 func MakeEmitter() *Emitter {
-	return &Emitter{
-		opts: DefaultEmitterOptions(),
-		nsp:  defaultNamespace,
-	}
+	return &Emitter{}
 }
 
-// NewEmitter creates and initializes a new Emitter with the given Unix client and options.
+// NewEmitter creates and initializes a new Emitter with the given Unix client.
 // An optional namespace can be provided; if not specified, the root namespace "/" is used.
-func NewEmitter(client *unix.UnixClient, opts *EmitterOptions, nsps ...string) *Emitter {
+func NewEmitter(client *unix.UnixClient, nsps ...string) *Emitter {
 	e := MakeEmitter()
-	e.Construct(client, opts, nsps...)
+	e.Construct(client, nsps...)
 	return e
 }
 
-// Construct initializes the Emitter with the given Unix client, options, and namespace.
-// This method sets up the broadcast options based on the configured key prefix.
-func (e *Emitter) Construct(client *unix.UnixClient, opts *EmitterOptions, nsps ...string) {
+// Construct initializes the Emitter with the given Unix client and namespace.
+func (e *Emitter) Construct(client *unix.UnixClient, nsps ...string) {
 	e.unixClient = client
 
-	// Merge provided options with defaults
-	if opts == nil {
-		opts = DefaultEmitterOptions()
-	}
-	e.opts.Assign(opts)
-
-	// Apply default key if not set
-	if e.opts.GetRawKey() == nil {
-		e.opts.SetKey(DefaultEmitterKey)
+	nsp := defaultNamespace
+	if len(nsps) > 0 {
+		nsp = nsps[0]
 	}
 
-	// Apply default socket path if not set
-	if e.opts.GetRawSocketPath() == nil {
-		e.opts.SetSocketPath(DefaultSocketPath)
-	}
-
-	// Set namespace if provided
-	if len(nsps) > 0 && len(nsps[0]) > 0 {
-		e.nsp = nsps[0]
-	}
-
-	// Configure broadcast options
 	e.broadcastOptions = &BroadcastOptions{
-		Nsp:        e.nsp,
-		SocketPath: e.opts.SocketPath(),
+		Nsp: nsp,
 	}
 }
 
@@ -90,7 +56,7 @@ func (e *Emitter) Of(nsp string) *Emitter {
 	if !strings.HasPrefix(nsp, "/") {
 		nsp = "/" + nsp
 	}
-	return NewEmitter(e.unixClient, e.opts, nsp)
+	return NewEmitter(e.unixClient, nsp)
 }
 
 // Emit broadcasts an event to all clients in the namespace.
@@ -107,7 +73,7 @@ func (e *Emitter) To(rooms ...socket.Room) BroadcastOperatorInterface {
 
 // In is an alias for To, targeting specific room(s) for event emission.
 func (e *Emitter) In(rooms ...socket.Room) BroadcastOperatorInterface {
-	return e.newBroadcastOperator().In(rooms...)
+	return e.To(rooms...)
 }
 
 // Except excludes specific room(s) from event emission.
@@ -122,8 +88,8 @@ func (e *Emitter) Volatile() BroadcastOperatorInterface {
 	return e.newBroadcastOperator().Volatile()
 }
 
-// Compress sets the compress flag for the broadcast.
-// When true, the message will be compressed before sending.
+// Compress sets the client-facing transport compression preference for the
+// broadcast. It does not compress the Unix cluster frame.
 func (e *Emitter) Compress(compress bool) BroadcastOperatorInterface {
 	return e.newBroadcastOperator().Compress(compress)
 }

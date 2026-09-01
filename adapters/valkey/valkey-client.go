@@ -12,6 +12,7 @@ import (
 
 	vk "github.com/valkey-io/valkey-go"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 var (
@@ -154,10 +155,10 @@ func NewValkeyClient(ctx context.Context, client vk.Client) (*ValkeyClient, erro
 //	subClient, _ := valkey.NewClient(valkey.ClientOption{InitAddress: []string{"replica:6380"}})
 //	valkeyClient, err := NewValkeyClientWithSub(context.Background(), pubClient, subClient)
 func NewValkeyClientWithSub(ctx context.Context, client, subClient vk.Client) (*ValkeyClient, error) {
-	if client == nil {
+	if utils.IsNil(client) {
 		return nil, ErrValkeyClientRequired
 	}
-	if subClient == nil {
+	if utils.IsNil(subClient) {
 		subClient = client
 	}
 	if ctx == nil {

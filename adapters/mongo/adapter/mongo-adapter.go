@@ -28,18 +28,11 @@ import (
 var (
 	mongoLog = log.NewLog("socket.io-mongo-adapter")
 
-	errAdapterClosed           = errors.New("adapter is closed")
 	errInvalidOffset           = errors.New("invalid offset")
 	errFetchSession            = errors.New("error while fetching session")
 	errSessionOrOffsetNotFound = errors.New("session or offset not found")
 	errFetchMissedPackets      = errors.New("error while fetching missed packets")
 )
-
-func onPublishError(err error) {
-	if err != nil {
-		mongoLog.Debug("something went wrong when inserting the MongoDB document: %s", err.Error())
-	}
-}
 
 // mongoAdapter follows the standalone protocol implemented by
 // @socket.io/mongo-adapter. Event type 13 represents a session on MongoDB,
@@ -61,6 +54,14 @@ type mongoAdapter struct {
 	isClosed        atomic.Bool
 
 	cleanupFunc atomic.Pointer[types.Callable]
+}
+
+func (a *mongoAdapter) onPublishError(err error) {
+	if err == nil {
+		return
+	}
+	mongoLog.Debug("something went wrong when inserting the MongoDB document: %s", err.Error())
+	a.mongoCollection.Emit("error", err)
 }
 
 // MakeMongoAdapter creates a new uninitialized MongoDB adapter.
@@ -86,6 +87,9 @@ func (a *mongoAdapter) SetMongo(mongoCollection *mongo.MongoClient) {
 }
 
 func (a *mongoAdapter) SetOpts(opts any) {
+	if utils.IsNil(opts) {
+		return
+	}
 	if options, ok := opts.(adapter.ClusterAdapterOptionsInterface); ok {
 		if options.GetRawHeartbeatInterval() != nil {
 			a.heartbeatInterval = options.HeartbeatInterval()
@@ -161,12 +165,12 @@ func (a *mongoAdapter) Uid() adapter.ServerId {
 func (a *mongoAdapter) Publish(message *ClusterMessage) {
 	document, err := a.prepareDocument(message)
 	if err != nil {
-		onPublishError(err)
+		a.onPublishError(err)
 		return
 	}
 	go func() {
 		_, err := a.insertDocument(document)
-		onPublishError(err)
+		a.onPublishError(err)
 	}()
 }
 
@@ -188,7 +192,7 @@ func (a *mongoAdapter) publish(document *ClusterMessage) (adapter.Offset, error)
 
 func (a *mongoAdapter) prepareDocument(document *ClusterMessage) (*mongo.AdapterEvent, error) {
 	if a.isClosed.Load() {
-		return nil, errAdapterClosed
+		return nil, adapter.ErrAdapterClosed
 	}
 	document.Uid = a.uid
 	document.Nsp = a.Nsp().Name()
@@ -243,6 +247,9 @@ func (a *mongoAdapter) OnEvent(document *mongo.AdapterEvent) {
 	if document.Uid != "" && document.Uid != mongo.EMITTER_UID {
 		a.nodesMap.Store(document.Uid, time.Now().UnixMilli())
 	}
+	if document.Type == mongo.HEARTBEAT || document.Type == mongo.SESSION {
+		return
+	}
 	message := &ClusterMessage{
 		Uid:  document.Uid,
 		Nsp:  document.Nsp,
@@ -252,6 +259,7 @@ func (a *mongoAdapter) OnEvent(document *mongo.AdapterEvent) {
 		data, err := mongo.UnmarshalAdapterData(document.Type, document.Data)
 		if err != nil {
 			mongoLog.Debug("failed to decode data for type %d: %s", document.Type, err.Error())
+			a.mongoCollection.Emit("error", err)
 			return
 		}
 		message.Data = data
@@ -267,11 +275,9 @@ func (a *mongoAdapter) OnMessage(message *ClusterMessage, offset adapter.Offset)
 	switch message.Type {
 	case mongo.INITIAL_HEARTBEAT:
 		a.Publish(&ClusterMessage{Type: mongo.HEARTBEAT})
-	case mongo.HEARTBEAT, mongo.SESSION:
-		return
 	case mongo.BROADCAST:
 		data, ok := message.Data.(*BroadcastMessage)
-		if !ok {
+		if !ok || data == nil || data.Packet == nil || !data.Opts.IsValid() {
 			return
 		}
 		opts := adapter.DecodeOptions(data.Opts)
@@ -304,20 +310,26 @@ func (a *mongoAdapter) OnMessage(message *ClusterMessage, offset adapter.Offset)
 			},
 		)
 	case mongo.SOCKETS_JOIN:
-		if data, ok := message.Data.(*SocketsJoinLeaveMessage); ok {
-			a.Adapter.AddSockets(adapter.DecodeOptions(data.Opts), data.Rooms)
+		data, ok := message.Data.(*SocketsJoinLeaveMessage)
+		if !ok || data == nil || !data.Opts.IsValid() {
+			return
 		}
+		a.Adapter.AddSockets(adapter.DecodeOptions(data.Opts), data.Rooms)
 	case mongo.SOCKETS_LEAVE:
-		if data, ok := message.Data.(*SocketsJoinLeaveMessage); ok {
-			a.Adapter.DelSockets(adapter.DecodeOptions(data.Opts), data.Rooms)
+		data, ok := message.Data.(*SocketsJoinLeaveMessage)
+		if !ok || data == nil || !data.Opts.IsValid() {
+			return
 		}
+		a.Adapter.DelSockets(adapter.DecodeOptions(data.Opts), data.Rooms)
 	case mongo.DISCONNECT_SOCKETS:
-		if data, ok := message.Data.(*DisconnectSocketsMessage); ok {
-			a.Adapter.DisconnectSockets(adapter.DecodeOptions(data.Opts), data.Close)
+		data, ok := message.Data.(*DisconnectSocketsMessage)
+		if !ok || data == nil || !data.Opts.IsValid() {
+			return
 		}
+		a.Adapter.DisconnectSockets(adapter.DecodeOptions(data.Opts), data.Close)
 	case mongo.FETCH_SOCKETS:
 		data, ok := message.Data.(*FetchSocketsMessage)
-		if !ok {
+		if !ok || data == nil || !data.Opts.IsValid() {
 			return
 		}
 		a.Adapter.FetchSockets(adapter.DecodeOptions(data.Opts))(func(localSockets []socket.SocketDetails, err error) {
@@ -472,7 +484,7 @@ func (a *mongoAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOp
 			},
 		})
 		if err != nil {
-			mongoLog.Debug("[%s] error while inserting document: %s", a.uid, err.Error())
+			a.onPublishError(err)
 			return
 		}
 		a.addOffsetIfNecessary(packet, opts, offset)

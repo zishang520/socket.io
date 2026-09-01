@@ -16,6 +16,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
@@ -23,6 +24,8 @@ import (
 
 // redisLog is the logger for the Redis adapter.
 var redisLog = log.NewLog("socket.io-redis")
+
+var errRedisPublishPanicked = errors.New("redis publish panicked")
 
 const (
 	// Default configuration values.
@@ -61,6 +64,9 @@ type (
 		// Internal state management.
 		requests              types.Map[string, *RedisRequest]
 		ackRequests           types.Map[string, *AckRequest]
+		publisher             *queue.Queue
+		responses             *queue.Queue
+		queueMu               sync.Mutex
 		pubSub                *redisPubSub
 		broadcastSubscription *redisSubscription
 		requestSubscription   *redisSubscription
@@ -82,8 +88,10 @@ func (rb *RedisAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 // Call Construct() to complete initialization.
 func MakeRedisAdapter() RedisAdapter {
 	c := &redisAdapter{
-		Adapter: socket.MakeAdapter(),
-		opts:    DefaultRedisAdapterOptions(),
+		Adapter:   socket.MakeAdapter(),
+		opts:      DefaultRedisAdapterOptions(),
+		publisher: queue.New(),
+		responses: queue.New(),
 	}
 	c.Prototype(c)
 
@@ -241,6 +249,10 @@ func (r *redisAdapter) onMessage(msg []byte, channel string) {
 		redisLog.Debug("ignore different namespace")
 		return
 	}
+	if !packet.Opts.IsValid() {
+		redisLog.Debug("ignoring malformed broadcast options")
+		return
+	}
 	r.Adapter.Broadcast(packet.Packet, adapter.DecodeOptions(packet.Opts))
 }
 
@@ -326,49 +338,37 @@ func (r *redisAdapter) handleAllRoomsRequest(request *Request) {
 
 // handleRemoteJoinRequest handles REMOTE_JOIN request type.
 func (r *redisAdapter) handleRemoteJoinRequest(request *Request) {
-	if request.Opts != nil {
-		r.Adapter.AddSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
+	if !request.Opts.IsValid() {
+		redisLog.Debug("ignoring malformed REMOTE_JOIN request")
 		return
 	}
-	client, ok := r.Nsp().Sockets().Load(request.Sid)
-	if !ok {
-		return
-	}
-	client.Join(request.Room)
-	r.publishJSONResponse(request, &Response{RequestId: request.RequestId})
+	r.Adapter.AddSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
 }
 
 // handleRemoteLeaveRequest handles REMOTE_LEAVE request type.
 func (r *redisAdapter) handleRemoteLeaveRequest(request *Request) {
-	if request.Opts != nil {
-		r.Adapter.DelSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
+	if !request.Opts.IsValid() {
+		redisLog.Debug("ignoring malformed REMOTE_LEAVE request")
 		return
 	}
-	client, ok := r.Nsp().Sockets().Load(request.Sid)
-	if !ok {
-		return
-	}
-	client.Leave(request.Room)
-	r.publishJSONResponse(request, &Response{RequestId: request.RequestId})
+	r.Adapter.DelSockets(adapter.DecodeOptions(request.Opts), request.Rooms)
 }
 
 // handleRemoteDisconnectRequest handles REMOTE_DISCONNECT request type.
 func (r *redisAdapter) handleRemoteDisconnectRequest(request *Request) {
-	close := utils.FromPtr(request.Close)
-	if request.Opts != nil {
-		r.Adapter.DisconnectSockets(adapter.DecodeOptions(request.Opts), close)
+	if !request.Opts.IsValid() {
+		redisLog.Debug("ignoring malformed REMOTE_DISCONNECT request")
 		return
 	}
-	client, ok := r.Nsp().Sockets().Load(request.Sid)
-	if !ok {
-		return
-	}
-	client.Disconnect(close)
-	r.publishJSONResponse(request, &Response{RequestId: request.RequestId})
+	r.Adapter.DisconnectSockets(adapter.DecodeOptions(request.Opts), utils.FromPtr(request.Close))
 }
 
 // handleRemoteFetchRequest handles REMOTE_FETCH request type.
 func (r *redisAdapter) handleRemoteFetchRequest(request *Request) {
+	if !request.Opts.IsValid() {
+		redisLog.Debug("ignoring malformed REMOTE_FETCH request")
+		return
+	}
 	r.Adapter.FetchSockets(adapter.DecodeOptions(request.Opts))(func(localSockets []socket.SocketDetails, err error) {
 		if err != nil {
 			redisLog.Debug("REMOTE_FETCH Adapter.FetchSockets error: %s", err.Error())
@@ -405,15 +405,14 @@ func (r *redisAdapter) handleServerSideEmitRequest(request *Request) {
 			redisLog.Debug("Error marshaling SERVER_SIDE_EMIT response for RequestId %s: %s", request.RequestId, err.Error())
 			return
 		}
-		_ = r.publish(r.responseChannel, response)
+		r.publishResponseMessage(r.responseChannel, response)
 	}
 	r.Nsp().OnServerSideEmit(slices.AppendCopy(request.Data, callback))
 }
 
 // handleBroadcastRequest handles BROADCAST request type.
 func (r *redisAdapter) handleBroadcastRequest(request *Request) {
-	if request.Uid == "" || request.RequestId == "" || request.Packet == nil || request.Opts == nil ||
-		request.Opts.Rooms == nil || request.Opts.Except == nil {
+	if request.Uid == "" || request.RequestId == "" || request.Packet == nil || !request.Opts.IsValid() {
 		redisLog.Debug("ignoring malformed BROADCAST request")
 		return
 	}
@@ -445,11 +444,44 @@ func (r *redisAdapter) handleBroadcastRequest(request *Request) {
 }
 
 func (r *redisAdapter) publish(channel string, message []byte) error {
-	err := r.redisClient.Client().Publish(r.ctx, channel, message).Err()
-	if err != nil {
-		r.redisClient.Emit("error", err)
+	result := make(chan error, 1)
+	if err := r.enqueuePublish(r.publisher, channel, message, result); err != nil {
+		return err
+	}
+	err, ok := <-result
+	if !ok {
+		return errRedisPublishPanicked
 	}
 	return err
+}
+
+func (r *redisAdapter) publishAsync(channel string, message []byte) {
+	_ = r.enqueuePublish(r.publisher, channel, message, nil)
+}
+
+func (r *redisAdapter) enqueuePublish(target *queue.Queue, channel string, message []byte, result chan<- error) error {
+	r.queueMu.Lock()
+	defer r.queueMu.Unlock()
+	if target.IsShuttingDown() {
+		return adapter.ErrAdapterClosed
+	}
+	target.Enqueue(func() {
+		if result != nil {
+			defer close(result)
+		}
+		err := r.redisClient.Client().Publish(r.redisClient.Context(), channel, message).Err()
+		if err != nil {
+			go r.redisClient.Emit("error", err)
+		}
+		if result != nil {
+			result <- err
+		}
+	})
+	return nil
+}
+
+func (r *redisAdapter) publishResponseMessage(channel string, message []byte) {
+	_ = r.enqueuePublish(r.responses, channel, message, nil)
 }
 
 func (r *redisAdapter) publishJSONResponse(request *Request, response *Response) {
@@ -468,7 +500,7 @@ func (r *redisAdapter) publishResponse(request *Request, response []byte) {
 	}
 
 	redisLog.Debug("publishing response to channel %s", channel)
-	_ = r.publish(channel, response)
+	r.publishResponseMessage(channel, response)
 }
 
 // onResponse handles responses from other nodes.
@@ -522,20 +554,15 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 	switch request.Type {
 	case redis.SOCKETS:
 		var socketIds []socket.SocketId
-		if response.Sockets != nil {
-			socketsPayload, ok := response.Sockets.(json.RawMessage)
-			if !ok {
-				redisLog.Debug("ignoring malformed SOCKETS response")
-				return
-			}
-			if err := json.Unmarshal(socketsPayload, &socketIds); err != nil || socketIds == nil {
-				redisLog.Debug("ignoring malformed SOCKETS response")
-				return
-			}
+		socketsPayload, ok := response.Sockets.(json.RawMessage)
+		if !ok {
+			redisLog.Debug("ignoring malformed SOCKETS response")
+			return
 		}
-		// Go adapters before the wire-format refactor omitted empty slices due to
-		// omitempty. Treat an absent field as an empty legacy response so rolling
-		// upgrades do not time out; an explicit null or another type is malformed.
+		if err := json.Unmarshal(socketsPayload, &socketIds); err != nil || socketIds == nil {
+			redisLog.Debug("ignoring malformed SOCKETS response")
+			return
+		}
 		request.Sockets.Add(socketIds...)
 		msgCount := request.MsgCount.Add(1)
 		if msgCount != request.NumSub || !r.finishRequest(requestId, request) {
@@ -547,19 +574,15 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 		request.Resolve(types.NewSlice(responses...))
 	case redis.REMOTE_FETCH:
 		var sockets []adapter.SocketResponse
-		if response.Sockets != nil {
-			socketsPayload, ok := response.Sockets.(json.RawMessage)
-			if !ok {
-				redisLog.Debug("ignoring malformed REMOTE_FETCH response")
-				return
-			}
-			if err := json.Unmarshal(socketsPayload, &sockets); err != nil || sockets == nil {
-				redisLog.Debug("ignoring malformed REMOTE_FETCH response")
-				return
-			}
+		socketsPayload, ok := response.Sockets.(json.RawMessage)
+		if !ok {
+			redisLog.Debug("ignoring malformed REMOTE_FETCH response")
+			return
 		}
-		// Older Go peers omitted an empty sockets field. Missing therefore means
-		// an empty legacy response, while explicit null and invalid types do not.
+		if err := json.Unmarshal(socketsPayload, &sockets); err != nil || sockets == nil {
+			redisLog.Debug("ignoring malformed REMOTE_FETCH response")
+			return
+		}
 		if len(sockets) > 0 {
 			request.Responses.Push(adapter.SocketResponsesToDetailsAny(sockets)...)
 		}
@@ -568,6 +591,10 @@ func (r *redisAdapter) processResponse(request *RedisRequest, response *Response
 			request.Resolve(request.Responses)
 		}
 	case redis.ALL_ROOMS:
+		if response.Rooms == nil {
+			redisLog.Debug("ignoring malformed ALL_ROOMS response")
+			return
+		}
 		request.Rooms.Add(response.Rooms...)
 		msgCount := request.MsgCount.Add(1)
 		if msgCount == request.NumSub && r.finishRequest(requestId, request) {
@@ -611,7 +638,7 @@ func (r *redisAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOp
 			channel = channel + string(packetOpts.Rooms[0]) + "#"
 		}
 		redisLog.Debug("publishing message to channel %s", channel)
-		_ = r.publish(channel, msg)
+		r.publishAsync(channel, msg)
 	}
 	r.Adapter.Broadcast(packet, opts)
 }
@@ -645,7 +672,7 @@ func (r *redisAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Broa
 		}
 		r.registerAckRequest(requestId, ackRequest, timeout)
 
-		_ = r.publish(r.requestChannel, message)
+		r.publishAsync(r.requestChannel, message)
 	}
 	r.Adapter.BroadcastWithAck(packet, opts, clientCountCallback, ack)
 }
@@ -755,7 +782,7 @@ func (r *redisAdapter) AddSockets(opts *socket.BroadcastOptions, rooms []socket.
 		if err != nil {
 			redisLog.Debug("Error marshaling AddSockets request: %s", err.Error())
 		} else {
-			_ = r.publish(r.requestChannel, message)
+			r.publishAsync(r.requestChannel, message)
 		}
 	}
 	r.Adapter.AddSockets(opts, rooms)
@@ -768,7 +795,7 @@ func (r *redisAdapter) DelSockets(opts *socket.BroadcastOptions, rooms []socket.
 		if err != nil {
 			redisLog.Debug("Error marshaling DelSockets request: %s", err.Error())
 		} else {
-			_ = r.publish(r.requestChannel, message)
+			r.publishAsync(r.requestChannel, message)
 		}
 	}
 	r.Adapter.DelSockets(opts, rooms)
@@ -781,7 +808,7 @@ func (r *redisAdapter) DisconnectSockets(opts *socket.BroadcastOptions, close bo
 		if err != nil {
 			redisLog.Debug("Error marshaling DisconnectSockets request: %s", err.Error())
 		} else {
-			_ = r.publish(r.requestChannel, message)
+			r.publishAsync(r.requestChannel, message)
 		}
 	}
 	r.Adapter.DisconnectSockets(opts, close)
@@ -802,7 +829,7 @@ func (r *redisAdapter) ServerSideEmit(packet []any) error {
 		return fmt.Errorf("failed to marshal ServerSideEmit request: %w", err)
 	}
 
-	return r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err()
+	return r.publish(r.requestChannel, message)
 }
 
 // serverSideEmitWithAck emits a packet and waits for acknowledgements from other servers.
@@ -838,7 +865,7 @@ func (r *redisAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 		ack(request.Responses.All(), fmt.Errorf("timeout reached: only %d responses received out of %d", request.Responses.Len(), request.NumSub))
 	})
 
-	if err := r.redisClient.Client().Publish(r.ctx, r.requestChannel, message).Err(); err != nil && r.finishRequest(requestId, request) {
+	if err := r.publish(r.requestChannel, message); err != nil && r.finishRequest(requestId, request) {
 		return err
 	}
 	return nil
@@ -856,6 +883,10 @@ func (r *redisAdapter) Close() {
 }
 
 func (r *redisAdapter) close() {
+	r.queueMu.Lock()
+	r.responses.TryClose()
+	r.publisher.TryClose()
+	r.queueMu.Unlock()
 	if r.cancel != nil {
 		r.cancel()
 	}

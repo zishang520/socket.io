@@ -441,8 +441,8 @@ func TestRedisStreamsAdapterCloseStopsOwnedRedisOperations(t *testing.T) {
 			Rooms: []socket.Room{"room"},
 		},
 	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("durable publish error = %v, want context.Canceled", err)
+	if !errors.Is(err, adapter.ErrAdapterClosed) {
+		t.Fatalf("durable publish error = %v, want ErrAdapterClosed", err)
 	}
 	if length, err := client.XLen(t.Context(), current.streamName).Result(); err != nil || length != 0 {
 		t.Fatalf("stream length/error after Close = %d/%v, want 0/nil", length, err)
@@ -1894,12 +1894,12 @@ func TestDecodePubSubMessage(t *testing.T) {
 			Opts:      &adapter.PacketOptions{},
 		},
 	}
-	payload, err := rediswire.EncodeClusterMessageMsgpack(message)
+	payload, err := adapter.EncodeClusterMessageMsgpack(message)
 	if err != nil {
 		t.Fatalf("Failed to encode message: %v", err)
 	}
 
-	decoded, err := rediswire.UnmarshalClusterMessage(payload)
+	decoded, err := adapter.DecodeClusterMessage(payload)
 	if err != nil {
 		t.Fatalf("Failed to decode message: %v", err)
 	}

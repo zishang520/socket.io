@@ -31,8 +31,6 @@ type (
 		RequestId string                 `json:"requestId,omitempty" msgpack:"requestId,omitempty"`
 		Rooms     []socket.Room          `json:"rooms,omitzero" msgpack:"rooms,omitempty"`
 		Opts      *adapter.PacketOptions `json:"opts,omitempty" msgpack:"opts,omitempty"`
-		Sid       socket.SocketId        `json:"sid,omitempty" msgpack:"sid,omitempty"`
-		Room      socket.Room            `json:"room,omitempty" msgpack:"room,omitempty"`
 		Close     *bool                  `json:"close,omitempty" msgpack:"close,omitempty"`
 		Uid       adapter.ServerId       `json:"uid,omitempty" msgpack:"uid,omitempty"`
 		Data      []any                  `json:"data,omitzero" msgpack:"data,omitempty"`

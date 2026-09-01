@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -36,6 +37,28 @@ type fetchSocketsErrorAdapter struct {
 	calls atomic.Int64
 }
 
+type scopedOperationAdapter struct {
+	socket.Adapter
+	calls atomic.Int64
+}
+
+type ackLifecycleAdapter struct {
+	socket.Adapter
+	broadcasts atomic.Int64
+}
+
+type blockingPublishAdapter struct {
+	ClusterAdapter
+	started chan *ClusterMessage
+	release <-chan struct{}
+}
+
+type countedCloseReader struct {
+	reader *bytes.Reader
+	reads  atomic.Int64
+	closes atomic.Int64
+}
+
 type prototypeClusterAdapter struct {
 	ClusterAdapter
 	count            int64
@@ -43,10 +66,14 @@ type prototypeClusterAdapter struct {
 	serverCountCalls atomic.Int64
 	publishCount     atomic.Int64
 	responseCount    atomic.Int64
+	published        chan struct{}
 }
 
 func (a *prototypeClusterAdapter) Publish(*ClusterMessage) {
 	a.publishCount.Add(1)
+	if a.published != nil {
+		a.published <- struct{}{}
+	}
 }
 
 func (a *prototypeClusterAdapter) OnResponse(*ClusterResponse) {
@@ -65,6 +92,23 @@ func (a *fetchSocketsErrorAdapter) FetchSockets(*socket.BroadcastOptions) func(f
 	}
 }
 
+func (a *scopedOperationAdapter) FetchSockets(*socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
+	a.calls.Add(1)
+	return func(func([]socket.SocketDetails, error)) {}
+}
+
+func (a *scopedOperationAdapter) AddSockets(*socket.BroadcastOptions, []socket.Room) {
+	a.calls.Add(1)
+}
+
+func (a *scopedOperationAdapter) DelSockets(*socket.BroadcastOptions, []socket.Room) {
+	a.calls.Add(1)
+}
+
+func (a *scopedOperationAdapter) DisconnectSockets(*socket.BroadcastOptions, bool) {
+	a.calls.Add(1)
+}
+
 func (a *ackAdapter) BroadcastWithAck(_ *parser.Packet, _ *socket.BroadcastOptions, clientCount func(uint64), ack socket.Ack) {
 	a.broadcastsWithAck.Add(1)
 	clientCount(1)
@@ -75,11 +119,46 @@ func (a *ackAdapter) Broadcast(*parser.Packet, *socket.BroadcastOptions) {
 	a.broadcasts.Add(1)
 }
 
+func (a *ackLifecycleAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.BroadcastOptions, clientCount func(uint64), ack socket.Ack) {
+	a.broadcasts.Add(1)
+	a.Adapter.BroadcastWithAck(packet, opts, clientCount, ack)
+}
+
+func (a *blockingPublishAdapter) DoPublish(message *ClusterMessage) (Offset, error) {
+	a.started <- message
+	<-a.release
+	return "", nil
+}
+
+func (r *countedCloseReader) Read(data []byte) (int, error) {
+	r.reads.Add(1)
+	return r.reader.Read(data)
+}
+
+func (r *countedCloseReader) Close() error {
+	r.closes.Add(1)
+	return nil
+}
+
+func newTestBroadcastClusterMessage() *ClusterMessage {
+	return &ClusterMessage{
+		Type: BROADCAST,
+		Data: &BroadcastMessage{
+			Packet: &parser.Packet{Type: parser.EVENT, Data: []any{"event"}},
+			Opts:   EncodeOptions(nil),
+		},
+	}
+}
+
 func TestClusterAdapterUsesPrototypeDispatch(t *testing.T) {
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
 	cluster := MakeClusterAdapter().(*clusterAdapter)
 	cluster.Adapter = socket.NewAdapter(nsp)
-	prototype := &prototypeClusterAdapter{ClusterAdapter: cluster, count: 1}
+	prototype := &prototypeClusterAdapter{
+		ClusterAdapter: cluster,
+		count:          1,
+		published:      make(chan struct{}, 1),
+	}
 	cluster.Prototype(prototype)
 	cluster.Construct(nsp)
 
@@ -98,7 +177,9 @@ func TestClusterAdapterUsesPrototypeDispatch(t *testing.T) {
 		func(uint64) {},
 		func([]any, error) {},
 	)
-	if prototype.publishCount.Load() != 1 {
+	select {
+	case <-prototype.published:
+	case <-time.After(time.Second):
 		t.Fatal("BroadcastWithAck() did not publish through the prototype")
 	}
 }
@@ -162,6 +243,41 @@ func TestClusterRejectsMalformedBroadcastMessages(t *testing.T) {
 			}
 			if got := local.broadcastsWithAck.Load(); got != 0 {
 				t.Fatalf("local BroadcastWithAck() calls = %d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestClusterRejectsMissingOptionsForScopedMessages(t *testing.T) {
+	tests := []struct {
+		name        string
+		messageType MessageType
+		data        any
+	}{
+		{name: "join", messageType: SOCKETS_JOIN, data: new(SocketsJoinLeaveMessage)},
+		{name: "leave", messageType: SOCKETS_LEAVE, data: new(SocketsJoinLeaveMessage)},
+		{name: "disconnect", messageType: DISCONNECT_SOCKETS, data: new(DisconnectSocketsMessage)},
+		{name: "fetch", messageType: FETCH_SOCKETS, data: new(FetchSocketsMessage)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+			local := &scopedOperationAdapter{Adapter: socket.NewAdapter(nsp)}
+			cluster := MakeClusterAdapter().(*clusterAdapter)
+			cluster.Adapter = local
+			cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
+			cluster.Construct(nsp)
+
+			cluster.OnMessage(&ClusterMessage{
+				Uid:  "remote",
+				Nsp:  nsp.Name(),
+				Type: test.messageType,
+				Data: test.data,
+			}, "")
+
+			if got := local.calls.Load(); got != 0 {
+				t.Fatalf("local operation calls = %d, want 0", got)
 			}
 		})
 	}
@@ -461,6 +577,7 @@ type testClusterAdapter struct {
 	response   atomic.Pointer[ClusterResponse]
 	publishErr error
 	onPublish  func(*ClusterMessage)
+	onResponse func(*ClusterResponse)
 }
 
 func (a *testClusterAdapter) DoPublish(message *ClusterMessage) (Offset, error) {
@@ -473,6 +590,9 @@ func (a *testClusterAdapter) DoPublish(message *ClusterMessage) (Offset, error) 
 
 func (a *testClusterAdapter) DoPublishResponse(_ ServerId, response *ClusterResponse) error {
 	a.response.Store(response)
+	if a.onResponse != nil {
+		a.onResponse(response)
+	}
 	return nil
 }
 
@@ -587,6 +707,415 @@ func TestClusterFetchSocketsReturnsPublishError(t *testing.T) {
 	}
 }
 
+func TestClusterBroadcastAckDoesNotWaitForPublish(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+		local := &ackLifecycleAdapter{Adapter: socket.NewAdapter(nsp)}
+		cluster := MakeClusterAdapter().(*clusterAdapter)
+		cluster.Adapter = local
+
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releasePublish := func() {
+			releaseOnce.Do(func() { close(release) })
+		}
+		defer releasePublish()
+
+		transport := &blockingPublishAdapter{
+			ClusterAdapter: cluster,
+			started:        make(chan *ClusterMessage, 1),
+			release:        release,
+		}
+		cluster.Prototype(transport)
+		cluster.Construct(nsp)
+
+		timeout := int64(10)
+		packet := &parser.Packet{Type: parser.EVENT, Data: []any{"event"}}
+		returned := make(chan struct{})
+		var remoteAcks atomic.Int64
+		go func() {
+			cluster.BroadcastWithAck(
+				packet,
+				&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: &timeout}},
+				func(uint64) {},
+				func([]any, error) { remoteAcks.Add(1) },
+			)
+			close(returned)
+		}()
+
+		synctest.Wait()
+		select {
+		case <-returned:
+		default:
+			t.Fatal("BroadcastWithAck() waited for the transport publish")
+		}
+		if local.broadcasts.Load() != 1 || packet.Id == nil {
+			t.Fatal("local BroadcastWithAck() did not run immediately")
+		}
+
+		var published *ClusterMessage
+		select {
+		case published = <-transport.started:
+		default:
+			t.Fatal("transport publish was not started")
+		}
+		requestId := *published.Data.(*BroadcastMessage).RequestId
+		if cluster.ackRequests.Len() != 1 {
+			t.Fatal("acknowledgement request was not stored")
+		}
+
+		time.Sleep(10 * time.Millisecond)
+		synctest.Wait()
+		if cluster.ackRequests.Len() != 0 {
+			t.Fatal("acknowledgement request outlived its timeout while publish was blocked")
+		}
+
+		cluster.OnResponse(&ClusterResponse{
+			Type: BROADCAST_ACK,
+			Data: &BroadcastAck{RequestId: requestId, Packet: "late"},
+		})
+		if remoteAcks.Load() != 0 {
+			t.Fatal("late acknowledgement was delivered after request cleanup")
+		}
+
+		releasePublish()
+		synctest.Wait()
+	})
+}
+
+func TestClusterBroadcastAckPreservesPublishOrder(t *testing.T) {
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	cluster.Adapter = &ackLifecycleAdapter{Adapter: socket.NewAdapter(nsp)}
+	release := make(chan struct{})
+	transport := &blockingPublishAdapter{
+		ClusterAdapter: cluster,
+		started:        make(chan *ClusterMessage, 2),
+		release:        release,
+	}
+	cluster.Prototype(transport)
+	cluster.Construct(nsp)
+	defer cluster.Close()
+
+	timeout := int64(10_000)
+	cluster.BroadcastWithAck(
+		&parser.Packet{Type: parser.EVENT, Data: []any{"first"}},
+		&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: &timeout}},
+		func(uint64) {},
+		func([]any, error) {},
+	)
+
+	first := <-transport.started
+	firstPacket := first.Data.(*BroadcastMessage).Packet.Data.([]any)
+	if firstPacket[0] != "first" {
+		t.Fatalf("first published packet = %#v", firstPacket)
+	}
+
+	secondDone := make(chan struct{})
+	secondStarted := make(chan struct{})
+	go func() {
+		close(secondStarted)
+		cluster.Broadcast(
+			&parser.Packet{Type: parser.EVENT, Data: []any{"second"}},
+			&socket.BroadcastOptions{},
+		)
+		close(secondDone)
+	}()
+	<-secondStarted
+	select {
+	case message := <-transport.started:
+		t.Fatalf("second publish overtook the blocked first publish: %#v", message)
+	default:
+	}
+
+	close(release)
+	second := <-transport.started
+	secondPacket := second.Data.(*BroadcastMessage).Packet.Data.([]any)
+	if secondPacket[0] != "second" {
+		t.Fatalf("second published packet = %#v", secondPacket)
+	}
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("second broadcast did not finish")
+	}
+}
+
+func TestClusterPublishResponseBypassesBlockedPublishAndCloseIsFinal(t *testing.T) {
+	type publishedEvent struct {
+		kind        string
+		messageType MessageType
+	}
+
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	release := make(chan struct{})
+	responseStarted := make(chan struct{})
+	releaseResponse := make(chan struct{})
+	published := make(chan publishedEvent, 4)
+	transport := &testClusterAdapter{
+		ClusterAdapter: cluster,
+		onPublish: func(message *ClusterMessage) {
+			published <- publishedEvent{kind: "message", messageType: message.Type}
+			if message.Type == BROADCAST {
+				<-release
+			}
+		},
+		onResponse: func(response *ClusterResponse) {
+			if response.Type == BROADCAST_CLIENT_COUNT {
+				close(responseStarted)
+				<-releaseResponse
+			}
+			published <- publishedEvent{kind: "response", messageType: response.Type}
+		},
+	}
+	cluster.Prototype(transport)
+	cluster.Construct(nsp)
+
+	cluster.Publish(&ClusterMessage{
+		Type: BROADCAST,
+		Data: &BroadcastMessage{
+			Packet: &parser.Packet{Type: parser.EVENT, Data: []any{"blocked"}},
+			Opts:   EncodeOptions(nil),
+		},
+	})
+	if event := <-published; event.kind != "message" || event.messageType != BROADCAST {
+		t.Fatalf("first published event = %#v", event)
+	}
+
+	response := &ClusterResponse{
+		Type: BROADCAST_ACK,
+		Data: &BroadcastAck{RequestId: "request"},
+	}
+	cluster.PublishResponse("requester", response)
+	select {
+	case event := <-published:
+		if event.kind != "response" || event.messageType != BROADCAST_ACK {
+			t.Fatalf("published response = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("response waited for an unrelated blocked publish")
+	}
+	response.Type = SERVER_SIDE_EMIT_RESPONSE
+	if got := transport.response.Load(); got == nil || got.Type != BROADCAST_ACK {
+		t.Fatalf("published response changed after submit: %#v", got)
+	}
+
+	responseReturned := make(chan struct{})
+	go func() {
+		cluster.PublishResponse("requester", &ClusterResponse{
+			Type: BROADCAST_CLIENT_COUNT,
+			Data: &BroadcastClientCount{RequestId: "request"},
+		})
+		close(responseReturned)
+	}()
+	<-responseStarted
+	select {
+	case <-responseReturned:
+	case <-time.After(time.Second):
+		t.Fatal("PublishResponse() waited for the transport")
+	}
+	mutablePacket := map[string]any{"values": []any{"before"}}
+	queuedResponse := &ClusterResponse{
+		Type: BROADCAST_ACK,
+		Data: &BroadcastAck{
+			RequestId: "request",
+			Packet:    mutablePacket,
+		},
+	}
+	cluster.PublishResponse("requester", queuedResponse)
+	queuedResponse.Type = SERVER_SIDE_EMIT_RESPONSE
+	mutablePacket["values"].([]any)[0] = "after"
+
+	cluster.closeWithMessage(&ClusterMessage{Type: ADAPTER_CLOSE})
+	cluster.PublishResponse("requester", &ClusterResponse{
+		Type: SERVER_SIDE_EMIT_RESPONSE,
+		Data: &ServerSideEmitResponse{RequestId: "request"},
+	})
+	if _, err := cluster.PublishAndReturnOffset(&ClusterMessage{Type: HEARTBEAT}); !errors.Is(err, ErrAdapterClosed) {
+		t.Fatalf("PublishAndReturnOffset() error after closeWithMessage = %v", err)
+	}
+	select {
+	case event := <-published:
+		t.Fatalf("unexpected event before release: %#v", event)
+	default:
+	}
+
+	close(release)
+	select {
+	case event := <-published:
+		t.Fatalf("ADAPTER_CLOSE overtook an in-flight response: %#v", event)
+	default:
+	}
+
+	close(releaseResponse)
+	for _, expected := range []publishedEvent{
+		{kind: "response", messageType: BROADCAST_CLIENT_COUNT},
+		{kind: "response", messageType: BROADCAST_ACK},
+		{kind: "message", messageType: ADAPTER_CLOSE},
+	} {
+		select {
+		case event := <-published:
+			if event != expected {
+				t.Fatalf("published event = %#v, want %#v", event, expected)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %#v", expected)
+		}
+	}
+	lastResponse := transport.response.Load()
+	if lastResponse == nil || lastResponse.Type != BROADCAST_ACK {
+		t.Fatalf("last response = %#v, want BROADCAST_ACK", lastResponse)
+	}
+	ack := lastResponse.Data.(*BroadcastAck)
+	values := ack.Packet.(map[string]any)["values"].([]any)
+	if len(values) != 1 || values[0] != "before" {
+		t.Fatalf("queued response packet = %#v, want immutable snapshot", ack.Packet)
+	}
+	select {
+	case event := <-published:
+		t.Fatalf("unexpected event after ADAPTER_CLOSE: %#v", event)
+	default:
+	}
+}
+
+func TestClusterPublishPanicReturnsErrorAndQueueContinues(t *testing.T) {
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	transport := &testClusterAdapter{ClusterAdapter: cluster}
+	var calls atomic.Int64
+	transport.onPublish = func(*ClusterMessage) {
+		if calls.Add(1) == 1 {
+			panic("publish failed")
+		}
+	}
+	cluster.Prototype(transport)
+	cluster.Construct(nsp)
+	defer cluster.Close()
+
+	if _, err := cluster.PublishAndReturnOffset(&ClusterMessage{Type: HEARTBEAT}); err == nil {
+		t.Fatal("PublishAndReturnOffset() did not return the transport panic")
+	}
+	if _, err := cluster.PublishAndReturnOffset(&ClusterMessage{Type: HEARTBEAT}); err != nil {
+		t.Fatalf("PublishAndReturnOffset() after panic error = %v", err)
+	}
+}
+
+func TestClusterTransportCallbackCanCloseAdapter(t *testing.T) {
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	transport := &testClusterAdapter{ClusterAdapter: cluster}
+	transport.onPublish = func(*ClusterMessage) {
+		cluster.Close()
+	}
+	cluster.Prototype(transport)
+	cluster.Construct(nsp)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := cluster.PublishAndReturnOffset(&ClusterMessage{Type: HEARTBEAT})
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("PublishAndReturnOffset() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("transport callback deadlocked while closing the adapter")
+	}
+	if _, err := cluster.PublishAndReturnOffset(&ClusterMessage{Type: HEARTBEAT}); !errors.Is(err, ErrAdapterClosed) {
+		t.Fatalf("publish after callback close error = %v, want ErrAdapterClosed", err)
+	}
+}
+
+func TestClusterBroadcastAckSnapshotsPacketForAsyncPublish(t *testing.T) {
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	local := &ackLifecycleAdapter{Adapter: socket.NewAdapter(nsp)}
+	cluster := MakeClusterAdapter().(*clusterAdapter)
+	cluster.Adapter = local
+	publishedMessages := make(chan *ClusterMessage, 1)
+	transport := &testClusterAdapter{
+		ClusterAdapter: cluster,
+		onPublish: func(message *ClusterMessage) {
+			publishedMessages <- message
+		},
+	}
+	cluster.Prototype(transport)
+	cluster.Construct(nsp)
+
+	reader := &countedCloseReader{reader: bytes.NewReader([]byte("reader"))}
+	mutable := map[string]any{"values": []any{"before"}}
+	packet := &parser.Packet{
+		Type: parser.EVENT,
+		Data: []any{
+			"event",
+			reader,
+			types.NewBytesBuffer([]byte("buffer")),
+			mutable,
+		},
+	}
+	timeout := int64(10_000)
+	cluster.BroadcastWithAck(
+		packet,
+		&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: &timeout}},
+		func(uint64) {},
+		func([]any, error) {},
+	)
+
+	var published *ClusterMessage
+	select {
+	case published = <-publishedMessages:
+	case <-time.After(time.Second):
+		t.Fatal("transport publish was not started")
+	}
+	mutable["values"].([]any)[0] = "after"
+	materializedReads := reader.reads.Load()
+	if materializedReads == 0 || reader.closes.Load() != 1 {
+		t.Fatalf("reader reads/closes = %d/%d, want non-zero/1", materializedReads, reader.closes.Load())
+	}
+
+	remotePacket := published.Data.(*BroadcastMessage).Packet
+	if remotePacket == packet {
+		t.Fatal("remote and local broadcasts share the mutable packet")
+	}
+	if local.broadcasts.Load() != 1 || packet.Nsp != nsp.Name() || packet.Id == nil {
+		t.Fatalf("local packet fields = broadcasts %d, nsp %q, id %v", local.broadcasts.Load(), packet.Nsp, packet.Id)
+	}
+	localData := packet.Data.([]any)
+	if !bytes.Equal(localData[1].([]byte), []byte("reader")) ||
+		!bytes.Equal(localData[2].([]byte), []byte("buffer")) {
+		t.Fatalf("local binary data = %#v", localData)
+	}
+	if remotePacket.Nsp != "" || remotePacket.Id != nil {
+		t.Fatalf("remote packet inherited local fields: nsp %q, id %v", remotePacket.Nsp, remotePacket.Id)
+	}
+
+	payload, err := EncodeClusterMessage(published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reader.reads.Load() != materializedReads || reader.closes.Load() != 1 {
+		t.Fatal("reader was consumed again by the remote encoding path")
+	}
+	decoded, err := DecodeClusterMessage(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteData := decoded.Data.(*BroadcastMessage).Packet.Data.([]any)
+	if !bytes.Equal(remoteData[1].([]byte), []byte("reader")) ||
+		!bytes.Equal(remoteData[2].([]byte), []byte("buffer")) {
+		t.Fatalf("remote binary data = %#v", remoteData)
+	}
+	remoteValues := remoteData[3].(map[string]any)["values"].([]any)
+	if len(remoteValues) != 1 || remoteValues[0] != "before" {
+		t.Fatalf("remote mutable data = %#v, want immutable snapshot", remoteData[3])
+	}
+
+	requestId := *published.Data.(*BroadcastMessage).RequestId
+	cluster.ackRequests.Delete(requestId)
+}
+
 func TestClusterBroadcastAckCleanupWithoutTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
@@ -663,7 +1192,13 @@ func TestClusterBroadcastAckUsesFirstArgument(t *testing.T) {
 				Adapter: socket.NewAdapter(nsp),
 				args:    test.args,
 			}
-			transport := &testClusterAdapter{ClusterAdapter: cluster}
+			responseReady := make(chan MessageType, 2)
+			transport := &testClusterAdapter{
+				ClusterAdapter: cluster,
+				onResponse: func(response *ClusterResponse) {
+					responseReady <- response.Type
+				},
+			}
 			cluster.Prototype(transport)
 			cluster.Construct(nsp)
 
@@ -678,6 +1213,16 @@ func TestClusterBroadcastAckUsesFirstArgument(t *testing.T) {
 					RequestId: &requestId,
 				},
 			}, "")
+			for _, expected := range []MessageType{BROADCAST_CLIENT_COUNT, BROADCAST_ACK} {
+				select {
+				case messageType := <-responseReady:
+					if messageType != expected {
+						t.Fatalf("response type = %d, want %d", messageType, expected)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("timed out waiting for broadcast acknowledgement")
+				}
+			}
 
 			response := transport.response.Load()
 			if response == nil || response.Type != BROADCAST_ACK {
@@ -711,7 +1256,13 @@ func TestClusterServerSideAckUsesFirstArgument(t *testing.T) {
 
 			cluster := MakeClusterAdapter().(*clusterAdapter)
 			cluster.Adapter = socket.NewAdapter(nsp)
-			transport := &testClusterAdapter{ClusterAdapter: cluster}
+			responseReady := make(chan MessageType, 1)
+			transport := &testClusterAdapter{
+				ClusterAdapter: cluster,
+				onResponse: func(response *ClusterResponse) {
+					responseReady <- response.Type
+				},
+			}
 			cluster.Prototype(transport)
 			cluster.Construct(nsp)
 
@@ -725,6 +1276,11 @@ func TestClusterServerSideAckUsesFirstArgument(t *testing.T) {
 					Packet:    []any{"event"},
 				},
 			}, "")
+			select {
+			case <-responseReady:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for server-side acknowledgement")
+			}
 
 			response := transport.response.Load()
 			if response == nil || response.Type != SERVER_SIDE_EMIT_RESPONSE {
@@ -922,74 +1478,66 @@ func TestServerSideEmitTimeoutAndResponseCallOnce(t *testing.T) {
 
 func TestHeartbeatConcurrentPublishAndClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		const heartbeatInterval = 10 * time.Millisecond
-
-		opts := DefaultClusterAdapterOptions()
-		opts.SetHeartbeatInterval(heartbeatInterval)
-
 		nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
-		cluster := NewClusterAdapterWithHeartbeat(nsp, opts).(*clusterAdapterWithHeartbeat)
-		transport := &testClusterAdapter{ClusterAdapter: cluster}
+		cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
+		var lastPublished atomic.Int64
+		transport := &testClusterAdapter{
+			ClusterAdapter: cluster,
+			onPublish: func(message *ClusterMessage) {
+				lastPublished.Store(int64(message.Type))
+			},
+		}
 		cluster.Prototype(transport)
 
 		var wg sync.WaitGroup
 		for range 100 {
 			wg.Go(func() {
-				cluster.Publish(&ClusterMessage{Type: BROADCAST})
+				cluster.Publish(newTestBroadcastClusterMessage())
 			})
 		}
 		wg.Go(cluster.Close)
 		wg.Wait()
-
-		if got := transport.published.Load(); got != 101 {
-			t.Fatalf("published messages = %d, want 101", got)
-		}
-		heartbeatTimer := cluster.heartbeatTimer.Load()
-		if heartbeatTimer == nil {
-			t.Fatal("heartbeat timer was not retained after Close()")
-		}
-		cluster.Publish(&ClusterMessage{Type: BROADCAST})
-		if cluster.heartbeatTimer.Load() != heartbeatTimer {
-			t.Fatal("heartbeat timer was replaced after Close()")
-		}
-
-		afterPublish := transport.published.Load()
-		time.Sleep(2 * heartbeatInterval)
 		synctest.Wait()
-		if got := transport.published.Load(); got != afterPublish {
-			t.Fatalf("heartbeat fired after Close(): got %d, want %d", got, afterPublish)
+
+		if got := transport.published.Load(); got < 1 || got > 101 {
+			t.Fatalf("published messages = %d, want between 1 and 101", got)
+		}
+		if got := MessageType(lastPublished.Load()); got != ADAPTER_CLOSE {
+			t.Fatalf("last published message = %d, want ADAPTER_CLOSE", got)
+		}
+		if cluster.heartbeatTimer.Load() != nil || cluster.cleanupTimer.Load() != nil {
+			t.Fatal("Close() retained heartbeat timers")
+		}
+
+		beforePublish := transport.published.Load()
+		cluster.Publish(newTestBroadcastClusterMessage())
+		synctest.Wait()
+		if got := transport.published.Load(); got != beforePublish {
+			t.Fatalf("Publish() after Close changed count from %d to %d", beforePublish, got)
 		}
 	})
 }
 
 func TestHeartbeatCloseBeforePublish(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		const heartbeatInterval = 10 * time.Millisecond
-
-		opts := DefaultClusterAdapterOptions()
-		opts.SetHeartbeatInterval(heartbeatInterval)
-
 		nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
-		cluster := NewClusterAdapterWithHeartbeat(nsp, opts).(*clusterAdapterWithHeartbeat)
+		cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
 		transport := &testClusterAdapter{ClusterAdapter: cluster}
 		cluster.Prototype(transport)
 
 		cluster.Close()
-		heartbeatTimer := cluster.heartbeatTimer.Load()
-		if heartbeatTimer == nil {
-			t.Fatal("heartbeat timer was not retained after Close()")
-		}
-
-		cluster.Publish(&ClusterMessage{Type: BROADCAST})
-		afterPublish := transport.published.Load()
-		if cluster.heartbeatTimer.Load() != heartbeatTimer {
-			t.Fatal("heartbeat timer was replaced after Close()")
-		}
-
-		time.Sleep(2 * heartbeatInterval)
 		synctest.Wait()
-		if got := transport.published.Load(); got != afterPublish {
-			t.Fatalf("heartbeat fired after Close(): got %d, want %d", got, afterPublish)
+		if got := transport.published.Load(); got != 1 {
+			t.Fatalf("published messages after Close() = %d, want 1", got)
+		}
+		if cluster.heartbeatTimer.Load() != nil || cluster.cleanupTimer.Load() != nil {
+			t.Fatal("Close() retained heartbeat timers")
+		}
+
+		cluster.Publish(newTestBroadcastClusterMessage())
+		synctest.Wait()
+		if got := transport.published.Load(); got != 1 {
+			t.Fatalf("published messages after closed Publish() = %d, want 1", got)
 		}
 	})
 }
@@ -1005,7 +1553,7 @@ func TestHeartbeatTimer(t *testing.T) {
 		cluster := NewClusterAdapterWithHeartbeat(nsp, opts).(*clusterAdapterWithHeartbeat)
 		transport := &testClusterAdapter{ClusterAdapter: cluster}
 		cluster.Prototype(transport)
-		message := &ClusterMessage{Type: BROADCAST}
+		message := newTestBroadcastClusterMessage()
 
 		if cluster.heartbeatTimer.Load() != nil {
 			t.Fatal("heartbeat timer was created before Publish()")
@@ -1022,7 +1570,6 @@ func TestHeartbeatTimer(t *testing.T) {
 		synctest.Wait()
 		afterHeartbeat := transport.published.Load()
 
-		heartbeatTimer := cluster.heartbeatTimer.Load()
 		cluster.Close()
 		synctest.Wait()
 		afterClose := transport.published.Load()
@@ -1042,14 +1589,14 @@ func TestHeartbeatTimer(t *testing.T) {
 		if afterClose != 4 {
 			t.Fatalf("published messages after Close() = %d, want 4", afterClose)
 		}
-		if afterClosedPublish != 5 {
-			t.Fatalf("published messages after closed Publish() = %d, want 5", afterClosedPublish)
+		if afterClosedPublish != afterClose {
+			t.Fatalf("published messages after closed Publish() = %d, want %d", afterClosedPublish, afterClose)
 		}
 		if afterClosedInterval != afterClosedPublish {
 			t.Fatalf("published messages after closed heartbeat = %d, want %d", afterClosedInterval, afterClosedPublish)
 		}
-		if cluster.heartbeatTimer.Load() != heartbeatTimer {
-			t.Fatal("heartbeat timer was replaced after Close()")
+		if cluster.heartbeatTimer.Load() != nil || cluster.cleanupTimer.Load() != nil {
+			t.Fatal("Close() retained heartbeat timers")
 		}
 	})
 }

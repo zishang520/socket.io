@@ -114,7 +114,7 @@ func UnmarshalAdapterData(messageType adapter.MessageType, raw bson.RawValue) (a
 	case *PacketData[*SocketPacket]:
 		return &adapter.BroadcastMessage{
 			Packet:    deserializePacket(value.Packet),
-			Opts:      adapter.NormalizeOptions(value.Opts),
+			Opts:      value.Opts,
 			RequestId: value.RequestId,
 		}, nil
 	case *PacketData[[]any]:
@@ -171,27 +171,26 @@ func decodeEventData(messageType adapter.MessageType, data *EventData) any {
 			rooms = utils.NonNilSlice(*data.Rooms)
 		}
 		return &adapter.SocketsJoinLeaveMessage{
-			Opts:  adapter.NormalizeOptions(data.Opts),
+			Opts:  data.Opts,
 			Rooms: rooms,
 		}
 	case DISCONNECT_SOCKETS:
 		return &adapter.DisconnectSocketsMessage{
-			Opts:  adapter.NormalizeOptions(data.Opts),
+			Opts:  data.Opts,
 			Close: data.Close != nil && *data.Close,
 		}
 	case FETCH_SOCKETS:
 		return &adapter.FetchSocketsMessage{
-			Opts:      adapter.NormalizeOptions(data.Opts),
+			Opts:      data.Opts,
 			RequestId: data.RequestId,
 		}
 	case FETCH_SOCKETS_RESPONSE:
-		sockets := []adapter.SocketResponse{}
-		if data.Sockets != nil {
-			sockets = decodeSocketResponses(*data.Sockets)
+		if data.Sockets == nil {
+			return nil
 		}
 		return &adapter.FetchSocketsResponse{
 			RequestId: data.RequestId,
-			Sockets:   sockets,
+			Sockets:   decodeSocketResponses(*data.Sockets),
 		}
 	case BROADCAST_CLIENT_COUNT:
 		return &adapter.BroadcastClientCount{

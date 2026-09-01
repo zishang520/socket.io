@@ -74,6 +74,21 @@ func TestPostgresClientListenerChannels(t *testing.T) {
 	}
 }
 
+func TestPostgresClientListenerCommandWaitHonorsContext(t *testing.T) {
+	client := mustNewPostgresClient(t, context.Background(), newTestPostgresPool(t))
+	client.listenerCommandGate <- struct{}{}
+	defer func() { <-client.listenerCommandGate }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := client.Listen(ctx, "socket.io#/"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Listen() error = %v, want context deadline exceeded", err)
+	}
+	if client.listenerChannels.Has("socket.io#/") {
+		t.Fatal("timed-out LISTEN changed the desired channels")
+	}
+}
+
 func TestPostgresClientCloseIsIdempotent(t *testing.T) {
 	client := mustNewPostgresClient(t, context.Background(), newTestPostgresPool(t))
 	client.Close()
@@ -145,6 +160,57 @@ func TestPostgresClientCloseCancelsListenerAcquire(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("WaitForNotification() did not return after Close()")
+	}
+}
+
+func TestPostgresClientContextCancellationClosesClient(t *testing.T) {
+	config, err := pgxpool.ParseConfig("postgres://root@127.0.0.1/socket_io_test?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dialStarted := make(chan struct{}, 1)
+	config.ConnConfig.DialFunc = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		select {
+		case dialStarted <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := mustNewPostgresClient(t, ctx, pool)
+	waitDone := make(chan error, 1)
+	go func() {
+		_, err := client.WaitForNotification(context.Background())
+		waitDone <- err
+	}()
+
+	select {
+	case <-dialStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("listener connection was not attempted")
+	}
+
+	cancel()
+	select {
+	case err := <-waitDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("WaitForNotification() returned %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("context cancellation did not close the PostgreSQL client")
+	}
+
+	if err := client.Listen(context.Background(), "socket.io#/"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Listen() after context cancellation returned %v", err)
 	}
 }
 

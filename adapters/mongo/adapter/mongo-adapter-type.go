@@ -13,6 +13,7 @@ import (
 	"github.com/zishang520/socket.io/adapters/mongo/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	mongod "go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -101,7 +102,7 @@ func (mb *MongoAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 		if mb.uid == "" {
 			mb.uid = adapter.ServerId(adapter.RandomId())
 		}
-		if mb.Opts != nil {
+		if !utils.IsNil(mb.Opts) {
 			mb.Opts.SetUid(mb.uid)
 		}
 		mb.changeStreamOpts = opts.ChangeStreamOptions()
@@ -114,12 +115,10 @@ func (mb *MongoAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	adapterInstance := NewMongoAdapter(nsp, mb.Mongo, opts)
 	mb.adapters.Store(name, adapterInstance)
 	mb.mu.Unlock()
-
-	if ctx != nil {
-		go mb.initChangeStream(ctx)
-	}
+	stopContextClose := context.AfterFunc(mb.Mongo.Context(), adapterInstance.Close)
 
 	adapterInstance.Cleanup(func() {
+		stopContextClose()
 		mb.mu.Lock()
 		defer mb.mu.Unlock()
 
@@ -132,6 +131,9 @@ func (mb *MongoAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 		}
 		mb.cancel = nil
 	})
+	if ctx != nil {
+		go mb.initChangeStream(ctx)
+	}
 
 	return adapterInstance
 }
@@ -188,6 +190,7 @@ func (mb *MongoAdapterBuilder) initChangeStream(ctx context.Context) {
 						mb.mu.Unlock()
 					}
 					mongoLog.Debug("failed to decode change stream event: %s", decodeErr.Error())
+					mb.Mongo.Emit("error", decodeErr)
 					continue
 				}
 				if event.OperationType != "insert" {
@@ -231,6 +234,7 @@ func (mb *MongoAdapterBuilder) initChangeStream(ctx context.Context) {
 				mb.mu.Unlock()
 			}
 			mongoLog.Debug("change stream error: %s", err.Error())
+			mb.Mongo.Emit("error", err)
 		}
 
 		timer := time.NewTimer(time.Second)

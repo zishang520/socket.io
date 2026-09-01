@@ -5,8 +5,13 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/postgres/v3"
@@ -23,6 +28,31 @@ func mustNewPostgresClient(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	}
 	return client
 }
+
+type attachmentAcquireTracer struct {
+	deadline chan<- time.Duration
+}
+
+func (t *attachmentAcquireTracer) TraceAcquireStart(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireStartData) context.Context {
+	var remaining time.Duration
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining = time.Until(deadline)
+	}
+	select {
+	case t.deadline <- remaining:
+	default:
+	}
+	return ctx
+}
+
+func (*attachmentAcquireTracer) TraceAcquireEnd(context.Context, *pgxpool.Pool, pgxpool.TraceAcquireEndData) {
+}
+
+func (*attachmentAcquireTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	return ctx
+}
+
+func (*attachmentAcquireTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
 func TestNotificationMessage_Marshal(t *testing.T) {
 	t.Run("with attachment", func(t *testing.T) {
@@ -79,6 +109,12 @@ func TestPostgresAdapter_SetChannel(t *testing.T) {
 	}
 }
 
+func TestPostgresAdapter_SetOptsTypedNil(t *testing.T) {
+	a := MakePostgresAdapter().(*postgresAdapter)
+	var opts *PostgresAdapterOptions
+	a.SetOpts(opts)
+}
+
 func TestNewPostgresAdapterDefaults(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -117,6 +153,198 @@ func TestPostgresAdapter_OnNotificationUsesErrorHandler(t *testing.T) {
 	a.OnNotification("invalid")
 	if received == nil {
 		t.Fatal("expected the configured error handler to be called")
+	}
+}
+
+func TestPostgresAdapterPublishErrorHandlerCanReenterPublisher(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), "postgres://localhost/socket_io_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client := mustNewPostgresClient(t, ctx, pool)
+	t.Cleanup(client.Close)
+
+	var current *postgresAdapter
+	var reentered atomic.Bool
+	reentryDone := make(chan error, 1)
+	opts := DefaultPostgresAdapterOptions()
+	opts.SetErrorHandler(func(error) {
+		if reentered.CompareAndSwap(false, true) {
+			_, err := current.PublishAndReturnOffset(&ClusterMessage{Type: adapter.HEARTBEAT})
+			reentryDone <- err
+		}
+	})
+	current = NewPostgresAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
+		client,
+		opts,
+	).(*postgresAdapter)
+	t.Cleanup(current.Close)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := current.PublishAndReturnOffset(&ClusterMessage{Type: adapter.HEARTBEAT})
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("initial publish error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial publish deadlocked in the error handler")
+	}
+	select {
+	case err := <-reentryDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("reentrant publish error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("error handler could not reenter the publisher")
+	}
+}
+
+func TestPostgresAdapter_AttachmentUsesNotificationContext(t *testing.T) {
+	config, err := pgxpool.ParseConfig("postgres://root@127.0.0.1/socket_io_test?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	acquireDeadline := make(chan time.Duration, 1)
+	config.ConnConfig.Tracer = &attachmentAcquireTracer{deadline: acquireDeadline}
+	config.ConnConfig.DialFunc = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientCtx, cancelClient := context.WithCancel(context.Background())
+	client := mustNewPostgresClient(t, clientCtx, pool)
+	a := NewPostgresAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
+		client,
+		nil,
+	).(*postgresAdapter)
+	t.Cleanup(func() {
+		cancelClient()
+		a.Close()
+		client.Close()
+		pool.Close()
+	})
+
+	notificationCtx, cancelNotification := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := a.decodeReceivedNotification(notificationCtx, &NotificationMessage{
+			Uid:          "other-node",
+			Type:         adapter.BROADCAST,
+			AttachmentId: "1",
+		})
+		result <- err
+	}()
+
+	select {
+	case remaining := <-acquireDeadline:
+		if remaining <= 0 || remaining > postgres.DefaultOperationTimeout {
+			t.Fatalf("attachment query deadline remaining = %s, want (0, %s]", remaining, postgres.DefaultOperationTimeout)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("attachment query was not attempted")
+	}
+
+	cancelNotification()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("attachment query returned %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("attachment query did not stop with the notification context")
+	}
+}
+
+func TestPostgresAdapterCleanupAfterClose(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	pool, err := pgxpool.New(ctx, "postgres://localhost/socket_io_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := mustNewPostgresClient(t, ctx, pool)
+	a := NewPostgresAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
+		client,
+		nil,
+	).(*postgresAdapter)
+	t.Cleanup(func() {
+		client.Close()
+		pool.Close()
+	})
+
+	a.Close()
+	cleaned := make(chan struct{})
+	a.Cleanup(func() {
+		close(cleaned)
+	})
+
+	select {
+	case <-cleaned:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup registered after Close was not called")
+	}
+}
+
+func TestPostgresAdapterStopsPublishingBeforeCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	pool, err := pgxpool.New(ctx, "postgres://localhost/socket_io_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := mustNewPostgresClient(t, ctx, pool)
+	a := NewPostgresAdapter(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
+		client,
+		nil,
+	).(*postgresAdapter)
+	t.Cleanup(func() {
+		client.Close()
+		pool.Close()
+	})
+
+	cleanupStarted := make(chan struct{})
+	releaseCleanup := make(chan struct{})
+	a.Cleanup(func() {
+		close(cleanupStarted)
+		<-releaseCleanup
+	})
+	closeDone := make(chan struct{})
+	go func() {
+		a.Close()
+		close(closeDone)
+	}()
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		close(releaseCleanup)
+		t.Fatal("cleanup did not start")
+	}
+
+	if _, err := a.PublishAndReturnOffset(&ClusterMessage{Type: adapter.HEARTBEAT}); !errors.Is(err, adapter.ErrAdapterClosed) {
+		close(releaseCleanup)
+		t.Fatalf("publish during cleanup error = %v, want ErrAdapterClosed", err)
+	}
+	close(releaseCleanup)
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish after cleanup returned")
 	}
 }
 

@@ -33,9 +33,7 @@ func NewRedisStreamsEmitter(client *redis.RedisClient, opts *RedisStreamsEmitter
 // Construct initializes the Redis Streams emitter.
 func (e *RedisStreamsEmitter) Construct(client *redis.RedisClient, opts *RedisStreamsEmitterOptions, nsps ...string) {
 	e.redisClient = client
-	if opts != nil {
-		e.opts.Assign(opts)
-	}
+	e.opts.Assign(opts)
 	if e.opts.GetRawStreamName() == nil {
 		e.opts.SetStreamName(DefaultStreamName)
 	}

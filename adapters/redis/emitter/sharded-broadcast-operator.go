@@ -92,7 +92,7 @@ func (b *ShardedBroadcastOperator) Volatile() BroadcastOperatorInterface {
 }
 
 func (b *ShardedBroadcastOperator) Emit(ev string, args ...any) error {
-	if reservedEvents.Has(ev) {
+	if socket.SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
@@ -177,7 +177,7 @@ func (b *ShardedBroadcastOperator) publishMessage(message *adapter.ClusterMessag
 		}
 	}
 
-	payload, err := redis.EncodeClusterMessage(message)
+	payload, err := adapter.EncodeClusterMessage(message)
 	if err != nil {
 		return err
 	}

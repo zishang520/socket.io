@@ -22,6 +22,28 @@ func TestEmitter_NodeDefaults(t *testing.T) {
 	}
 }
 
+func TestEmitter_NilOptions(t *testing.T) {
+	e := NewEmitter(nil, nil)
+
+	if e.opts.ChannelPrefix() != DefaultChannelPrefix {
+		t.Fatalf("expected channel prefix %q, got %q", DefaultChannelPrefix, e.opts.ChannelPrefix())
+	}
+	if e.broadcastOptions.Nsp != defaultNamespace {
+		t.Fatalf("expected namespace %q, got %q", defaultNamespace, e.broadcastOptions.Nsp)
+	}
+}
+
+func TestEmitter_ExplicitEmptyNamespace(t *testing.T) {
+	e := NewEmitter(nil, nil, "")
+
+	if e.broadcastOptions.Nsp != "" {
+		t.Fatalf("expected empty namespace, got %q", e.broadcastOptions.Nsp)
+	}
+	if e.broadcastOptions.BroadcastChannel != DefaultChannelPrefix+"#" {
+		t.Fatalf("expected channel %q, got %q", DefaultChannelPrefix+"#", e.broadcastOptions.BroadcastChannel)
+	}
+}
+
 func TestEmitter_Of(t *testing.T) {
 	// Test Of with nil client - just testing namespace handling
 	e := MakeEmitter()
@@ -37,15 +59,15 @@ func TestEmitter_Of(t *testing.T) {
 
 	t.Run("with leading slash", func(t *testing.T) {
 		ne := e.Of("/admin")
-		if ne.nsp != "/admin" {
-			t.Fatalf("Expected '/admin', got %s", ne.nsp)
+		if ne.broadcastOptions.Nsp != "/admin" {
+			t.Fatalf("Expected '/admin', got %s", ne.broadcastOptions.Nsp)
 		}
 	})
 
 	t.Run("without leading slash", func(t *testing.T) {
 		ne := e.Of("admin")
-		if ne.nsp != "/admin" {
-			t.Fatalf("Expected '/admin', got %s", ne.nsp)
+		if ne.broadcastOptions.Nsp != "/admin" {
+			t.Fatalf("Expected '/admin', got %s", ne.broadcastOptions.Nsp)
 		}
 	})
 }

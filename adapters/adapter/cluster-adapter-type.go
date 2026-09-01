@@ -141,6 +141,11 @@ type (
 	}
 )
 
+// IsValid reports whether all required packet option fields are present.
+func (p *PacketOptions) IsValid() bool {
+	return p != nil && p.Rooms != nil && p.Except != nil
+}
+
 const (
 	EMITTER_UID     ServerId      = "emitter"
 	DEFAULT_TIMEOUT time.Duration = 5_000 * time.Millisecond

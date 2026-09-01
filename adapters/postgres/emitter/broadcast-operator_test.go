@@ -2,40 +2,14 @@ package emitter
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/postgres/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
-
-func TestReservedEvents(t *testing.T) {
-	reserved := []string{
-		"connect",
-		"connect_error",
-		"disconnect",
-		"disconnecting",
-		"newListener",
-		"removeListener",
-	}
-
-	for _, ev := range reserved {
-		t.Run(ev, func(t *testing.T) {
-			if !reservedEvents.Has(ev) {
-				t.Errorf("Expected %q to be reserved", ev)
-			}
-		})
-	}
-
-	t.Run("non-reserved events", func(t *testing.T) {
-		nonReserved := []string{"message", "chat", "custom", ""}
-		for _, ev := range nonReserved {
-			if reservedEvents.Has(ev) {
-				t.Errorf("Expected %q to NOT be reserved", ev)
-			}
-		}
-	})
-}
 
 func TestBroadcastOptions(t *testing.T) {
 	t.Run("default values", func(t *testing.T) {
@@ -264,6 +238,40 @@ func TestBroadcastOperator_Emit_NilClient(t *testing.T) {
 
 	// Emit on non-reserved should panic due to nil postgres client
 	_ = b.Emit("test")
+}
+
+func TestBroadcastOperatorUsesAttachmentAtPayloadThreshold(t *testing.T) {
+	pool, err := pgxpool.New(t.Context(), "postgres://localhost/socket_io_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+	client, err := postgres.NewPostgresClient(t.Context(), pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
+
+	message := &adapter.ClusterMessage{Type: adapter.HEARTBEAT}
+	wireMessage := *message
+	wireMessage.Uid = adapter.EMITTER_UID
+	wireMessage.Nsp = "/"
+	wireMessage.Data, _ = postgres.MarshalAdapterData(message.Data)
+	payload, err := json.Marshal(&wireMessage)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	operator := NewBroadcastOperator(client, &BroadcastOptions{
+		Nsp:              "/",
+		BroadcastChannel: "socket.io#/",
+		TableName:        "socket_io_attachments",
+		PayloadThreshold: len(payload),
+	}, nil, nil, nil)
+	err = operator.publish(message)
+	if err == nil || !strings.Contains(err.Error(), "failed to insert attachment") {
+		t.Fatalf("publish at threshold error = %v, want attachment insert error", err)
+	}
 }
 
 func TestBroadcastOperator_SocketsJoin_Marshal(t *testing.T) {

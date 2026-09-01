@@ -173,6 +173,14 @@ func TestPostgresAdapterOptions_Assign(t *testing.T) {
 		}
 	})
 
+	t.Run("assign typed nil", func(t *testing.T) {
+		opts := DefaultPostgresAdapterOptions()
+		var source *PostgresAdapterOptions
+		if result := opts.Assign(source); result != opts {
+			t.Fatal("Expected same instance when assigning typed nil")
+		}
+	})
+
 	t.Run("assign all fields", func(t *testing.T) {
 		source := DefaultPostgresAdapterOptions()
 		source.SetChannelPrefix("src-key")

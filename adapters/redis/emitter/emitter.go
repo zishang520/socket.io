@@ -19,12 +19,12 @@ type Emitter struct {
 	redisClient      *redis.RedisClient
 	opts             *EmitterOptions
 	broadcastOptions *BroadcastOptions
-	nsp              string
 }
 
-// MakeEmitter creates an emitter with the root namespace.
+// MakeEmitter creates an uninitialized emitter with default options.
+// Call Construct to complete initialization before use.
 func MakeEmitter() *Emitter {
-	return &Emitter{opts: DefaultEmitterOptions(), nsp: defaultNamespace}
+	return &Emitter{opts: DefaultEmitterOptions()}
 }
 
 // NewEmitter creates and initializes a Redis Pub/Sub emitter.
@@ -37,24 +37,23 @@ func NewEmitter(client *redis.RedisClient, opts *EmitterOptions, nsps ...string)
 // Construct initializes the emitter and its Redis channels.
 func (e *Emitter) Construct(client *redis.RedisClient, opts *EmitterOptions, nsps ...string) {
 	e.redisClient = client
-	if opts != nil {
-		e.opts.Assign(opts)
-	}
+	e.opts.Assign(opts)
 	if e.opts.GetRawKey() == nil {
 		e.opts.SetKey(DefaultEmitterKey)
 	}
 	if utils.IsNil(e.opts.Encoder()) {
 		e.opts.SetEncoder(utils.MsgPack())
 	}
+	nsp := defaultNamespace
 	if len(nsps) > 0 {
-		e.nsp = nsps[0]
+		nsp = nsps[0]
 	}
 
 	key := e.opts.Key()
 	e.broadcastOptions = &BroadcastOptions{
-		Nsp:              e.nsp,
-		BroadcastChannel: key + "#" + e.nsp + "#",
-		RequestChannel:   key + "-request#" + e.nsp + "#",
+		Nsp:              nsp,
+		BroadcastChannel: key + "#" + nsp + "#",
+		RequestChannel:   key + "-request#" + nsp + "#",
 		Encoder:          e.opts.Encoder(),
 		SubscriptionMode: e.opts.SubscriptionMode(),
 	}

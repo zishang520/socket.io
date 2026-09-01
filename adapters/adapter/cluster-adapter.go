@@ -10,10 +10,16 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
+
+// ErrAdapterClosed is returned when a cluster publish is attempted after the adapter is closed.
+var ErrAdapterClosed = errors.New("adapter is closed")
+
+var errClusterPublishPanicked = errors.New("cluster publish panicked")
 
 // ClusterAdapterBuilder is a builder for creating ClusterAdapter instances.
 //
@@ -32,6 +38,9 @@ type (
 
 		requests    types.Map[string, *ClusterRequest]
 		ackRequests types.Map[string, ClusterAckRequest]
+		queueMu     sync.Mutex
+		publisher   *queue.Queue
+		responses   *queue.Queue
 	}
 )
 
@@ -43,7 +52,9 @@ func (cb *ClusterAdapterBuilder) New(nsp socket.Namespace) Adapter {
 // MakeClusterAdapter returns a new default ClusterAdapter instance.
 func MakeClusterAdapter() ClusterAdapter {
 	c := &clusterAdapter{
-		Adapter: MakeAdapter(),
+		Adapter:   MakeAdapter(),
+		publisher: queue.New(),
+		responses: queue.New(),
 	}
 	c.Prototype(c)
 	return c
@@ -99,8 +110,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 	switch message.Type {
 	case BROADCAST:
 		data, ok := message.Data.(*BroadcastMessage)
-		if !ok || data == nil || data.Packet == nil || data.Opts == nil ||
-			data.Opts.Rooms == nil || data.Opts.Except == nil {
+		if !ok || data == nil || data.Packet == nil || !data.Opts.IsValid() {
 			adapterLog.Debug("[%s] invalid data for BROADCAST message", c.uid)
 			return
 		}
@@ -141,29 +151,32 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 		}
 
 	case SOCKETS_JOIN:
-		if data, ok := message.Data.(*SocketsJoinLeaveMessage); ok {
-			c.Adapter.AddSockets(DecodeOptions(data.Opts), data.Rooms)
-		} else {
+		data, ok := message.Data.(*SocketsJoinLeaveMessage)
+		if !ok || data == nil || !data.Opts.IsValid() {
 			adapterLog.Debug("[%s] invalid data for SOCKETS_JOIN message", c.uid)
+			return
 		}
+		c.Adapter.AddSockets(DecodeOptions(data.Opts), data.Rooms)
 
 	case SOCKETS_LEAVE:
-		if data, ok := message.Data.(*SocketsJoinLeaveMessage); ok {
-			c.Adapter.DelSockets(DecodeOptions(data.Opts), data.Rooms)
-		} else {
+		data, ok := message.Data.(*SocketsJoinLeaveMessage)
+		if !ok || data == nil || !data.Opts.IsValid() {
 			adapterLog.Debug("[%s] invalid data for SOCKETS_LEAVE message", c.uid)
+			return
 		}
+		c.Adapter.DelSockets(DecodeOptions(data.Opts), data.Rooms)
 
 	case DISCONNECT_SOCKETS:
-		if data, ok := message.Data.(*DisconnectSocketsMessage); ok {
-			c.Adapter.DisconnectSockets(DecodeOptions(data.Opts), data.Close)
-		} else {
+		data, ok := message.Data.(*DisconnectSocketsMessage)
+		if !ok || data == nil || !data.Opts.IsValid() {
 			adapterLog.Debug("[%s] invalid data for DISCONNECT_SOCKETS message", c.uid)
+			return
 		}
+		c.Adapter.DisconnectSockets(DecodeOptions(data.Opts), data.Close)
 
 	case FETCH_SOCKETS:
 		data, ok := message.Data.(*FetchSocketsMessage)
-		if !ok {
+		if !ok || data == nil || !data.Opts.IsValid() {
 			adapterLog.Debug("[%s] invalid data for FETCH_SOCKETS message", c.uid)
 			return
 		}
@@ -217,7 +230,7 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			})
 		}
 
-		c.Nsp().OnServerSideEmit(append(packet, callback))
+		c.Nsp().OnServerSideEmit(slices.AppendCopy(packet, callback))
 
 	case BROADCAST_CLIENT_COUNT, BROADCAST_ACK, FETCH_SOCKETS_RESPONSE, SERVER_SIDE_EMIT_RESPONSE:
 		// extending classes may not make a distinction between a ClusterMessage and a ClusterResponse payload and may
@@ -546,7 +559,20 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 }
 
 func (c *clusterAdapter) Publish(message *ClusterMessage) {
-	if _, err := c.PublishAndReturnOffset(message); err != nil {
+	message.Uid = c.uid
+	message.Nsp = c.Nsp().Name()
+	published, err := snapshotClusterMessage(message)
+	if err != nil {
+		adapterLog.Debug(`[%s] error while publishing message: %s`, c.uid, err.Error())
+		return
+	}
+	publish := c.Proto().(ClusterAdapter).DoPublish
+	if err := c.enqueue(c.publisher, func() {
+		_, err := publish(published)
+		if err != nil {
+			adapterLog.Debug(`[%s] error while publishing message: %s`, c.uid, err.Error())
+		}
+	}); err != nil {
 		adapterLog.Debug(`[%s] error while publishing message: %s`, c.uid, err.Error())
 	}
 }
@@ -554,7 +580,30 @@ func (c *clusterAdapter) Publish(message *ClusterMessage) {
 func (c *clusterAdapter) PublishAndReturnOffset(message *ClusterMessage) (Offset, error) {
 	message.Uid = c.uid
 	message.Nsp = c.Nsp().Name()
-	return c.Proto().(ClusterAdapter).DoPublish(message)
+	publish := c.Proto().(ClusterAdapter).DoPublish
+	var (
+		offset Offset
+		err    = errClusterPublishPanicked
+	)
+	done := make(chan struct{})
+	if enqueueErr := c.enqueue(c.publisher, func() {
+		defer close(done)
+		offset, err = publish(message)
+	}); enqueueErr != nil {
+		return "", enqueueErr
+	}
+	<-done
+	return offset, err
+}
+
+func (c *clusterAdapter) enqueue(tasks *queue.Queue, task func()) error {
+	c.queueMu.Lock()
+	defer c.queueMu.Unlock()
+	if tasks.IsShuttingDown() {
+		return ErrAdapterClosed
+	}
+	tasks.Enqueue(task)
+	return nil
 }
 
 // Send a message to the other members of the cluster.
@@ -562,11 +611,57 @@ func (c *clusterAdapter) DoPublish(message *ClusterMessage) (Offset, error) {
 	return "", errors.New("DoPublish() is not supported on parent ClusterAdapter")
 }
 
+func (c *clusterAdapter) Close() {
+	c.queueMu.Lock()
+	if c.publisher.IsShuttingDown() {
+		c.queueMu.Unlock()
+		return
+	}
+	c.responses.TryClose()
+	c.publisher.TryClose()
+	c.queueMu.Unlock()
+	c.Adapter.Close()
+}
+
+func (c *clusterAdapter) closeWithMessage(message *ClusterMessage) {
+	c.queueMu.Lock()
+	if c.publisher.IsShuttingDown() {
+		c.queueMu.Unlock()
+		return
+	}
+
+	message.Uid = c.uid
+	message.Nsp = c.Nsp().Name()
+	responsesDone := make(chan struct{})
+	publish := c.Proto().(ClusterAdapter).DoPublish
+	c.responses.Enqueue(func() { close(responsesDone) })
+	c.publisher.Enqueue(func() {
+		defer c.Adapter.Close()
+		<-responsesDone
+		if _, err := publish(message); err != nil {
+			adapterLog.Debug(`[%s] error while publishing message: %s`, c.uid, err.Error())
+		}
+	})
+	c.responses.TryClose()
+	c.publisher.TryClose()
+	c.queueMu.Unlock()
+}
+
 func (c *clusterAdapter) PublishResponse(requesterUid ServerId, response *ClusterResponse) {
 	response.Uid = c.uid
 	response.Nsp = c.Nsp().Name()
+	published, err := snapshotClusterMessage(response)
+	if err != nil {
+		adapterLog.Debug(`[%s] error while publishing response: %s`, c.uid, err.Error())
+		return
+	}
+	publish := c.Proto().(ClusterAdapter).DoPublishResponse
 
-	if err := c.Proto().(ClusterAdapter).DoPublishResponse(requesterUid, response); err != nil {
+	if err = c.enqueue(c.responses, func() {
+		if err := publish(requesterUid, published); err != nil {
+			adapterLog.Debug(`[%s] error while publishing response: %s`, c.uid, err.Error())
+		}
+	}); err != nil {
 		adapterLog.Debug(`[%s] error while publishing response: %s`, c.uid, err.Error())
 	}
 }

@@ -79,7 +79,7 @@ func requestOptions(messageType RequestType, opts *adapter.PacketOptions) *adapt
 
 func prepareRequest(request *RedisRequest, jsonFormat bool) redisRequest {
 	payload := redisRequest(*request)
-	payload.Packet, _ = marshalPacket(payload.Packet, jsonFormat)
+	payload.Packet = marshalPacket(payload.Packet, jsonFormat)
 	if payload.Opts != nil {
 		payload.Opts = requestOptions(payload.Type, payload.Opts)
 	}
@@ -89,12 +89,8 @@ func prepareRequest(request *RedisRequest, jsonFormat bool) redisRequest {
 	}
 
 	switch payload.Type {
-	case SOCKETS:
+	case SOCKETS, REMOTE_JOIN, REMOTE_LEAVE:
 		payload.Rooms = utils.NonNilSlice(payload.Rooms)
-	case REMOTE_JOIN, REMOTE_LEAVE:
-		if payload.Opts != nil {
-			payload.Rooms = utils.NonNilSlice(payload.Rooms)
-		}
 	case REMOTE_DISCONNECT:
 		if payload.Close == nil {
 			payload.Close = new(false)
@@ -158,7 +154,7 @@ func (r *RedisResponse) MarshalJSON() ([]byte, error) {
 
 	payload := redisResponse(*r)
 	if sockets, ok := payload.Sockets.([]adapter.SocketResponse); ok {
-		payload.Sockets, _ = marshalSocketResponses(sockets, true)
+		payload.Sockets = marshalJSONSocketResponses(sockets)
 	}
 	if payload.Data != nil {
 		payload.Data = NormalizeJSONData(payload.Data)
@@ -191,7 +187,7 @@ func (r *RedisPacket) MarshalJSON() ([]byte, error) {
 	if r == nil {
 		return json.Marshal(nil)
 	}
-	packet, _ := marshalPacket(r.Packet, true)
+	packet := marshalPacket(r.Packet, true)
 	return json.Marshal([3]any{r.Uid, packet, wireOptions(r.Opts)})
 }
 
@@ -229,7 +225,7 @@ func (r *RedisPacket) UnmarshalJSON(data []byte) error {
 }
 
 func (r RedisPacket) MarshalMsgpack() ([]byte, error) {
-	packet, _ := marshalPacket(r.Packet, false)
+	packet := marshalPacket(r.Packet, false)
 	return msgpack.Marshal([3]any{r.Uid, packet, wireOptions(r.Opts)})
 }
 
@@ -243,74 +239,10 @@ func (r RawClusterMessage) Nsp() string  { return r.stringValue("nsp") }
 func (r RawClusterMessage) Type() string { return r.stringValue("type") }
 func (r RawClusterMessage) Data() string { return r.stringValue("data") }
 
-func marshalClusterMessage(message *adapter.ClusterMessage) (adapter.ClusterMessage, bool) {
-	wireMessage := *message
-	var binary bool
-	wireMessage.Data, binary = marshalClusterData(message.Data, false)
-	return wireMessage, binary
-}
-
-// EncodeClusterMessage uses JSON for plaintext messages and MessagePack for binary messages.
-func EncodeClusterMessage(message *adapter.ClusterMessage) ([]byte, error) {
-	wireMessage, binary := marshalClusterMessage(message)
-	if binary {
-		return msgpack.Marshal(wireMessage)
-	}
-	return json.Marshal(wireMessage)
-}
-
-// EncodeClusterMessageMsgpack encodes a cluster message in the MessagePack format used by Streams PUB/SUB.
-func EncodeClusterMessageMsgpack(message *adapter.ClusterMessage) ([]byte, error) {
-	wireMessage, _ := marshalClusterMessage(message)
-	return msgpack.Marshal(wireMessage)
-}
-
-// UnmarshalClusterMessage decodes the JSON or MessagePack cluster envelope.
-func UnmarshalClusterMessage(data []byte) (*adapter.ClusterMessage, error) {
-	if len(data) == 0 {
-		return nil, errors.New("empty cluster message")
-	}
-
-	var message adapter.ClusterMessage
-	var rawData any
-	if data[0] == '{' {
-		var payload struct {
-			Uid  adapter.ServerId    `json:"uid"`
-			Nsp  string              `json:"nsp"`
-			Type adapter.MessageType `json:"type"`
-			Data json.RawMessage     `json:"data"`
-		}
-		if err := json.Unmarshal(data, &payload); err != nil {
-			return nil, err
-		}
-		message.Uid, message.Nsp, message.Type = payload.Uid, payload.Nsp, payload.Type
-		rawData = payload.Data
-	} else {
-		var payload struct {
-			Uid  adapter.ServerId    `msgpack:"uid"`
-			Nsp  string              `msgpack:"nsp"`
-			Type adapter.MessageType `msgpack:"type"`
-			Data msgpack.RawMessage  `msgpack:"data"`
-		}
-		if err := msgpack.Unmarshal(data, &payload); err != nil {
-			return nil, err
-		}
-		message.Uid, message.Nsp, message.Type = payload.Uid, payload.Nsp, payload.Type
-		rawData = payload.Data
-	}
-
-	decoded, err := unmarshalClusterData(message.Type, rawData)
-	if err != nil {
-		return nil, err
-	}
-	message.Data = decoded
-	return &message, nil
-}
-
 // EncodeStreamMessage converts a cluster message to the flat Redis Streams
 // field-value format used by the Node.js adapter and emitter.
 func EncodeStreamMessage(message *adapter.ClusterMessage, onlyPlaintext bool) (RawClusterMessage, error) {
-	wireData, binary := marshalClusterData(message.Data, onlyPlaintext)
+	wireData, binary := adapter.EncodeClusterMessageData(message.Data, onlyPlaintext)
 	rawMessage := RawClusterMessage{
 		"uid":  string(message.Uid),
 		"nsp":  message.Nsp,
@@ -365,7 +297,7 @@ func DecodeStreamMessage(rawMessage RawClusterMessage) (*adapter.ClusterMessage,
 		}
 		rawData = msgpack.RawMessage(decoded)
 	}
-	message.Data, err = unmarshalClusterData(message.Type, rawData)
+	message.Data, err = adapter.DecodeClusterMessageData(message.Type, rawData)
 	if err != nil {
 		return nil, err
 	}
@@ -389,19 +321,16 @@ func XAddContext(ctx context.Context, client *RedisClient, stream string, messag
 	return client.Client().Do(ctx, args...).Text()
 }
 
-func marshalSocketResponses(sockets []adapter.SocketResponse, jsonFormat bool) ([]adapter.SocketResponse, bool) {
+func marshalJSONSocketResponses(sockets []adapter.SocketResponse) []adapter.SocketResponse {
 	var normalized []adapter.SocketResponse
-	var binary bool
 	for i := range sockets {
 		details := sockets[i]
-		data, changed, hasBinary := marshalData(details.Data, jsonFormat)
-		binary = binary || hasBinary
+		data, changed, _ := marshalData(details.Data, true)
 		if changed {
 			details.Data = data
 		}
 		if handshake := details.Handshake; handshake != nil && handshake.Auth != nil {
-			auth, authChanged, authBinary := marshalData(handshake.Auth, jsonFormat)
-			binary = binary || authBinary
+			auth, authChanged, _ := marshalData(handshake.Auth, true)
 			if authChanged {
 				details.Handshake = new(*handshake)
 				details.Handshake.Auth = auth.(map[string]any)
@@ -422,172 +351,7 @@ func marshalSocketResponses(sockets []adapter.SocketResponse, jsonFormat bool) (
 	if normalized == nil {
 		normalized = sockets
 	}
-	return utils.NonNilSlice(normalized), binary
-}
-
-func marshalPlaintextClusterData(data any) any {
-	switch value := data.(type) {
-	case *adapter.BroadcastMessage:
-		opts := wireOptions(value.Opts)
-		if opts == value.Opts {
-			return value
-		}
-		payload := *value
-		payload.Opts = opts
-		return &payload
-	case *adapter.SocketsJoinLeaveMessage:
-		payload := *value
-		payload.Opts = wireOptions(value.Opts)
-		payload.Rooms = utils.NonNilSlice(value.Rooms)
-		return &payload
-	case *adapter.DisconnectSocketsMessage:
-		payload := *value
-		payload.Opts = wireOptions(value.Opts)
-		return &payload
-	case *adapter.FetchSocketsMessage:
-		payload := *value
-		payload.Opts = wireOptions(value.Opts)
-		return &payload
-	case *adapter.FetchSocketsResponse:
-		payload := *value
-		payload.Sockets = plaintextSocketResponses(value.Sockets)
-		return &payload
-	case *adapter.ServerSideEmitMessage:
-		if value.Packet != nil {
-			return value
-		}
-		payload := *value
-		payload.Packet = []any{}
-		return &payload
-	default:
-		return data
-	}
-}
-
-func plaintextSocketResponses(sockets []adapter.SocketResponse) []adapter.SocketResponse {
-	var normalized []adapter.SocketResponse
-	for i := range sockets {
-		if sockets[i].Rooms != nil {
-			continue
-		}
-		if normalized == nil {
-			normalized = slices.Clone(sockets)
-		}
-		normalized[i].Rooms = []socket.Room{}
-	}
-	if normalized != nil {
-		return normalized
-	}
-	return utils.NonNilSlice(sockets)
-}
-
-func marshalClusterData(data any, onlyPlaintext bool) (any, bool) {
-	if onlyPlaintext {
-		return marshalPlaintextClusterData(data), false
-	}
-
-	switch value := data.(type) {
-	case *adapter.BroadcastMessage:
-		packet, binary := marshalPacket(value.Packet, false)
-		opts := wireOptions(value.Opts)
-		if packet == value.Packet && opts == value.Opts {
-			return value, binary
-		}
-		payload := *value
-		payload.Packet, payload.Opts = packet, opts
-		return &payload, binary
-	case *adapter.SocketsJoinLeaveMessage:
-		payload := *value
-		payload.Opts = wireOptions(value.Opts)
-		payload.Rooms = utils.NonNilSlice(value.Rooms)
-		return &payload, false
-	case *adapter.DisconnectSocketsMessage:
-		payload := *value
-		payload.Opts = wireOptions(value.Opts)
-		return &payload, false
-	case *adapter.FetchSocketsMessage:
-		payload := *value
-		payload.Opts = wireOptions(value.Opts)
-		return &payload, false
-	case *adapter.FetchSocketsResponse:
-		payload := *value
-		var binary bool
-		payload.Sockets, binary = marshalSocketResponses(value.Sockets, false)
-		return &payload, binary
-	case *adapter.ServerSideEmitMessage:
-		payload := *value
-		packet, _, binary := marshalData(value.Packet, false)
-		payload.Packet = utils.NonNilSlice(packet.([]any))
-		return &payload, binary
-	case *adapter.ServerSideEmitResponse:
-		payload := *value
-		packet, _, binary := marshalData(value.Packet, false)
-		payload.Packet = packet
-		return &payload, binary
-	case *adapter.BroadcastClientCount:
-		return value, false
-	case *adapter.BroadcastAck:
-		payload := *value
-		packet, _, binary := marshalData(value.Packet, false)
-		payload.Packet = packet
-		return &payload, binary
-	default:
-		return data, false
-	}
-}
-
-func unmarshalClusterData(messageType adapter.MessageType, rawData any) (any, error) {
-	var target any
-	switch messageType {
-	case adapter.INITIAL_HEARTBEAT, adapter.HEARTBEAT, adapter.ADAPTER_CLOSE:
-		return nil, nil
-	case adapter.BROADCAST:
-		target = new(adapter.BroadcastMessage)
-	case adapter.SOCKETS_JOIN, adapter.SOCKETS_LEAVE:
-		target = new(adapter.SocketsJoinLeaveMessage)
-	case adapter.DISCONNECT_SOCKETS:
-		target = new(adapter.DisconnectSocketsMessage)
-	case adapter.FETCH_SOCKETS:
-		target = new(adapter.FetchSocketsMessage)
-	case adapter.FETCH_SOCKETS_RESPONSE:
-		target = new(adapter.FetchSocketsResponse)
-	case adapter.SERVER_SIDE_EMIT:
-		target = new(adapter.ServerSideEmitMessage)
-	case adapter.SERVER_SIDE_EMIT_RESPONSE:
-		target = new(adapter.ServerSideEmitResponse)
-	case adapter.BROADCAST_CLIENT_COUNT:
-		target = new(adapter.BroadcastClientCount)
-	case adapter.BROADCAST_ACK:
-		target = new(adapter.BroadcastAck)
-	default:
-		return nil, errors.New("unknown message type")
-	}
-
-	switch raw := rawData.(type) {
-	case json.RawMessage:
-		if err := json.Unmarshal(raw, target); err != nil {
-			return nil, err
-		}
-	case msgpack.RawMessage:
-		if err := msgpack.Unmarshal(raw, target); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, errors.New("unsupported data format")
-	}
-
-	switch value := target.(type) {
-	case *adapter.SocketsJoinLeaveMessage:
-		value.Rooms = utils.NonNilSlice(value.Rooms)
-	case *adapter.FetchSocketsResponse:
-		value.Sockets = utils.NonNilSlice(value.Sockets)
-		for i := range value.Sockets {
-			value.Sockets[i].Rooms = utils.NonNilSlice(value.Sockets[i].Rooms)
-		}
-	case *adapter.ServerSideEmitMessage:
-		value.Packet = utils.NonNilSlice(value.Packet)
-	}
-	return target, nil
+	return utils.NonNilSlice(normalized)
 }
 
 // NormalizeData materializes supported readers while preserving slices and maps.
@@ -604,9 +368,9 @@ func NormalizeJSONData(data any) any {
 	return normalized
 }
 
-func marshalPacket(packet *parser.Packet, jsonFormat bool) (*parser.Packet, bool) {
+func marshalPacket(packet *parser.Packet, jsonFormat bool) *parser.Packet {
 	if packet == nil {
-		return nil, false
+		return nil
 	}
 	data, changed, binary := marshalData(packet.Data, false)
 	if changed {
@@ -615,16 +379,16 @@ func marshalPacket(packet *parser.Packet, jsonFormat bool) (*parser.Packet, bool
 		packet.Data = data
 	}
 	if !jsonFormat || !binary {
-		return packet, binary
+		return packet
 	}
 
 	data, changed, _ = marshalData(packet.Data, true)
 	if !changed {
-		return packet, binary
+		return packet
 	}
 	wirePacket := new(*packet)
 	wirePacket.Data = data
-	return wirePacket, binary
+	return wirePacket
 }
 
 func marshalData(data any, jsonFormat bool) (any, bool, bool) {

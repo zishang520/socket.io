@@ -1,9 +1,5 @@
-// Package unix provides a Unix Domain Socket client wrapper for Socket.IO Unix adapter.
-// This package offers a unified interface for Unix Domain Socket operations with event handling
-// support using connection-oriented stream sockets (SOCK_STREAM) for pub/sub communication.
-//
-// Messages are framed with a 4-byte big-endian length prefix to ensure reliable delivery
-// over the byte-stream transport. Connections to peers are pooled and reused for performance.
+// Package unix provides a Unix Domain Socket transport for Socket.IO adapters.
+// Messages use a 4-byte big-endian length prefix over SOCK_STREAM connections.
 package unix
 
 import (
@@ -11,346 +7,586 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-// maxMessageSize is the maximum allowed message size (10 MB).
-// This prevents malicious or corrupted length headers from causing excessive memory allocation.
-const maxMessageSize = 10 << 20
+const (
+	// maxMessageSize is the maximum allowed message size (10 MiB).
+	maxMessageSize = 10 << 20
 
-// ErrUnixSocketPathRequired is returned when no Unix socket base path is provided.
-var ErrUnixSocketPathRequired = errors.New("unix: socket path is required")
+	defaultUnixDialTimeout  = 5 * time.Second
+	defaultUnixWriteTimeout = 5 * time.Second
+)
 
-// peerConn wraps a persistent connection to a peer with its own mutex
-// to ensure atomic framed writes when multiple goroutines send concurrently.
+var (
+	unixClientLog = log.NewLog("socket.io-unix")
+
+	// ErrUnixSocketPathRequired is returned when no usable Unix socket base path is provided.
+	ErrUnixSocketPathRequired = errors.New("unix: socket path is required")
+	// ErrUnixClientClosed is returned when an operation starts after client shutdown.
+	ErrUnixClientClosed = errors.New("unix: client is closed")
+	// ErrUnixListenerNotStarted is returned when ReadMessage is called before Listen.
+	ErrUnixListenerNotStarted = errors.New("unix: listener not started")
+	// ErrUnixClientAlreadyListening is returned when Listen is called with another path.
+	ErrUnixClientAlreadyListening = errors.New("unix: client is already listening")
+
+	errUnixPeerRemoved = errors.New("unix: peer was removed")
+)
+
+// peerConn serializes framed writes while allowing Close to interrupt a blocked
+// write by closing the connection independently.
 type peerConn struct {
-	mu   sync.Mutex
-	conn net.Conn
-	mode unixSocketMode
+	sendMu sync.Mutex
+	connMu sync.Mutex
+	conn   net.Conn
 }
 
-// receivedMessage holds a complete message received from a stream connection.
-type receivedMessage struct {
-	data []byte
-	addr net.Addr
+func (p *peerConn) connection() net.Conn {
+	p.connMu.Lock()
+	defer p.connMu.Unlock()
+	return p.conn
 }
 
-// UnixClient wraps Unix Domain Socket stream connections and provides context management
-// and event emitting capabilities for the Socket.IO Unix adapter.
-//
-// The client uses connection-oriented Unix Domain Sockets (SOCK_STREAM) for pub/sub messaging.
-// Each message is framed with a 4-byte big-endian length prefix for reliable delivery.
-// Outgoing connections are pooled per peer for performance; incoming connections are
-// accepted in background goroutines and delivered through an internal message queue.
-//
-// The client supports error event emission, which allows higher-level components
-// to handle Unix socket-related errors gracefully. The zero value is not usable;
-// create clients with NewUnixClient.
+func (p *peerConn) setConn(conn net.Conn) {
+	p.connMu.Lock()
+	p.conn = conn
+	p.connMu.Unlock()
+}
+
+func (p *peerConn) discardConn(conn net.Conn) {
+	p.connMu.Lock()
+	if p.conn == conn {
+		p.conn = nil
+	}
+	p.connMu.Unlock()
+	_ = conn.Close()
+}
+
+func (p *peerConn) close() {
+	p.connMu.Lock()
+	conn := p.conn
+	p.conn = nil
+	p.connMu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
+// UnixClientOptions configures bounded peer I/O. Non-positive values use the
+// defaults returned by DefaultUnixClientOptions.
+type UnixClientOptions struct {
+	// DialTimeout bounds each peer connection attempt.
+	DialTimeout time.Duration
+	// WriteTimeout bounds each complete framed write.
+	WriteTimeout time.Duration
+}
+
+// DefaultUnixClientOptions returns the default peer I/O timeouts.
+func DefaultUnixClientOptions() *UnixClientOptions {
+	return &UnixClientOptions{
+		DialTimeout:  defaultUnixDialTimeout,
+		WriteTimeout: defaultUnixWriteTimeout,
+	}
+}
+
+// UnixClient owns a listener and pooled outgoing Unix stream connections.
+// The zero value is not usable; create clients with NewUnixClient.
 type UnixClient struct {
 	types.EventEmitter
 
-	socketPath string
-	ctx        context.Context
+	socketPath   string
+	ctx          context.Context
+	cancel       context.CancelFunc
+	dialTimeout  time.Duration
+	writeTimeout time.Duration
 
 	mu           sync.Mutex
 	listener     net.Listener
 	listenerPath string
-	listenerMode unixSocketMode
+	peers        map[string]*peerConn
+	activeConns  map[net.Conn]struct{}
+	closeOnce    sync.Once
+	closeErr     error
+	wg           sync.WaitGroup
 
-	// Connection pool for outgoing connections to peers.
-	peersMu sync.Mutex
-	peers   map[string]*peerConn
-
-	// Internal message channel for received messages.
-	msgCh chan *receivedMessage
-
-	// Tracking accepted connections for cleanup.
-	activeConns   map[net.Conn]struct{}
-	activeConnsMu sync.Mutex
-
-	// Shutdown control.
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	msgCh chan []byte
 }
 
-// NewUnixClient creates a new UnixClient with the given context and socket path.
-//
-// Parameters:
-//   - ctx: The context that controls the lifecycle of Unix socket operations.
-//     When canceled, all operations will be terminated.
-//   - socketPath: The path to the shared Unix Domain Socket used for broadcasting messages.
-//
-// Returns:
-//   - A pointer to the initialized UnixClient instance, or an error when the
-//     socket path is empty.
-//
-// Example:
-//
-//	client, err := NewUnixClient(context.Background(), "/tmp/socket.io.sock")
-func NewUnixClient(ctx context.Context, socketPath string) (*UnixClient, error) {
+func (c *UnixClient) onError(...any) {
+	if c.ListenerCount("error") == 1 {
+		unixClientLog.Warning("missing 'error' handler on this Unix client")
+	}
+}
+
+// NewUnixClient creates a Unix transport whose lifecycle follows ctx. The
+// option values are copied during construction; nil uses the bounded defaults.
+func NewUnixClient(ctx context.Context, socketPath string, opts *UnixClientOptions) (*UnixClient, error) {
 	if socketPath == "" {
 		return nil, ErrUnixSocketPathRequired
+	}
+	if os.IsPathSeparator(socketPath[len(socketPath)-1]) {
+		return nil, fmt.Errorf("%w: must not end with a path separator", ErrUnixSocketPathRequired)
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	resolved := DefaultUnixClientOptions()
+	if opts != nil {
+		if opts.DialTimeout > 0 {
+			resolved.DialTimeout = opts.DialTimeout
+		}
+		if opts.WriteTimeout > 0 {
+			resolved.WriteTimeout = opts.WriteTimeout
+		}
+	}
 
 	ctx, cancel := context.WithCancel(ctx)
-
-	return &UnixClient{
+	client := &UnixClient{
 		EventEmitter: types.NewEventEmitter(),
 		socketPath:   socketPath,
 		ctx:          ctx,
 		cancel:       cancel,
+		dialTimeout:  resolved.DialTimeout,
+		writeTimeout: resolved.WriteTimeout,
 		peers:        make(map[string]*peerConn),
 		activeConns:  make(map[net.Conn]struct{}),
-		msgCh:        make(chan *receivedMessage, 256),
-	}, nil
+		msgCh:        make(chan []byte, 256),
+	}
+	_ = client.On("error", client.onError)
+
+	context.AfterFunc(ctx, func() {
+		_ = client.Close()
+	})
+
+	return client, nil
 }
 
-// SocketPath returns the base Unix socket path used for peer discovery.
+// SocketPath returns the base path used for peer discovery.
 func (c *UnixClient) SocketPath() string { return c.socketPath }
 
 // Context returns the context controlling Unix socket operations.
 func (c *UnixClient) Context() context.Context { return c.ctx }
 
-// Listen starts accepting stream connections on the given Unix socket path.
-// Incoming connections are handled in background goroutines, with messages
-// delivered through ReadMessage via an internal queue.
-//
-// Parameters:
-//   - listenerPath: The unique path for this listener's Unix Domain Socket.
+// Listen starts accepting framed messages on listenerPath.
 func (c *UnixClient) Listen(listenerPath string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.ctx.Err() != nil {
+		return ErrUnixClientClosed
+	}
 	if c.listener != nil {
-		return nil
+		if c.listenerPath == listenerPath {
+			return nil
+		}
+		return fmt.Errorf("%w on %q", ErrUnixClientAlreadyListening, c.listenerPath)
 	}
 
-	c.listenerPath = listenerPath
-
-	listener, mode, err := listenUnix(listenerPath)
+	listener, err := listenUnix(listenerPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on Unix socket %q: %w", listenerPath, err)
 	}
 
+	// Publish listener state only after listenUnix, including chmod, succeeds.
 	c.listener = listener
-	c.listenerMode = mode
-
+	c.listenerPath = listenerPath
 	c.wg.Add(1)
-	go c.acceptLoop()
-
+	go c.acceptLoop(listener)
 	return nil
 }
 
-// acceptLoop continuously accepts new stream connections on the listener.
-func (c *UnixClient) acceptLoop() {
+func (c *UnixClient) acceptLoop(listener net.Listener) {
 	defer c.wg.Done()
+	var retryDelay time.Duration
 
 	for {
-		conn, err := c.listener.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
-			select {
-			case <-c.ctx.Done():
+			c.mu.Lock()
+			stopped := c.ctx.Err() != nil || c.listener != listener
+			c.mu.Unlock()
+			if stopped {
 				return
-			default:
-				return // listener was closed
 			}
+
+			go c.Emit("error", fmt.Errorf("failed to accept Unix socket connection: %w", err))
+			if retryDelay == 0 {
+				retryDelay = 5 * time.Millisecond
+			} else {
+				retryDelay = min(2*retryDelay, time.Second)
+			}
+			timer := time.NewTimer(retryDelay)
+			select {
+			case <-timer.C:
+			case <-c.ctx.Done():
+				timer.Stop()
+				return
+			}
+			continue
 		}
+		retryDelay = 0
 
 		c.mu.Lock()
-		mode := c.listenerMode
+		if c.listener != listener {
+			c.mu.Unlock()
+			_ = conn.Close()
+			return
+		}
+		c.activeConns[conn] = struct{}{}
+		c.wg.Add(1)
 		c.mu.Unlock()
 
-		c.trackConn(conn)
-		c.wg.Add(1)
-		go c.handleConn(conn, mode)
+		go c.handleConn(conn)
 	}
 }
 
-// trackConn adds a connection to the active set for cleanup on Close.
-func (c *UnixClient) trackConn(conn net.Conn) {
-	c.activeConnsMu.Lock()
-	c.activeConns[conn] = struct{}{}
-	c.activeConnsMu.Unlock()
-}
-
-// untrackConn removes a connection from the active set.
-func (c *UnixClient) untrackConn(conn net.Conn) {
-	c.activeConnsMu.Lock()
-	delete(c.activeConns, conn)
-	c.activeConnsMu.Unlock()
-}
-
-// handleConn reads length-prefixed messages from an accepted stream connection.
-// Each message is framed as [4-byte big-endian length][payload].
-func (c *UnixClient) handleConn(conn net.Conn, mode unixSocketMode) {
-	defer c.wg.Done()
-	defer func() { _ = conn.Close() }()
-	defer c.untrackConn(conn)
-
-	addr := conn.RemoteAddr()
+func (c *UnixClient) handleConn(conn net.Conn) {
+	var frameErr error
+	defer func() {
+		_ = conn.Close()
+		c.mu.Lock()
+		delete(c.activeConns, conn)
+		c.mu.Unlock()
+		c.wg.Done()
+		if frameErr != nil {
+			c.Emit("error", frameErr)
+		}
+	}()
 
 	for {
-		data, err := readUnixMessage(conn, mode)
+		data, err := readUnixMessage(conn)
 		if err != nil {
+			if errors.Is(err, ErrUnixMessageSize) {
+				frameErr = fmt.Errorf("failed to read Unix socket frame: %w", err)
+			}
 			return
 		}
 
 		select {
-		case c.msgCh <- &receivedMessage{data: data, addr: addr}:
+		case c.msgCh <- data:
 		case <-c.ctx.Done():
 			return
 		}
 	}
 }
 
-// ReadMessage reads the next message from the internal message queue.
-// This method blocks until a message is received or the context is canceled.
-//
-// Returns the received message bytes and the sender address, or an error.
-func (c *UnixClient) ReadMessage(buf []byte) (int, net.Addr, error) {
+// ReadMessage returns the next complete frame without copying it through a
+// caller-sized buffer.
+func (c *UnixClient) ReadMessage() ([]byte, error) {
 	c.mu.Lock()
+	closed := c.ctx.Err() != nil
 	listening := c.listener != nil
 	c.mu.Unlock()
 
+	if closed {
+		return nil, ErrUnixClientClosed
+	}
 	if !listening {
-		return 0, nil, fmt.Errorf("listener not started")
+		return nil, ErrUnixListenerNotStarted
 	}
 
 	select {
-	case msg := <-c.msgCh:
-		if msg == nil {
-			return 0, nil, fmt.Errorf("message channel closed")
-		}
-		n := copy(buf, msg.data)
-		return n, msg.addr, nil
+	case data := <-c.msgCh:
+		return data, nil
 	case <-c.ctx.Done():
-		return 0, nil, c.ctx.Err()
+		return nil, ErrUnixClientClosed
 	}
 }
 
-// Send sends a length-prefixed message to the specified Unix socket path.
-// Connections are pooled and reused across calls. If a send fails, the stale
-// connection is discarded and the send is retried once with a fresh connection.
-//
-// Parameters:
-//   - targetPath: The path of the target Unix Domain Socket.
-//   - payload: The message payload bytes.
+// Send writes one framed message to targetPath. A non-timeout write failure on
+// an existing pooled connection is retried once with a new connection. Dial,
+// first-use write, and write-timeout failures are returned directly.
 func (c *UnixClient) Send(targetPath string, payload []byte) error {
-	if c.ctx.Err() != nil {
-		return c.ctx.Err()
+	if err := validateUnixMessage(payload); err != nil {
+		return err
 	}
 
-	pc := c.getOrCreatePeer(targetPath)
-	pc.mu.Lock()
-	defer pc.mu.Unlock()
-
-	// Try once; on failure the connection is reset, so retry with a fresh connection.
-	if err := c.writeFrame(pc, targetPath, payload); err != nil {
-		if err2 := c.writeFrame(pc, targetPath, payload); err2 != nil {
-			return err2
-		}
-	}
-
-	return nil
-}
-
-// getOrCreatePeer returns the peerConn for the given path, creating one if needed.
-func (c *UnixClient) getOrCreatePeer(targetPath string) *peerConn {
-	c.peersMu.Lock()
-	defer c.peersMu.Unlock()
-
-	if pc, ok := c.peers[targetPath]; ok {
-		return pc
-	}
-
-	pc := &peerConn{}
-	c.peers[targetPath] = pc
-	return pc
-}
-
-// writeFrame connects (if needed) and writes a length-prefixed message to the peer.
-// The frame format is [4-byte big-endian length][payload]. Uses net.Buffers for
-// efficient scatter-gather I/O (writev). On write failure, the connection is closed
-// and set to nil so the next call retries with a fresh connection.
-func (c *UnixClient) writeFrame(pc *peerConn, targetPath string, payload []byte) error {
-	if pc.conn == nil {
-		conn, mode, err := dialUnix(targetPath)
+	for {
+		pc, err := c.lockPeer(targetPath)
 		if err != nil {
-			return fmt.Errorf("failed to dial Unix socket %q: %w", targetPath, err)
+			return err
 		}
-		pc.conn = conn
-		pc.mode = mode
+		err = c.sendLocked(targetPath, payload, pc)
+		pc.sendMu.Unlock()
+		if !errors.Is(err, errUnixPeerRemoved) {
+			return err
+		}
+	}
+}
+
+func (c *UnixClient) lockPeer(targetPath string) (*peerConn, error) {
+	for {
+		c.mu.Lock()
+		if c.ctx.Err() != nil {
+			c.mu.Unlock()
+			return nil, ErrUnixClientClosed
+		}
+		pc := c.peers[targetPath]
+		if pc == nil {
+			pc = &peerConn{}
+			c.peers[targetPath] = pc
+		}
+		c.mu.Unlock()
+
+		pc.sendMu.Lock()
+		c.mu.Lock()
+		closed := c.ctx.Err() != nil
+		current := c.peers[targetPath] == pc
+		c.mu.Unlock()
+		if closed {
+			pc.sendMu.Unlock()
+			return nil, ErrUnixClientClosed
+		}
+		if current {
+			return pc, nil
+		}
+		pc.sendMu.Unlock()
+	}
+}
+
+func (c *UnixClient) sendLocked(targetPath string, payload []byte, pc *peerConn) error {
+	conn := pc.connection()
+	pooled := conn != nil
+	if !pooled {
+		var err error
+		conn, err = c.dialPeer(targetPath)
+		if err != nil {
+			c.removePeer(targetPath, pc)
+			return err
+		}
+		pc.setConn(conn)
+		if err := c.checkPeer(targetPath, pc); err != nil {
+			pc.discardConn(conn)
+			return err
+		}
 	}
 
-	if err := writeUnixMessage(pc.conn, payload, pc.mode); err != nil {
-		_ = pc.conn.Close()
-		pc.conn = nil
+	reusable, err := c.writeMessage(conn, payload)
+	if err == nil {
+		if !reusable {
+			pc.discardConn(conn)
+		}
+		return nil
+	}
+	if !pooled || errors.Is(err, os.ErrDeadlineExceeded) {
+		pc.discardConn(conn)
+		c.removePeer(targetPath, pc)
 		return fmt.Errorf("failed to send to Unix socket %q: %w", targetPath, err)
 	}
 
+	// Only a stale pooled connection gets one reconnect attempt.
+	pc.discardConn(conn)
+	if peerErr := c.checkPeer(targetPath, pc); peerErr != nil {
+		c.removePeer(targetPath, pc)
+		return peerErr
+	}
+
+	conn, err = c.dialPeer(targetPath)
+	if err != nil {
+		c.removePeer(targetPath, pc)
+		return err
+	}
+	pc.setConn(conn)
+	if peerErr := c.checkPeer(targetPath, pc); peerErr != nil {
+		pc.discardConn(conn)
+		return peerErr
+	}
+	reusable, err = c.writeMessage(conn, payload)
+	if err != nil {
+		pc.discardConn(conn)
+		c.removePeer(targetPath, pc)
+		return fmt.Errorf("failed to send to Unix socket %q: %w", targetPath, err)
+	}
+	if !reusable {
+		pc.discardConn(conn)
+	}
 	return nil
 }
 
-// ListenerPath returns the path of the listener socket.
-func (c *UnixClient) ListenerPath() string {
+// writeMessage bounds a complete frame write. A false reusable result with no
+// error means the frame was delivered but the deadline could not be cleared.
+func (c *UnixClient) writeMessage(conn net.Conn, payload []byte) (reusable bool, err error) {
+	if err := conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+		return false, err
+	}
+	if err := writeUnixMessage(conn, payload); err != nil {
+		return false, err
+	}
+	return conn.SetWriteDeadline(time.Time{}) == nil, nil
+}
+
+func (c *UnixClient) dialPeer(targetPath string) (net.Conn, error) {
+	conn, err := dialUnix(c.ctx, targetPath, c.dialTimeout)
+	if err == nil {
+		return conn, nil
+	}
+	if c.ctx.Err() != nil {
+		return nil, ErrUnixClientClosed
+	}
+	return nil, fmt.Errorf("failed to dial Unix socket %q: %w", targetPath, err)
+}
+
+func (c *UnixClient) checkPeer(targetPath string, pc *peerConn) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.listenerPath
-}
-
-// Close releases all resources including the listener, accepted connections,
-// pooled peer connections, and waits for background goroutines to exit.
-func (c *UnixClient) Close() error {
-	c.mu.Lock()
-
-	var errs []error
-
-	// Cancel context to signal all goroutines.
-	if c.cancel != nil {
-		c.cancel()
+	if c.ctx.Err() != nil {
+		return ErrUnixClientClosed
 	}
-
-	// Close listener to unblock Accept.
-	if c.listener != nil {
-		if err := c.listener.Close(); err != nil {
-			errs = append(errs, err)
-		}
-		c.listener = nil
-	}
-
-	c.mu.Unlock()
-
-	// Close all accepted connections to unblock ReadFull.
-	c.activeConnsMu.Lock()
-	for conn := range c.activeConns {
-		_ = conn.Close()
-		delete(c.activeConns, conn)
-	}
-	c.activeConnsMu.Unlock()
-
-	// Close all pooled peer connections.
-	c.peersMu.Lock()
-	for path, pc := range c.peers {
-		pc.mu.Lock()
-		if pc.conn != nil {
-			_ = pc.conn.Close()
-			pc.conn = nil
-		}
-		pc.mu.Unlock()
-		delete(c.peers, path)
-	}
-	c.peersMu.Unlock()
-
-	// Wait for all background goroutines to exit.
-	c.wg.Wait()
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors closing Unix client: %v", errs)
+	if c.peers[targetPath] != pc {
+		return errUnixPeerRemoved
 	}
 	return nil
+}
+
+func (c *UnixClient) removePeer(targetPath string, pc *peerConn) {
+	c.mu.Lock()
+	if c.peers[targetPath] == pc {
+		delete(c.peers, targetPath)
+	}
+	c.mu.Unlock()
+}
+
+// Broadcast discovers listener sockets derived from SocketPath and sends the
+// payload to each peer. Per-peer failures are emitted as "error" events; only
+// discovery and input errors are returned.
+func (c *UnixClient) Broadcast(payload []byte) error {
+	if err := validateUnixMessage(payload); err != nil {
+		return err
+	}
+
+	if c.ctx.Err() != nil {
+		return ErrUnixClientClosed
+	}
+
+	directory := filepath.Dir(c.socketPath)
+	prefix := filepath.Base(c.socketPath) + "."
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return fmt.Errorf("failed to scan Unix socket directory %q: %w", directory, err)
+	}
+
+	targets := make([]string, 0, len(entries))
+	discovered := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if !matchesUnixPeerName(entry.Name(), prefix) {
+			continue
+		}
+		isSocket, err := isUnixSocketEntry(entry)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				go c.Emit("error", fmt.Errorf("failed to inspect Unix socket %q: %w", entry.Name(), err))
+			}
+			continue
+		}
+		if !isSocket {
+			continue
+		}
+
+		targetPath := filepath.Join(directory, entry.Name())
+		discovered[targetPath] = struct{}{}
+		targets = append(targets, targetPath)
+	}
+
+	c.prunePeers(directory, prefix, discovered)
+	for _, targetPath := range targets {
+		if err := c.Send(targetPath, payload); err != nil {
+			go c.Emit("error", err)
+		}
+	}
+	return nil
+}
+
+func matchesUnixPeerName(name, prefix string) bool {
+	suffix, matchesPrefix := strings.CutPrefix(name, prefix)
+	return matchesPrefix && suffix != "" && !strings.ContainsRune(suffix, '.')
+}
+
+func isUnixSocketEntry(entry os.DirEntry) (bool, error) {
+	mode := entry.Type()
+	if mode&os.ModeSymlink != 0 || mode.IsDir() {
+		return false, nil
+	}
+	if mode&os.ModeSocket != 0 {
+		return true, nil
+	}
+	info, err := entry.Info()
+	if err != nil {
+		return false, err
+	}
+	return info.Mode()&os.ModeSocket != 0, nil
+}
+
+func (c *UnixClient) prunePeers(directory, prefix string, discovered map[string]struct{}) {
+	c.mu.Lock()
+	for targetPath, pc := range c.peers {
+		if filepath.Dir(targetPath) != directory || !matchesUnixPeerName(filepath.Base(targetPath), prefix) {
+			continue
+		}
+		if _, ok := discovered[targetPath]; ok {
+			continue
+		}
+		pc.close()
+		delete(c.peers, targetPath)
+	}
+	c.mu.Unlock()
+}
+
+// Close releases the listener and all accepted and pooled connections. It is
+// safe to call concurrently and waits for an in-progress Close to finish.
+func (c *UnixClient) Close() error {
+	c.closeOnce.Do(func() {
+		c.closeErr = c.close()
+	})
+	return c.closeErr
+}
+
+func (c *UnixClient) close() error {
+	c.mu.Lock()
+	c.cancel()
+	listener := c.listener
+	c.listener = nil
+	c.listenerPath = ""
+	activeConns := make([]net.Conn, 0, len(c.activeConns))
+	for conn := range c.activeConns {
+		activeConns = append(activeConns, conn)
+	}
+	clear(c.activeConns)
+	peers := make([]*peerConn, 0, len(c.peers))
+	for _, pc := range c.peers {
+		peers = append(peers, pc)
+	}
+	clear(c.peers)
+	c.mu.Unlock()
+
+	var closeErr error
+	if listener != nil {
+		if closeErr = listener.Close(); errors.Is(closeErr, net.ErrClosed) {
+			closeErr = nil
+		}
+	}
+	for _, conn := range activeConns {
+		_ = conn.Close()
+	}
+	for _, pc := range peers {
+		pc.close()
+	}
+	c.wg.Wait()
+
+drainMessages:
+	for {
+		select {
+		case <-c.msgCh:
+		default:
+			break drainMessages
+		}
+	}
+
+	return closeErr
 }

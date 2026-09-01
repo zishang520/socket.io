@@ -15,16 +15,6 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
-// reservedEvents contains event names that are reserved by Socket.IO and cannot be emitted.
-var reservedEvents = types.NewSet(
-	"connect",
-	"connect_error",
-	"disconnect",
-	"disconnecting",
-	"newListener",
-	"removeListener",
-)
-
 var errAcknowledgementsNotSupported = errors.New("Acknowledgements are not supported") //nolint:staticcheck // Node.js API text
 
 // BroadcastOperator provides a fluent API for broadcasting events to Socket.IO clients via MongoDB.
@@ -130,7 +120,7 @@ func (b *BroadcastOperator) Volatile() BroadcastOperatorInterface {
 // The message is sent by inserting a document into the MongoDB collection,
 // matching the Node.js @socket.io/mongo-emitter wire protocol.
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
-	if reservedEvents.Has(ev) {
+	if socket.SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
@@ -160,7 +150,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 // This matches the Node.js emitter's _publish() method behavior exactly.
 func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 	event := &mongo.AdapterEvent{
-		Uid:  emitterUID,
+		Uid:  adapter.EMITTER_UID,
 		Nsp:  b.broadcastOptions.Nsp,
 		Type: message.Type,
 	}

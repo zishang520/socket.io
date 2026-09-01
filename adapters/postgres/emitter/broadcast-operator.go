@@ -2,6 +2,7 @@
 package emitter
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,16 +14,6 @@ import (
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
-)
-
-// reservedEvents contains event names that are reserved by Socket.IO and cannot be emitted.
-var reservedEvents = types.NewSet(
-	"connect",
-	"connect_error",
-	"disconnect",
-	"disconnecting",
-	"newListener",
-	"removeListener",
 )
 
 var errAcknowledgementsNotSupported = errors.New("Acknowledgements are not supported") //nolint:staticcheck // Node.js API text
@@ -132,7 +123,7 @@ func (b *BroadcastOperator) Volatile() BroadcastOperatorInterface {
 // contains binary data, the message is msgpack-encoded and stored in the
 // attachment table, matching the Node.js adapter wire protocol.
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
-	if reservedEvents.Has(ev) {
+	if socket.SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
@@ -164,6 +155,9 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 // and attachment storage for large payloads. This matches the Node.js emitter's
 // publish() method behavior exactly.
 func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
+	ctx, cancel := context.WithTimeout(b.postgresClient.Context(), postgres.DefaultOperationTimeout)
+	defer cancel()
+
 	channel := b.broadcastOptions.BroadcastChannel
 	wireMessage := *message
 	wireMessage.Uid = adapter.EMITTER_UID
@@ -173,7 +167,7 @@ func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 
 	// Check binary data first — binary always goes to attachment table
 	if binary {
-		return b.publishWithAttachment(&wireMessage)
+		return b.publishWithAttachment(ctx, &wireMessage)
 	}
 
 	payload, err := json.Marshal(&wireMessage)
@@ -184,24 +178,24 @@ func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 	emitterLog.Debug("publishing message to channel %s", channel)
 
 	// Check if payload exceeds threshold — use attachment table
-	if len(payload) > b.broadcastOptions.PayloadThreshold {
-		return b.publishWithAttachment(&wireMessage)
+	if len(payload) >= b.broadcastOptions.PayloadThreshold {
+		return b.publishWithAttachment(ctx, &wireMessage)
 	}
 
-	return b.postgresClient.Notify(b.postgresClient.Context(), channel, string(payload))
+	return b.postgresClient.Notify(ctx, channel, string(payload))
 }
 
 // publishWithAttachment msgpack-encodes the full ClusterMessage, stores it in the
 // attachment table, and sends a lightweight NOTIFY header with the attachment ID.
 // This matches the Node.js emitter's publishWithAttachment() behavior.
-func (b *BroadcastOperator) publishWithAttachment(message *adapter.ClusterMessage) error {
+func (b *BroadcastOperator) publishWithAttachment(ctx context.Context, message *adapter.ClusterMessage) error {
 	payload, err := utils.MsgPack().Encode(message)
 	if err != nil {
 		return fmt.Errorf("failed to msgpack-encode message: %w", err)
 	}
 
 	id, err := b.postgresClient.InsertAttachment(
-		b.postgresClient.Context(),
+		ctx,
 		b.broadcastOptions.TableName,
 		payload,
 	)
@@ -219,7 +213,7 @@ func (b *BroadcastOperator) publishWithAttachment(message *adapter.ClusterMessag
 		return err
 	}
 
-	return b.postgresClient.Notify(b.postgresClient.Context(), b.broadcastOptions.BroadcastChannel, string(notification))
+	return b.postgresClient.Notify(ctx, b.broadcastOptions.BroadcastChannel, string(notification))
 }
 
 // SocketsJoin makes all matching socket instances join the specified rooms.

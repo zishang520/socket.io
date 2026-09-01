@@ -60,7 +60,7 @@ func (e *Emitter) Construct(client *valkey.ValkeyClient, opts *EmitterOptions, n
 		e.opts.SetParser(utils.MsgPack())
 	}
 
-	if len(nsps) > 0 && len(nsps[0]) > 0 {
+	if len(nsps) > 0 {
 		e.nsp = nsps[0]
 	}
 

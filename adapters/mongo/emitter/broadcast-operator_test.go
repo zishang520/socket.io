@@ -43,3 +43,19 @@ func TestServerSideEmitRejectsAck(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestEmitterNamespaceDefaultsMatchNode(t *testing.T) {
+	root := NewEmitter(nil, nil)
+	if root.broadcastOptions.Nsp != "/" {
+		t.Fatalf("default namespace = %q, want %q", root.broadcastOptions.Nsp, "/")
+	}
+
+	empty := NewEmitter(nil, nil, "")
+	if empty.broadcastOptions.Nsp != "" {
+		t.Fatalf("explicit namespace = %q, want an empty string", empty.broadcastOptions.Nsp)
+	}
+
+	if namespace := empty.Of("").broadcastOptions.Nsp; namespace != "/" {
+		t.Fatalf("Of(\"\") namespace = %q, want %q", namespace, "/")
+	}
+}

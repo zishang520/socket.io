@@ -15,14 +15,6 @@ import (
 )
 
 var (
-	reservedEvents = types.NewSet(
-		"connect",
-		"connect_error",
-		"disconnect",
-		"disconnecting",
-		"newListener",
-		"removeListener",
-	)
 	errAcknowledgementsNotSupported = errors.New("Acknowledgements are not supported") //nolint:staticcheck // Node.js API text
 	errEncoderNotSet                = errors.New("broadcastOptions.Encoder is not set")
 )
@@ -108,7 +100,7 @@ func (b *BroadcastOperator) Volatile() BroadcastOperatorInterface {
 }
 
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
-	if reservedEvents.Has(ev) {
+	if socket.SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 	if utils.IsNil(b.broadcastOptions.Encoder) {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
@@ -68,7 +69,7 @@ func DefaultMongoAdapterOptions() *MongoAdapterOptions {
 // Assign copies non-nil fields from another MongoAdapterOptionsInterface.
 // This method is useful for merging user-provided options with defaults.
 func (s *MongoAdapterOptions) Assign(data MongoAdapterOptionsInterface) MongoAdapterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return s
 	}
 

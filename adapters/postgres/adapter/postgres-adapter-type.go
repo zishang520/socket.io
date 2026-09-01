@@ -79,7 +79,7 @@ type PostgresAdapterBuilder struct {
 	// Opts contains configuration options for the adapter.
 	Opts PostgresAdapterOptionsInterface
 
-	namespaces   types.Map[string, PostgresAdapter]
+	namespaces   types.Map[string, *postgresAdapter]
 	mu           sync.Mutex
 	cancel       context.CancelFunc
 	listenerDone chan struct{}
@@ -103,8 +103,13 @@ func (pb *PostgresAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	}
 	pb.mu.Unlock()
 
-	if err := pb.Postgres.Listen(pb.Postgres.Context(), channel); err != nil {
-		postgresLog.Debug("failed to listen on channel %s: %s", channel, err.Error())
+	listenCtx, cancelListen := context.WithTimeout(pb.Postgres.Context(), postgres.DefaultOperationTimeout)
+	err := pb.Postgres.Listen(listenCtx, channel)
+	cancelListen()
+	if err != nil {
+		if !errors.Is(err, context.Canceled) && pb.Postgres.Context().Err() == nil {
+			adapterInstance.onError(err)
+		}
 	}
 	if listenerCtx != nil {
 		options := adapterInstance.opts
@@ -119,7 +124,10 @@ func (pb *PostgresAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 		}()
 	}
 
+	stopContextClose := context.AfterFunc(pb.Postgres.Context(), adapterInstance.Close)
 	adapterInstance.Cleanup(func() {
+		stopContextClose()
+
 		pb.mu.Lock()
 		if !pb.namespaces.CompareAndDelete(channel, adapterInstance) {
 			pb.mu.Unlock()
@@ -131,11 +139,15 @@ func (pb *PostgresAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 			}
 			pb.cancel = nil
 		}
-		err := pb.Postgres.Unlisten(pb.Postgres.Context(), channel)
+		unlistenCtx, cancelUnlisten := context.WithTimeout(pb.Postgres.Context(), postgres.DefaultOperationTimeout)
+		err := pb.Postgres.Unlisten(unlistenCtx, channel)
+		cancelUnlisten()
 		pb.mu.Unlock()
 
 		if err != nil {
-			postgresLog.Debug("failed to unlisten from channel %s: %s", channel, err.Error())
+			if !errors.Is(err, context.Canceled) && pb.Postgres.Context().Err() == nil {
+				adapterInstance.onError(err)
+			}
 		}
 	})
 
@@ -161,7 +173,7 @@ func (pb *PostgresAdapterBuilder) startListening(ctx context.Context, options *P
 			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
 				return
 			}
-			postgresLog.Debug("listener error: %s", err.Error())
+			options.ErrorHandler()(err)
 
 			timer := time.NewTimer(time.Duration(rand.IntN(2_000)+1_000) * time.Millisecond)
 			select {
@@ -177,10 +189,62 @@ func (pb *PostgresAdapterBuilder) startListening(ctx context.Context, options *P
 			continue
 		}
 
-		if adapterInstance, ok := pb.namespaces.Load(notification.Channel); ok {
-			adapterInstance.OnNotification(notification.Payload)
+		adapterInstance, ok := pb.namespaces.Load(notification.Channel)
+		if !ok {
+			continue
 		}
+
+		message, err := parseNotification(notification.Payload)
+		if err != nil {
+			if pb.isActiveListener(ctx, notification.Channel, adapterInstance) {
+				adapterInstance.onError(err)
+			}
+			continue
+		}
+		if message.Uid == adapterInstance.Uid() {
+			continue
+		}
+
+		if message.AttachmentId != "" {
+			go pb.dispatchNotification(ctx, notification.Channel, adapterInstance, message)
+			continue
+		}
+
+		pb.dispatchNotification(ctx, notification.Channel, adapterInstance, message)
 	}
+}
+
+func (pb *PostgresAdapterBuilder) dispatchNotification(
+	ctx context.Context,
+	channel string,
+	adapterInstance *postgresAdapter,
+	notification *NotificationMessage,
+) {
+	message, err := adapterInstance.decodeReceivedNotification(ctx, notification)
+	if !pb.isActiveListener(ctx, channel, adapterInstance) {
+		return
+	}
+	if err != nil {
+		adapterInstance.onError(err)
+		return
+	}
+	if message == nil {
+		return
+	}
+
+	adapterInstance.OnMessage(message, "")
+}
+
+func (pb *PostgresAdapterBuilder) isActiveListener(
+	ctx context.Context,
+	channel string,
+	adapterInstance *postgresAdapter,
+) bool {
+	if ctx.Err() != nil || adapterInstance.isClosed.Load() {
+		return false
+	}
+	current, ok := pb.namespaces.Load(channel)
+	return ok && current == adapterInstance
 }
 
 // cleanupLoop periodically cleans up old attachments from the storage table.

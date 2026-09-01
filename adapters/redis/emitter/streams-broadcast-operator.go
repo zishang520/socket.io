@@ -132,7 +132,7 @@ func (b *RedisStreamsBroadcastOperator) Volatile() BroadcastOperatorInterface {
 }
 
 func (b *RedisStreamsBroadcastOperator) Emit(ev string, args ...any) error {
-	if reservedEvents.Has(ev) {
+	if socket.SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 

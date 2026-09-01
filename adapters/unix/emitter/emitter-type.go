@@ -8,13 +8,10 @@ import (
 
 type (
 	// BroadcastOptions contains configuration for broadcasting messages via Unix Domain Sockets.
-	// These options determine how messages are routed and encoded.
+	// The namespace routes the message to the matching adapter.
 	BroadcastOptions struct {
 		// Nsp is the Socket.IO namespace for the broadcast.
 		Nsp string
-
-		// SocketPath is the base path of the Unix Domain Socket.
-		SocketPath string
 	}
 
 	// BroadcastOperatorInterface defines the common interface for broadcast operators.

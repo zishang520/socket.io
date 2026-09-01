@@ -220,6 +220,110 @@ func TestUnmarshalAdapterDataAcceptsNodeOptions(t *testing.T) {
 	}
 }
 
+func TestUnmarshalAdapterDataPreservesInvalidOptions(t *testing.T) {
+	tests := []struct {
+		name        string
+		messageType adapter.MessageType
+		data        bson.D
+		wantOpts    bool
+	}{
+		{
+			name:        "broadcast without opts",
+			messageType: BROADCAST,
+			data:        bson.D{{Key: "packet", Value: bson.D{}}},
+		},
+		{
+			name:        "leave with missing option fields",
+			messageType: SOCKETS_LEAVE,
+			data: bson.D{
+				{Key: "opts", Value: bson.D{}},
+				{Key: "rooms", Value: bson.A{}},
+			},
+			wantOpts: true,
+		},
+		{
+			name:        "disconnect with null rooms",
+			messageType: DISCONNECT_SOCKETS,
+			data: bson.D{
+				{Key: "opts", Value: bson.D{
+					{Key: "rooms", Value: nil},
+					{Key: "except", Value: bson.A{}},
+				}},
+				{Key: "close", Value: false},
+			},
+			wantOpts: true,
+		},
+		{
+			name:        "fetch with null except",
+			messageType: FETCH_SOCKETS,
+			data: bson.D{
+				{Key: "opts", Value: bson.D{
+					{Key: "rooms", Value: bson.A{}},
+					{Key: "except", Value: nil},
+				}},
+				{Key: "requestId", Value: "request-1"},
+			},
+			wantOpts: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := mustMarshalNodeDocument(t, tt.data)
+			decoded, err := UnmarshalAdapterData(tt.messageType, bson.RawValue{
+				Type:  bson.TypeEmbeddedDocument,
+				Value: raw,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			opts := decodedPacketOptions(t, decoded)
+			if (opts != nil) != tt.wantOpts {
+				t.Fatalf("options = %#v, want present %t", opts, tt.wantOpts)
+			}
+			if opts.IsValid() {
+				t.Fatalf("invalid wire options were normalized: %#v", opts)
+			}
+		})
+	}
+}
+
+func TestUnmarshalAdapterDataRequiresFetchSockets(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		data         bson.D
+		wantResponse bool
+	}{
+		{name: "missing", data: bson.D{{Key: "requestId", Value: "request"}}},
+		{name: "null", data: bson.D{{Key: "requestId", Value: "request"}, {Key: "sockets", Value: nil}}},
+		{name: "empty", data: bson.D{{Key: "requestId", Value: "request"}, {Key: "sockets", Value: bson.A{}}}, wantResponse: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			decoded, err := UnmarshalAdapterData(FETCH_SOCKETS_RESPONSE, bson.RawValue{
+				Type:  bson.TypeEmbeddedDocument,
+				Value: mustMarshalNodeDocument(t, tt.data),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tt.wantResponse {
+				if decoded != nil {
+					t.Fatalf("decoded response = %T, want nil", decoded)
+				}
+				return
+			}
+			response, ok := decoded.(*adapter.FetchSocketsResponse)
+			if !ok {
+				t.Fatalf("decoded response type = %T", decoded)
+			}
+			if response.Sockets == nil || len(response.Sockets) != 0 {
+				t.Fatalf("sockets = %#v, want non-nil empty slice", response.Sockets)
+			}
+		})
+	}
+}
+
 func TestUnmarshalAdapterDataAcceptsNodeSocketDetails(t *testing.T) {
 	raw := mustMarshalNodeDocument(t, bson.D{
 		{Key: "requestId", Value: "request-1"},
@@ -470,6 +574,23 @@ func responsePacket(t *testing.T, response any) any {
 		return value.Packet
 	default:
 		t.Fatalf("unexpected response type: %T", response)
+		return nil
+	}
+}
+
+func decodedPacketOptions(t *testing.T, data any) *adapter.PacketOptions {
+	t.Helper()
+	switch value := data.(type) {
+	case *adapter.BroadcastMessage:
+		return value.Opts
+	case *adapter.SocketsJoinLeaveMessage:
+		return value.Opts
+	case *adapter.DisconnectSocketsMessage:
+		return value.Opts
+	case *adapter.FetchSocketsMessage:
+		return value.Opts
+	default:
+		t.Fatalf("unexpected adapter data type: %T", data)
 		return nil
 	}
 }

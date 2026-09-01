@@ -7,12 +7,17 @@ import (
 	"context"
 	"errors"
 
+	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-// ErrMongoCollectionRequired is returned when no MongoDB collection is provided.
-var ErrMongoCollectionRequired = errors.New("mongo: collection is required")
+var (
+	mongoClientLog = log.NewLog("socket.io-mongo")
+
+	// ErrMongoCollectionRequired is returned when no MongoDB collection is provided.
+	ErrMongoCollectionRequired = errors.New("mongo: collection is required")
+)
 
 // MongoClient wraps a mongo.Collection and provides context management
 // and event emitting capabilities for the Socket.IO MongoDB adapter.
@@ -41,6 +46,12 @@ func (m *MongoClient) Context() context.Context {
 	return m.ctx
 }
 
+func (m *MongoClient) onError(...any) {
+	if m.ListenerCount("error") == 1 {
+		mongoClientLog.Warning("missing 'error' handler on this MongoDB client")
+	}
+}
+
 // NewMongoClient creates a new MongoClient with the given context and MongoDB collection.
 //
 // Parameters:
@@ -66,9 +77,11 @@ func NewMongoClient(ctx context.Context, collection *mongo.Collection) (*MongoCl
 		ctx = context.Background()
 	}
 
-	return &MongoClient{
+	mongoClient := &MongoClient{
 		EventEmitter: types.NewEventEmitter(),
 		collection:   collection,
 		ctx:          ctx,
-	}, nil
+	}
+	_ = mongoClient.On("error", mongoClient.onError)
+	return mongoClient, nil
 }

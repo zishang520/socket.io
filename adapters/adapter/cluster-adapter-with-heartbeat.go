@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +24,8 @@ type (
 
 		_opts ClusterAdapterOptions
 
+		publishMu      sync.Mutex
+		closed         atomic.Bool
 		heartbeatTimer atomic.Pointer[utils.Timer]
 		cleanupTimer   atomic.Pointer[utils.Timer]
 		nodesMap       types.Map[ServerId, int64] // uid => timestamp of last message
@@ -90,31 +93,40 @@ func (a *clusterAdapterWithHeartbeat) Init() {
 	})
 }
 
+// scheduleHeartbeat is called while publishMu is held.
 func (a *clusterAdapterWithHeartbeat) scheduleHeartbeat() {
-	heartbeatTimer := a.heartbeatTimer.Load()
-	if heartbeatTimer != nil {
+	if heartbeatTimer := a.heartbeatTimer.Load(); heartbeatTimer != nil {
 		heartbeatTimer.Refresh()
 		return
 	}
 
-	heartbeatTimer = utils.SetTimeout(func() {
+	a.heartbeatTimer.Store(utils.SetTimeout(func() {
 		a.Publish(&ClusterMessage{Type: HEARTBEAT})
-	}, a._opts.HeartbeatInterval())
-	if !a.heartbeatTimer.CompareAndSwap(nil, heartbeatTimer) {
-		heartbeatTimer.Stop()
-		a.heartbeatTimer.Load().Refresh()
-	}
+	}, a._opts.HeartbeatInterval()))
 }
 
 func (a *clusterAdapterWithHeartbeat) Close() {
-	a.Publish(&ClusterMessage{
-		Type: ADAPTER_CLOSE,
-	})
-	utils.ClearTimeout(a.heartbeatTimer.Load())
-	utils.ClearInterval(a.cleanupTimer.Load())
+	a.publishMu.Lock()
+	defer a.publishMu.Unlock()
+	if a.closed.Swap(true) {
+		return
+	}
+	utils.ClearTimeout(a.heartbeatTimer.Swap(nil))
+	utils.ClearInterval(a.cleanupTimer.Swap(nil))
+	if closer, ok := a.ClusterAdapter.(interface {
+		closeWithMessage(*ClusterMessage)
+	}); ok {
+		closer.closeWithMessage(&ClusterMessage{Type: ADAPTER_CLOSE})
+	} else {
+		a.ClusterAdapter.Publish(&ClusterMessage{Type: ADAPTER_CLOSE})
+		a.ClusterAdapter.Close()
+	}
 }
 
 func (a *clusterAdapterWithHeartbeat) OnMessage(message *ClusterMessage, offset Offset) {
+	if a.closed.Load() {
+		return
+	}
 	if message.Uid == a.Uid() {
 		if log.DEBUG.Load() {
 			adapterLog.Debug("[%s] ignore message from self", a.Uid())
@@ -153,13 +165,24 @@ func (a *clusterAdapterWithHeartbeat) ServerCount() (int64, error) {
 }
 
 func (a *clusterAdapterWithHeartbeat) publishAndReturnOffset(message *ClusterMessage) (Offset, error) {
+	a.publishMu.Lock()
+	if a.closed.Load() {
+		a.publishMu.Unlock()
+		return "", ErrAdapterClosed
+	}
 	a.scheduleHeartbeat()
-	return a.PublishAndReturnOffset(message)
+	a.publishMu.Unlock()
+	return a.ClusterAdapter.PublishAndReturnOffset(message)
 }
 
-// registerRequest reconciles nodes removed after the request took its snapshot.
-func (a *clusterAdapterWithHeartbeat) registerRequest(requestId string, request *CustomClusterRequest) bool {
+// registerRequest registers a timed request and reconciles nodes removed after its snapshot.
+func (a *clusterAdapterWithHeartbeat) registerRequest(requestId string, request *CustomClusterRequest, timeout time.Duration, onTimeout func()) bool {
 	a.customRequests.Store(requestId, request)
+	request.Timeout.Store(utils.SetTimeout(func() {
+		if finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
+			onTimeout()
+		}
+	}, timeout))
 	for _, uid := range request.MissingUids.Keys() {
 		if _, ok := a.nodesMap.Load(uid); !ok {
 			request.MissingUids.Delete(uid)
@@ -171,13 +194,21 @@ func (a *clusterAdapterWithHeartbeat) registerRequest(requestId string, request 
 		}
 	}
 	stored, ok := a.customRequests.Load(requestId)
-	return ok && stored == request
+	pending := ok && stored == request
+	if !pending {
+		utils.ClearTimeout(request.Timeout.Swap(nil))
+	}
+	return pending
 }
 
 func (a *clusterAdapterWithHeartbeat) Publish(message *ClusterMessage) {
-	if _, err := a.publishAndReturnOffset(message); err != nil {
-		adapterLog.Debug(`[%s] error while publishing message: %s`, a.Uid(), err.Error())
+	a.publishMu.Lock()
+	defer a.publishMu.Unlock()
+	if a.closed.Load() {
+		return
 	}
+	a.scheduleHeartbeat()
+	a.ClusterAdapter.Publish(message)
 }
 
 func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
@@ -221,19 +252,14 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		MissingUids: missingUids,
 		Responses:   types.NewSlice[any](),
 	}
-	if !a.registerRequest(requestId, request) {
-		return nil
-	}
-
-	request.Timeout.Store(utils.SetTimeout(func() {
-		if !finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
-			return
-		}
+	if !a.registerRequest(requestId, request, DEFAULT_TIMEOUT, func() {
 		ack(
 			request.Responses.All(),
 			fmt.Errorf(`timeout reached: missing %d responses`, request.MissingUids.Len()),
 		)
-	}, DEFAULT_TIMEOUT))
+	}) {
+		return nil
+	}
 
 	_, err := a.publishAndReturnOffset(&ClusterMessage{
 		Type: SERVER_SIDE_EMIT,
@@ -291,16 +317,11 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 				MissingUids: types.NewSet(missingUids...),
 				Responses:   types.NewSlice(SocketDetailsToAny(localSockets)...),
 			}
-			if !a.registerRequest(requestId, request) {
+			if !a.registerRequest(requestId, request, t, func() {
+				cb(nil, fmt.Errorf("timeout reached: missing %d responses", request.MissingUids.Len()))
+			}) {
 				return
 			}
-
-			request.Timeout.Store(utils.SetTimeout(func() {
-				if !finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
-					return
-				}
-				cb(nil, fmt.Errorf("timeout reached: missing %d responses", request.MissingUids.Len()))
-			}, t))
 
 			_, publishErr := a.publishAndReturnOffset(&ClusterMessage{
 				Type: FETCH_SOCKETS,

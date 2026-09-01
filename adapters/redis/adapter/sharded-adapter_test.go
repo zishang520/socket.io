@@ -212,7 +212,7 @@ func waitForShardedStateWithin(t *testing.T, timeout time.Duration, check func()
 
 func shardedServerSideEmitPayload(t *testing.T, nsp string) []byte {
 	t.Helper()
-	payload, err := redis.EncodeClusterMessage(&clusteradapter.ClusterMessage{
+	payload, err := clusteradapter.EncodeClusterMessage(&clusteradapter.ClusterMessage{
 		Uid:  "remote",
 		Nsp:  nsp,
 		Type: clusteradapter.SERVER_SIDE_EMIT,
@@ -222,6 +222,109 @@ func shardedServerSideEmitPayload(t *testing.T, nsp string) []byte {
 		t.Fatal(err)
 	}
 	return payload
+}
+
+func TestShardedReceiveReportsErrClosedUntilShutdown(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		shutdown   bool
+		wantNotify bool
+	}{
+		{name: "active pool", wantNotify: true},
+		{name: "shutdown", shutdown: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			if test.shutdown {
+				cancel()
+			} else {
+				defer cancel()
+			}
+			client := rds.NewClient(&rds.Options{Addr: "unused"})
+			t.Cleanup(func() { _ = client.Close() })
+			pool := &shardedPool{pubSub: client.SSubscribe(ctx)}
+			if err := pool.pubSub.Close(); err != nil {
+				t.Fatal(err)
+			}
+			current := &shardedPubSub{
+				ctx:    ctx,
+				client: client,
+				events: make(chan shardedPubSubEvent, 1),
+			}
+
+			current.receive(pool)
+
+			select {
+			case event := <-current.events:
+				if !test.wantNotify {
+					t.Fatal("shutdown notified the manager")
+				}
+				if event.pool != pool || !errors.Is(event.err, rds.ErrClosed) {
+					t.Fatalf("event = %#v, %v", event.pool, event.err)
+				}
+			default:
+				if test.wantNotify {
+					t.Fatal("active pool closure was not reported to the manager")
+				}
+			}
+		})
+	}
+}
+
+func TestShardedManagerProcessesOnlyCurrentPoolClose(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		current bool
+	}{
+		{name: "current", current: true},
+		{name: "stale"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			client := rds.NewClient(&rds.Options{Addr: "unused"})
+			t.Cleanup(func() { _ = client.Close() })
+			key := shardedPoolKey{node: client}
+			active := &shardedPool{
+				key:      key,
+				pubSub:   client.SSubscribe(ctx),
+				channels: make(map[string]struct{}),
+			}
+			closed := active
+			if !test.current {
+				closed = &shardedPool{key: key, pubSub: client.SSubscribe(ctx)}
+				defer func() { _ = closed.pubSub.Close() }()
+			}
+			manager := &shardedPubSub{
+				ctx:      ctx,
+				cancel:   cancel,
+				client:   client,
+				routes:   make(map[string]shardedRoute),
+				dirty:    make(map[string]struct{}),
+				wake:     make(chan struct{}, 1),
+				barriers: make(chan chan struct{}),
+				events:   make(chan shardedPubSubEvent),
+				errors:   make(chan error, 1),
+				done:     make(chan struct{}),
+				pools:    map[shardedPoolKey]*shardedPool{key: active},
+				channels: make(map[string]*shardedPool),
+			}
+			go manager.run()
+			defer manager.Close()
+
+			manager.events <- shardedPubSubEvent{pool: closed, err: rds.ErrClosed}
+			if err := manager.flush(ctx); err != nil {
+				t.Fatal(err)
+			}
+
+			got := manager.pools[key]
+			if test.current && got != nil {
+				t.Fatal("current closed pool was retained")
+			}
+			if !test.current && got != active {
+				t.Fatal("stale pool event removed the current pool")
+			}
+		})
+	}
 }
 
 func TestShardedBuilderSharesSubscriberAcrossNamespaces(t *testing.T) {

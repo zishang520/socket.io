@@ -2,9 +2,16 @@
 // These message types are used for inter-node communication in a clustered Socket.IO environment.
 package postgres
 
-import "github.com/zishang520/socket.io/adapters/adapter/v3"
+import (
+	"time"
+
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
+)
 
 const (
+	// DefaultOperationTimeout bounds publish, attachment fetch, and listener update operations.
+	DefaultOperationTimeout = 5 * time.Second
+
 	EMITTER_UID = adapter.EMITTER_UID
 
 	INITIAL_HEARTBEAT         = adapter.INITIAL_HEARTBEAT

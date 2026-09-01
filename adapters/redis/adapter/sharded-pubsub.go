@@ -528,7 +528,7 @@ func (s *shardedPubSub) receive(pool *shardedPool) {
 	for {
 		value, err := pool.pubSub.Receive(s.ctx)
 		if err != nil {
-			if s.ctx.Err() != nil || errors.Is(err, rds.ErrClosed) {
+			if s.ctx.Err() != nil {
 				return
 			}
 			// go-redis reconnects and resubscribes standalone and Sentinel

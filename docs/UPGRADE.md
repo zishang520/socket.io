@@ -175,7 +175,7 @@ redisClient, err := redis.NewRedisClient(ctx, client)
 mongoClient, err := mongo.NewMongoClient(ctx, collection)
 postgresClient, err := postgres.NewPostgresClient(ctx, pool)
 valkeyClient, err := valkey.NewValkeyClient(ctx, client)
-unixClient, err := unix.NewUnixClient(ctx, socketPath)
+unixClient, err := unix.NewUnixClient(ctx, socketPath, nil)
 ```
 
 Direct field access must be replaced with accessors:
@@ -184,6 +184,13 @@ Direct field access must be replaced with accessors:
 - MongoDB: `Collection()`, `Context()`
 - PostgreSQL: `Pool()`, `Context()`
 - Unix: `SocketPath()`, `Context()`
+
+`PostgresClient.Close` releases its listener connection; it does not cancel the
+caller-provided context or close the caller-owned pool.
+
+PostgreSQL adapter and emitter publishing, incoming attachment fetches, and
+initial LISTEN and UNLISTEN updates now use a fixed 5-second I/O deadline
+instead of waiting indefinitely.
 
 A go-redis `*redis.ClusterClient` passed as the primary Redis client must not
 enable `ReadOnly`, `RouteByLatency`, or `RouteRandomly`; construction now
@@ -197,6 +204,105 @@ This release also adds methods to the go-redis `UniversalClient` and `Cmdable`
 interfaces. Custom clients that implement either interface directly must add
 those methods; official clients and wrappers that embed the interface are
 unaffected.
+
+</details>
+
+<details>
+<summary>Unix Adapter Transport and API Simplification</summary>
+
+The Unix adapter now uses the same length-prefixed `SOCK_STREAM` transport on
+every platform. Linux no longer prefers `unixpacket`, which restores transport
+compatibility with the `SOCK_STREAM` implementation shipped in v3.0.4 and
+removes its platform-specific packet-size limit. This does not make a
+mixed-version rolling upgrade safe: processes using this version cannot safely
+run alongside Linux processes that still use `unixpacket` in the same socket
+directory. Stop all old processes and perform a coordinated restart.
+
+**Likelihood Of Impact: High (if using the Unix adapter directly)**
+
+`UnixClient.ReadMessage` now returns its complete owned payload instead of
+copying into a caller-provided buffer:
+
+```go
+// Before
+buf := make([]byte, 64*1024)
+n, addr, err := client.ReadMessage(buf)
+payload := buf[:n]
+
+// After
+payload, err := client.ReadMessage()
+```
+
+The unused peer address return value and `UnixClient.ListenerPath` were
+removed. Listener paths are now an internal transport detail managed by
+`UnixAdapterBuilder`; cluster node identity continues to come from the message
+UID.
+
+The client is now the single source of transport configuration and owns the
+listener shared by every namespace. Close it when the server or standalone
+emitter shuts down; closing one namespace adapter no longer removes the shared
+listener. `NewUnixAdapter` remains the low-level initialized constructor, but it
+does not register the adapter with the shared listener. `MakeUnixAdapter` is
+deprecated. Install adapters through `UnixAdapterBuilder` as shown below so
+incoming messages are routed to the matching namespace.
+
+`Listen` remains idempotent for the active listener path, but now returns
+`ErrUnixClientAlreadyListening` when called with a different path. `Send`
+rejects empty payloads and payloads larger than 10 MiB with
+`ErrUnixMessageSize` before dialing. Peer dials and framed writes are bounded to
+5 seconds by default. `NewUnixClient` now accepts `*UnixClientOptions` as its
+third argument; pass `nil` for the bounded defaults or provide custom limits.
+Non-positive option values retain the bounded defaults. `Send` retries once
+only when a non-timeout write fails on an existing pooled connection. Dial
+failures, first-use write failures, and write timeouts are returned without
+retrying.
+
+The base socket path must not end with a path separator. Listener paths used
+with `Broadcast` must append one non-empty suffix that does not contain `.`, as
+in `{base-socket-path}.{listener-id}`; `UnixAdapterBuilder` handles this naming
+automatically. Rejecting a trailing separator prevents that path from silently
+discovering no listeners, while the suffix rule keeps overlapping base names in
+the same directory from exchanging cluster traffic.
+
+```go
+client, err := unix.NewUnixClient(ctx, socketPath, nil)
+if err != nil {
+	return err
+}
+defer client.Close()
+
+server.SetAdapter(&unixadapter.UnixAdapterBuilder{Unix: client})
+emitter := unixemitter.NewEmitter(client)
+```
+
+`unixemitter.NewEmitter` and `(*Emitter).Construct` no longer accept an
+`*EmitterOptions` argument. `EmitterOptions`, `EmitterOptionsInterface`, and
+`DefaultEmitterOptions` were removed.
+
+The unused Unix emitter `Key`, `Parser`, and `SocketPath` options were removed,
+along with the unused adapter `Key` and `ErrorHandler` options. Remove calls to
+`SetKey`, `SetParser`, and `SetSocketPath`; pass the base path and transport
+options only to `NewUnixClient`. The obsolete Unix-specific message constants,
+`UnixMessage`, `Parser`, `ErrNilUnixPacket`, `SetChannel`, and `OnRawMessage`
+were also removed in favor of the shared `adapters/adapter` cluster protocol.
+This also removes
+the old exported Unix defaults (`unixadapter.DefaultChannelPrefix`,
+`unixadapter.DefaultSocketPath`, `unixadapter.DefaultHeartbeatInterval`,
+`unixadapter.DefaultHeartbeatTimeout`, `unixemitter.DefaultEmitterKey`, and
+`unixemitter.DefaultSocketPath`) and `BroadcastOptions.SocketPath`.
+
+Register an `"error"` listener on `UnixClient` in place of the removed adapter
+`ErrorHandler`. Broadcast and emitter delivery is broker-like: invalid input or
+a failed directory scan is returned to the caller, while failures for individual
+listener paths are reported through this event and do not stop delivery to the
+remaining listeners.
+
+Unix cluster messages now use the shared typed JSON/MessagePack codec, which
+normalizes required arrays and preserves binary payloads and readers for every
+cluster response type. The ACK envelope itself is unchanged. A coordinated
+restart is still required when upgrading older Unix adapter versions because
+the transport framing, including Linux's move from `unixpacket` to
+`SOCK_STREAM`, is not compatible with mixed-version processes.
 
 </details>
 
@@ -500,6 +606,20 @@ already satisfy the narrower interface.
 </details>
 
 <details>
+<summary>Redis Cluster Codec Helpers Moved</summary>
+
+The Redis package no longer re-exports the shared cluster-message codec. Import
+`github.com/zishang520/socket.io/adapters/adapter/v3` and replace:
+
+| Before | After |
+|--------|-------|
+| `redis.EncodeClusterMessage` | `adapter.EncodeClusterMessage` |
+| `redis.EncodeClusterMessageMsgpack` | `adapter.EncodeClusterMessageMsgpack` |
+| `redis.UnmarshalClusterMessage` | `adapter.DecodeClusterMessage` |
+
+</details>
+
+<details>
 <summary>Classic Redis RequestType Separation</summary>
 
 Classic Redis request/response codes now use `redis.RequestType` instead of the
@@ -510,6 +630,19 @@ mixed accidentally.
 Code that explicitly stored `redis.SOCKETS` through `redis.BROADCAST_ACK` in an
 `adapter.MessageType` variable must change that variable to `redis.RequestType`
 or convert deliberately at an API boundary.
+</details>
+
+<details>
+<summary>Classic Redis Request Scope Wire Format</summary>
+
+Classic Redis requests for `REMOTE_JOIN`, `REMOTE_LEAVE`,
+`REMOTE_DISCONNECT`, and `REMOTE_FETCH` now require `opts.rooms` and
+`opts.except`. The legacy single-socket `sid` and `room` fields are no longer
+supported; use empty arrays for an unrestricted selection.
+
+This wire format is not backward-compatible. Upgrade all Go Redis adapter and
+emitter nodes together; do not mix this version with older Redis adapter nodes
+during a rolling upgrade.
 </details>
 
 <details>

@@ -148,16 +148,16 @@ func TestClassicEmitterPreservesConstructorRoutingValues(t *testing.T) {
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
 	redisClient := mustRedisClient(t, client)
 	emit := NewEmitter(redisClient, nil, "")
-	if emit.nsp != "" || emit.broadcastOptions.BroadcastChannel != "socket.io##" {
-		t.Fatalf("namespace = %q, channel = %q", emit.nsp, emit.broadcastOptions.BroadcastChannel)
+	if emit.broadcastOptions.Nsp != "" || emit.broadcastOptions.BroadcastChannel != "socket.io##" {
+		t.Fatalf("namespace = %q, channel = %q", emit.broadcastOptions.Nsp, emit.broadcastOptions.BroadcastChannel)
 	}
-	if got := emit.Of("").nsp; got != "/" {
+	if got := emit.Of("").broadcastOptions.Nsp; got != "/" {
 		t.Fatalf("Of empty namespace = %q, want /", got)
 	}
-	if got := NewEmitter(redisClient, nil, "chat").nsp; got != "chat" {
+	if got := NewEmitter(redisClient, nil, "chat").broadcastOptions.Nsp; got != "chat" {
 		t.Fatalf("direct namespace = %q, want raw chat", got)
 	}
-	if got := emit.Of("chat").nsp; got != "/chat" {
+	if got := emit.Of("chat").broadcastOptions.Nsp; got != "/chat" {
 		t.Fatalf("Of namespace = %q, want /chat", got)
 	}
 
@@ -201,7 +201,7 @@ func TestShardedEmitterUsesSPublishWithClusterMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("SPUBLISH payload type = %T, want []byte", client.payload)
 	}
-	message, err := redis.UnmarshalClusterMessage(payload)
+	message, err := clusteradapter.DecodeClusterMessage(payload)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,8 @@
 package adapter
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -8,9 +10,52 @@ import (
 
 	clusteradapter "github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/mongo/v3"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongod "go.mongodb.org/mongo-driver/v2/mongo"
 )
+
+type recordingAdapter struct {
+	clusteradapter.Adapter
+	broadcasts atomic.Int32
+	operations atomic.Int32
+}
+
+func (a *recordingAdapter) Broadcast(*parser.Packet, *socket.BroadcastOptions) {
+	a.broadcasts.Add(1)
+}
+
+func (a *recordingAdapter) AddSockets(*socket.BroadcastOptions, []socket.Room) {
+	a.operations.Add(1)
+}
+
+func (a *recordingAdapter) DelSockets(*socket.BroadcastOptions, []socket.Room) {
+	a.operations.Add(1)
+}
+
+func (a *recordingAdapter) DisconnectSockets(*socket.BroadcastOptions, bool) {
+	a.operations.Add(1)
+}
+
+func (a *recordingAdapter) FetchSockets(*socket.BroadcastOptions) func(func([]socket.SocketDetails, error)) {
+	a.operations.Add(1)
+	return func(callback func([]socket.SocketDetails, error)) {
+		callback(nil, nil)
+	}
+}
+
+func captureErrors(t *testing.T, client *mongo.MongoClient) <-chan error {
+	t.Helper()
+	events := make(chan error, 1)
+	if err := client.On("error", func(args ...any) {
+		events <- args[0].(error)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
 
 func TestSetOptsAcceptsClusterAdapterOptions(t *testing.T) {
 	a := &mongoAdapter{
@@ -29,6 +74,21 @@ func TestSetOptsAcceptsClusterAdapterOptions(t *testing.T) {
 	}
 	if a.requestsTimeout != 2*time.Second {
 		t.Fatal("cluster adapter options changed MongoDB-specific values")
+	}
+}
+
+func TestSetOptsIgnoresTypedNil(t *testing.T) {
+	a := &mongoAdapter{
+		heartbeatInterval: time.Second,
+		heartbeatTimeout:  1_000,
+		requestsTimeout:   2 * time.Second,
+	}
+	var opts *MongoAdapterOptions
+
+	a.SetOpts(opts)
+
+	if a.heartbeatInterval != time.Second || a.heartbeatTimeout != 1_000 || a.requestsTimeout != 2*time.Second {
+		t.Fatal("typed-nil options changed adapter values")
 	}
 }
 
@@ -146,6 +206,159 @@ func TestBroadcastAckKeepsScalarShape(t *testing.T) {
 	values := <-response
 	if len(values) != 1 || values[0] != "value" {
 		t.Fatalf("unexpected acknowledgement: %#v", values)
+	}
+}
+
+func TestMalformedBroadcastMessageIsIgnored(t *testing.T) {
+	a := NewMongoAdapter(socket.NewServer(nil, nil).Sockets(), nil, nil).(*mongoAdapter)
+	defer a.Close()
+
+	for _, data := range []any{
+		nil,
+		(*BroadcastMessage)(nil),
+		&BroadcastMessage{},
+	} {
+		a.OnMessage(&ClusterMessage{
+			Uid:  "remote",
+			Nsp:  "/",
+			Type: mongo.BROADCAST,
+			Data: data,
+		}, "")
+	}
+}
+
+func TestOnMessageRejectsInvalidPacketOptions(t *testing.T) {
+	nsp := socket.NewServer(nil, nil).Sockets()
+	local := &recordingAdapter{Adapter: clusteradapter.NewAdapter(nsp)}
+	a := &mongoAdapter{Adapter: local, uid: "local"}
+	invalid := &clusteradapter.PacketOptions{}
+
+	for _, message := range []*ClusterMessage{
+		{Type: mongo.BROADCAST, Data: &BroadcastMessage{Packet: &parser.Packet{}, Opts: invalid}},
+		{Type: mongo.SOCKETS_JOIN, Data: &SocketsJoinLeaveMessage{Opts: invalid}},
+		{Type: mongo.SOCKETS_LEAVE, Data: &SocketsJoinLeaveMessage{Opts: invalid}},
+		{Type: mongo.DISCONNECT_SOCKETS, Data: &DisconnectSocketsMessage{Opts: invalid}},
+		{Type: mongo.FETCH_SOCKETS, Data: &FetchSocketsMessage{Opts: invalid}},
+	} {
+		message.Uid = "remote"
+		message.Nsp = "/"
+		a.OnMessage(message, "")
+	}
+
+	if count := local.broadcasts.Load(); count != 0 {
+		t.Fatalf("local broadcast count = %d, want 0", count)
+	}
+	if count := local.operations.Load(); count != 0 {
+		t.Fatalf("local operation count = %d, want 0", count)
+	}
+}
+
+func TestOnEventEmitsDecodeErrors(t *testing.T) {
+	client, err := mongo.NewMongoClient(context.Background(), new(mongod.Collection))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeErrors := captureErrors(t, client)
+
+	a := NewMongoAdapter(socket.NewServer(nil, nil).Sockets(), client, nil).(*mongoAdapter)
+	defer a.Close()
+	a.OnEvent(&mongo.AdapterEvent{
+		Uid:  "remote",
+		Nsp:  "/",
+		Type: mongo.BROADCAST,
+		Data: bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: []byte{1}},
+	})
+
+	select {
+	case <-decodeErrors:
+	default:
+		t.Fatal("decode error was not emitted")
+	}
+}
+
+func TestOnEventSkipsHeartbeatAndSessionData(t *testing.T) {
+	client, err := mongo.NewMongoClient(context.Background(), new(mongod.Collection))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeErrors := captureErrors(t, client)
+	a := NewMongoAdapter(socket.NewServer(nil, nil).Sockets(), client, nil).(*mongoAdapter)
+	defer a.Close()
+
+	for _, messageType := range []mongo.EventType{mongo.HEARTBEAT, mongo.SESSION} {
+		a.OnEvent(&mongo.AdapterEvent{
+			Uid:  "remote",
+			Nsp:  "/",
+			Type: messageType,
+			Data: bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: []byte{1}},
+		})
+	}
+
+	if _, ok := a.nodesMap.Load("remote"); !ok {
+		t.Fatal("heartbeat/session did not refresh the remote node")
+	}
+	select {
+	case err := <-decodeErrors:
+		t.Fatalf("heartbeat/session data was decoded: %v", err)
+	default:
+	}
+}
+
+func TestMongoAdapterClosesWithClientContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client, err := mongo.NewMongoClient(ctx, new(mongod.Collection))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var typedNilOpts *MongoAdapterOptions
+	builder := &MongoAdapterBuilder{Mongo: client, Opts: typedNilOpts}
+	// Keep this unit test independent from a live MongoDB change stream.
+	builder.cancel = func() {}
+	current := builder.New(socket.NewServer(nil, nil).Sockets()).(*mongoAdapter)
+	current.scheduleHeartbeat()
+
+	cancel()
+	deadline := time.Now().Add(time.Second)
+	for (!current.isClosed.Load() || current.heartbeatTimer.Load() != nil || builder.adapters.Len() != 0) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	if !current.isClosed.Load() {
+		t.Fatal("adapter remained open after client context cancellation")
+	}
+	if current.heartbeatTimer.Load() != nil {
+		t.Fatal("heartbeat timer survived client context cancellation")
+	}
+	if builder.adapters.Len() != 0 {
+		t.Fatal("closed adapter remained registered in the builder")
+	}
+}
+
+func TestBroadcastStopsWhenPublishFails(t *testing.T) {
+	client, err := mongo.NewMongoClient(context.Background(), new(mongod.Collection))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishErrors := captureErrors(t, client)
+
+	local := &recordingAdapter{}
+	a := &mongoAdapter{
+		Adapter:         local,
+		mongoCollection: client,
+	}
+	a.isClosed.Store(true)
+	a.Broadcast(&parser.Packet{Type: parser.EVENT}, nil)
+
+	if count := local.broadcasts.Load(); count != 0 {
+		t.Fatalf("local broadcast count = %d, want 0", count)
+	}
+	select {
+	case publishErr := <-publishErrors:
+		if !errors.Is(publishErr, clusteradapter.ErrAdapterClosed) {
+			t.Fatalf("publish error = %v, want %v", publishErr, clusteradapter.ErrAdapterClosed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("publish error was not emitted")
 	}
 }
 

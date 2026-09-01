@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // ClusterAdapterOptionsInterface defines the interface for cluster adapter options.
@@ -33,7 +34,7 @@ func DefaultClusterAdapterOptions() *ClusterAdapterOptions {
 }
 
 func (s *ClusterAdapterOptions) Assign(data ClusterAdapterOptionsInterface) ClusterAdapterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return s
 	}
 	if data.GetRawHeartbeatInterval() != nil {

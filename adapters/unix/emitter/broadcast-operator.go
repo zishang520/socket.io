@@ -2,11 +2,8 @@
 package emitter
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/unix/v3"
@@ -16,15 +13,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-// reservedEvents contains event names that are reserved by Socket.IO and cannot be emitted.
-var reservedEvents = types.NewSet(
-	"connect",
-	"connect_error",
-	"disconnect",
-	"disconnecting",
-	"newListener",
-	"removeListener",
-)
+var errAcknowledgementsNotSupported = errors.New("Acknowledgements are not supported") //nolint:staticcheck // Node.js API text
 
 // BroadcastOperator provides a fluent API for broadcasting events to Socket.IO clients via Unix Domain Sockets.
 // It supports room targeting, exclusions, and broadcast flags through method chaining.
@@ -46,7 +35,7 @@ func MakeBroadcastOperator() *BroadcastOperator {
 }
 
 // NewBroadcastOperator creates and initializes a new BroadcastOperator with the given configuration.
-// Nil parameters are replaced with safe defaults.
+// Nil optional configuration values are replaced with safe defaults.
 func NewBroadcastOperator(
 	client *unix.UnixClient,
 	broadcastOptions *BroadcastOptions,
@@ -60,7 +49,7 @@ func NewBroadcastOperator(
 }
 
 // Construct initializes the BroadcastOperator with the given parameters.
-// This method is called by NewBroadcastOperator and handles nil safety.
+// This method is called by NewBroadcastOperator and normalizes optional values.
 func (b *BroadcastOperator) Construct(
 	client *unix.UnixClient,
 	broadcastOptions *BroadcastOptions,
@@ -71,7 +60,7 @@ func (b *BroadcastOperator) Construct(
 	b.unixClient = client
 
 	if broadcastOptions == nil {
-		broadcastOptions = &BroadcastOptions{}
+		broadcastOptions = &BroadcastOptions{Nsp: defaultNamespace}
 	}
 	b.broadcastOptions = broadcastOptions
 
@@ -107,8 +96,8 @@ func (b *BroadcastOperator) Except(room ...socket.Room) BroadcastOperatorInterfa
 	return NewBroadcastOperator(b.unixClient, b.broadcastOptions, b.rooms, exceptRooms, b.flags)
 }
 
-// Compress sets the compress flag for the broadcast.
-// When true, the message will be compressed before transmission.
+// Compress sets the client-facing transport compression preference for the
+// broadcast. It does not compress the Unix cluster frame.
 func (b *BroadcastOperator) Compress(compress bool) BroadcastOperatorInterface {
 	flags := new(*b.flags)
 	flags.Compress = new(compress)
@@ -126,10 +115,9 @@ func (b *BroadcastOperator) Volatile() BroadcastOperatorInterface {
 // Emit broadcasts an event with the given name and arguments to all targeted clients.
 // Returns an error if the event name is reserved or if broadcasting fails.
 //
-// The message is sent as a ClusterMessage in JSON format via Unix Domain Socket.
-// If the message contains binary data, msgpack encoding is used.
+// The shared cluster codec selects JSON or MessagePack based on the payload.
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
-	if reservedEvents.Has(ev) {
+	if socket.SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
 
@@ -147,8 +135,6 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 	// Build ClusterMessage
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
-		Nsp:  b.broadcastOptions.Nsp,
 		Type: adapter.BROADCAST,
 		Data: &adapter.BroadcastMessage{
 			Packet: packet,
@@ -159,89 +145,23 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	return b.publish(message)
 }
 
-// publish sends a ClusterMessage via Unix Domain Socket, handling binary detection.
+// publish encodes and sends a ClusterMessage over the shared Unix transport.
 func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
-	var payload []byte
-	var err error
+	message.Uid = adapter.EMITTER_UID
+	message.Nsp = b.broadcastOptions.Nsp
+	payload, err := adapter.EncodeClusterMessage(message)
 
-	// Check binary data — binary uses msgpack, non-binary uses JSON
-	if b.messageHasBinary(message) {
-		payload, err = utils.MsgPack().Encode(message)
-		if err != nil {
-			return fmt.Errorf("failed to msgpack-encode message: %w", err)
-		}
-	} else {
-		payload, err = json.Marshal(message)
-		if err != nil {
-			return err
-		}
-	}
-
-	emitterLog.Debug("publishing message to Unix socket peers")
-
-	// Broadcast to all peer listener sockets
-	return b.broadcast(payload)
-}
-
-// messageHasBinary checks if a ClusterMessage contains binary data.
-func (b *BroadcastOperator) messageHasBinary(message *adapter.ClusterMessage) bool {
-	if message.Data == nil {
-		return false
-	}
-	switch message.Type {
-	case adapter.BROADCAST, adapter.SERVER_SIDE_EMIT, adapter.SERVER_SIDE_EMIT_RESPONSE:
-		return parser.HasBinary(message.Data)
-	default:
-		return false
-	}
-}
-
-// broadcast sends a message to all peer Unix Domain Socket listeners.
-// It discovers peers by scanning the socket directory for matching listener paths.
-func (b *BroadcastOperator) broadcast(payload []byte) error {
-	socketPath := b.broadcastOptions.SocketPath
-	if socketPath == "" {
-		socketPath = DefaultSocketPath
-	}
-
-	dir := filepath.Dir(socketPath)
-	base := filepath.Base(socketPath)
-	prefix := base + "."
-
-	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("failed to read socket directory %q: %w", dir, err)
+		return err
 	}
 
-	var lastErr error
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		name := entry.Name()
-		// Match peer listener sockets: "{base}.{uid}"
-		if !strings.HasPrefix(name, prefix) {
-			continue
-		}
-
-		peerPath := filepath.Join(dir, name)
-
-		if err := b.unixClient.Send(peerPath, payload); err != nil {
-			emitterLog.Debug("failed to send to peer %s: %s", peerPath, err.Error())
-			lastErr = err
-		}
-	}
-
-	return lastErr
+	return b.unixClient.Broadcast(payload)
 }
 
 // SocketsJoin makes all matching socket instances join the specified rooms.
 // This sends a SOCKETS_JOIN ClusterMessage to all Socket.IO servers.
 func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
-		Nsp:  b.broadcastOptions.Nsp,
 		Type: adapter.SOCKETS_JOIN,
 		Data: &adapter.SocketsJoinLeaveMessage{
 			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
@@ -259,8 +179,6 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 // This sends a SOCKETS_LEAVE ClusterMessage to all Socket.IO servers.
 func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
-		Nsp:  b.broadcastOptions.Nsp,
 		Type: adapter.SOCKETS_LEAVE,
 		Data: &adapter.SocketsJoinLeaveMessage{
 			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
@@ -279,8 +197,6 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 // This sends a DISCONNECT_SOCKETS ClusterMessage to all Socket.IO servers.
 func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
-		Nsp:  b.broadcastOptions.Nsp,
 		Type: adapter.DISCONNECT_SOCKETS,
 		Data: &adapter.DisconnectSocketsMessage{
 			Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
@@ -300,13 +216,11 @@ func (b *BroadcastOperator) DisconnectSockets(state bool) error {
 func (b *BroadcastOperator) ServerSideEmit(args ...any) error {
 	if len(args) > 0 {
 		if _, withAck := args[len(args)-1].(socket.Ack); withAck {
-			return fmt.Errorf("acknowledgements are not supported when using emitter")
+			return errAcknowledgementsNotSupported
 		}
 	}
 
 	message := &adapter.ClusterMessage{
-		Uid:  emitterUID,
-		Nsp:  b.broadcastOptions.Nsp,
 		Type: adapter.SERVER_SIDE_EMIT,
 		Data: &adapter.ServerSideEmitMessage{
 			Packet: args,

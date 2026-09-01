@@ -8,16 +8,12 @@ package emitter
 import (
 	"strings"
 
-	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/mongo/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
 )
 
 const (
-	// emitterUID is the unique identifier for messages sent by the emitter.
-	emitterUID adapter.ServerId = "emitter"
-
 	// defaultNamespace is the default Socket.IO namespace.
 	defaultNamespace = "/"
 )
@@ -31,15 +27,13 @@ type Emitter struct {
 	mongoClient      *mongo.MongoClient
 	opts             *EmitterOptions
 	broadcastOptions *BroadcastOptions
-	nsp              string
 }
 
-// MakeEmitter creates a new Emitter with default options and the root namespace.
+// MakeEmitter creates an uninitialized Emitter with default options.
 // Call Construct() to complete initialization before use.
 func MakeEmitter() *Emitter {
 	return &Emitter{
 		opts: DefaultEmitterOptions(),
-		nsp:  defaultNamespace,
 	}
 }
 
@@ -54,21 +48,16 @@ func NewEmitter(client *mongo.MongoClient, opts *EmitterOptions, nsps ...string)
 // Construct initializes the Emitter with the given MongoDB client, options, and namespace.
 func (e *Emitter) Construct(client *mongo.MongoClient, opts *EmitterOptions, nsps ...string) {
 	e.mongoClient = client
-
-	// Merge provided options with defaults
-	if opts == nil {
-		opts = DefaultEmitterOptions()
-	}
 	e.opts.Assign(opts)
 
-	// Set namespace if provided
-	if len(nsps) > 0 && len(nsps[0]) > 0 {
-		e.nsp = nsps[0]
+	nsp := defaultNamespace
+	if len(nsps) > 0 {
+		nsp = nsps[0]
 	}
 
 	// Configure broadcast options
 	e.broadcastOptions = &BroadcastOptions{
-		Nsp:               e.nsp,
+		Nsp:               nsp,
 		AddCreatedAtField: e.opts.AddCreatedAtField(),
 	}
 }
@@ -96,7 +85,7 @@ func (e *Emitter) To(rooms ...socket.Room) BroadcastOperatorInterface {
 
 // In is an alias for To, targeting specific room(s) for event emission.
 func (e *Emitter) In(rooms ...socket.Room) BroadcastOperatorInterface {
-	return e.newBroadcastOperator().In(rooms...)
+	return e.To(rooms...)
 }
 
 // Except excludes specific room(s) from event emission.

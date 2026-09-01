@@ -1,150 +1,162 @@
-// Package adapter defines types and interfaces for the Unix Domain Socket-based Socket.IO adapter implementation.
-// It uses Unix Domain Sockets for inter-node communication in a clustered Socket.IO environment.
+// Package adapter defines the Unix Domain Socket adapter and its builder.
 package adapter
 
 import (
-	"encoding/json"
-	"sync/atomic"
+	"context"
+	"fmt"
+	"sync"
+	"time"
 
-	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	baseadapter "github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/unix/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-type (
-	// UnixAdapter defines the interface for a Unix Domain Socket-based Socket.IO adapter.
-	// It extends ClusterAdapterWithHeartbeat with Unix socket-specific functionality.
-	UnixAdapter interface {
-		adapter.ClusterAdapterWithHeartbeat
-
-		// SetUnix configures the Unix Domain Socket client for the adapter.
-		SetUnix(*unix.UnixClient)
-
-		// Cleanup registers a cleanup callback to be called when the adapter is closed.
-		Cleanup(func())
-
-		// SetChannel sets the channel prefix for this adapter.
-		SetChannel(string)
-
-		// OnRawMessage processes a raw message payload received from Unix Domain Socket.
-		OnRawMessage([]byte)
-	}
-
-	// UnixMessage represents a message received via Unix Domain Socket.
-	// It contains the full cluster message payload along with routing metadata.
-	UnixMessage struct {
-		Uid     adapter.ServerId    `json:"uid,omitempty"`
-		Type    adapter.MessageType `json:"type,omitempty"`
-		Data    any                 `json:"data,omitempty"`
-		Nsp     string              `json:"nsp,omitempty"`
-		Channel string              `json:"channel,omitempty"`
-	}
+const (
+	initialListenRetryDelay = 100 * time.Millisecond
+	maxListenRetryDelay     = 5 * time.Second
 )
 
-// UnixAdapterBuilder creates Unix Domain Socket adapters for Socket.IO namespaces.
-// It manages the shared listener connection and message loop across all namespace adapters.
-type UnixAdapterBuilder struct {
-	// Unix is the Unix Domain Socket client used for communication.
-	Unix *unix.UnixClient
-	// Opts contains configuration options for the adapter.
-	Opts UnixAdapterOptionsInterface
+type UnixAdapter interface {
+	baseadapter.ClusterAdapterWithHeartbeat
 
-	namespaceToAdapters types.Map[string, UnixAdapter]
-	listening           atomic.Bool
+	SetUnix(*unix.UnixClient)
+	Cleanup(func())
 }
 
-// New creates a new UnixAdapter for the given namespace.
-// This method implements the socket.AdapterBuilder interface.
+// UnixAdapterBuilder shares one Unix listener across all namespace adapters.
+type UnixAdapterBuilder struct {
+	Unix *unix.UnixClient
+	Opts UnixAdapterOptionsInterface
+
+	mu                  sync.Mutex
+	namespaceToAdapters types.Map[string, UnixAdapter]
+	listening           bool
+	retrying            bool
+	retryPath           string
+}
+
+// New creates an adapter for a namespace and starts the shared listener once.
 func (ub *UnixAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
-	options := DefaultUnixAdapterOptions()
-	options.Assign(ub.Opts)
+	name := nsp.Name()
+	adapterInstance := NewUnixAdapter(nsp, ub.Unix, ub.Opts)
+	stopContextClose := context.AfterFunc(ub.Unix.Context(), adapterInstance.Close)
 
-	// Apply defaults
-	if options.GetRawKey() == nil {
-		options.SetKey(DefaultChannelPrefix)
-	}
-	if options.GetRawHeartbeatInterval() == nil {
-		options.SetHeartbeatInterval(DefaultHeartbeatInterval)
-	}
-	if options.GetRawHeartbeatTimeout() == nil {
-		options.SetHeartbeatTimeout(DefaultHeartbeatTimeout)
-	}
-
-	channel := options.Key() + "#" + nsp.Name()
-
-	adapterInstance := NewUnixAdapter(nsp, ub.Unix, options)
-	adapterInstance.SetChannel(channel)
-
-	ub.namespaceToAdapters.Store(nsp.Name(), adapterInstance)
-
-	// Start listening if not already
-	if ub.listening.CompareAndSwap(false, true) {
-		// Create a unique listener path for this server node
-		listenerPath := ub.Unix.SocketPath() + "." + string(adapterInstance.(adapter.ClusterAdapter).Uid())
-		if err := ub.Unix.Listen(listenerPath); err != nil {
-			ub.Unix.Emit("error", err)
+	ub.mu.Lock()
+	previous, replaced := ub.namespaceToAdapters.Swap(name, adapterInstance)
+	startListening := false
+	startRetry := false
+	var listenErr error
+	if !ub.listening && ub.Unix.Context().Err() == nil {
+		listenerPath := ub.Unix.SocketPath() + "." + string(adapterInstance.Uid())
+		listenErr = ub.listen(listenerPath)
+		startListening = listenErr == nil
+		if listenErr != nil && !ub.retrying {
+			ub.retrying = true
+			startRetry = true
 		}
+	}
+	ub.mu.Unlock()
 
+	if listenErr != nil {
+		ub.Unix.Emit("error", listenErr)
+	}
+	if startListening {
 		go ub.startListening()
+	} else if startRetry {
+		go ub.retryListen()
 	}
 
-	// Register cleanup callback
 	adapterInstance.Cleanup(func() {
-		ub.namespaceToAdapters.Delete(nsp.Name())
+		stopContextClose()
+		ub.mu.Lock()
+		ub.namespaceToAdapters.CompareAndDelete(name, adapterInstance)
+		ub.mu.Unlock()
 	})
-
+	if replaced {
+		previous.Close()
+	}
 	return adapterInstance
 }
 
-// startListening continuously reads from the Unix Domain Socket and dispatches messages
-// to the appropriate namespace adapter.
-func (ub *UnixAdapterBuilder) startListening() {
-	buf := make([]byte, 65536) // 64KB buffer for Unix Domain Socket messages
+// listen transitions the builder from no listener to one active listener.
+// ub.mu must be held by the caller.
+func (ub *UnixAdapterBuilder) listen(listenerPath string) error {
+	ub.retryPath = listenerPath
+	if err := ub.Unix.Listen(listenerPath); err != nil {
+		return err
+	}
+	ub.listening = true
+	return nil
+}
 
+// retryListen is the sole background retry loop for a builder. Namespace
+// creation may still make an immediate serialized attempt through New.
+func (ub *UnixAdapterBuilder) retryListen() {
+	delay := initialListenRetryDelay
+	ctx := ub.Unix.Context()
 	for {
-		n, _, err := ub.Unix.ReadMessage(buf)
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			ub.mu.Lock()
+			ub.retrying = false
+			ub.mu.Unlock()
+			return
+		}
+
+		ub.mu.Lock()
+		if ub.listening || ctx.Err() != nil || ub.namespaceToAdapters.Len() == 0 {
+			ub.retrying = false
+			ub.mu.Unlock()
+			return
+		}
+		err := ub.listen(ub.retryPath)
+		if err == nil {
+			ub.retrying = false
+		}
+		ub.mu.Unlock()
+
 		if err != nil {
-			if ub.Unix.Context().Err() != nil {
-				return // Context canceled, stop listening
+			if ctx.Err() == nil {
+				ub.Unix.Emit("error", err)
 			}
-			ub.Unix.Emit("error", err)
+			delay = min(2*delay, maxListenRetryDelay)
 			continue
 		}
-
-		if n == 0 {
-			continue
-		}
-
-		// Make a copy of the message data
-		data := make([]byte, n)
-		copy(data, buf[:n])
-
-		// Dispatch to all namespace adapters — the adapter will filter by channel/nsp
-		ub.dispatchMessage(data)
+		ub.startListening()
+		return
 	}
 }
 
-// dispatchMessage sends a raw message payload to the correct adapter based on namespace.
-func (ub *UnixAdapterBuilder) dispatchMessage(data []byte) {
-	// Peek at the message to determine the target namespace
-	// The message is JSON-encoded and contains a "nsp" field
-	var peek struct {
-		Nsp string `json:"nsp,omitempty"`
-	}
-
-	// Try to extract the nsp from the message for targeted dispatch.
-	// If we can't parse it, broadcast to all adapters and let them filter.
-	if err := json.Unmarshal(data, &peek); err == nil && peek.Nsp != "" {
-		if adapterInstance, ok := ub.namespaceToAdapters.Load(peek.Nsp); ok {
-			adapterInstance.OnRawMessage(data)
+// startListening reads complete framed messages until the shared client closes
+// or the read loop encounters an error. A failed Listen never starts this loop.
+func (ub *UnixAdapterBuilder) startListening() {
+	for {
+		payload, err := ub.Unix.ReadMessage()
+		if err != nil {
+			if ub.Unix.Context().Err() == nil {
+				ub.Unix.Emit("error", err)
+			}
+			return
 		}
+		ub.dispatchMessage(payload)
+	}
+}
+
+// dispatchMessage decodes once and routes the message to the exact namespace adapter.
+func (ub *UnixAdapterBuilder) dispatchMessage(payload []byte) {
+	message, err := baseadapter.DecodeClusterMessage(payload)
+	if err != nil {
+		ub.Unix.Emit("error", fmt.Errorf("failed to decode cluster message: %w", err))
 		return
 	}
-
-	// Fallback: dispatch to all namespace adapters
-	ub.namespaceToAdapters.Range(func(_ string, adapterInstance UnixAdapter) bool {
-		adapterInstance.OnRawMessage(data)
-		return true
-	})
+	adapterInstance, ok := ub.namespaceToAdapters.Load(message.Nsp)
+	if !ok {
+		return
+	}
+	adapterInstance.OnMessage(message, "")
 }

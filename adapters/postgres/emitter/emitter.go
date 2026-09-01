@@ -24,15 +24,13 @@ type Emitter struct {
 	postgresClient   *postgres.PostgresClient
 	opts             *EmitterOptions
 	broadcastOptions *BroadcastOptions
-	nsp              string
 }
 
-// MakeEmitter creates a new Emitter with default options and the root namespace.
+// MakeEmitter creates an uninitialized Emitter with default options.
 // Call Construct() to complete initialization before use.
 func MakeEmitter() *Emitter {
 	return &Emitter{
 		opts: DefaultEmitterOptions(),
-		nsp:  defaultNamespace,
 	}
 }
 
@@ -48,7 +46,6 @@ func NewEmitter(client *postgres.PostgresClient, opts *EmitterOptions, nsps ...s
 // This method sets up the broadcast channel based on the configured channel prefix.
 func (e *Emitter) Construct(client *postgres.PostgresClient, opts *EmitterOptions, nsps ...string) {
 	e.postgresClient = client
-
 	e.opts.Assign(opts)
 
 	// Match the Node.js emitter's logical-OR defaults, including explicit zero values.
@@ -64,16 +61,16 @@ func (e *Emitter) Construct(client *postgres.PostgresClient, opts *EmitterOption
 		e.opts.SetPayloadThreshold(DefaultPayloadThreshold)
 	}
 
-	// Set namespace if provided
-	if len(nsps) > 0 && len(nsps[0]) > 0 {
-		e.nsp = nsps[0]
+	nsp := defaultNamespace
+	if len(nsps) > 0 {
+		nsp = nsps[0]
 	}
 
 	// Configure broadcast options with channel names
 	channelPrefix := e.opts.ChannelPrefix()
 	e.broadcastOptions = &BroadcastOptions{
-		Nsp:              e.nsp,
-		BroadcastChannel: channelPrefix + "#" + e.nsp,
+		Nsp:              nsp,
+		BroadcastChannel: channelPrefix + "#" + nsp,
 		TableName:        e.opts.TableName(),
 		PayloadThreshold: e.opts.PayloadThreshold(),
 	}

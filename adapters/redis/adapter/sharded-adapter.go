@@ -124,6 +124,7 @@ func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
 
 func (s *shardedRedisAdapter) Close() {
 	s.closeOnce.Do(func() {
+		s.ClusterAdapter.Close()
 		if s.cancel != nil {
 			s.cancel()
 		}
@@ -133,18 +134,17 @@ func (s *shardedRedisAdapter) Close() {
 		if s.pubSub != nil {
 			releaseShardedPubSub(s.server, s.redisClient, s.pubSub)
 		}
-		s.ClusterAdapter.Close()
 	})
 }
 
 func (s *shardedRedisAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
 	channel := s.computeChannel(message)
 	redisLog.Debug("publishing message of type %v to %s", message.Type, channel)
-	payload, err := redis.EncodeClusterMessage(message)
+	payload, err := adapter.EncodeClusterMessage(message)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode message: %w", err)
 	}
-	return "", s.redisClient.Client().SPublish(s.ctx, channel, payload).Err()
+	return "", s.redisClient.Client().SPublish(s.redisClient.Context(), channel, payload).Err()
 }
 
 func (s *shardedRedisAdapter) computeChannel(message *adapter.ClusterMessage) string {
@@ -167,18 +167,18 @@ func (s *shardedRedisAdapter) dynamicChannel(room socket.Room) string {
 }
 
 func (s *shardedRedisAdapter) DoPublishResponse(requester adapter.ServerId, response *adapter.ClusterResponse) error {
-	payload, err := redis.EncodeClusterMessage(response)
+	payload, err := adapter.EncodeClusterMessage(response)
 	if err != nil {
 		return fmt.Errorf("failed to encode response: %w", err)
 	}
-	return s.redisClient.Client().SPublish(s.ctx, s.channel+string(requester)+"#", payload).Err()
+	return s.redisClient.Client().SPublish(s.redisClient.Context(), s.channel+string(requester)+"#", payload).Err()
 }
 
 func (s *shardedRedisAdapter) onRawMessage(raw []byte, _ string) {
 	if len(raw) == 0 || s.ctx != nil && s.ctx.Err() != nil {
 		return
 	}
-	message, err := redis.UnmarshalClusterMessage(raw)
+	message, err := adapter.DecodeClusterMessage(raw)
 	if err != nil {
 		redisLog.Debug("invalid message format: %s", err.Error())
 		return

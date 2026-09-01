@@ -45,6 +45,164 @@ func TestAdapterDataOptionsWireFormat(t *testing.T) {
 	}
 }
 
+func TestUnmarshalAdapterDataPreservesInvalidOptions(t *testing.T) {
+	formats := []struct {
+		name      string
+		roundTrip func(any, any) error
+	}{
+		{
+			name: "JSON",
+			roundTrip: func(data, target any) error {
+				payload, err := json.Marshal(data)
+				if err != nil {
+					return err
+				}
+				return json.Unmarshal(payload, target)
+			},
+		},
+		{
+			name: "MessagePack",
+			roundTrip: func(data, target any) error {
+				payload, err := utils.MsgPack().Encode(data)
+				if err != nil {
+					return err
+				}
+				return utils.MsgPack().Decode(payload, target)
+			},
+		},
+	}
+	tests := []struct {
+		name        string
+		messageType adapter.MessageType
+		data        map[string]any
+		wantOpts    bool
+	}{
+		{
+			name:        "broadcast without opts",
+			messageType: adapter.BROADCAST,
+			data:        map[string]any{"packet": map[string]any{}},
+		},
+		{
+			name:        "leave with missing option fields",
+			messageType: adapter.SOCKETS_LEAVE,
+			data: map[string]any{
+				"opts":  map[string]any{},
+				"rooms": []any{},
+			},
+			wantOpts: true,
+		},
+		{
+			name:        "disconnect with null rooms",
+			messageType: adapter.DISCONNECT_SOCKETS,
+			data: map[string]any{
+				"opts": map[string]any{
+					"rooms":  nil,
+					"except": []any{},
+				},
+				"close": false,
+			},
+			wantOpts: true,
+		},
+		{
+			name:        "fetch with null except",
+			messageType: adapter.FETCH_SOCKETS,
+			data: map[string]any{
+				"opts": map[string]any{
+					"rooms":  []any{},
+					"except": nil,
+				},
+				"requestId": "request-1",
+			},
+			wantOpts: true,
+		},
+	}
+
+	for _, format := range formats {
+		t.Run(format.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					target := AdapterDataTarget(tt.messageType)
+					if err := format.roundTrip(tt.data, target); err != nil {
+						t.Fatal(err)
+					}
+
+					opts := decodedPacketOptions(t, UnmarshalAdapterData(tt.messageType, target))
+					if (opts != nil) != tt.wantOpts {
+						t.Fatalf("options = %#v, want present %t", opts, tt.wantOpts)
+					}
+					if opts.IsValid() {
+						t.Fatalf("invalid wire options were normalized: %#v", opts)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestUnmarshalAdapterDataRequiresFetchSockets(t *testing.T) {
+	formats := []struct {
+		name      string
+		roundTrip func(any, any) error
+	}{
+		{
+			name: "JSON",
+			roundTrip: func(data, target any) error {
+				payload, err := json.Marshal(data)
+				if err != nil {
+					return err
+				}
+				return json.Unmarshal(payload, target)
+			},
+		},
+		{
+			name: "MessagePack",
+			roundTrip: func(data, target any) error {
+				payload, err := utils.MsgPack().Encode(data)
+				if err != nil {
+					return err
+				}
+				return utils.MsgPack().Decode(payload, target)
+			},
+		},
+	}
+	tests := []struct {
+		name         string
+		data         map[string]any
+		wantResponse bool
+	}{
+		{name: "missing", data: map[string]any{"requestId": "request"}},
+		{name: "null", data: map[string]any{"requestId": "request", "sockets": nil}},
+		{name: "empty", data: map[string]any{"requestId": "request", "sockets": []any{}}, wantResponse: true},
+	}
+
+	for _, format := range formats {
+		t.Run(format.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					target := AdapterDataTarget(adapter.FETCH_SOCKETS_RESPONSE)
+					if err := format.roundTrip(tt.data, target); err != nil {
+						t.Fatal(err)
+					}
+					decoded := UnmarshalAdapterData(adapter.FETCH_SOCKETS_RESPONSE, target)
+					if !tt.wantResponse {
+						if decoded != nil {
+							t.Fatalf("decoded response = %T, want nil", decoded)
+						}
+						return
+					}
+					response, ok := decoded.(*adapter.FetchSocketsResponse)
+					if !ok {
+						t.Fatalf("decoded response type = %T", decoded)
+					}
+					if response.Sockets == nil || len(response.Sockets) != 0 {
+						t.Fatalf("sockets = %#v, want non-nil empty slice", response.Sockets)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestAdapterDataRequiredWireFields(t *testing.T) {
 	wire, _ := MarshalAdapterData(&adapter.DisconnectSocketsMessage{Close: false})
 	payload, err := json.Marshal(wire)
@@ -338,5 +496,22 @@ func TestAdapterDataTextReaders(t *testing.T) {
 				t.Fatalf("unexpected local text: %#v", localPacket[1])
 			}
 		})
+	}
+}
+
+func decodedPacketOptions(t *testing.T, data any) *adapter.PacketOptions {
+	t.Helper()
+	switch value := data.(type) {
+	case *adapter.BroadcastMessage:
+		return value.Opts
+	case *adapter.SocketsJoinLeaveMessage:
+		return value.Opts
+	case *adapter.DisconnectSocketsMessage:
+		return value.Opts
+	case *adapter.FetchSocketsMessage:
+		return value.Opts
+	default:
+		t.Fatalf("unexpected adapter data type: %T", data)
+		return nil
 	}
 }
