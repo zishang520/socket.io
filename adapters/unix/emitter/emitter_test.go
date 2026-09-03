@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/zishang520/socket.io/adapters/unix/v3"
-	unixadapter "github.com/zishang520/socket.io/adapters/unix/v3/adapter"
+	"github.com/zishang520/socket.io/adapters/unix/v3/adapter"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
@@ -32,7 +32,7 @@ func TestEmitterUsesClientTransportAndSharedCodec(t *testing.T) {
 	t.Cleanup(func() { _ = receiver.Close() })
 
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/custom")
-	builder := &unixadapter.UnixAdapterBuilder{Unix: receiver}
+	builder := &adapter.UnixAdapterBuilder{Unix: receiver}
 	instance := builder.New(nsp)
 	t.Cleanup(instance.Close)
 	received := make(chan []byte, 1)

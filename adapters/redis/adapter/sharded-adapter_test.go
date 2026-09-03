@@ -13,7 +13,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	miniredisserver "github.com/alicebob/miniredis/v2/server"
 	rds "github.com/redis/go-redis/v9"
-	clusteradapter "github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -195,6 +195,10 @@ func waitForShardedState(t *testing.T, check func() bool) {
 	waitForShardedStateWithin(t, 5*time.Second, check)
 }
 
+func shardedResponseChannel(current *shardedRedisAdapter) string {
+	return current.channel + string(current.Uid()) + "#"
+}
+
 func waitForShardedStateWithin(t *testing.T, timeout time.Duration, check func() bool) {
 	t.Helper()
 	deadline := time.NewTimer(timeout)
@@ -212,11 +216,11 @@ func waitForShardedStateWithin(t *testing.T, timeout time.Duration, check func()
 
 func shardedServerSideEmitPayload(t *testing.T, nsp string) []byte {
 	t.Helper()
-	payload, err := clusteradapter.EncodeClusterMessage(&clusteradapter.ClusterMessage{
+	payload, err := adapter.EncodeClusterMessage(&adapter.ClusterMessage{
 		Uid:  "remote",
 		Nsp:  nsp,
-		Type: clusteradapter.SERVER_SIDE_EMIT,
-		Data: &clusteradapter.ServerSideEmitMessage{Packet: []any{"probe", "value"}},
+		Type: adapter.SERVER_SIDE_EMIT,
+		Data: &adapter.ServerSideEmitMessage{Packet: []any{"probe", "value"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -343,7 +347,7 @@ func TestShardedBuilderSharesSubscriberAcrossNamespaces(t *testing.T) {
 	}
 	waitForShardedState(t, func() bool {
 		for _, current := range adapters {
-			if len(recorder.activePeers(current.channel)) != 1 || len(recorder.activePeers(current.response)) != 1 {
+			if len(recorder.activePeers(current.channel)) != 1 || len(recorder.activePeers(shardedResponseChannel(current))) != 1 {
 				return false
 			}
 		}
@@ -352,7 +356,7 @@ func TestShardedBuilderSharesSubscriberAcrossNamespaces(t *testing.T) {
 
 	var sharedPeer *miniredisserver.Peer
 	for _, current := range adapters {
-		for _, channel := range []string{current.channel, current.response} {
+		for _, channel := range []string{current.channel, shardedResponseChannel(current)} {
 			peers := recorder.activePeers(channel)
 			if len(peers) != 1 {
 				t.Fatalf("channel %q has %d subscribers, want 1", channel, len(peers))
@@ -407,13 +411,13 @@ func TestNewShardedRedisAdapterSharesSubscriber(t *testing.T) {
 
 	waitForShardedState(t, func() bool {
 		return len(recorder.activePeers(first.channel)) == 1 &&
-			len(recorder.activePeers(first.response)) == 1 &&
+			len(recorder.activePeers(shardedResponseChannel(first))) == 1 &&
 			len(recorder.activePeers(second.channel)) == 1 &&
-			len(recorder.activePeers(second.response)) == 1
+			len(recorder.activePeers(shardedResponseChannel(second))) == 1
 	})
 
 	sharedPeer := recorder.activePeers(first.channel)[0]
-	for _, channel := range []string{first.response, second.channel, second.response} {
+	for _, channel := range []string{shardedResponseChannel(first), second.channel, shardedResponseChannel(second)} {
 		if recorder.activePeers(channel)[0] != sharedPeer {
 			t.Fatal("direct constructors did not reuse the subscriber connection")
 		}
@@ -478,11 +482,11 @@ func TestShardedAdaptersKeepRedisClientsIndependent(t *testing.T) {
 	waitForShardedState(t, func() bool {
 		return len(recorder.activePeers(first.channel)) == 1 &&
 			len(recorder.activePeers(second.channel)) == 1 &&
-			len(recorder.activePeers(first.response)) == 1 &&
-			len(recorder.activePeers(second.response)) == 1
+			len(recorder.activePeers(shardedResponseChannel(first))) == 1 &&
+			len(recorder.activePeers(shardedResponseChannel(second))) == 1
 	})
-	firstPeer := recorder.activePeers(first.response)[0]
-	secondPeer := recorder.activePeers(second.response)[0]
+	firstPeer := recorder.activePeers(shardedResponseChannel(first))[0]
+	secondPeer := recorder.activePeers(shardedResponseChannel(second))[0]
 	if firstPeer == secondPeer {
 		t.Fatal("different Redis clients reused the subscriber connection")
 	}
@@ -526,14 +530,14 @@ func TestShardedAdapterSeparatesSubscriptionAndPublishClients(t *testing.T) {
 	).(*shardedRedisAdapter)
 	t.Cleanup(current.Close)
 	waitForShardedState(t, func() bool {
-		return len(recorder.activePeers(current.channel)) == 1 && len(recorder.activePeers(current.response)) == 1
+		return len(recorder.activePeers(current.channel)) == 1 && len(recorder.activePeers(shardedResponseChannel(current))) == 1
 	})
 
-	if _, err := current.DoPublish(&clusteradapter.ClusterMessage{
+	if _, err := current.DoPublish(&adapter.ClusterMessage{
 		Uid:  current.Uid(),
 		Nsp:  nsp.Name(),
-		Type: clusteradapter.SERVER_SIDE_EMIT,
-		Data: &clusteradapter.ServerSideEmitMessage{Packet: []any{"event"}},
+		Type: adapter.SERVER_SIDE_EMIT,
+		Data: &adapter.ServerSideEmitMessage{Packet: []any{"event"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -949,27 +953,28 @@ func TestShardedResponseChannelCollisionDispatchesOnce(t *testing.T) {
 	if err := nsp.On("probe", func(...any) { received <- struct{}{} }); err != nil {
 		t.Fatal(err)
 	}
-	waitForShardedState(t, func() bool { return len(recorder.activePeers(current.response)) == 1 })
+	responseChannel := shardedResponseChannel(current)
+	waitForShardedState(t, func() bool { return len(recorder.activePeers(responseChannel)) == 1 })
 	current.AddAll("sid", types.NewSet(socket.Room(current.Uid())))
 	current.Del("sid", socket.Room(current.Uid()))
 	if err := current.pubSub.flush(current.ctx); err != nil {
 		t.Fatal(err)
 	}
-	message := &clusteradapter.ClusterMessage{
-		Type: clusteradapter.BROADCAST,
-		Data: &clusteradapter.BroadcastMessage{
-			Opts: &clusteradapter.PacketOptions{Rooms: []socket.Room{socket.Room(current.Uid())}},
+	message := &adapter.ClusterMessage{
+		Type: adapter.BROADCAST,
+		Data: &adapter.BroadcastMessage{
+			Opts: &adapter.PacketOptions{Rooms: []socket.Room{socket.Room(current.Uid())}},
 		},
 	}
-	if channel := current.computeChannel(message); channel != current.response {
-		t.Fatalf("UID room channel = %q, want response channel %q", channel, current.response)
+	if channel := current.computeChannel(message); channel != responseChannel {
+		t.Fatalf("UID room channel = %q, want response channel %q", channel, responseChannel)
 	}
-	if peers := recorder.activePeers(current.response); len(peers) != 1 {
+	if peers := recorder.activePeers(responseChannel); len(peers) != 1 {
 		t.Fatalf("response channel subscribers = %d, want 1", len(peers))
 	}
 
 	payload := shardedServerSideEmitPayload(t, "/collision")
-	if delivered := recorder.publish(current.response, payload); delivered != 1 {
+	if delivered := recorder.publish(responseChannel, payload); delivered != 1 {
 		t.Fatalf("delivered to %d subscribers, want 1", delivered)
 	}
 	select {
@@ -1029,16 +1034,16 @@ func TestShardedRedisAdapterRoutesDefaultAndLegacySocketRooms(t *testing.T) {
 		t.Fatalf("20-character public room has %d dynamic subscribers, want 0", len(peers))
 	}
 
-	message := &clusteradapter.ClusterMessage{
-		Type: clusteradapter.BROADCAST,
-		Data: &clusteradapter.BroadcastMessage{
-			Opts: &clusteradapter.PacketOptions{Rooms: []socket.Room{room}},
+	message := &adapter.ClusterMessage{
+		Type: adapter.BROADCAST,
+		Data: &adapter.BroadcastMessage{
+			Opts: &adapter.PacketOptions{Rooms: []socket.Room{room}},
 		},
 	}
 	if channel := publisher.computeChannel(message); channel != publisher.channel {
 		t.Fatalf("default Socket.IO room channel = %q, want %q", channel, publisher.channel)
 	}
-	message.Data.(*clusteradapter.BroadcastMessage).Opts.Rooms[0] = legacyRoom
+	message.Data.(*adapter.BroadcastMessage).Opts.Rooms[0] = legacyRoom
 	channel := publisher.computeChannel(message)
 	want := publisher.dynamicChannel(legacyRoom)
 	if channel != want {
@@ -1055,16 +1060,16 @@ func TestShardedRedisAdapterComputeChannel(t *testing.T) {
 	current.opts.SetSubscriptionMode(redis.DynamicSubscriptionMode)
 	room := socket.Room("room")
 
-	message := &clusteradapter.ClusterMessage{
-		Type: clusteradapter.BROADCAST,
-		Data: &clusteradapter.BroadcastMessage{Opts: &clusteradapter.PacketOptions{Rooms: []socket.Room{room}}},
+	message := &adapter.ClusterMessage{
+		Type: adapter.BROADCAST,
+		Data: &adapter.BroadcastMessage{Opts: &adapter.PacketOptions{Rooms: []socket.Room{room}}},
 	}
 	if got := current.computeChannel(message); got != "socket.io#/#room#" {
 		t.Fatalf("dynamic channel = %q", got)
 	}
 
 	requestID := "request"
-	message.Data.(*clusteradapter.BroadcastMessage).RequestId = &requestID
+	message.Data.(*adapter.BroadcastMessage).RequestId = &requestID
 	if got := current.computeChannel(message); got != current.channel {
 		t.Fatalf("acknowledged broadcast channel = %q", got)
 	}

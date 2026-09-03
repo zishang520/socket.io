@@ -351,14 +351,6 @@ func prepareClusterData(data any) (any, bool, bool) {
 			payload = value.Bytes()
 		}
 		return utils.NonNilSlice(payload), true, true
-	case interface {
-		io.Reader
-		Bytes() []byte
-	}:
-		if utils.IsNil(data) {
-			return data, false, false
-		}
-		return utils.NonNilSlice(value.Bytes()), true, true
 	case io.Reader:
 		if utils.IsNil(data) {
 			return data, false, false

@@ -17,7 +17,7 @@ import (
 	rds "github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
-	rediswire "github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -696,7 +696,7 @@ func TestRedisStreamsPollerRoutesAndStopsAfterClose(t *testing.T) {
 
 	publish := func(nsp string) {
 		t.Helper()
-		message, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+		message, err := redis.EncodeStreamMessage(&adapter.ClusterMessage{
 			Uid:  "remote",
 			Nsp:  nsp,
 			Type: adapter.SERVER_SIDE_EMIT,
@@ -705,7 +705,7 @@ func TestRedisStreamsPollerRoutesAndStopsAfterClose(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := rediswire.XAdd(redisClient, first.streamName, message, first.opts.MaxLen()); err != nil {
+		if _, err := redis.XAdd(redisClient, first.streamName, message, first.opts.MaxLen()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1127,7 +1127,7 @@ func TestCollectMissedPacketsReadsEntriesAppendedAfterShortPage(t *testing.T) {
 	}).Err(); err != nil {
 		t.Fatal(err)
 	}
-	wireMessage, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+	wireMessage, err := redis.EncodeStreamMessage(&adapter.ClusterMessage{
 		Uid:  "remote",
 		Nsp:  "/test",
 		Type: adapter.BROADCAST,
@@ -1198,7 +1198,7 @@ func TestCollectMissedPacketsSkipsVolatileBroadcasts(t *testing.T) {
 	ctx := context.Background()
 
 	add := func(id, event string, volatile bool) {
-		message, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+		message, err := redis.EncodeStreamMessage(&adapter.ClusterMessage{
 			Uid:  "remote",
 			Nsp:  "/test",
 			Type: adapter.BROADCAST,
@@ -1321,7 +1321,7 @@ func TestCollectMissedPacketsValidatesIncludedPacketData(t *testing.T) {
 			t.Cleanup(func() { _ = client.Close() })
 			ctx := context.Background()
 
-			message, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+			message, err := redis.EncodeStreamMessage(&adapter.ClusterMessage{
 				Uid:  "remote",
 				Nsp:  "/test",
 				Type: adapter.BROADCAST,
@@ -1427,7 +1427,7 @@ func TestRestoreSessionUsesWriteClientForStreamReads(t *testing.T) {
 	}).Err(); err != nil {
 		t.Fatal(err)
 	}
-	wireMessage, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+	wireMessage, err := redis.EncodeStreamMessage(&adapter.ClusterMessage{
 		Uid:  "remote",
 		Nsp:  "/test",
 		Type: adapter.BROADCAST,
@@ -1672,7 +1672,7 @@ func TestEncode(t *testing.T) {
 			Data: nil,
 		}
 
-		raw, err := rediswire.EncodeStreamMessage(msg, false)
+		raw, err := redis.EncodeStreamMessage(msg, false)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1705,7 +1705,7 @@ func TestEncode(t *testing.T) {
 			Data: testData,
 		}
 
-		raw, err := rediswire.EncodeStreamMessage(msg, false)
+		raw, err := redis.EncodeStreamMessage(msg, false)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1721,7 +1721,7 @@ func TestEncode(t *testing.T) {
 	})
 
 	t.Run("propagate encoding errors", func(t *testing.T) {
-		_, err := rediswire.EncodeStreamMessage(&adapter.ClusterMessage{
+		_, err := redis.EncodeStreamMessage(&adapter.ClusterMessage{
 			Uid:  "server-1",
 			Nsp:  "/",
 			Type: adapter.MessageType(999),
@@ -1796,7 +1796,7 @@ func TestDecode_JSONData(t *testing.T) {
 		"data": `{"requestId":"req-1"}`,
 	}
 
-	result, err := rediswire.DecodeStreamMessage(rawMsg)
+	result, err := redis.DecodeStreamMessage(rawMsg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1827,7 +1827,7 @@ func TestDecode_Base64MsgpackData(t *testing.T) {
 		"data": base64Data,
 	}
 
-	result, err := rediswire.DecodeStreamMessage(rawMsg)
+	result, err := redis.DecodeStreamMessage(rawMsg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1847,7 +1847,7 @@ func TestDecode_InvalidType(t *testing.T) {
 		"type": "invalid",
 	}
 
-	_, err := rediswire.DecodeStreamMessage(rawMsg)
+	_, err := redis.DecodeStreamMessage(rawMsg)
 	if err == nil {
 		t.Error("Expected error for invalid type")
 	}
@@ -1860,7 +1860,7 @@ func TestDecode_NoData(t *testing.T) {
 		"type": "0", // INITIAL_HEARTBEAT
 	}
 
-	result, err := rediswire.DecodeStreamMessage(rawMsg)
+	result, err := redis.DecodeStreamMessage(rawMsg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1878,7 +1878,7 @@ func TestDecode_InvalidBase64(t *testing.T) {
 		"data": "not-valid-base64!!!",
 	}
 
-	_, err := rediswire.DecodeStreamMessage(rawMsg)
+	_, err := redis.DecodeStreamMessage(rawMsg)
 	if err == nil {
 		t.Error("Expected error for invalid base64")
 	}
@@ -1918,7 +1918,7 @@ func TestComputeStreamName(t *testing.T) {
 		opts.SetStreamName("socket.io")
 		opts.SetStreamCount(1)
 
-		result := rediswire.StreamNameForNamespace(opts.StreamName(), "/chat", opts.StreamCount())
+		result := redis.StreamNameForNamespace(opts.StreamName(), "/chat", opts.StreamCount())
 		if result != "socket.io" {
 			t.Errorf("Expected 'socket.io', got %q", result)
 		}
@@ -1929,7 +1929,7 @@ func TestComputeStreamName(t *testing.T) {
 		opts.SetStreamName("socket.io")
 		opts.SetStreamCount(4)
 
-		result := rediswire.StreamNameForNamespace(opts.StreamName(), "/chat", opts.StreamCount())
+		result := redis.StreamNameForNamespace(opts.StreamName(), "/chat", opts.StreamCount())
 		expected := "socket.io-3"
 		if result != expected {
 			t.Errorf("Expected %q, got %q", expected, result)
@@ -1941,7 +1941,7 @@ func TestComputeStreamName(t *testing.T) {
 		opts.SetStreamName("socket.io")
 		opts.SetStreamCount(5)
 
-		if result := rediswire.StreamNameForNamespace(opts.StreamName(), "/namespace-0", opts.StreamCount()); result != "socket.io--3" {
+		if result := redis.StreamNameForNamespace(opts.StreamName(), "/namespace-0", opts.StreamCount()); result != "socket.io--3" {
 			t.Errorf("Expected 'socket.io--3', got %q", result)
 		}
 	})

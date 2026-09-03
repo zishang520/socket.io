@@ -3,7 +3,7 @@ package transports
 import (
 	"testing"
 
-	enginepacket "github.com/zishang520/socket.io/parsers/engine/v3/packet"
+	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
@@ -43,19 +43,19 @@ func (f *cachedPreparedFrameForTransportTest) PreparedWebTransportFrame(build fu
 
 func TestWebSocketPreparedMessageUsesBroadcastCache(t *testing.T) {
 	frame := &cachedPreparedFrameForTransportTest{BufferInterface: types.NewStringBufferString("42/test,[\"event\"]")}
-	packet := &enginepacket.Packet{
-		Type: enginepacket.MESSAGE,
+	pkt := &packet.Packet{
+		Type: packet.MESSAGE,
 		Data: types.NewStringBufferString("2/test,[\"event\"]"),
-		Options: &enginepacket.Options{
+		Options: &packet.Options{
 			WsPreEncodedFrame: frame,
 		},
 	}
 
-	first, err := websocketPreparedMessage(packet)
+	first, err := websocketPreparedMessage(pkt)
 	if err != nil {
 		t.Fatalf("unexpected first prepared message error: %v", err)
 	}
-	second, err := websocketPreparedMessage(packet)
+	second, err := websocketPreparedMessage(pkt)
 	if err != nil {
 		t.Fatalf("unexpected second prepared message error: %v", err)
 	}
@@ -69,19 +69,19 @@ func TestWebSocketPreparedMessageUsesBroadcastCache(t *testing.T) {
 
 func TestWebTransportPreparedMessageUsesBroadcastCache(t *testing.T) {
 	frame := &cachedPreparedFrameForTransportTest{BufferInterface: types.NewStringBufferString("42/test,[\"event\"]")}
-	packet := &enginepacket.Packet{
-		Type: enginepacket.MESSAGE,
+	pkt := &packet.Packet{
+		Type: packet.MESSAGE,
 		Data: types.NewStringBufferString("2/test,[\"event\"]"),
-		Options: &enginepacket.Options{
+		Options: &packet.Options{
 			WsPreEncodedFrame: frame,
 		},
 	}
 
-	first, err := webTransportPreparedMessage(packet)
+	first, err := webTransportPreparedMessage(pkt)
 	if err != nil {
 		t.Fatalf("unexpected first prepared message error: %v", err)
 	}
-	second, err := webTransportPreparedMessage(packet)
+	second, err := webTransportPreparedMessage(pkt)
 	if err != nil {
 		t.Fatalf("unexpected second prepared message error: %v", err)
 	}

@@ -3,52 +3,20 @@ package adapter
 
 import (
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
-	valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
+	"github.com/zishang520/socket.io/adapters/valkey/v3"
 )
 
 type (
-	// RawClusterMessage represents a raw message from the Valkey stream.
-	RawClusterMessage map[string]any
+	// RawClusterMessage represents the flat field-value shape read from a Valkey stream.
+	RawClusterMessage = valkey.RawClusterMessage
 
 	// ValkeyStreamsAdapter defines the interface for a Valkey Streams-based Socket.IO adapter.
+	// It extends ClusterAdapter with Streams-specific persistence and Pub/Sub transport.
 	ValkeyStreamsAdapter interface {
 		adapter.ClusterAdapter
 
 		SetValkey(*valkey.ValkeyClient)
 		SetOpts(any)
-		Cleanup(func())
 		OnRawMessage(RawClusterMessage, string) error
 	}
 )
-
-// Uid returns the UID from the raw cluster message.
-func (r RawClusterMessage) Uid() string {
-	if value, ok := r["uid"].(string); ok {
-		return value
-	}
-	return ""
-}
-
-// Nsp returns the namespace from the raw cluster message.
-func (r RawClusterMessage) Nsp() string {
-	if value, ok := r["nsp"].(string); ok {
-		return value
-	}
-	return ""
-}
-
-// Type returns the message type from the raw cluster message.
-func (r RawClusterMessage) Type() string {
-	if value, ok := r["type"].(string); ok {
-		return value
-	}
-	return ""
-}
-
-// Data returns the data field from the raw cluster message.
-func (r RawClusterMessage) Data() string {
-	if value, ok := r["data"].(string); ok {
-		return value
-	}
-	return ""
-}

@@ -3,553 +3,585 @@ package valkey_test
 import (
 	"context"
 	"errors"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	miniredisserver "github.com/alicebob/miniredis/v2/server"
 	vk "github.com/valkey-io/valkey-go"
-	valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
-	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/adapters/valkey/v3"
 )
 
 type embeddedValkeyClient struct {
 	vk.Client
 }
 
-// newMiniValkeyClient starts an in-memory Redis server (miniredis) and returns
-// a ValkeyClient connected to it. The server is cleaned up when the test ends.
-func newMiniValkeyClient(t *testing.T) *valkey.ValkeyClient {
+func newRawClient(t *testing.T, address string) vk.Client {
 	t.Helper()
-	s := miniredis.RunT(t)
 	client, err := vk.NewClient(vk.ClientOption{
-		InitAddress:  []string{s.Addr()},
+		InitAddress:  []string{address},
 		DisableCache: true,
+		AlwaysRESP2:  true,
 	})
 	if err != nil {
-		t.Fatalf("failed to connect to miniredis: %v", err)
+		t.Fatalf("valkey.NewClient: %v", err)
 	}
-	t.Cleanup(func() { client.Close() })
-	valkeyClient, err := valkey.NewValkeyClient(context.Background(), client)
+	t.Cleanup(client.Close)
+	return client
+}
+
+func newMiniValkeyClient(t *testing.T) (*miniredis.Miniredis, *valkey.ValkeyClient) {
+	t.Helper()
+	server := miniredis.RunT(t)
+	client, err := valkey.NewValkeyClient(context.Background(), newRawClient(t, server.Addr()))
 	if err != nil {
 		t.Fatalf("NewValkeyClient: %v", err)
 	}
-	return valkeyClient
+	return server, client
 }
-
-// --- Constructor tests ---
 
 func TestNewValkeyClient(t *testing.T) {
-	vc := newMiniValkeyClient(t)
-	if vc == nil {
-		t.Fatal("expected non-nil ValkeyClient")
-	}
-	if vc.Client() == nil {
-		t.Fatal("expected non-nil Client")
+	_, client := newMiniValkeyClient(t)
+	if client.Client() == nil || client.Sub() != client.Client() || client.Context() == nil {
+		t.Fatal("expected one initialized client for both roles")
 	}
 }
 
-func TestNewValkeyClient_RequiresClient(t *testing.T) {
+func TestNewValkeyClientRequiresClient(t *testing.T) {
 	t.Run("nil", func(t *testing.T) {
 		client, err := valkey.NewValkeyClient(context.Background(), nil)
 		if client != nil || !errors.Is(err, valkey.ErrValkeyClientRequired) {
-			t.Fatalf("NewValkeyClient() = (%v, %v), want (nil, ErrValkeyClientRequired)", client, err)
+			t.Fatalf("NewValkeyClient() = (%v, %v)", client, err)
 		}
 	})
 
 	t.Run("typed nil", func(t *testing.T) {
-		var rawClient *embeddedValkeyClient
-		client, err := valkey.NewValkeyClient(context.Background(), rawClient)
+		var raw *embeddedValkeyClient
+		client, err := valkey.NewValkeyClient(context.Background(), raw)
 		if client != nil || !errors.Is(err, valkey.ErrValkeyClientRequired) {
-			t.Fatalf("NewValkeyClient() = (%v, %v), want (nil, ErrValkeyClientRequired)", client, err)
+			t.Fatalf("NewValkeyClient() = (%v, %v)", client, err)
 		}
 	})
-}
-
-func TestNewValkeyClient_NilContext(t *testing.T) {
-	s := miniredis.RunT(t)
-	client, err := vk.NewClient(vk.ClientOption{
-		InitAddress:  []string{s.Addr()},
-		DisableCache: true,
-	})
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
-	t.Cleanup(func() { client.Close() })
-
-	//nolint:staticcheck
-	vc, err := valkey.NewValkeyClient(nil, client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if vc.Context() == nil {
-		t.Fatal("expected non-nil Context when nil was passed")
-	}
 }
 
 func TestNewValkeyClientWithSub(t *testing.T) {
-	t.Run("with separate sub client", func(t *testing.T) {
-		s := miniredis.RunT(t)
-		pubClient, err := vk.NewClient(vk.ClientOption{
-			InitAddress:  []string{s.Addr()},
-			DisableCache: true,
-		})
-		if err != nil {
-			t.Fatalf("failed to connect pubClient: %v", err)
-		}
-		t.Cleanup(func() { pubClient.Close() })
+	server := miniredis.RunT(t)
+	primary := newRawClient(t, server.Addr())
+	subscriber := newRawClient(t, server.Addr())
 
-		subClient, err := vk.NewClient(vk.ClientOption{
-			InitAddress:  []string{s.Addr()},
-			DisableCache: true,
-		})
-		if err != nil {
-			t.Fatalf("failed to connect subClient: %v", err)
-		}
-		t.Cleanup(func() { subClient.Close() })
-
-		vc, err := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if vc == nil {
-			t.Fatal("expected non-nil ValkeyClient")
-		}
-		if vc.Client() != pubClient {
-			t.Fatal("expected Client to be pubClient")
-		}
-		if vc.Sub() != subClient {
-			t.Fatal("Sub() should return SubClient when set")
-		}
-	})
-
-	t.Run("nil context defaults to Background", func(t *testing.T) {
-		s := miniredis.RunT(t)
-		pubClient, err := vk.NewClient(vk.ClientOption{
-			InitAddress:  []string{s.Addr()},
-			DisableCache: true,
-		})
-		if err != nil {
-			t.Fatalf("failed to connect: %v", err)
-		}
-		t.Cleanup(func() { pubClient.Close() })
-
-		subClient, err := vk.NewClient(vk.ClientOption{
-			InitAddress:  []string{s.Addr()},
-			DisableCache: true,
-		})
-		if err != nil {
-			t.Fatalf("failed to connect: %v", err)
-		}
-		t.Cleanup(func() { subClient.Close() })
-
-		//nolint:staticcheck
-		vc, err := valkey.NewValkeyClientWithSub(nil, pubClient, subClient)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if vc.Context() == nil {
-			t.Fatal("expected non-nil Context when nil was passed")
-		}
-	})
-
-	t.Run("nil sub client uses primary", func(t *testing.T) {
-		primary := &embeddedValkeyClient{}
-		vc, err := valkey.NewValkeyClientWithSub(context.Background(), primary, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if vc.Client() != primary || vc.Sub() != primary {
-			t.Fatal("expected the primary client for reads and writes")
-		}
-	})
-
-	t.Run("typed nil sub client uses primary", func(t *testing.T) {
-		primary := &embeddedValkeyClient{}
-		var subClient *embeddedValkeyClient
-		vc, err := valkey.NewValkeyClientWithSub(context.Background(), primary, subClient)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if vc.Client() != primary || vc.Sub() != primary {
-			t.Fatal("expected the primary client for reads and writes")
-		}
-	})
-}
-
-// --- Sub() routing tests ---
-
-func TestValkeyClient_Sub(t *testing.T) {
-	t.Run("returns SubClient when set", func(t *testing.T) {
-		s := miniredis.RunT(t)
-		pubClient, err := vk.NewClient(vk.ClientOption{
-			InitAddress:  []string{s.Addr()},
-			DisableCache: true,
-		})
-		if err != nil {
-			t.Fatalf("failed to connect: %v", err)
-		}
-		t.Cleanup(func() { pubClient.Close() })
-
-		subClient, err := vk.NewClient(vk.ClientOption{
-			InitAddress:  []string{s.Addr()},
-			DisableCache: true,
-		})
-		if err != nil {
-			t.Fatalf("failed to connect: %v", err)
-		}
-		t.Cleanup(func() { subClient.Close() })
-
-		vc, err := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if vc.Sub() != subClient {
-			t.Fatal("Sub() should return SubClient")
-		}
-	})
-
-	t.Run("falls back to Client when SubClient is nil", func(t *testing.T) {
-		vc := newMiniValkeyClient(t)
-		if vc.Sub() != vc.Client() {
-			t.Fatal("Sub() should fall back to Client when SubClient is nil")
-		}
-	})
-
-	t.Run("NewValkeyClient uses the primary client", func(t *testing.T) {
-		vc := newMiniValkeyClient(t)
-		if vc.Sub() != vc.Client() {
-			t.Fatal("Sub() should return Client")
-		}
-	})
-}
-
-// --- Pub/Sub lifecycle tests ---
-
-func TestValkeyPubSub_Close(t *testing.T) {
-	vc := newMiniValkeyClient(t)
-
-	pubsub := vc.Subscribe(vc.Context(), "test-channel")
-	if closeErr := pubsub.Close(); closeErr != nil {
-		t.Fatalf("expected no error on Close, got %v", closeErr)
-	}
-
-	if closeErr := pubsub.Close(); closeErr != nil {
-		t.Fatalf("expected no error on second Close (idempotent), got %v", closeErr)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	_, err := pubsub.ReceiveMessage(ctx)
-	if err == nil {
-		t.Fatal("expected error after Close, got nil")
-	}
-}
-
-func TestValkeyClient_PubSub(t *testing.T) {
-	vc := newMiniValkeyClient(t)
-	ctx := vc.Context()
-
-	channel := "sio:test:pubsub"
-	pubsub := vc.Subscribe(ctx, channel)
-	defer pubsub.Close() //nolint:errcheck
-
-	done := make(chan string, 1)
-	go func() {
-		msg, recvErr := pubsub.ReceiveMessage(ctx)
-		if recvErr == nil {
-			done <- msg.Payload
-		} else {
-			done <- ""
-		}
-	}()
-
-	time.Sleep(100 * time.Millisecond)
-	if err := vc.Publish(ctx, channel, []byte("hello")); err != nil {
-		t.Fatalf("Publish: %v", err)
-	}
-
-	select {
-	case payload := <-done:
-		if payload != "hello" {
-			t.Fatalf("expected 'hello', got %q", payload)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("timeout waiting for message")
-	}
-}
-
-// --- Unsubscribe tests (the bug the maintainer flagged) ---
-
-func TestValkeyPubSub_Unsubscribe_PerChannel(t *testing.T) {
-	vc := newMiniValkeyClient(t)
-	ctx := vc.Context()
-
-	ch1 := "sio:test:unsub:ch1"
-	ch2 := "sio:test:unsub:ch2"
-	pubsub := vc.Subscribe(ctx, ch1, ch2)
-	defer pubsub.Close() //nolint:errcheck
-
-	time.Sleep(100 * time.Millisecond)
-
-	// Unsubscribe from ch1 only — must not kill the entire subscription.
-	if err := pubsub.Unsubscribe(ctx, ch1); err != nil {
-		t.Fatalf("Unsubscribe ch1: %v", err)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-
-	// ch2 should still be active.
-	if err := vc.Publish(ctx, ch2, []byte("still-alive")); err != nil {
-		t.Fatalf("Publish to ch2: %v", err)
-	}
-
-	msgCtx, msgCancel := context.WithTimeout(ctx, 3*time.Second)
-	defer msgCancel()
-
-	msg, err := pubsub.ReceiveMessage(msgCtx)
-	if err != nil {
-		t.Fatalf("expected message on ch2 after unsubscribing ch1, got error: %v", err)
-	}
-	if msg.Payload != "still-alive" {
-		t.Fatalf("expected 'still-alive', got %q", msg.Payload)
-	}
-}
-
-func TestValkeyPubSub_Unsubscribe_NoMessagesOnUnsubbed(t *testing.T) {
-	vc := newMiniValkeyClient(t)
-	ctx := vc.Context()
-
-	ch1 := "sio:test:unsub2:ch1"
-	ch2 := "sio:test:unsub2:ch2"
-	pubsub := vc.Subscribe(ctx, ch1, ch2)
-	defer pubsub.Close() //nolint:errcheck
-
-	time.Sleep(100 * time.Millisecond)
-
-	if err := pubsub.Unsubscribe(ctx, ch1); err != nil {
-		t.Fatalf("Unsubscribe ch1: %v", err)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-
-	// Publish to the unsubscribed channel, then to the subscribed one.
-	if err := vc.Publish(ctx, ch1, []byte("should-not-arrive")); err != nil {
-		t.Fatalf("Publish ch1: %v", err)
-	}
-	if err := vc.Publish(ctx, ch2, []byte("expected")); err != nil {
-		t.Fatalf("Publish ch2: %v", err)
-	}
-
-	msgCtx, msgCancel := context.WithTimeout(ctx, 3*time.Second)
-	defer msgCancel()
-
-	msg, err := pubsub.ReceiveMessage(msgCtx)
-	if err != nil {
-		t.Fatalf("ReceiveMessage: %v", err)
-	}
-	if msg.Payload != "expected" {
-		t.Fatalf("received unexpected payload %q (should have been 'expected' from ch2)", msg.Payload)
-	}
-	if msg.Channel != ch2 {
-		t.Fatalf("received message from wrong channel %q (expected %q)", msg.Channel, ch2)
-	}
-}
-
-func TestValkeyPubSub_PSubscribe_And_PUnsubscribe(t *testing.T) {
-	vc := newMiniValkeyClient(t)
-	ctx := vc.Context()
-
-	pubsub := vc.PSubscribe(ctx, "sio:test:punsub:*")
-	defer pubsub.Close() //nolint:errcheck
-
-	time.Sleep(100 * time.Millisecond)
-
-	if err := vc.Publish(ctx, "sio:test:punsub:foo", []byte("pattern-msg")); err != nil {
-		t.Fatalf("Publish: %v", err)
-	}
-
-	msgCtx, msgCancel := context.WithTimeout(ctx, 3*time.Second)
-	defer msgCancel()
-
-	msg, err := pubsub.ReceiveMessage(msgCtx)
-	if err != nil {
-		t.Fatalf("expected message from pattern subscription, got error: %v", err)
-	}
-	if msg.Payload != "pattern-msg" {
-		t.Fatalf("expected 'pattern-msg', got %q", msg.Payload)
-	}
-	if msg.Pattern == "" {
-		t.Fatal("expected non-empty Pattern for pattern subscription message")
-	}
-
-	// PUnsubscribe should issue the command without error.
-	err = pubsub.PUnsubscribe(ctx, "sio:test:punsub:*")
-	if err != nil {
-		t.Fatalf("PUnsubscribe: %v", err)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-
-	// After PUnsubscribe, publishing should not deliver messages.
-	err = vc.Publish(ctx, "sio:test:punsub:bar", []byte("should-not-arrive"))
-	if err != nil {
-		t.Fatalf("Publish after PUnsubscribe: %v", err)
-	}
-
-	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	defer timeoutCancel()
-
-	_, err = pubsub.ReceiveMessage(timeoutCtx)
-	if err == nil {
-		t.Fatal("expected timeout or error after PUnsubscribe, got message")
-	}
-}
-
-// --- Read/write separation tests ---
-
-func TestValkeyPubSub_WithSubClient(t *testing.T) {
-	s := miniredis.RunT(t)
-
-	pubClient, err := vk.NewClient(vk.ClientOption{
-		InitAddress:  []string{s.Addr()},
-		DisableCache: true,
-	})
-	if err != nil {
-		t.Fatalf("failed to connect pubClient: %v", err)
-	}
-	t.Cleanup(func() { pubClient.Close() })
-
-	subClient, err := vk.NewClient(vk.ClientOption{
-		InitAddress:  []string{s.Addr()},
-		DisableCache: true,
-	})
-	if err != nil {
-		t.Fatalf("failed to connect subClient: %v", err)
-	}
-	t.Cleanup(func() { subClient.Close() })
-
-	vc, err := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+	//nolint:staticcheck
+	client, err := valkey.NewValkeyClientWithSub(nil, primary, subscriber)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := vc.Context()
+	if client.Client() != primary || client.Sub() != subscriber || client.Context() == nil {
+		t.Fatal("client roles or default context were not preserved")
+	}
 
-	channel := "sio:test:subclient:pubsub"
-	pubsub := vc.Subscribe(ctx, channel)
-	defer pubsub.Close() //nolint:errcheck
+	client, err = valkey.NewValkeyClientWithSub(context.Background(), primary, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Sub() != primary {
+		t.Fatal("nil subscription client should use the primary client")
+	}
+}
 
-	done := make(chan string, 1)
-	go func() {
-		msg, recvErr := pubsub.ReceiveMessage(ctx)
-		if recvErr == nil {
-			done <- msg.Payload
-		} else {
-			done <- ""
-		}
-	}()
+func TestValkeyPubSubIsReadyOnReturn(t *testing.T) {
+	_, client := newMiniValkeyClient(t)
+	ctx := client.Context()
+	channel := "sio:test:ready"
+	pubSub := client.Subscribe(ctx, channel)
+	defer pubSub.Close() //nolint:errcheck
 
-	time.Sleep(100 * time.Millisecond)
-	if err := vc.Publish(ctx, channel, []byte("via-subclient")); err != nil {
+	if err := client.Publish(ctx, channel, []byte("hello")); err != nil {
 		t.Fatalf("Publish: %v", err)
+	}
+	receiveCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	message, err := pubSub.ReceiveMessage(receiveCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Channel != channel || message.Message != "hello" {
+		t.Fatalf("unexpected message: %+v", message)
+	}
+}
+
+func TestValkeyPatternPubSub(t *testing.T) {
+	_, client := newMiniValkeyClient(t)
+	ctx := client.Context()
+	pubSub := client.PSubscribe(ctx, "sio:test:pattern:*")
+	defer pubSub.Close() //nolint:errcheck
+
+	if err := client.Publish(ctx, "sio:test:pattern:room", []byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	receiveCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	message, err := pubSub.ReceiveMessage(receiveCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Pattern == "" || message.Message != "payload" {
+		t.Fatalf("unexpected pattern message: %+v", message)
+	}
+}
+
+func TestValkeyPubSubCloseIsIdempotent(t *testing.T) {
+	_, client := newMiniValkeyClient(t)
+	pubSub := client.Subscribe(client.Context(), "sio:test:close")
+	if err := pubSub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := pubSub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pubSub.ReceiveMessage(context.Background()); !errors.Is(err, valkey.ErrValkeyPubSubClosed) {
+		t.Fatalf("ReceiveMessage error = %v", err)
+	}
+}
+
+func TestValkeyPubSubCloseReturnsCleanupError(t *testing.T) {
+	server, client := newMiniValkeyClient(t)
+	pubSub := client.Subscribe(client.Context(), "sio:test:close-error")
+
+	errorEvent := make(chan error, 1)
+	if err := client.On("error", func(args ...any) {
+		if err, ok := args[0].(error); ok {
+			select {
+			case errorEvent <- err:
+			default:
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var attempts atomic.Int32
+	server.Server().SetPreHook(func(peer *miniredisserver.Peer, command string, _ ...string) bool {
+		if command != "UNSUBSCRIBE" {
+			return false
+		}
+		attempts.Add(1)
+		peer.WriteError("NOPERM unsubscribe denied")
+		return true
+	})
+	defer server.Server().SetPreHook(nil)
+
+	closeErr := pubSub.Close()
+	if closeErr == nil || closeErr.Error() != "NOPERM unsubscribe denied" {
+		t.Fatalf("Close() error = %v", closeErr)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("UNSUBSCRIBE attempts = %d, want 1", got)
 	}
 
 	select {
-	case payload := <-done:
-		if payload != "via-subclient" {
-			t.Fatalf("expected 'via-subclient', got %q", payload)
+	case eventErr := <-errorEvent:
+		if eventErr != closeErr {
+			t.Fatalf("error event = %v, want %v", eventErr, closeErr)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("timeout waiting for message with SubClient")
+	case <-time.After(time.Second):
+		t.Fatal("cleanup error event was not emitted")
 	}
 }
 
-// --- Key-value tests ---
+func TestValkeyPubSubCloseRetriesTryAgain(t *testing.T) {
+	server, client := newMiniValkeyClient(t)
+	channel := "sio:test:close-retry"
+	pubSub := client.Subscribe(client.Context(), channel)
 
-func TestValkeyClient_SetGetDel(t *testing.T) {
-	vc := newMiniValkeyClient(t)
-	ctx := vc.Context()
+	var attempts atomic.Int32
+	server.Server().SetPreHook(func(peer *miniredisserver.Peer, command string, _ ...string) bool {
+		if command != "UNSUBSCRIBE" {
+			return false
+		}
+		if attempts.Add(1) < 3 {
+			peer.WriteError("TRYAGAIN unsubscribe retry")
+			return true
+		}
+		return false
+	})
+	defer server.Server().SetPreHook(nil)
 
-	key := "sio:test:setget"
-
-	if err := vc.Set(ctx, key, "hello", 10*time.Second); err != nil {
-		t.Fatalf("Set: %v", err)
+	if err := pubSub.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
 	}
-
-	val, err := vc.GetDel(ctx, key)
-	if err != nil {
-		t.Fatalf("GetDel: %v", err)
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("UNSUBSCRIBE attempts = %d, want 3", got)
 	}
-	if val != "hello" {
-		t.Fatalf("expected 'hello', got %q", val)
-	}
-
-	val2, err := vc.GetDel(ctx, key)
-	if err != nil {
-		t.Fatalf("GetDel on missing key: %v", err)
-	}
-	if val2 != "" {
-		t.Fatalf("expected empty string for missing key, got %q", val2)
+	if got := server.PubSubNumSub(channel)[channel]; got != 0 {
+		t.Fatalf("subscriber count after close = %d, want 0", got)
 	}
 }
 
-func TestValkeyClient_XAddXRange(t *testing.T) {
-	vc := newMiniValkeyClient(t)
-	ctx := vc.Context()
+func TestValkeyPubSubDeduplicatesTopicsAndUnsubscribesOnClose(t *testing.T) {
+	server, client := newMiniValkeyClient(t)
+	ctx := client.Context()
+	channel := "sio:test:shared"
+	pubSub := client.Subscribe(ctx, channel, channel)
+
+	if got := server.PubSubNumSub(channel)[channel]; got != 1 {
+		t.Fatalf("subscriber count = %d, want 1", got)
+	}
+	if err := pubSub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.PubSubNumSub(channel)[channel]; got != 0 {
+		t.Fatalf("subscriber count after close = %d, want 0", got)
+	}
+}
+
+func TestValkeyPubSubSharesOverlappingSubscriptions(t *testing.T) {
+	server, client := newMiniValkeyClient(t)
+	ctx := client.Context()
+	firstCtx, cancelFirst := context.WithCancel(ctx)
+	secondCtx, cancelSecond := context.WithCancel(ctx)
+	defer cancelFirst()
+	defer cancelSecond()
+	firstOnly := "sio:test:overlap:first"
+	shared := "sio:test:overlap:shared"
+	secondOnly := "sio:test:overlap:second"
+	first := client.Subscribe(firstCtx, firstOnly, shared)
+	second := client.Subscribe(secondCtx, shared, secondOnly)
+
+	counts := server.PubSubNumSub(firstOnly, shared, secondOnly)
+	if counts[firstOnly] != 1 || counts[shared] != 1 || counts[secondOnly] != 1 {
+		t.Fatalf("subscriber counts = %v, want one physical subscription per topic", counts)
+	}
+	if err := client.Publish(ctx, shared, []byte("shared")); err != nil {
+		t.Fatal(err)
+	}
+	for index, pubSub := range []*valkey.ValkeyPubSub{first, second} {
+		receiveCtx, cancel := context.WithTimeout(ctx, time.Second)
+		message, err := pubSub.ReceiveMessage(receiveCtx)
+		cancel()
+		if err != nil || message.Message != "shared" {
+			t.Fatalf("subscription %d = %+v, %v", index, message, err)
+		}
+	}
+
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	counts = server.PubSubNumSub(firstOnly, shared, secondOnly)
+	if counts[firstOnly] != 0 || counts[shared] != 1 || counts[secondOnly] != 1 {
+		t.Fatalf("subscriber counts after first close = %v", counts)
+	}
+	if err := client.Publish(ctx, shared, []byte("remaining")); err != nil {
+		t.Fatal(err)
+	}
+	receiveCtx, cancel := context.WithTimeout(ctx, time.Second)
+	message, err := second.ReceiveMessage(receiveCtx)
+	cancel()
+	if err != nil || message.Message != "remaining" {
+		t.Fatalf("remaining subscription = %+v, %v", message, err)
+	}
+
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	counts = server.PubSubNumSub(firstOnly, shared, secondOnly)
+	if counts[firstOnly] != 0 || counts[shared] != 0 || counts[secondOnly] != 0 {
+		t.Fatalf("subscriber counts after final close = %v", counts)
+	}
+}
+
+func TestValkeyPubSubReturnsAfterInitialSubscriptionError(t *testing.T) {
+	server, client := newMiniValkeyClient(t)
+	channel := "sio:test:initial-error"
+	server.Server().SetPreHook(func(peer *miniredisserver.Peer, command string, _ ...string) bool {
+		if command != "SUBSCRIBE" {
+			return false
+		}
+		peer.WriteError("NOPERM subscription denied")
+		return true
+	})
+	t.Cleanup(func() { server.Server().SetPreHook(nil) })
+
+	errorEvent := make(chan error, 1)
+	if err := client.On("error", func(args ...any) {
+		if err, ok := args[0].(error); ok {
+			select {
+			case errorEvent <- err:
+			default:
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	returned := make(chan *valkey.ValkeyPubSub, 1)
+	go func() { returned <- client.Subscribe(client.Context(), channel) }()
+
+	var pubSub *valkey.ValkeyPubSub
+	select {
+	case pubSub = <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("Subscribe blocked after the initial server error")
+	}
+	defer pubSub.Close() //nolint:errcheck
+	select {
+	case err := <-errorEvent:
+		if err.Error() != "NOPERM subscription denied" {
+			t.Fatalf("error event = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initial subscription error was not emitted")
+	}
+
+	server.Server().SetPreHook(nil)
+	deadline := time.Now().Add(3 * time.Second)
+	for server.PubSubNumSub(channel)[channel] != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("subscription did not recover")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := client.Publish(client.Context(), channel, []byte("recovered")); err != nil {
+		t.Fatal(err)
+	}
+	receiveCtx, cancel := context.WithTimeout(client.Context(), time.Second)
+	defer cancel()
+	message, err := pubSub.ReceiveMessage(receiveCtx)
+	if err != nil || message.Message != "recovered" {
+		t.Fatalf("recovered subscription = %+v, %v", message, err)
+	}
+}
+
+func TestValkeyPubSubWithNoTopicsIsInert(t *testing.T) {
+	server, client := newMiniValkeyClient(t)
+	var commands atomic.Int32
+	server.Server().SetPreHook(func(_ *miniredisserver.Peer, command string, _ ...string) bool {
+		if command == "SUBSCRIBE" || command == "UNSUBSCRIBE" {
+			commands.Add(1)
+		}
+		return false
+	})
+	t.Cleanup(func() { server.Server().SetPreHook(nil) })
+
+	pubSub := client.Subscribe(client.Context())
+	if _, err := pubSub.ReceiveMessage(context.Background()); !errors.Is(err, valkey.ErrValkeyPubSubClosed) {
+		t.Fatalf("ReceiveMessage error = %v", err)
+	}
+	if err := pubSub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := commands.Load(); got != 0 {
+		t.Fatalf("Pub/Sub commands = %d, want 0", got)
+	}
+}
+
+func TestValkeyClientContextClosesExplicitContextSubscription(t *testing.T) {
+	server := miniredis.RunT(t)
+	ownerCtx, cancelOwner := context.WithCancel(context.Background())
+	client, err := valkey.NewValkeyClient(ownerCtx, newRawClient(t, server.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel := "sio:test:owner-context"
+	pubSub := client.Subscribe(context.Background(), channel)
+	cancelOwner()
+
+	receiveDone := make(chan error, 1)
+	go func() {
+		_, receiveErr := pubSub.ReceiveMessage(context.Background())
+		receiveDone <- receiveErr
+	}()
+	select {
+	case receiveErr := <-receiveDone:
+		if !errors.Is(receiveErr, valkey.ErrValkeyPubSubClosed) {
+			t.Fatalf("ReceiveMessage error = %v", receiveErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("owner context did not close the subscription")
+	}
+	if err := pubSub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.PubSubNumSub(channel)[channel]; got != 0 {
+		t.Fatalf("subscriber count after owner cancellation = %d, want 0", got)
+	}
+}
+
+func TestValkeyPubSubDoesNotConsumeBlockingPool(t *testing.T) {
+	server := miniredis.RunT(t)
+	raw, err := vk.NewClient(vk.ClientOption{
+		InitAddress:      []string{server.Addr()},
+		DisableCache:     true,
+		AlwaysRESP2:      true,
+		BlockingPoolSize: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(raw.Close)
+	client, err := valkey.NewValkeyClient(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := client.Subscribe(client.Context(), "sio:test:pool:1")
+	defer first.Close() //nolint:errcheck
+	second := client.Subscribe(client.Context(), "sio:test:pool:2")
+	defer second.Close() //nolint:errcheck
+
+	ctx, cancel := context.WithTimeout(client.Context(), time.Second)
+	defer cancel()
+	entries, err := client.XRead(ctx, "sio:test:pool:stream", "0-0", 1, 10*time.Millisecond)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("XRead with active subscriptions = %+v, %v", entries, err)
+	}
+}
+
+func TestSlowValkeyPubSubConsumerDoesNotBlockOtherSubscriptions(t *testing.T) {
+	_, client := newMiniValkeyClient(t)
+	ctx := client.Context()
+	slow := client.Subscribe(ctx, "sio:test:slow")
+	defer slow.Close() //nolint:errcheck
+	fast := client.Subscribe(ctx, "sio:test:fast")
+	defer fast.Close() //nolint:errcheck
+
+	for i := range 100 {
+		if err := client.Publish(ctx, "sio:test:slow", []byte(strconv.Itoa(i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := client.Publish(ctx, "sio:test:fast", []byte("delivered")); err != nil {
+		t.Fatal(err)
+	}
+	receiveCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	message, err := fast.ReceiveMessage(receiveCtx)
+	if err != nil || message.Message != "delivered" {
+		t.Fatalf("fast subscription = %+v, %v", message, err)
+	}
+}
+
+func TestValkeyPubSubReconnects(t *testing.T) {
+	server, client := newMiniValkeyClient(t)
+	ctx, cancel := context.WithTimeout(client.Context(), 5*time.Second)
+	defer cancel()
+	pubSub := client.Subscribe(ctx, "sio:test:reconnect")
+	defer pubSub.Close() //nolint:errcheck
+
+	server.Close()
+	if err := server.Restart(); err != nil {
+		t.Fatalf("restart miniredis: %v", err)
+	}
+
+	received := make(chan string, 1)
+	go func() {
+		message, err := pubSub.ReceiveMessage(ctx)
+		if err == nil {
+			received <- message.Message
+		}
+	}()
+
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case payload := <-received:
+			if payload != "after-reconnect" {
+				t.Fatalf("unexpected payload %q", payload)
+			}
+			return
+		case <-ticker.C:
+			_ = client.Publish(ctx, "sio:test:reconnect", []byte("after-reconnect"))
+		case <-ctx.Done():
+			t.Fatal("subscription did not recover")
+		}
+	}
+}
+
+func TestValkeyClientUsesSeparateRoles(t *testing.T) {
+	primaryServer := miniredis.RunT(t)
+	subServer := miniredis.RunT(t)
+	primary := newRawClient(t, primaryServer.Addr())
+	subscriber := newRawClient(t, subServer.Addr())
+	client, err := valkey.NewValkeyClientWithSub(context.Background(), primary, subscriber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := client.Context()
+
+	pubSub := client.Subscribe(ctx, "sio:test:roles")
+	defer pubSub.Close() //nolint:errcheck
+	if err := subscriber.Do(ctx,
+		subscriber.B().Publish().Channel("sio:test:roles").Message("from-sub").Build(),
+	).Error(); err != nil {
+		t.Fatal(err)
+	}
+	message, err := pubSub.ReceiveMessage(ctx)
+	if err != nil || message.Message != "from-sub" {
+		t.Fatalf("subscription did not use Sub(): %+v, %v", message, err)
+	}
+	counts, err := client.PubSubNumSub(ctx, "sio:test:roles")
+	if err != nil || counts["sio:test:roles"] != 1 {
+		t.Fatalf("subscriber count = %v, %v", counts, err)
+	}
+
+	if err := client.Set(ctx, "sio:test:session", "value", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	value, err := client.GetDel(ctx, "sio:test:session")
+	if err != nil || value != "value" {
+		t.Fatalf("GetDel did not use primary: %q, %v", value, err)
+	}
+
+	if _, err := client.XAdd(ctx, "sio:test:primary-stream", valkey.RawClusterMessage{
+		"uid": "1", "nsp": "/", "type": "2",
+	}, 100); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := client.XRangeN(ctx, "sio:test:primary-stream", "-", "+", 1)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("XRangeN did not use primary: %d, %v", len(entries), err)
+	}
+
+	if err := subscriber.Do(ctx,
+		subscriber.B().Xadd().Key("sio:test:sub-stream").Id("*").FieldValue().FieldValue("uid", "2").Build(),
+	).Error(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = client.XRead(ctx, "sio:test:sub-stream", "0-0", 10, time.Millisecond)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("XRead did not use Sub(): %d, %v", len(entries), err)
+	}
+}
+
+func TestValkeyClientStreamCommands(t *testing.T) {
+	server, client := newMiniValkeyClient(t)
+	ctx := client.Context()
 	stream := "sio:test:stream"
 
-	entryID, err := vc.XAdd(ctx, stream, 1000, map[string]any{"uid": "test", "nsp": "/"})
-	if err != nil {
-		t.Fatalf("XAdd: %v", err)
+	first, err := client.XAdd(ctx, stream, valkey.RawClusterMessage{
+		"uid": "first", "nsp": "/", "type": "2",
+	}, 100)
+	if err != nil || first == "" {
+		t.Fatalf("XAdd = %q, %v", first, err)
 	}
-	if entryID == "" {
-		t.Fatal("expected non-empty entry ID")
+	second, err := client.XAdd(ctx, stream, valkey.RawClusterMessage{
+		"uid": "second", "nsp": "/", "type": "3", "data": `{"value":"second"}`,
+	}, 100)
+	if err != nil || second == "" {
+		t.Fatalf("XAdd = %q, %v", second, err)
 	}
-
-	entries, err := vc.XRange(ctx, stream, "-", "+")
-	if err != nil {
-		t.Fatalf("XRange: %v", err)
+	entries, err := client.XRangeN(ctx, stream, "-", "+", 1)
+	if err != nil || len(entries) != 1 || entries[0].ID != first {
+		t.Fatalf("XRangeN = %+v, %v", entries, err)
 	}
-	if len(entries) == 0 {
-		t.Fatal("expected at least one entry from XRange")
-	}
-}
-
-// --- Pure-logic tests (no server needed) ---
-
-func TestSubscriptionMode_ShouldUseDynamicChannel(t *testing.T) {
-	tests := []struct {
-		mode  valkey.SubscriptionMode
-		room  string
-		wants bool
-	}{
-		{valkey.StaticSubscriptionMode, "room1", false},
-		{valkey.StaticSubscriptionMode, "abcdefghijklmnopqrst", false},
-		{valkey.DynamicSubscriptionMode, "room1", true},
-		{valkey.DynamicSubscriptionMode, "abcdefghijklmnopqrst", false},
-		{valkey.DynamicPrivateSubscriptionMode, "abcdefghijklmnopqrst", true},
-		{valkey.DynamicPrivateSubscriptionMode, "room1", true},
+	entries, err = client.XRevRangeN(ctx, stream, "+", "-", 1)
+	if err != nil || len(entries) != 1 || entries[0].ID != second {
+		t.Fatalf("XRevRangeN = %+v, %v", entries, err)
 	}
 
-	for _, tc := range tests {
-		got := valkey.ShouldUseDynamicChannel(tc.mode, socket.Room(tc.room))
-		if got != tc.wants {
-			t.Errorf("ShouldUseDynamicChannel(%q, %q) = %v, want %v", tc.mode, tc.room, got, tc.wants)
-		}
+	if err := client.Set(ctx, "sio:test:px", "value", 1500*time.Millisecond); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestValkeyPacket_MarshalUnmarshal(t *testing.T) {
-	var p *valkey.ValkeyPacket
-	data, err := p.MarshalJSON()
-	if err != nil {
-		t.Fatalf("MarshalJSON of nil: %v", err)
-	}
-	if string(data) != "null" {
-		t.Fatalf("expected 'null', got %s", data)
-	}
-
-	if err := p.UnmarshalJSON([]byte(`["uid"]`)); err == nil {
-		t.Fatal("expected error when unmarshaling into nil ValkeyPacket")
+	if ttl := server.TTL("sio:test:px"); ttl != 1500*time.Millisecond {
+		t.Fatalf("TTL = %s, want 1.5s", ttl)
 	}
 }

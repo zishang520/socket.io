@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sync"
 	"time"
 
@@ -36,15 +35,9 @@ type redisStreamsPoller struct {
 	done     chan struct{}
 }
 
-type sharedRedisStreamsPoller struct {
-	poller        *redisStreamsPoller
-	registrations map[string][]*redisStreamsAdapter
-	refs          int
-}
-
 var redisStreamsPollers struct {
 	mu     sync.Mutex
-	groups map[redisStreamsPollerKey]*sharedRedisStreamsPoller
+	groups map[redisStreamsPollerKey]*redisStreamsPoller
 }
 
 func redisStreamsPollerBlock(blockTimeInMs int64) (time.Duration, error) {
@@ -77,75 +70,50 @@ func acquireRedisStreamsPoller(adapter *redisStreamsAdapter) *redisStreamsPoller
 	}
 
 	redisStreamsPollers.mu.Lock()
-	shared := redisStreamsPollers.groups[key]
-	created := shared == nil
-	if shared == nil {
+	poller := redisStreamsPollers.groups[key]
+	created := poller == nil
+	if poller == nil {
 		ctx, cancel := context.WithCancel(adapter.redisClient.Context())
-		shared = &sharedRedisStreamsPoller{poller: &redisStreamsPoller{
+		poller = &redisStreamsPoller{
 			key:    key,
 			ctx:    ctx,
 			cancel: cancel,
 			client: adapter.redisClient.Sub(),
 			ready:  make(chan struct{}),
 			done:   make(chan struct{}),
-		}, registrations: make(map[string][]*redisStreamsAdapter)}
-		if redisStreamsPollers.groups == nil {
-			redisStreamsPollers.groups = make(map[redisStreamsPollerKey]*sharedRedisStreamsPoller)
 		}
-		redisStreamsPollers.groups[key] = shared
+		if redisStreamsPollers.groups == nil {
+			redisStreamsPollers.groups = make(map[redisStreamsPollerKey]*redisStreamsPoller)
+		}
+		redisStreamsPollers.groups[key] = poller
 	}
 	nsp := adapter.Nsp().Name()
-	shared.refs++
-	shared.registrations[nsp] = append(shared.registrations[nsp], adapter)
-	shared.poller.adapters.Store(nsp, adapter)
+	poller.adapters.Store(nsp, adapter)
 	redisStreamsPollers.mu.Unlock()
 
 	if created {
-		startID, err := shared.poller.readInitialID()
-		if err != nil && shared.poller.ctx.Err() == nil {
+		startID, err := poller.readInitialID()
+		go poller.poll(startID, err == nil)
+		close(poller.ready)
+		if err != nil && poller.ctx.Err() == nil {
 			redisStreamsLog.Debug("error reading stream tail: %s", err.Error())
 			adapter.redisClient.Emit("error", err)
 		}
-		go shared.poller.poll(startID, err == nil)
-		close(shared.poller.ready)
 	} else {
-		<-shared.poller.ready
+		<-poller.ready
 	}
-	return shared.poller
+	return poller
 }
 
 func releaseRedisStreamsPoller(poller *redisStreamsPoller, adapter *redisStreamsAdapter) {
 	redisStreamsPollers.mu.Lock()
-	shared := redisStreamsPollers.groups[poller.key]
-	if shared == nil || shared.poller != poller {
+	if redisStreamsPollers.groups[poller.key] != poller {
 		redisStreamsPollers.mu.Unlock()
 		return
 	}
 
 	nsp := adapter.Nsp().Name()
-	registrations := shared.registrations[nsp]
-	registrationIndex := -1
-	for i, registration := range slices.Backward(registrations) {
-		if registration == adapter {
-			registrationIndex = i
-			break
-		}
-	}
-	if registrationIndex == -1 {
-		redisStreamsPollers.mu.Unlock()
-		return
-	}
-	registrations = append(registrations[:registrationIndex], registrations[registrationIndex+1:]...)
-	if len(registrations) == 0 {
-		delete(shared.registrations, nsp)
-		poller.adapters.Delete(nsp)
-	} else {
-		shared.registrations[nsp] = registrations
-		poller.adapters.Store(nsp, registrations[len(registrations)-1])
-	}
-
-	shared.refs--
-	if shared.refs != 0 {
+	if !poller.adapters.CompareAndDelete(nsp, adapter) || poller.adapters.Len() != 0 {
 		redisStreamsPollers.mu.Unlock()
 		return
 	}

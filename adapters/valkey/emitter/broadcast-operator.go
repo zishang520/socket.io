@@ -1,4 +1,4 @@
-// Package emitter provides broadcast capabilities for Socket.IO via Valkey pub/sub.
+// Package emitter provides broadcast capabilities for Socket.IO via Valkey.
 package emitter
 
 import (
@@ -7,14 +7,19 @@ import (
 	"fmt"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
-	valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
+	"github.com/zishang520/socket.io/adapters/valkey/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-// BroadcastOperator provides a fluent API for broadcasting events to Socket.IO clients via Valkey.
+var (
+	errAcknowledgementsNotSupported = errors.New("Acknowledgements are not supported") //nolint:staticcheck // Node.js API text
+	errEncoderNotSet                = errors.New("broadcastOptions.Encoder is not set")
+)
+
+// BroadcastOperator publishes packets with the classic Valkey emitter protocol.
 type BroadcastOperator struct {
 	valkeyClient     *valkey.ValkeyClient
 	broadcastOptions *BroadcastOptions
@@ -23,16 +28,14 @@ type BroadcastOperator struct {
 	flags            *socket.BroadcastFlags
 }
 
-// MakeBroadcastOperator creates a new BroadcastOperator with empty room sets and default flags.
 func MakeBroadcastOperator() *BroadcastOperator {
 	return &BroadcastOperator{
 		rooms:       types.NewSet[socket.Room](),
 		exceptRooms: types.NewSet[socket.Room](),
-		flags:       &socket.BroadcastFlags{},
+		flags:       new(socket.BroadcastFlags),
 	}
 }
 
-// NewBroadcastOperator creates and initializes a new BroadcastOperator.
 func NewBroadcastOperator(
 	client *valkey.ValkeyClient,
 	broadcastOptions *BroadcastOptions,
@@ -45,7 +48,6 @@ func NewBroadcastOperator(
 	return b
 }
 
-// Construct initializes the BroadcastOperator.
 func (b *BroadcastOperator) Construct(
 	client *valkey.ValkeyClient,
 	broadcastOptions *BroadcastOptions,
@@ -53,13 +55,11 @@ func (b *BroadcastOperator) Construct(
 	exceptRooms *types.Set[socket.Room],
 	flags *socket.BroadcastFlags,
 ) {
-	b.valkeyClient = client
-
 	if broadcastOptions == nil {
-		broadcastOptions = &BroadcastOptions{}
+		broadcastOptions = new(BroadcastOptions)
 	}
+	b.valkeyClient = client
 	b.broadcastOptions = broadcastOptions
-
 	if rooms != nil {
 		b.rooms = rooms
 	}
@@ -99,20 +99,12 @@ func (b *BroadcastOperator) Volatile() BroadcastOperatorInterface {
 	return NewBroadcastOperator(b.valkeyClient, b.broadcastOptions, b.rooms, b.exceptRooms, flags)
 }
 
-// Emit broadcasts an event with the given name and arguments to all targeted clients.
 func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	if socket.SOCKET_RESERVED_EVENTS.Has(ev) {
 		return fmt.Errorf(`"%s" is a reserved event name`, ev)
 	}
-
-	if b.broadcastOptions.Parser == nil {
-		return errors.New("broadcastOptions.Parser is not set")
-	}
-
-	packet := &parser.Packet{
-		Type: parser.EVENT,
-		Nsp:  b.broadcastOptions.Nsp,
-		Data: utils.EventPayload(ev, args),
+	if utils.IsNil(b.broadcastOptions.Encoder) {
+		return errEncoderNotSet
 	}
 
 	opts := adapter.EncodeOptions(&socket.BroadcastOptions{
@@ -120,32 +112,29 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		Except: b.exceptRooms,
 		Flags:  b.flags,
 	})
-
-	msg, err := b.broadcastOptions.Parser.Encode(&Packet{
-		Uid:    emitterUID,
-		Packet: packet,
-		Opts:   opts,
+	payload, err := b.broadcastOptions.Encoder.Encode(&valkey.ValkeyPacket{
+		Uid: adapter.EMITTER_UID,
+		Packet: &parser.Packet{
+			Type: parser.EVENT,
+			Nsp:  b.broadcastOptions.Nsp,
+			Data: utils.EventPayload(ev, args),
+		},
+		Opts: opts,
 	})
 	if err != nil {
 		return err
 	}
 
 	channel := b.broadcastOptions.BroadcastChannel
-	if b.rooms != nil {
-		rooms := b.rooms.Keys()
-		if len(rooms) == 1 && valkey.ShouldUseDynamicChannel(b.broadcastOptions.SubscriptionMode, rooms[0]) {
-			channel += string(rooms[0]) + "#"
-		}
+	if len(opts.Rooms) == 1 {
+		channel += string(opts.Rooms[0]) + "#"
 	}
-
 	emitterLog.Debug("publishing message to channel %s", channel)
-
-	return b.valkeyClient.Publish(b.valkeyClient.Context(), channel, msg)
+	return b.valkeyClient.Publish(b.valkeyClient.Context(), channel, payload)
 }
 
-// SocketsJoin makes all matching socket instances join the specified rooms.
 func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
-	request, err := json.Marshal(&Request{
+	return b.publishRequest(&valkey.ValkeyRequest{
 		Type: valkey.REMOTE_JOIN,
 		Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
 			Rooms:  b.rooms,
@@ -153,15 +142,10 @@ func (b *BroadcastOperator) SocketsJoin(rooms ...socket.Room) error {
 		}),
 		Rooms: rooms,
 	})
-	if err != nil {
-		return err
-	}
-	return b.valkeyClient.Publish(b.valkeyClient.Context(), b.broadcastOptions.RequestChannel, request)
 }
 
-// SocketsLeave makes all matching socket instances leave the specified rooms.
 func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
-	request, err := json.Marshal(&Request{
+	return b.publishRequest(&valkey.ValkeyRequest{
 		Type: valkey.REMOTE_LEAVE,
 		Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
 			Rooms:  b.rooms,
@@ -169,24 +153,36 @@ func (b *BroadcastOperator) SocketsLeave(rooms ...socket.Room) error {
 		}),
 		Rooms: rooms,
 	})
-	if err != nil {
-		return err
-	}
-	return b.valkeyClient.Publish(b.valkeyClient.Context(), b.broadcastOptions.RequestChannel, request)
 }
 
-// DisconnectSockets disconnects all matching socket instances.
-func (b *BroadcastOperator) DisconnectSockets(state bool) error {
-	request, err := json.Marshal(&Request{
+func (b *BroadcastOperator) DisconnectSockets(close bool) error {
+	return b.publishRequest(&valkey.ValkeyRequest{
 		Type: valkey.REMOTE_DISCONNECT,
 		Opts: adapter.EncodeOptions(&socket.BroadcastOptions{
 			Rooms:  b.rooms,
 			Except: b.exceptRooms,
 		}),
-		Close: state,
+		Close: new(close),
 	})
+}
+
+func (b *BroadcastOperator) ServerSideEmit(args ...any) error {
+	if len(args) > 0 {
+		if _, withAck := args[len(args)-1].(socket.Ack); withAck {
+			return errAcknowledgementsNotSupported
+		}
+	}
+	return b.publishRequest(&valkey.ValkeyRequest{
+		Uid:  adapter.EMITTER_UID,
+		Type: valkey.SERVER_SIDE_EMIT,
+		Data: args,
+	})
+}
+
+func (b *BroadcastOperator) publishRequest(request *valkey.ValkeyRequest) error {
+	payload, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	return b.valkeyClient.Publish(b.valkeyClient.Context(), b.broadcastOptions.RequestChannel, request)
+	return b.valkeyClient.Publish(b.valkeyClient.Context(), b.broadcastOptions.RequestChannel, payload)
 }

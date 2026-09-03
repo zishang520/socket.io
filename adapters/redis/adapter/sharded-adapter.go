@@ -31,7 +31,6 @@ type shardedRedisAdapter struct {
 	redisClient *redis.RedisClient
 	opts        *ShardedRedisAdapterOptions
 	channel     string
-	response    string
 
 	pubSub       *shardedPubSub
 	subscription *shardedSubscription
@@ -81,7 +80,7 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	s.ctx, s.cancel = context.WithCancel(s.redisClient.Context())
 	s.server = nsp.Server()
 	s.channel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
-	s.response = s.channel + string(s.Uid()) + "#"
+	responseChannel := s.channel + string(s.Uid()) + "#"
 
 	s.pubSub = acquireShardedPubSub(s.server, s.redisClient)
 	s.subscription = s.pubSub.newSubscription(s.onRawMessage)
@@ -89,7 +88,7 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 		s.setupDynamicSubscriptions()
 	}
 	s.subscription.Subscribe(s.channel)
-	s.subscription.Subscribe(s.response)
+	s.subscription.Subscribe(responseChannel)
 	if err := s.pubSub.flush(s.ctx); err != nil && s.ctx.Err() == nil {
 		s.redisClient.Emit("error", err)
 	}

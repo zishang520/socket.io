@@ -2,8 +2,9 @@
 package adapter
 
 import (
-	valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
+	"github.com/zishang520/socket.io/adapters/valkey/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 const (
@@ -40,7 +41,7 @@ func DefaultShardedValkeyAdapterOptions() *ShardedValkeyAdapterOptions {
 
 // Assign copies non-nil fields from another ShardedValkeyAdapterOptionsInterface.
 func (s *ShardedValkeyAdapterOptions) Assign(data ShardedValkeyAdapterOptionsInterface) ShardedValkeyAdapterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return s
 	}
 

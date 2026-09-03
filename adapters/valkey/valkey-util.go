@@ -1,7 +1,6 @@
-package redis
+package valkey
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	vk "github.com/valkey-io/valkey-go"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
@@ -21,16 +21,16 @@ import (
 )
 
 var (
-	// ErrNilRedisPacket indicates an attempt to unmarshal into a nil RedisPacket.
-	ErrNilRedisPacket = errors.New("cannot unmarshal into nil RedisPacket")
+	// ErrNilValkeyPacket indicates an attempt to unmarshal into a nil ValkeyPacket.
+	ErrNilValkeyPacket = errors.New("cannot unmarshal into nil ValkeyPacket")
 
-	errNilRedisRequest         = errors.New("cannot unmarshal into nil RedisRequest")
-	errRedisRequestMissingType = errors.New("RedisRequest must contain a type")
+	errNilValkeyRequest         = errors.New("cannot unmarshal into nil ValkeyRequest")
+	errValkeyRequestMissingType = errors.New("ValkeyRequest must contain a type")
 )
 
 type (
-	redisRequest   RedisRequest
-	redisResponse  RedisResponse
+	valkeyRequest  ValkeyRequest
+	valkeyResponse ValkeyResponse
 	nodeBufferJSON []byte
 )
 
@@ -77,8 +77,8 @@ func requestOptions(messageType RequestType, opts *adapter.PacketOptions) *adapt
 	}
 }
 
-func prepareRequest(request *RedisRequest, jsonFormat bool) redisRequest {
-	payload := redisRequest(*request)
+func prepareRequest(request *ValkeyRequest, jsonFormat bool) valkeyRequest {
+	payload := valkeyRequest(*request)
 	payload.Packet = marshalPacket(payload.Packet, jsonFormat)
 	if payload.Opts != nil {
 		payload.Opts = requestOptions(payload.Type, payload.Opts)
@@ -101,58 +101,58 @@ func prepareRequest(request *RedisRequest, jsonFormat bool) redisRequest {
 	return payload
 }
 
-func (r *RedisRequest) set(payload *redisRequest) error {
+func (r *ValkeyRequest) set(payload *valkeyRequest) error {
 	if payload.Type == -1 {
-		return errRedisRequestMissingType
+		return errValkeyRequestMissingType
 	}
 
-	*r = RedisRequest(*payload)
+	*r = ValkeyRequest(*payload)
 	return nil
 }
 
-func (r *RedisRequest) MarshalJSON() ([]byte, error) {
+func (r *ValkeyRequest) MarshalJSON() ([]byte, error) {
 	if r == nil {
 		return json.Marshal(nil)
 	}
 	return json.Marshal(prepareRequest(r, true))
 }
 
-func (r *RedisRequest) UnmarshalJSON(data []byte) error {
+func (r *ValkeyRequest) UnmarshalJSON(data []byte) error {
 	if r == nil {
-		return errNilRedisRequest
+		return errNilValkeyRequest
 	}
-	payload := redisRequest{Type: -1}
+	payload := valkeyRequest{Type: -1}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return err
 	}
 	return r.set(&payload)
 }
 
-func (r *RedisRequest) MarshalMsgpack() ([]byte, error) {
+func (r *ValkeyRequest) MarshalMsgpack() ([]byte, error) {
 	if r == nil {
 		return msgpack.Marshal(nil)
 	}
 	return msgpack.Marshal(prepareRequest(r, false))
 }
 
-func (r *RedisRequest) UnmarshalMsgpack(data []byte) error {
+func (r *ValkeyRequest) UnmarshalMsgpack(data []byte) error {
 	if r == nil {
-		return errNilRedisRequest
+		return errNilValkeyRequest
 	}
-	payload := redisRequest{Type: -1}
+	payload := valkeyRequest{Type: -1}
 	if err := msgpack.Unmarshal(data, &payload); err != nil {
 		return err
 	}
 	return r.set(&payload)
 }
 
-// MarshalJSON preserves Node.js Buffer values in Redis responses.
-func (r *RedisResponse) MarshalJSON() ([]byte, error) {
+// MarshalJSON preserves Node.js Buffer values in Valkey responses.
+func (r *ValkeyResponse) MarshalJSON() ([]byte, error) {
 	if r == nil {
 		return json.Marshal(nil)
 	}
 
-	payload := redisResponse(*r)
+	payload := valkeyResponse(*r)
 	if sockets, ok := payload.Sockets.([]adapter.SocketResponse); ok {
 		payload.Sockets = marshalJSONSocketResponses(sockets)
 	}
@@ -166,11 +166,11 @@ func (r *RedisResponse) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON preserves sockets for request-specific decoding.
-func (r *RedisResponse) UnmarshalJSON(data []byte) error {
+func (r *ValkeyResponse) UnmarshalJSON(data []byte) error {
 	payload := struct {
-		*redisResponse
+		*valkeyResponse
 		Sockets json.RawMessage `json:"sockets"`
-	}{redisResponse: (*redisResponse)(r)}
+	}{valkeyResponse: (*valkeyResponse)(r)}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return err
 	}
@@ -182,8 +182,8 @@ func (r *RedisResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON serializes RedisPacket as [uid, packet, opts].
-func (r *RedisPacket) MarshalJSON() ([]byte, error) {
+// MarshalJSON serializes ValkeyPacket as [uid, packet, opts].
+func (r *ValkeyPacket) MarshalJSON() ([]byte, error) {
 	if r == nil {
 		return json.Marshal(nil)
 	}
@@ -191,55 +191,50 @@ func (r *RedisPacket) MarshalJSON() ([]byte, error) {
 	return json.Marshal([3]any{r.Uid, packet, wireOptions(r.Opts)})
 }
 
-// UnmarshalJSON deserializes RedisPacket from [uid, packet?, opts?].
-func (r *RedisPacket) UnmarshalJSON(data []byte) error {
+// UnmarshalJSON deserializes ValkeyPacket from [uid, packet?, opts?].
+func (r *ValkeyPacket) UnmarshalJSON(data []byte) error {
 	if r == nil {
-		return ErrNilRedisPacket
+		return ErrNilValkeyPacket
 	}
 
 	var payload [3]json.RawMessage
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return fmt.Errorf("failed to unmarshal RedisPacket array: %w", err)
+		return fmt.Errorf("failed to unmarshal ValkeyPacket array: %w", err)
 	}
 	if payload[0] == nil {
-		return errors.New("RedisPacket array must contain at least 1 element (Uid), got 0")
+		return errors.New("ValkeyPacket array must contain at least 1 element (Uid), got 0")
 	}
 	if err := json.Unmarshal(payload[0], &r.Uid); err != nil {
-		return fmt.Errorf("failed to unmarshal RedisPacket Uid: %w", err)
+		return fmt.Errorf("failed to unmarshal ValkeyPacket Uid: %w", err)
 	}
 
 	r.Packet = nil
 	if payload[1] != nil {
 		if err := json.Unmarshal(payload[1], &r.Packet); err != nil {
-			return fmt.Errorf("failed to unmarshal RedisPacket Packet: %w", err)
+			return fmt.Errorf("failed to unmarshal ValkeyPacket Packet: %w", err)
 		}
 	}
 
 	r.Opts = nil
 	if payload[2] != nil {
 		if err := json.Unmarshal(payload[2], &r.Opts); err != nil {
-			return fmt.Errorf("failed to unmarshal RedisPacket Opts: %w", err)
+			return fmt.Errorf("failed to unmarshal ValkeyPacket Opts: %w", err)
 		}
 	}
 	return nil
 }
 
-func (r RedisPacket) MarshalMsgpack() ([]byte, error) {
+func (r ValkeyPacket) MarshalMsgpack() ([]byte, error) {
 	packet := marshalPacket(r.Packet, false)
 	return msgpack.Marshal([3]any{r.Uid, packet, wireOptions(r.Opts)})
 }
 
-func (r RawClusterMessage) stringValue(key string) string {
-	value, _ := r[key].(string)
-	return value
-}
+func (r RawClusterMessage) Uid() string  { return r["uid"] }
+func (r RawClusterMessage) Nsp() string  { return r["nsp"] }
+func (r RawClusterMessage) Type() string { return r["type"] }
+func (r RawClusterMessage) Data() string { return r["data"] }
 
-func (r RawClusterMessage) Uid() string  { return r.stringValue("uid") }
-func (r RawClusterMessage) Nsp() string  { return r.stringValue("nsp") }
-func (r RawClusterMessage) Type() string { return r.stringValue("type") }
-func (r RawClusterMessage) Data() string { return r.stringValue("data") }
-
-// EncodeStreamMessage converts a cluster message to the flat Redis Streams
+// EncodeStreamMessage converts a cluster message to the flat Valkey Streams
 // field-value format used by the Node.js adapter and emitter.
 func EncodeStreamMessage(message *adapter.ClusterMessage, onlyPlaintext bool) (RawClusterMessage, error) {
 	wireData, binary := adapter.EncodeClusterMessageData(message.Data, onlyPlaintext)
@@ -265,11 +260,11 @@ func EncodeStreamMessage(message *adapter.ClusterMessage, onlyPlaintext bool) (R
 	if err != nil {
 		return nil, err
 	}
-	rawMessage["data"] = string(data)
+	rawMessage["data"] = vk.BinaryString(data)
 	return rawMessage, nil
 }
 
-// DecodeStreamMessage decodes the flat field-value format stored in a Redis
+// DecodeStreamMessage decodes the flat field-value format stored in a Valkey
 // Stream entry and restores the concrete cluster message data type.
 func DecodeStreamMessage(rawMessage RawClusterMessage) (*adapter.ClusterMessage, error) {
 	messageType, err := strconv.Atoi(rawMessage.Type())
@@ -302,23 +297,6 @@ func DecodeStreamMessage(rawMessage RawClusterMessage) (*adapter.ClusterMessage,
 		return nil, err
 	}
 	return message, nil
-}
-
-// XAdd appends a Socket.IO message with the same unconditional MAXLEN clause as the Node.js implementation.
-func XAdd(client *RedisClient, stream string, message RawClusterMessage, maxLen int64) (string, error) {
-	return XAddContext(client.Context(), client, stream, message, maxLen)
-}
-
-// XAddContext appends a Socket.IO message with the given operation context.
-func XAddContext(ctx context.Context, client *RedisClient, stream string, message RawClusterMessage, maxLen int64) (string, error) {
-	args := make([]any, 0, 14)
-	args = append(args, "XADD", stream, "MAXLEN", "~", maxLen, "*")
-	for _, field := range [...]string{"uid", "nsp", "type", "data"} {
-		if value, ok := message[field]; ok {
-			args = append(args, field, value)
-		}
-	}
-	return client.Client().Do(ctx, args...).Text()
 }
 
 func marshalJSONSocketResponses(sockets []adapter.SocketResponse) []adapter.SocketResponse {

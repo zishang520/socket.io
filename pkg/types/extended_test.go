@@ -295,6 +295,14 @@ func TestSet_Keys(t *testing.T) {
 }
 
 func TestSet_MarshalJSON(t *testing.T) {
+	empty, err := json.Marshal(NewSet[string]())
+	if err != nil {
+		t.Fatalf("MarshalJSON empty error: %v", err)
+	}
+	if string(empty) != "[]" {
+		t.Fatalf("MarshalJSON empty = %s, want []", empty)
+	}
+
 	s := NewSet("a", "b")
 	data, err := json.Marshal(s)
 	if err != nil {
@@ -331,6 +339,18 @@ func TestSet_UnmarshalJSONInvalid(t *testing.T) {
 }
 
 func TestSet_MarshalMsgpack(t *testing.T) {
+	empty, err := msgpack.Marshal(NewSet[int]())
+	if err != nil {
+		t.Fatalf("MarshalMsgpack empty error: %v", err)
+	}
+	var emptyKeys []int
+	if err := msgpack.Unmarshal(empty, &emptyKeys); err != nil {
+		t.Fatalf("UnmarshalMsgpack empty error: %v", err)
+	}
+	if emptyKeys == nil || len(emptyKeys) != 0 {
+		t.Fatalf("MarshalMsgpack empty decoded to %#v, want non-nil empty slice", emptyKeys)
+	}
+
 	s := NewSet(10, 20, 30)
 	data, err := msgpack.Marshal(s)
 	if err != nil {

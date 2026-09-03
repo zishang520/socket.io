@@ -93,10 +93,6 @@ func (s *Set[KType]) All() map[KType]Void {
 // Keys returns a slice containing all keys in the set.
 func (s *Set[KType]) Keys() []KType {
 	s.mu.RLock()
-	if len(s.cache) == 0 {
-		s.mu.RUnlock()
-		return nil
-	}
 	keys := make([]KType, len(s.cache))
 	i := 0
 	for key := range s.cache {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	rds "github.com/redis/go-redis/v9"
-	clusteradapter "github.com/zishang520/socket.io/adapters/adapter/v3"
-	rediswire "github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
@@ -145,7 +145,7 @@ func (*initialTailPollerHook) ProcessPipelineHook(next rds.ProcessPipelineHook) 
 	return next
 }
 
-func newBlockingPollerClient(t *testing.T) (*rediswire.RedisClient, *blockingPollerXReadHook) {
+func newBlockingPollerClient(t *testing.T) (*redis.RedisClient, *blockingPollerXReadHook) {
 	t.Helper()
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
@@ -373,10 +373,24 @@ func TestRedisStreamsPollerRetriesInitialTailLookupInBackground(t *testing.T) {
 	}()
 	client.AddHook(hook)
 	redisClient := mustRedisClient(t, context.Background(), client)
+	socketServer := socket.NewServer(nil, nil)
+	var reentrant *redisStreamsAdapter
+	t.Cleanup(func() {
+		if reentrant != nil {
+			reentrant.Close()
+		}
+	})
+	if err := redisClient.On("error", func(...any) {
+		reentrant = NewRedisStreamsAdapter(
+			socket.NewNamespace(socketServer, "/initial-retry-reentrant"), redisClient, nil,
+		).(*redisStreamsAdapter)
+	}); err != nil {
+		t.Fatal(err)
+	}
 	constructed := make(chan *redisStreamsAdapter, 1)
 	go func() {
 		constructed <- NewRedisStreamsAdapter(
-			socket.NewNamespace(socket.NewServer(nil, nil), "/initial-retry"), redisClient, nil,
+			socket.NewNamespace(socketServer, "/initial-retry"), redisClient, nil,
 		).(*redisStreamsAdapter)
 	}()
 
@@ -407,6 +421,9 @@ func TestRedisStreamsPollerRetriesInitialTailLookupInBackground(t *testing.T) {
 		t.Fatal("adapter construction waited for background tail retries")
 	}
 	t.Cleanup(current.Close)
+	if reentrant == nil || reentrant.streamPoller != current.streamPoller {
+		t.Fatal("initial-tail error listener did not acquire the ready shared poller")
+	}
 
 	call := waitForPollerXReadCall(t, hook.xreads)
 	if call.id != entryID {
@@ -436,16 +453,16 @@ func TestRedisStreamsPollerKeepsInitialIDAfterTimeout(t *testing.T) {
 	if first.id != "0-0" {
 		t.Fatalf("first XREAD ID = %q, want 0-0", first.id)
 	}
-	message, err := rediswire.EncodeStreamMessage(&clusteradapter.ClusterMessage{
+	message, err := redis.EncodeStreamMessage(&adapter.ClusterMessage{
 		Uid:  "remote",
 		Nsp:  nsp.Name(),
-		Type: clusteradapter.SERVER_SIDE_EMIT,
-		Data: &clusteradapter.ServerSideEmitMessage{Packet: []any{"probe"}},
+		Type: adapter.SERVER_SIDE_EMIT,
+		Data: &adapter.ServerSideEmitMessage{Packet: []any{"probe"}},
 	}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = rediswire.XAdd(redisClient, current.streamName, message, current.opts.MaxLen()); err != nil {
+	if _, err = redis.XAdd(redisClient, current.streamName, message, current.opts.MaxLen()); err != nil {
 		t.Fatal(err)
 	}
 	close(hook.releaseFirst)
@@ -620,7 +637,7 @@ func TestRedisStreamsPollerReportsNegativeBlockTime(t *testing.T) {
 	}
 }
 
-func TestRedisStreamsPollerRestoresPreviousAdapterOnReverseClose(t *testing.T) {
+func TestRedisStreamsPollerIgnoresStaleAdapterClose(t *testing.T) {
 	redisClient, _ := newBlockingPollerClient(t)
 	server := socket.NewServer(nil, nil)
 	nsp := socket.NewNamespace(server, "/same")
@@ -633,14 +650,14 @@ func TestRedisStreamsPollerRestoresPreviousAdapterOnReverseClose(t *testing.T) {
 	if second.streamPoller != poller {
 		t.Fatal("same namespace adapters did not share a poller")
 	}
-	second.Close()
-	if current, ok := poller.adapters.Load(nsp.Name()); !ok || current != first {
-		t.Fatal("closing the newest adapter did not restore the previous registration")
+	first.Close()
+	if current, ok := poller.adapters.Load(nsp.Name()); !ok || current != second {
+		t.Fatal("closing a stale adapter removed the current registration")
 	}
 	if poller.ctx.Err() != nil {
-		t.Fatal("poller stopped while the previous adapter remained active")
+		t.Fatal("poller stopped while the current adapter remained active")
 	}
 
-	first.Close()
+	second.Close()
 	waitForPollerExit(t, poller)
 }

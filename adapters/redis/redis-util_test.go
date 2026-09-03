@@ -405,7 +405,7 @@ func TestNormalizeEmptyBytesBuffer(t *testing.T) {
 	if got := NormalizeData(buffer); !reflect.DeepEqual(got, []byte{}) {
 		t.Fatalf("normalized buffer = %#v, want empty bytes", got)
 	}
-	if got := NormalizeJSONData(buffer); !reflect.DeepEqual(got, nodeBufferJSON{}) {
+	if got := normalizeJSONData(buffer); !reflect.DeepEqual(got, nodeBufferJSON{}) {
 		t.Fatalf("normalized JSON buffer = %#v, want empty Buffer", got)
 	}
 }

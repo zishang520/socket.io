@@ -6,7 +6,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	rds "github.com/redis/go-redis/v9"
-	rediswire "github.com/zishang520/socket.io/adapters/redis/v3"
+	"github.com/zishang520/socket.io/adapters/redis/v3"
 )
 
 type customRedisStreamsEmitterOptions struct {
@@ -18,7 +18,7 @@ var (
 	_ RedisStreamsEmitterOptionsInterface = (*customRedisStreamsEmitterOptions)(nil)
 )
 
-func newStreamsEmitterTestClient(t *testing.T) (*rediswire.RedisClient, *rds.Client, <-chan error) {
+func newStreamsEmitterTestClient(t *testing.T) (*redis.RedisClient, *rds.Client, <-chan error) {
 	t.Helper()
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
@@ -143,7 +143,7 @@ func TestRedisStreamsEmitterRoutesStreamCount(t *testing.T) {
 			if emitter.opts.StreamCount() != tt.streamCount || scoped.opts.StreamCount() != tt.streamCount {
 				t.Fatalf("stream counts = %d, %d, want raw value %d", emitter.opts.StreamCount(), scoped.opts.StreamCount(), tt.streamCount)
 			}
-			if got := rediswire.StreamNameForNamespace(scoped.opts.StreamName(), scoped.nsp, scoped.opts.StreamCount()); got != tt.wantStream {
+			if got := redis.StreamNameForNamespace(scoped.opts.StreamName(), scoped.nsp, scoped.opts.StreamCount()); got != tt.wantStream {
 				t.Fatalf("routed stream = %q, want %q", got, tt.wantStream)
 			}
 			if err := scoped.Emit("event"); err != nil {

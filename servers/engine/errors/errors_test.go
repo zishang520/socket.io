@@ -1,18 +1,18 @@
 package errors
 
 import (
-	stderrors "errors"
+	"errors"
 	"testing"
 )
 
 func TestNewTransportErrorWrapsSentinels(t *testing.T) {
-	description := stderrors.New("connection reset")
+	description := errors.New("connection reset")
 	err := NewTransportError("polling", description)
 
-	if !stderrors.Is(err, ErrTransportFailure) {
+	if !errors.Is(err, ErrTransportFailure) {
 		t.Fatal("expected transport failure sentinel")
 	}
-	if !stderrors.Is(err, description) {
+	if !errors.Is(err, description) {
 		t.Fatal("expected description error to be wrapped")
 	}
 }

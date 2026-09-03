@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	clusteradapter "github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/mongo/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
@@ -18,7 +18,7 @@ import (
 )
 
 type recordingAdapter struct {
-	clusteradapter.Adapter
+	adapter.Adapter
 	broadcasts atomic.Int32
 	operations atomic.Int32
 }
@@ -63,7 +63,7 @@ func TestSetOptsAcceptsClusterAdapterOptions(t *testing.T) {
 		heartbeatTimeout:  1_000,
 		requestsTimeout:   2 * time.Second,
 	}
-	opts := clusteradapter.DefaultClusterAdapterOptions()
+	opts := adapter.DefaultClusterAdapterOptions()
 	opts.SetHeartbeatInterval(3 * time.Second)
 	opts.SetHeartbeatTimeout(4_000)
 
@@ -229,9 +229,9 @@ func TestMalformedBroadcastMessageIsIgnored(t *testing.T) {
 
 func TestOnMessageRejectsInvalidPacketOptions(t *testing.T) {
 	nsp := socket.NewServer(nil, nil).Sockets()
-	local := &recordingAdapter{Adapter: clusteradapter.NewAdapter(nsp)}
+	local := &recordingAdapter{Adapter: adapter.NewAdapter(nsp)}
 	a := &mongoAdapter{Adapter: local, uid: "local"}
-	invalid := &clusteradapter.PacketOptions{}
+	invalid := &adapter.PacketOptions{}
 
 	for _, message := range []*ClusterMessage{
 		{Type: mongo.BROADCAST, Data: &BroadcastMessage{Packet: &parser.Packet{}, Opts: invalid}},
@@ -354,8 +354,8 @@ func TestBroadcastStopsWhenPublishFails(t *testing.T) {
 	}
 	select {
 	case publishErr := <-publishErrors:
-		if !errors.Is(publishErr, clusteradapter.ErrAdapterClosed) {
-			t.Fatalf("publish error = %v, want %v", publishErr, clusteradapter.ErrAdapterClosed)
+		if !errors.Is(publishErr, adapter.ErrAdapterClosed) {
+			t.Fatalf("publish error = %v, want %v", publishErr, adapter.ErrAdapterClosed)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("publish error was not emitted")

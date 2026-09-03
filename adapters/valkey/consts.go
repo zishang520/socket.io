@@ -2,14 +2,15 @@
 // These message types are used for inter-node communication in a clustered Socket.IO environment.
 package valkey
 
-import (
-	"github.com/zishang520/socket.io/adapters/adapter/v3"
-)
+// RequestType identifies a Classic Valkey adapter request or response.
+// It is intentionally separate from the cluster protocol's MessageType: the
+// two protocols use overlapping numeric values for different operations.
+type RequestType int
 
 // Message types for Socket.IO Valkey adapter inter-node communication.
 const (
 	// SOCKETS requests a list of socket IDs from other nodes.
-	SOCKETS adapter.MessageType = iota
+	SOCKETS RequestType = iota
 
 	// ALL_ROOMS requests a list of all rooms from other nodes.
 	ALL_ROOMS

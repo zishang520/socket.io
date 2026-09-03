@@ -2,46 +2,36 @@
 package adapter
 
 import (
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
-	valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
+	"github.com/zishang520/socket.io/adapters/valkey/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 type (
-	// Packet is an alias for valkey.ValkeyPacket, representing a broadcast packet sent via Valkey.
-	Packet = valkey.ValkeyPacket
-
-	// Request is an alias for valkey.ValkeyRequest, representing an inter-node request.
-	Request = valkey.ValkeyRequest
-
-	// Response is an alias for valkey.ValkeyResponse, representing an inter-node response.
+	Packet   = valkey.ValkeyPacket
+	Request  = valkey.ValkeyRequest
 	Response = valkey.ValkeyResponse
 
-	// AckRequest is an alias for adapter.ClusterAckRequest, used for acknowledgement tracking.
 	AckRequest = adapter.ClusterAckRequest
 
-	// ValkeyRequest represents an internal request tracker with state management.
+	// ValkeyRequest tracks the lifecycle and accumulated state of a pending request.
 	ValkeyRequest struct {
-		Type      adapter.MessageType
+		Type      valkey.RequestType
 		Resolve   func(*types.Slice[any])
-		Timeout   *atomic.Pointer[utils.Timer]
+		Timeout   atomic.Pointer[utils.Timer]
 		NumSub    int64
-		MsgCount  *atomic.Int64
+		MsgCount  atomic.Int64
 		Rooms     *types.Set[socket.Room]
+		Sockets   *types.Set[socket.SocketId]
 		Responses *types.Slice[any]
-
-		// Once ensures that the Resolve callback and cleanup are executed exactly once,
-		// preventing double invocations from both normal completion and timeout paths.
-		Once sync.Once
 	}
 
-	// ValkeyAdapter defines the interface for a Valkey-based Socket.IO adapter.
+	// ValkeyAdapter defines the public classic Valkey adapter contract.
 	ValkeyAdapter interface {
 		socket.Adapter
 

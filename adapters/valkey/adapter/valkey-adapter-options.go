@@ -4,17 +4,26 @@ package adapter
 import (
 	"time"
 
-	"github.com/zishang520/socket.io/adapters/valkey/v3/emitter"
+	"github.com/zishang520/socket.io/adapters/valkey/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
-// DefaultRequestsTimeout is the default timeout for inter-node requests.
-const DefaultRequestsTimeout = 5000 * time.Millisecond
+const (
+	// DefaultRequestsTimeout is the default timeout for inter-node requests.
+	DefaultRequestsTimeout = 5000 * time.Millisecond
+)
 
 type (
-	// ValkeyAdapterOptionsInterface defines the interface for configuring ValkeyAdapterOptions.
+	// ValkeyAdapterOptionsInterface defines the classic Valkey adapter settings.
 	ValkeyAdapterOptionsInterface interface {
-		emitter.EmitterOptionsInterface
+		SetKey(string)
+		GetRawKey() types.Optional[string]
+		Key() string
+
+		SetParser(valkey.Parser)
+		GetRawParser() types.Optional[valkey.Parser]
+		Parser() valkey.Parser
 
 		SetRequestsTimeout(time.Duration)
 		GetRawRequestsTimeout() types.Optional[time.Duration]
@@ -25,55 +34,78 @@ type (
 		PublishOnSpecificResponseChannel() bool
 	}
 
-	// ValkeyAdapterOptions holds configuration for the Valkey adapter.
-	//
-	// Fields:
-	//   - requestsTimeout: Maximum time to wait for responses to inter-node requests.
-	//     Default: 5000ms.
-	//   - publishOnSpecificResponseChannel: When true, responses are published to a
-	//     channel specific to the requesting node.
+	// ValkeyAdapterOptions holds configuration for the classic Valkey adapter.
 	ValkeyAdapterOptions struct {
-		emitter.EmitterOptions
-
+		key                              types.Optional[string]
+		parser                           types.Optional[valkey.Parser]
 		requestsTimeout                  types.Optional[time.Duration]
 		publishOnSpecificResponseChannel types.Optional[bool]
 	}
 )
 
-// DefaultValkeyAdapterOptions returns a new ValkeyAdapterOptions with default values.
+// DefaultValkeyAdapterOptions returns raw-empty options; ValkeyAdapter.Construct applies defaults.
 func DefaultValkeyAdapterOptions() *ValkeyAdapterOptions {
 	return &ValkeyAdapterOptions{}
 }
 
-// Assign copies non-nil fields from another ValkeyAdapterOptionsInterface.
+// Assign copies explicitly configured values from data.
 func (s *ValkeyAdapterOptions) Assign(data ValkeyAdapterOptionsInterface) ValkeyAdapterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return s
 	}
-
-	s.EmitterOptions.Assign(data)
-
+	if data.GetRawKey() != nil {
+		s.SetKey(data.Key())
+	}
+	if data.GetRawParser() != nil {
+		s.SetParser(data.Parser())
+	}
 	if data.GetRawRequestsTimeout() != nil {
 		s.SetRequestsTimeout(data.RequestsTimeout())
 	}
 	if data.GetRawPublishOnSpecificResponseChannel() != nil {
 		s.SetPublishOnSpecificResponseChannel(data.PublishOnSpecificResponseChannel())
 	}
-
 	return s
 }
 
-// SetRequestsTimeout sets the timeout duration for inter-node requests.
+func (s *ValkeyAdapterOptions) SetKey(key string) {
+	s.key = types.NewSome(key)
+}
+
+func (s *ValkeyAdapterOptions) GetRawKey() types.Optional[string] {
+	return s.key
+}
+
+func (s *ValkeyAdapterOptions) Key() string {
+	if s.key == nil {
+		return ""
+	}
+	return s.key.Get()
+}
+
+func (s *ValkeyAdapterOptions) SetParser(parser valkey.Parser) {
+	s.parser = types.NewSome(parser)
+}
+
+func (s *ValkeyAdapterOptions) GetRawParser() types.Optional[valkey.Parser] {
+	return s.parser
+}
+
+func (s *ValkeyAdapterOptions) Parser() valkey.Parser {
+	if s.parser == nil {
+		return nil
+	}
+	return s.parser.Get()
+}
+
 func (s *ValkeyAdapterOptions) SetRequestsTimeout(requestsTimeout time.Duration) {
 	s.requestsTimeout = types.NewSome(requestsTimeout)
 }
 
-// GetRawRequestsTimeout returns the raw Optional value for requestsTimeout.
 func (s *ValkeyAdapterOptions) GetRawRequestsTimeout() types.Optional[time.Duration] {
 	return s.requestsTimeout
 }
 
-// RequestsTimeout returns the configured requests timeout.
 func (s *ValkeyAdapterOptions) RequestsTimeout() time.Duration {
 	if s.requestsTimeout == nil {
 		return 0
@@ -81,17 +113,14 @@ func (s *ValkeyAdapterOptions) RequestsTimeout() time.Duration {
 	return s.requestsTimeout.Get()
 }
 
-// SetPublishOnSpecificResponseChannel sets whether responses are published to node-specific channels.
-func (s *ValkeyAdapterOptions) SetPublishOnSpecificResponseChannel(v bool) {
-	s.publishOnSpecificResponseChannel = types.NewSome(v)
+func (s *ValkeyAdapterOptions) SetPublishOnSpecificResponseChannel(value bool) {
+	s.publishOnSpecificResponseChannel = types.NewSome(value)
 }
 
-// GetRawPublishOnSpecificResponseChannel returns the raw Optional value.
 func (s *ValkeyAdapterOptions) GetRawPublishOnSpecificResponseChannel() types.Optional[bool] {
 	return s.publishOnSpecificResponseChannel
 }
 
-// PublishOnSpecificResponseChannel returns whether responses are published to node-specific channels.
 func (s *ValkeyAdapterOptions) PublishOnSpecificResponseChannel() bool {
 	if s.publishOnSpecificResponseChannel == nil {
 		return false

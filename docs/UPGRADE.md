@@ -792,17 +792,19 @@ Update all Socket.IO import paths throughout your application using the followin
 
 ### Valkey Adapter (new in v3)
 
-The Valkey adapter is a new, independent module introduced in v3. It mirrors the `adapters/redis` module but uses the [`valkey-go`](https://github.com/valkey-io/valkey-go) client.
+The Valkey adapter is a new, independent module introduced in v3. It mirrors
+the Redis adapter protocols through the
+[`valkey-go`](https://github.com/valkey-io/valkey-go) client.
 
 ```bash
 go get github.com/zishang520/socket.io/adapters/valkey/v3@latest
 ```
 
-| Package | Import Path |
-|---------|-------------|
-| Root types & client | `github.com/zishang520/socket.io/adapters/valkey/v3` |
-| Classic / Sharded / Streams adapters | `github.com/zishang520/socket.io/adapters/valkey/v3/adapter` |
-| Emitter | `github.com/zishang520/socket.io/adapters/valkey/v3/emitter` |
+| Package | Import Path | Contents |
+|---------|-------------|----------|
+| Root | `github.com/zishang520/socket.io/adapters/valkey/v3` | Protocol types, codecs, and `ValkeyClient` |
+| Adapter | `github.com/zishang520/socket.io/adapters/valkey/v3/adapter` | Classic, sharded, and Streams adapters |
+| Emitter | `github.com/zishang520/socket.io/adapters/valkey/v3/emitter` | Classic, sharded, and Streams emitters |
 
 **Example `go.mod`:**
 
@@ -830,17 +832,102 @@ if err != nil {
 server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
 ```
 
-**Read/write separation** (recommended for production):
+#### Client roles
+
+The first `vk.Client` passed to `NewValkeyClient` or
+`NewValkeyClientWithSub` is primary-routed. It handles writes and the
+consistency-sensitive reads used for connection-state recovery. The optional
+second client handles subscriptions, blocking `XREAD`, and Pub/Sub subscriber
+counts.
 
 ```go
-pubClient, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"master:6379"}})
+primaryClient, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"primary:6379"}})
 subClient, _ := vk.NewClient(vk.ClientOption{InitAddress: []string{"replica:6380"}})
-valkeyClient, err := valkey.NewValkeyClientWithSub(context.Background(), pubClient, subClient)
+valkeyClient, err := valkey.NewValkeyClientWithSub(context.Background(), primaryClient, subClient)
 if err != nil {
     panic(err)
 }
 server.SetAdapter(&vkadapter.ValkeyAdapterBuilder{Valkey: valkeyClient})
 ```
+
+`valkey-go` does not expose the read-only or routing options used to create an
+existing `vk.Client`, so the wrapper cannot verify that the first client is
+primary-routed. Supplying a write-capable client with primary-consistent
+recovery reads is therefore a caller contract. Configure the second client so
+its subscriptions and subscriber-count commands see the intended Pub/Sub
+topology.
+
+Create one `ValkeyClient` wrapper and one underlying `Sub()` client per
+Socket.IO server, then share the wrapper across that server's namespaces. The
+primary write client may be shared through `NewValkeyClientWithSub`, but the
+subscription client must be distinct for each server. This matches the Node.js
+adapters' duplicated subscription-client ownership and preserves server counts.
+
+#### API and protocol finalization
+
+- Classic adapter, sharded adapter, and emitter options are separate. Use
+  `ValkeyAdapterOptions` for `Key`, `Parser`, `RequestsTimeout`, and
+  `PublishOnSpecificResponseChannel`; use `ShardedValkeyAdapterOptions` for
+  `ChannelPrefix` and `SubscriptionMode`; and configure external emission with
+  `EmitterOptions`.
+- The classic emitter custom codec is outbound-only. Rename `SetParser`,
+  `GetRawParser`, and `Parser` to `SetEncoder`, `GetRawEncoder`, and `Encoder`.
+  `BroadcastOptions.Parser` is likewise now `Encoder`, and its `Sharded` field
+  was removed. Sharded emission always uses the shared cluster-message codec.
+  Custom `BroadcastOperatorInterface` implementations must also add
+  `ServerSideEmit(args ...any) error`.
+- `ValkeyPubSub` subscriptions are fixed at construction. The public
+  unsubscribe mutation methods were removed; call `Close` to end a
+  subscription. `SSubscribe` now accepts one channel, preventing a multi-slot
+  sharded subscription from reaching valkey-go's cluster panic path. Logical
+  subscriptions with the same kind and topic within one `ValkeyClient` now
+  share one physical subscription while retaining independent queues. One
+  wrapper and its underlying `Sub()` client represent one Socket.IO server;
+  each server must use a distinct subscription client. The subscriber ACL must
+  grant `SUBSCRIBE`/`UNSUBSCRIBE`,
+  `PSUBSCRIBE`/`PUNSUBSCRIBE`, and `SSUBSCRIBE`/`SUNSUBSCRIBE` as pairs. `Close`
+  now waits for cleanup and returns any unsubscribe error. `ValkeyMessage` was
+  removed; `ReceiveMessage` now returns valkey-go's `vk.PubSubMessage` by value,
+  so replace its `Payload` field with `Message`.
+- `RawClusterMessage` is now the Streams wire shape `map[string]string`.
+  `ValkeyClient.XAdd` accepts it before `maxLen`, and `ValkeyClient.XRead` reads
+  one stream per call. The generic multi-stream/map forms were removed because
+  the adapter protocol never used them.
+- `ValkeyClient.XRange` was removed. Use `XRangeN` with an explicit count.
+- Rename the Streams adapter constant `DefaultStreamChannelPrefix` to
+  `DefaultChannelPrefix`, matching the Redis Streams adapter API.
+- `ValkeyStreamsAdapter.Cleanup` was removed because shared poller cleanup is
+  internal. `ValkeyStreamsAdapterOptions` no longer embeds
+  `ClusterAdapterOptions`; its heartbeat fields were never consumed by the
+  Streams adapter.
+- `NewValkeyStreamsEmitter` and `ValkeyStreamsEmitterOptions` add the Streams
+  emitter alongside the classic and sharded emitters.
+- Emitter and adapter transport settings must match: classic `Key`; sharded
+  emitter `Key` with adapter `ChannelPrefix`, plus `SubscriptionMode`; and
+  Streams `StreamName` and `StreamCount`. Streams writers should also share the
+  same `MaxLen`, which controls retention rather than routing.
+- Each active shared poller holds one connection from the `Sub()` blocking
+  pool. Classic Pub/Sub uses one additional dedicated connection per
+  `ValkeyClient` so normal and pattern messages remain ordered.
+  Other sharded and Streams Pub/Sub notifications remain multiplexed. Size the
+  pool for these connections and other blocking operations. Mixed Go and
+  Node.js deployments must use
+  `StreamCount=1`: the Node.js standalone emitter writes only to the base
+  stream, and its server adapter does not poll the negative stream suffixes its
+  signed namespace hash can produce.
+- The classic request/response wire now matches Node.js: request types and
+  request-scope fields are explicit, broadcast acknowledgements carry a scalar
+  acknowledgement value, zero `clientCount` values are preserved, and required
+  arrays/options reject missing or `null` values.
+- Dynamic room classification and namespace stream routing use JavaScript
+  UTF-16 code-unit semantics. This keeps private-room channel selection and
+  signed namespace hashing consistent with Node.js for non-BMP characters.
+- Cross-language compound payloads preserve nested binary values only in
+  `[]any` and `map[string]any`; typed structs, slices, and maps are not
+  recursively inspected.
+
+These API and wire changes require a coordinated restart of Go Valkey nodes.
+Mixing nodes that use the earlier Go Valkey wire format is not supported.
 
 ### Engine.IO Client
 
@@ -901,6 +988,14 @@ func example() {
     value := roomName.Load()
 }
 ```
+
+### Adapter Payload Reader Normalization
+
+Adapter payload normalization now consistently reads generic `io.Reader`
+values. An additional `Bytes()` method no longer bypasses the reader path, so
+the common codec and the Redis, Valkey, and PostgreSQL adapters use the same
+best-effort behavior without adding error-return plumbing to their public APIs.
+The Redis and Valkey JSON-specific normalization helpers are now internal.
 
 ### Socket Handshake Access Patterns
 

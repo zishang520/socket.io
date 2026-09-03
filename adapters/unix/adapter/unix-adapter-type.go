@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	baseadapter "github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/unix/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -19,7 +19,7 @@ const (
 )
 
 type UnixAdapter interface {
-	baseadapter.ClusterAdapterWithHeartbeat
+	adapter.ClusterAdapterWithHeartbeat
 
 	SetUnix(*unix.UnixClient)
 	Cleanup(func())
@@ -149,7 +149,7 @@ func (ub *UnixAdapterBuilder) startListening() {
 
 // dispatchMessage decodes once and routes the message to the exact namespace adapter.
 func (ub *UnixAdapterBuilder) dispatchMessage(payload []byte) {
-	message, err := baseadapter.DecodeClusterMessage(payload)
+	message, err := adapter.DecodeClusterMessage(payload)
 	if err != nil {
 		ub.Unix.Emit("error", fmt.Errorf("failed to decode cluster message: %w", err))
 		return

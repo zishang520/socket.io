@@ -5,6 +5,27 @@ import (
 	"time"
 )
 
+func TestSocketDefaultData(t *testing.T) {
+	socket := MakeSocket()
+	t.Cleanup(socket.taskQueue.Close)
+
+	data, ok := socket.Data().(map[string]any)
+	if !ok || len(data) != 0 {
+		t.Fatalf("Data() = %#v, want an empty map", socket.Data())
+	}
+	data["socket"] = true
+	other := MakeSocket()
+	t.Cleanup(other.taskQueue.Close)
+	if len(other.Data().(map[string]any)) != 0 {
+		t.Fatal("default socket data is shared between sockets")
+	}
+
+	socket.SetData(nil)
+	if socket.Data() != nil {
+		t.Fatalf("Data() = %#v after SetData(nil), want nil", socket.Data())
+	}
+}
+
 func TestSocketNewBroadcastOperatorConsumesFlags(t *testing.T) {
 	socket := MakeSocket()
 	t.Cleanup(socket.taskQueue.Close)

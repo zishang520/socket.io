@@ -13,7 +13,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	rds "github.com/redis/go-redis/v9"
-	baseadapter "github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
@@ -630,7 +630,7 @@ func TestClassicPublisherCloseReleasesAndRejects(t *testing.T) {
 		t.Fatalf("current publish returned before its task finished: %v", err)
 	default:
 	}
-	if err := current.publish(current.channel, []byte("rejected")); !errors.Is(err, baseadapter.ErrAdapterClosed) {
+	if err := current.publish(current.channel, []byte("rejected")); !errors.Is(err, adapter.ErrAdapterClosed) {
 		t.Fatalf("publish after Close error = %v", err)
 	}
 	releasePublish()
@@ -681,14 +681,14 @@ func TestClosePreservesAcceptedPublishContext(t *testing.T) {
 				current.ClusterAdapter.Construct(nsp)
 				return func(response bool) {
 					if response {
-						current.PublishResponse("requester", &baseadapter.ClusterResponse{
-							Type: baseadapter.SERVER_SIDE_EMIT_RESPONSE,
-							Data: &baseadapter.ServerSideEmitResponse{RequestId: "request", Packet: "response"},
+						current.PublishResponse("requester", &adapter.ClusterResponse{
+							Type: adapter.SERVER_SIDE_EMIT_RESPONSE,
+							Data: &adapter.ServerSideEmitResponse{RequestId: "request", Packet: "response"},
 						})
 					} else {
-						current.Publish(&baseadapter.ClusterMessage{
-							Type: baseadapter.SERVER_SIDE_EMIT,
-							Data: &baseadapter.ServerSideEmitMessage{Packet: []any{"message"}},
+						current.Publish(&adapter.ClusterMessage{
+							Type: adapter.SERVER_SIDE_EMIT,
+							Data: &adapter.ServerSideEmitMessage{Packet: []any{"message"}},
 						})
 					}
 				}, current.Close
@@ -704,14 +704,14 @@ func TestClosePreservesAcceptedPublishContext(t *testing.T) {
 				current.ClusterAdapter.Construct(nsp)
 				return func(response bool) {
 					if response {
-						current.PublishResponse("requester", &baseadapter.ClusterResponse{
-							Type: baseadapter.SERVER_SIDE_EMIT_RESPONSE,
-							Data: &baseadapter.ServerSideEmitResponse{RequestId: "request", Packet: "response"},
+						current.PublishResponse("requester", &adapter.ClusterResponse{
+							Type: adapter.SERVER_SIDE_EMIT_RESPONSE,
+							Data: &adapter.ServerSideEmitResponse{RequestId: "request", Packet: "response"},
 						})
 					} else {
-						current.Publish(&baseadapter.ClusterMessage{
-							Type: baseadapter.SERVER_SIDE_EMIT,
-							Data: &baseadapter.ServerSideEmitMessage{Packet: []any{"message"}},
+						current.Publish(&adapter.ClusterMessage{
+							Type: adapter.SERVER_SIDE_EMIT,
+							Data: &adapter.ServerSideEmitMessage{Packet: []any{"message"}},
 						})
 					}
 				}, current.Close
@@ -1120,10 +1120,10 @@ func TestClassicFetchSocketsReturnsLocalErrorWithoutRedis(t *testing.T) {
 func TestClassicFetchSocketsAcrossNodes(t *testing.T) {
 	server := miniredis.RunT(t)
 	first := newClassicRedisTestNode(t, server.Addr(), &clusterResponseAdapter{
-		sockets: []socket.SocketDetails{baseadapter.NewRemoteSocket(&baseadapter.SocketResponse{Id: "first"})},
+		sockets: []socket.SocketDetails{adapter.NewRemoteSocket(&adapter.SocketResponse{Id: "first"})},
 	})
 	second := newClassicRedisTestNode(t, server.Addr(), &clusterResponseAdapter{
-		sockets: []socket.SocketDetails{baseadapter.NewRemoteSocket(&baseadapter.SocketResponse{Id: "second"})},
+		sockets: []socket.SocketDetails{adapter.NewRemoteSocket(&adapter.SocketResponse{Id: "second"})},
 	})
 	waitForRedisPubSub(t, func() bool {
 		firstCount, firstErr := first.ServerCount()
@@ -1242,7 +1242,7 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 	})
 
 	t.Run("empty socket details", func(t *testing.T) {
-		data, err := json.Marshal(&Response{RequestId: "request", Sockets: []baseadapter.SocketResponse{}})
+		data, err := json.Marshal(&Response{RequestId: "request", Sockets: []adapter.SocketResponse{}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1294,7 +1294,7 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 	t.Run("socket fields", func(t *testing.T) {
 		data, err := json.Marshal(&Response{
 			RequestId: "request",
-			Sockets: []baseadapter.SocketResponse{{
+			Sockets: []adapter.SocketResponse{{
 				Id:    "socket",
 				Rooms: []socket.Room{},
 			}},
@@ -1386,7 +1386,7 @@ func TestRequestOptionFlags(t *testing.T) {
 		Flags:  &socket.BroadcastFlags{WriteOptions: socket.WriteOptions{Volatile: true}},
 	}
 
-	encoded := baseadapter.EncodeOptions(opts)
+	encoded := adapter.EncodeOptions(opts)
 	for _, test := range []struct {
 		name          string
 		messageType   redis.RequestType
@@ -1404,7 +1404,7 @@ func TestRequestOptionFlags(t *testing.T) {
 			if err := json.Unmarshal(payload, &wire); err != nil {
 				t.Fatal(err)
 			}
-			flags := baseadapter.DecodeOptions(wire.Opts).Flags
+			flags := adapter.DecodeOptions(wire.Opts).Flags
 			if test.preserveFlags != (flags != nil && flags.Volatile) {
 				t.Fatalf("flags = %#v, preserve = %t", flags, test.preserveFlags)
 			}
@@ -1540,7 +1540,7 @@ func TestRedisAdapterOnResponseSeparatesSocketPayloads(t *testing.T) {
 }
 
 func TestRedisAdapterOnMessageAcceptsNamespaceChannel(t *testing.T) {
-	parser := &recordingParser{packet: &Packet{Uid: baseadapter.ServerId("sender")}}
+	parser := &recordingParser{packet: &Packet{Uid: adapter.ServerId("sender")}}
 	adapter := MakeRedisAdapter().(*redisAdapter)
 	adapter.channel = "socket.io#/#"
 	adapter.uid = "sender"
@@ -1556,10 +1556,10 @@ func TestRedisAdapterOnMessageAcceptsNamespaceChannel(t *testing.T) {
 func TestClassicBroadcastRequiresValidOptions(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		opts *baseadapter.PacketOptions
+		opts *adapter.PacketOptions
 		want int
 	}{
-		{name: "valid", opts: baseadapter.EncodeOptions(nil), want: 1},
+		{name: "valid", opts: adapter.EncodeOptions(nil), want: 1},
 		{name: "missing options"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1674,7 +1674,7 @@ func TestClassicRejectsMalformedBroadcastAckRequests(t *testing.T) {
 			RequestId: "request",
 			Type:      redis.BROADCAST,
 			Packet:    &parser.Packet{Type: parser.EVENT, Nsp: "/test", Data: []any{"event"}},
-			Opts:      baseadapter.EncodeOptions(nil),
+			Opts:      adapter.EncodeOptions(nil),
 		}
 	}
 
@@ -1789,7 +1789,7 @@ func TestClassicRequestRoutingUsesSenderUID(t *testing.T) {
 			Type:      redis.BROADCAST,
 			RequestId: "request",
 			Packet:    &parser.Packet{Type: parser.EVENT, Nsp: "/test", Data: []any{"event"}},
-			Opts:      baseadapter.EncodeOptions(nil),
+			Opts:      adapter.EncodeOptions(nil),
 		})
 		if got := local.broadcastsWithAck.Load(); got != 0 {
 			t.Fatalf("self broadcast count = %d, want 0", got)
@@ -1805,7 +1805,7 @@ func TestClassicRequestRoutingUsesSenderUID(t *testing.T) {
 			Type:      redis.BROADCAST,
 			RequestId: "request",
 			Packet:    &parser.Packet{Type: parser.EVENT, Nsp: "/test", Data: []any{"event"}},
-			Opts:      baseadapter.EncodeOptions(nil),
+			Opts:      adapter.EncodeOptions(nil),
 		})
 		if got := local.broadcastsWithAck.Load(); got != 1 {
 			t.Fatalf("remote broadcast count = %d, want 1", got)
@@ -1819,7 +1819,7 @@ func TestClassicRequestRoutingUsesSenderUID(t *testing.T) {
 			Uid:       current.uid,
 			Type:      redis.REMOTE_FETCH,
 			RequestId: "request",
-			Opts:      baseadapter.EncodeOptions(nil),
+			Opts:      adapter.EncodeOptions(nil),
 		})
 		if got := local.fetches.Load(); got != 0 {
 			t.Fatalf("self fetch count = %d, want 0", got)
@@ -1834,7 +1834,7 @@ func TestClassicRequestRoutingUsesSenderUID(t *testing.T) {
 			Uid:       "remote",
 			Type:      redis.REMOTE_FETCH,
 			RequestId: "request",
-			Opts:      baseadapter.EncodeOptions(nil),
+			Opts:      adapter.EncodeOptions(nil),
 		})
 		if got := local.fetches.Load(); got != 1 {
 			t.Fatalf("remote fetch count = %d, want 1", got)
@@ -1847,7 +1847,7 @@ func TestClassicRequestRoutingUsesSenderUID(t *testing.T) {
 		dispatchClassicRequest(t, current, &Request{
 			Type:      redis.REMOTE_FETCH,
 			RequestId: "request",
-			Opts:      baseadapter.EncodeOptions(nil),
+			Opts:      adapter.EncodeOptions(nil),
 		})
 		if got := local.fetches.Load(); got != 1 {
 			t.Fatalf("request without UID fetch count = %d, want 1", got)
@@ -1965,25 +1965,25 @@ func TestClassicCloseDoesNotWaitForInFlightMessage(t *testing.T) {
 		broadcastStarted: make(chan struct{}),
 		broadcastRelease: make(chan struct{}),
 	}
-	adapter := MakeRedisAdapter().(*redisAdapter)
-	adapter.Adapter = local
-	adapter.redisClient = client
-	adapter.channel = "socket.io#/test#"
-	adapter.uid = "self"
-	adapter.parser = &recordingParser{packet: &Packet{
+	current := MakeRedisAdapter().(*redisAdapter)
+	current.Adapter = local
+	current.redisClient = client
+	current.channel = "socket.io#/test#"
+	current.uid = "self"
+	current.parser = &recordingParser{packet: &Packet{
 		Uid:    "sender",
 		Packet: &parser.Packet{Type: parser.EVENT, Nsp: "/test"},
-		Opts:   baseadapter.EncodeOptions(nil),
+		Opts:   adapter.EncodeOptions(nil),
 	}}
 	messageDone := make(chan struct{})
 	go func() {
-		adapter.onMessage([]byte("payload"), adapter.channel)
+		current.onMessage([]byte("payload"), current.channel)
 		close(messageDone)
 	}()
 	<-local.broadcastStarted
 	closed := make(chan struct{})
 	go func() {
-		adapter.Close()
+		current.Close()
 		close(closed)
 	}()
 

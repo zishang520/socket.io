@@ -5,7 +5,7 @@ package adapter
 import (
 	"sync/atomic"
 
-	baseadapter "github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/unix/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -13,7 +13,7 @@ import (
 
 // unixAdapter implements cluster publishing over a shared UnixClient.
 type unixAdapter struct {
-	baseadapter.ClusterAdapterWithHeartbeat
+	adapter.ClusterAdapterWithHeartbeat
 
 	unixClient  *unix.UnixClient
 	cleanupFunc atomic.Pointer[types.Callable]
@@ -26,7 +26,7 @@ type unixAdapter struct {
 // shared listener lifecycle.
 func MakeUnixAdapter() UnixAdapter {
 	a := &unixAdapter{
-		ClusterAdapterWithHeartbeat: baseadapter.MakeClusterAdapterWithHeartbeat(),
+		ClusterAdapterWithHeartbeat: adapter.MakeClusterAdapterWithHeartbeat(),
 	}
 	a.Prototype(a)
 	return a
@@ -49,8 +49,8 @@ func (a *unixAdapter) SetUnix(client *unix.UnixClient) {
 }
 
 // DoPublish publishes a cluster message to all peer Unix listeners.
-func (a *unixAdapter) DoPublish(message *baseadapter.ClusterMessage) (baseadapter.Offset, error) {
-	payload, err := baseadapter.EncodeClusterMessage(message)
+func (a *unixAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
+	payload, err := adapter.EncodeClusterMessage(message)
 	if err != nil {
 		return "", err
 	}
@@ -58,7 +58,7 @@ func (a *unixAdapter) DoPublish(message *baseadapter.ClusterMessage) (baseadapte
 }
 
 // DoPublishResponse publishes a response over the shared broadcast transport.
-func (a *unixAdapter) DoPublishResponse(_ baseadapter.ServerId, response *baseadapter.ClusterResponse) error {
+func (a *unixAdapter) DoPublishResponse(_ adapter.ServerId, response *adapter.ClusterResponse) error {
 	_, err := a.DoPublish(response)
 	return err
 }

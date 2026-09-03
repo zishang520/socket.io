@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	baseadapter "github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/unix/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
@@ -38,9 +38,9 @@ func newTestUnixClient(t *testing.T, socketPath string) *unix.UnixClient {
 	return client
 }
 
-func encodeTestMessage(t *testing.T, message *baseadapter.ClusterMessage) []byte {
+func encodeTestMessage(t *testing.T, message *adapter.ClusterMessage) []byte {
 	t.Helper()
-	payload, err := baseadapter.EncodeClusterMessage(message)
+	payload, err := adapter.EncodeClusterMessage(message)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,20 +71,20 @@ func TestUnixAdapterBuilderDispatchesExactNamespace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	builder.dispatchMessage(encodeTestMessage(t, &baseadapter.ClusterMessage{
+	builder.dispatchMessage(encodeTestMessage(t, &adapter.ClusterMessage{
 		Uid:  "peer",
 		Nsp:  "/first",
-		Type: baseadapter.SERVER_SIDE_EMIT,
-		Data: &baseadapter.ServerSideEmitMessage{Packet: []any{"event"}},
+		Type: adapter.SERVER_SIDE_EMIT,
+		Data: &adapter.ServerSideEmitMessage{Packet: []any{"event"}},
 	}))
 	if firstCalls.Load() != 1 || secondCalls.Load() != 0 {
 		t.Fatalf("namespace calls = (%d, %d), want (1, 0)", firstCalls.Load(), secondCalls.Load())
 	}
 
-	for _, message := range []*baseadapter.ClusterMessage{
-		{Uid: first.Uid(), Nsp: "/first", Type: baseadapter.SERVER_SIDE_EMIT, Data: &baseadapter.ServerSideEmitMessage{Packet: []any{"event"}}},
-		{Uid: "peer", Nsp: "", Type: baseadapter.SERVER_SIDE_EMIT, Data: &baseadapter.ServerSideEmitMessage{Packet: []any{"event"}}},
-		{Uid: "peer", Nsp: "/missing", Type: baseadapter.SERVER_SIDE_EMIT, Data: &baseadapter.ServerSideEmitMessage{Packet: []any{"event"}}},
+	for _, message := range []*adapter.ClusterMessage{
+		{Uid: first.Uid(), Nsp: "/first", Type: adapter.SERVER_SIDE_EMIT, Data: &adapter.ServerSideEmitMessage{Packet: []any{"event"}}},
+		{Uid: "peer", Nsp: "", Type: adapter.SERVER_SIDE_EMIT, Data: &adapter.ServerSideEmitMessage{Packet: []any{"event"}}},
+		{Uid: "peer", Nsp: "/missing", Type: adapter.SERVER_SIDE_EMIT, Data: &adapter.ServerSideEmitMessage{Packet: []any{"event"}}},
 	} {
 		builder.dispatchMessage(encodeTestMessage(t, message))
 	}
@@ -109,11 +109,11 @@ func TestUnixAdapterIgnoresStaleMessageAfterClose(t *testing.T) {
 	}
 
 	instance.Close()
-	stale.OnMessage(&baseadapter.ClusterMessage{
+	stale.OnMessage(&adapter.ClusterMessage{
 		Uid:  "peer",
 		Nsp:  "/test",
-		Type: baseadapter.SERVER_SIDE_EMIT,
-		Data: &baseadapter.ServerSideEmitMessage{Packet: []any{"event"}},
+		Type: adapter.SERVER_SIDE_EMIT,
+		Data: &adapter.ServerSideEmitMessage{Packet: []any{"event"}},
 	}, "")
 	if calls.Load() != 0 {
 		t.Fatalf("closed adapter handled %d stale messages, want 0", calls.Load())
@@ -216,11 +216,11 @@ func TestUnixAdapterBuilderRetriesFailedListenWithoutAnotherNamespace(t *testing
 
 	sender := newTestUnixClient(t, socketPath)
 	listenerPath := socketPath + "." + string(instance.Uid())
-	if err := sender.Send(listenerPath, encodeTestMessage(t, &baseadapter.ClusterMessage{
+	if err := sender.Send(listenerPath, encodeTestMessage(t, &adapter.ClusterMessage{
 		Uid:  "peer",
 		Nsp:  "/test",
-		Type: baseadapter.SERVER_SIDE_EMIT,
-		Data: &baseadapter.ServerSideEmitMessage{Packet: []any{"event"}},
+		Type: adapter.SERVER_SIDE_EMIT,
+		Data: &adapter.ServerSideEmitMessage{Packet: []any{"event"}},
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -310,8 +310,8 @@ func TestUnixAdapterCloseKeepsSharedListenerAndReplacement(t *testing.T) {
 	}
 
 	sender := newTestUnixClient(t, basePath)
-	if err := sender.Send(listenerPath, encodeTestMessage(t, &baseadapter.ClusterMessage{
-		Uid: "peer", Nsp: "/same", Type: baseadapter.HEARTBEAT,
+	if err := sender.Send(listenerPath, encodeTestMessage(t, &adapter.ClusterMessage{
+		Uid: "peer", Nsp: "/same", Type: adapter.HEARTBEAT,
 	})); err != nil {
 		t.Fatalf("shared listener was unavailable after adapter Close: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestUnixAdapterErrorHandlerCanReenterPublisher(t *testing.T) {
 	reentryDone := make(chan error, 1)
 	if err := client.On("error", func(...any) {
 		if reentered.CompareAndSwap(false, true) {
-			_, err := current.PublishAndReturnOffset(&baseadapter.ClusterMessage{Type: baseadapter.HEARTBEAT})
+			_, err := current.PublishAndReturnOffset(&adapter.ClusterMessage{Type: adapter.HEARTBEAT})
 			reentryDone <- err
 		}
 	}); err != nil {
@@ -369,7 +369,7 @@ func TestUnixAdapterErrorHandlerCanReenterPublisher(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := current.PublishAndReturnOffset(&baseadapter.ClusterMessage{Type: baseadapter.HEARTBEAT})
+		_, err := current.PublishAndReturnOffset(&adapter.ClusterMessage{Type: adapter.HEARTBEAT})
 		result <- err
 	}()
 	select {

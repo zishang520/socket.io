@@ -3,8 +3,9 @@
 package emitter
 
 import (
-	valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
+	"github.com/zishang520/socket.io/adapters/valkey/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 const (
@@ -19,9 +20,9 @@ type (
 		GetRawKey() types.Optional[string]
 		Key() string
 
-		SetParser(valkey.Parser)
-		GetRawParser() types.Optional[valkey.Parser]
-		Parser() valkey.Parser
+		SetEncoder(valkey.Encoder)
+		GetRawEncoder() types.Optional[valkey.Encoder]
+		Encoder() valkey.Encoder
 
 		SetSharded(bool)
 		GetRawSharded() types.Optional[bool]
@@ -32,31 +33,30 @@ type (
 		SubscriptionMode() valkey.SubscriptionMode
 	}
 
-	// EmitterOptions holds configuration options for the Valkey emitter.
+	// EmitterOptions holds optional Valkey emitter settings.
 	EmitterOptions struct {
 		key              types.Optional[string]
-		parser           types.Optional[valkey.Parser]
+		encoder          types.Optional[valkey.Encoder]
 		sharded          types.Optional[bool]
 		subscriptionMode types.Optional[valkey.SubscriptionMode]
 	}
 )
 
-// DefaultEmitterOptions creates a new EmitterOptions instance with default values.
+// DefaultEmitterOptions returns raw-empty options; Emitter.Construct applies defaults.
 func DefaultEmitterOptions() *EmitterOptions {
-	return &EmitterOptions{}
+	return new(EmitterOptions)
 }
 
-// Assign copies non-nil option values from another EmitterOptionsInterface.
+// Assign copies explicitly set values from data.
 func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return o
 	}
-
 	if data.GetRawKey() != nil {
 		o.SetKey(data.Key())
 	}
-	if data.Parser() != nil {
-		o.SetParser(data.Parser())
+	if data.GetRawEncoder() != nil {
+		o.SetEncoder(data.Encoder())
 	}
 	if data.GetRawSharded() != nil {
 		o.SetSharded(data.Sharded())
@@ -64,7 +64,6 @@ func (o *EmitterOptions) Assign(data EmitterOptionsInterface) EmitterOptionsInte
 	if data.GetRawSubscriptionMode() != nil {
 		o.SetSubscriptionMode(data.SubscriptionMode())
 	}
-
 	return o
 }
 
@@ -77,13 +76,15 @@ func (o *EmitterOptions) Key() string {
 	return o.key.Get()
 }
 
-func (o *EmitterOptions) SetParser(parser valkey.Parser)              { o.parser = types.NewSome(parser) }
-func (o *EmitterOptions) GetRawParser() types.Optional[valkey.Parser] { return o.parser }
-func (o *EmitterOptions) Parser() valkey.Parser {
-	if o.parser == nil {
+func (o *EmitterOptions) SetEncoder(encoder valkey.Encoder) {
+	o.encoder = types.NewSome(encoder)
+}
+func (o *EmitterOptions) GetRawEncoder() types.Optional[valkey.Encoder] { return o.encoder }
+func (o *EmitterOptions) Encoder() valkey.Encoder {
+	if o.encoder == nil {
 		return nil
 	}
-	return o.parser.Get()
+	return o.encoder.Get()
 }
 
 func (o *EmitterOptions) SetSharded(sharded bool)             { o.sharded = types.NewSome(sharded) }

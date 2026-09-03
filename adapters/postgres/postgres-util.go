@@ -190,18 +190,6 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 			return nodeBufferJSON(payload), true, true
 		}
 		return payload, true, true
-	case interface {
-		io.Reader
-		Bytes() []byte
-	}:
-		if utils.IsNil(data) {
-			return data, false, false
-		}
-		payload := utils.NonNilSlice(value.Bytes())
-		if jsonFormat {
-			return nodeBufferJSON(payload), true, true
-		}
-		return payload, true, true
 	case io.Reader:
 		if utils.IsNil(data) {
 			return data, false, false

@@ -4,42 +4,52 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	vk "github.com/valkey-io/valkey-go"
-	baseadapter "github.com/zishang520/socket.io/adapters/adapter/v3"
-	valkey "github.com/zishang520/socket.io/adapters/valkey/v3"
+	"github.com/zishang520/socket.io/adapters/valkey/v3"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-type recordingParser struct {
-	decodeCalled bool
-	packet       *Packet
+type recordingSocketAdapter struct {
+	socket.Adapter
+	broadcasts chan *parser.Packet
 }
 
-func (p *recordingParser) Encode(any) ([]byte, error) { return nil, nil }
-
-func (p *recordingParser) Decode(_ []byte, value any) error {
-	p.decodeCalled = true
-	if packet, ok := value.(**Packet); ok {
-		*packet = p.packet
-	}
-	return nil
+func (a *recordingSocketAdapter) Broadcast(packet *parser.Packet, _ *socket.BroadcastOptions) {
+	a.broadcasts <- packet
 }
 
-func TestValkeyAdapterOnMessageAcceptsNamespaceChannel(t *testing.T) {
-	parser := &recordingParser{packet: &Packet{Uid: baseadapter.ServerId("sender")}}
-	adapter := MakeValkeyAdapter().(*valkeyAdapter)
-	adapter.channel = "socket.io#/#"
-	adapter.uid = "sender"
-	adapter.parser = parser
+func (a *recordingSocketAdapter) BroadcastWithAck(
+	_ *parser.Packet,
+	_ *socket.BroadcastOptions,
+	clientCount func(uint64),
+	ack socket.Ack,
+) {
+	clientCount(1)
+	ack([]any{"ack"}, nil)
+}
 
-	adapter.onMessage(adapter.channel+"*", adapter.channel, []byte("payload"))
-
-	if !parser.decodeCalled {
-		t.Fatal("expected namespace channel message to be decoded")
+func newRecordingClassicAdapter(
+	t *testing.T,
+	client *valkey.ValkeyClient,
+	nspName string,
+) (*valkeyAdapter, *recordingSocketAdapter) {
+	t.Helper()
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), nspName)
+	recorder := &recordingSocketAdapter{
+		Adapter:    socket.MakeAdapter(),
+		broadcasts: make(chan *parser.Packet, 1),
 	}
+	a := MakeValkeyAdapter().(*valkeyAdapter)
+	a.Adapter = recorder
+	a.SetValkey(client)
+	a.Construct(nsp)
+	t.Cleanup(a.Close)
+	return a, recorder
 }
 
 func canceledValkeyClient(t *testing.T) (*valkey.ValkeyClient, context.Context) {
@@ -49,6 +59,7 @@ func canceledValkeyClient(t *testing.T) (*valkey.ValkeyClient, context.Context) 
 	client, err := vk.NewClient(vk.ClientOption{
 		InitAddress:  []string{server.Addr()},
 		DisableCache: true,
+		AlwaysRESP2:  true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -148,5 +159,67 @@ func TestClassicServerCountErrorsAreReturned(t *testing.T) {
 	}
 	if adapter.requests.Len() != 0 {
 		t.Fatal("request was stored after server count failed")
+	}
+}
+
+func TestValkeyAdapterBroadcastsLocallyAndRemotely(t *testing.T) {
+	server := miniredis.RunT(t)
+	source, sourceRecorder := newRecordingClassicAdapter(
+		t, newValkeyAdapterTestClient(t, server.Addr()), "/test",
+	)
+	_, remoteRecorder := newRecordingClassicAdapter(
+		t, newValkeyAdapterTestClient(t, server.Addr()), "/test",
+	)
+	source.Broadcast(&parser.Packet{Type: parser.EVENT, Data: []any{"event"}}, nil)
+
+	for name, recorder := range map[string]*recordingSocketAdapter{
+		"local":  sourceRecorder,
+		"remote": remoteRecorder,
+	} {
+		select {
+		case packet := <-recorder.broadcasts:
+			if packet.Nsp != "/test" {
+				t.Fatalf("%s packet namespace = %q", name, packet.Nsp)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%s broadcast was not delivered", name)
+		}
+	}
+}
+
+func TestValkeyAdapterRegistersAckBeforePublish(t *testing.T) {
+	server := miniredis.RunT(t)
+	source, _ := newRecordingClassicAdapter(
+		t, newValkeyAdapterTestClient(t, server.Addr()), "/ack",
+	)
+	newRecordingClassicAdapter(
+		t, newValkeyAdapterTestClient(t, server.Addr()), "/ack",
+	)
+	counts := make(chan uint64, 2)
+	acks := make(chan []any, 2)
+	source.BroadcastWithAck(
+		&parser.Packet{Type: parser.EVENT, Data: []any{"event"}},
+		nil,
+		func(count uint64) { counts <- count },
+		func(args []any, _ error) { acks <- args },
+	)
+
+	for range 2 {
+		select {
+		case count := <-counts:
+			if count != 1 {
+				t.Fatalf("client count = %d", count)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("client count acknowledgement was lost")
+		}
+		select {
+		case args := <-acks:
+			if len(args) != 1 || args[0] != "ack" {
+				t.Fatalf("acknowledgement = %#v", args)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("broadcast acknowledgement was lost")
+		}
 	}
 }

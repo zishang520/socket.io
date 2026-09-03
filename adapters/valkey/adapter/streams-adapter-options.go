@@ -2,25 +2,23 @@
 package adapter
 
 import (
-	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 const (
-	DefaultStreamName          = "socket.io"
-	DefaultStreamMaxLen        = 10_000
-	DefaultStreamReadCount     = 100
-	DefaultStreamCount         = 1
-	DefaultStreamChannelPrefix = "socket.io"
-	DefaultBlockTimeInMs       = 5_000
-	DefaultSessionKeyPrefix    = "sio:session:"
+	DefaultStreamName       = "socket.io"
+	DefaultStreamMaxLen     = 10_000
+	DefaultStreamReadCount  = 100
+	DefaultStreamCount      = 1
+	DefaultChannelPrefix    = "socket.io"
+	DefaultBlockTimeInMs    = 5_000
+	DefaultSessionKeyPrefix = "sio:session:"
 )
 
 type (
 	// ValkeyStreamsAdapterOptionsInterface defines the interface for configuring ValkeyStreamsAdapterOptions.
 	ValkeyStreamsAdapterOptionsInterface interface {
-		adapter.ClusterAdapterOptionsInterface
-
 		SetStreamName(string)
 		GetRawStreamName() types.Optional[string]
 		StreamName() string
@@ -60,8 +58,6 @@ type (
 
 	// ValkeyStreamsAdapterOptions holds configuration for the Valkey Streams adapter.
 	ValkeyStreamsAdapterOptions struct {
-		adapter.ClusterAdapterOptions
-
 		streamName       types.Optional[string]
 		streamCount      types.Optional[int]
 		channelPrefix    types.Optional[string]
@@ -74,18 +70,16 @@ type (
 	}
 )
 
-// DefaultValkeyStreamsAdapterOptions returns a new ValkeyStreamsAdapterOptions with default values.
+// DefaultValkeyStreamsAdapterOptions returns empty options; ValkeyStreamsAdapter.Construct applies defaults.
 func DefaultValkeyStreamsAdapterOptions() *ValkeyStreamsAdapterOptions {
 	return &ValkeyStreamsAdapterOptions{}
 }
 
 // Assign copies non-nil fields from another ValkeyStreamsAdapterOptionsInterface.
 func (s *ValkeyStreamsAdapterOptions) Assign(data ValkeyStreamsAdapterOptionsInterface) ValkeyStreamsAdapterOptionsInterface {
-	if data == nil {
+	if utils.IsNil(data) {
 		return s
 	}
-
-	s.ClusterAdapterOptions.Assign(data)
 
 	if data.GetRawStreamName() != nil {
 		s.SetStreamName(data.StreamName())
@@ -184,6 +178,8 @@ func (s *ValkeyStreamsAdapterOptions) ReadCount() int64 {
 	return s.readCount.Get()
 }
 
+// SetBlockTimeInMs sets the XREAD block duration in milliseconds. A value of 0
+// blocks until a message arrives or the operation context is canceled.
 func (s *ValkeyStreamsAdapterOptions) SetBlockTimeInMs(v int64) {
 	s.blockTimeInMs = types.NewSome(v)
 }
@@ -210,6 +206,8 @@ func (s *ValkeyStreamsAdapterOptions) SessionKeyPrefix() string {
 	return s.sessionKeyPrefix.Get()
 }
 
+// SetOnlyPlaintext skips binary-data detection when all transmitted values are
+// JSON-serializable and contain no binary data.
 func (s *ValkeyStreamsAdapterOptions) SetOnlyPlaintext(v bool) {
 	s.onlyPlaintext = types.NewSome(v)
 }

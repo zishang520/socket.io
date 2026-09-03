@@ -154,6 +154,7 @@ func MakeSocket() *Socket {
 		_anyOutgoingListeners: types.NewSlice[types.EventListener](),
 		taskQueue:             queue.New(),
 	}
+	s.SetData(map[string]any{})
 	s.flags.Store(&BroadcastFlags{})
 	s.canJoin.Store(true)
 

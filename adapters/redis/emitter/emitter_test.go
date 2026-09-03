@@ -9,7 +9,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	rds "github.com/redis/go-redis/v9"
-	clusteradapter "github.com/zishang520/socket.io/adapters/adapter/v3"
+	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
@@ -201,12 +201,12 @@ func TestShardedEmitterUsesSPublishWithClusterMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("SPUBLISH payload type = %T, want []byte", client.payload)
 	}
-	message, err := clusteradapter.DecodeClusterMessage(payload)
+	message, err := adapter.DecodeClusterMessage(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, ok := message.Data.(*clusteradapter.BroadcastMessage)
-	if message.Uid != "emitter" || message.Nsp != "/" || message.Type != clusteradapter.BROADCAST || !ok ||
+	data, ok := message.Data.(*adapter.BroadcastMessage)
+	if message.Uid != "emitter" || message.Nsp != "/" || message.Type != adapter.BROADCAST || !ok ||
 		data.Packet == nil || data.Packet.Type != parser.EVENT ||
 		!reflect.DeepEqual(data.Packet.Data, []any{"event", "value"}) {
 		t.Fatalf("cluster message = %#v, data = %#v", message, message.Data)
