@@ -159,7 +159,16 @@ func (r *valkeyStreamsAdapter) Construct(nsp socket.Namespace) {
 	for _, pubSub := range r.pubSubs {
 		go r.handlePubSubMessages(pubSub)
 	}
-	acquireValkeyStreamsPoller(r)
+	poller, err := acquireValkeyStreamsPoller(r)
+	r.streamPoller = poller
+	if r.ctx.Err() != nil {
+		releaseValkeyStreamsPoller(poller, r)
+		return
+	}
+	if err != nil {
+		valkeyStreamsLog.Debug("error reading stream tail: %s", err.Error())
+		r.valkeyClient.Emit("error", err)
+	}
 }
 
 func (r *valkeyStreamsAdapter) handlePubSubMessages(pubSub *valkey.ValkeyPubSub) {

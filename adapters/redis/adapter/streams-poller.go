@@ -32,7 +32,6 @@ type redisStreamsPoller struct {
 	client   rds.UniversalClient
 	adapters types.Map[string, *redisStreamsAdapter]
 	ready    chan struct{}
-	done     chan struct{}
 }
 
 var redisStreamsPollers struct {
@@ -51,13 +50,7 @@ func redisStreamsPollerBlock(blockTimeInMs int64) (time.Duration, error) {
 	return time.Duration(blockTimeInMs) * time.Millisecond, nil
 }
 
-func acquireRedisStreamsPoller(adapter *redisStreamsAdapter) *redisStreamsPoller {
-	block, err := redisStreamsPollerBlock(adapter.opts.BlockTimeInMs())
-	if err != nil {
-		redisStreamsLog.Debug("invalid Redis Streams poller configuration: %s", err.Error())
-		adapter.redisClient.Emit("error", err)
-		block = time.Duration(DefaultBlockTimeInMs) * time.Millisecond
-	}
+func acquireRedisStreamsPoller(adapter *redisStreamsAdapter, block time.Duration) (*redisStreamsPoller, error) {
 	config := redisStreamsPollerConfig{
 		readCount: adapter.opts.ReadCount(),
 		block:     block,
@@ -80,7 +73,6 @@ func acquireRedisStreamsPoller(adapter *redisStreamsAdapter) *redisStreamsPoller
 			cancel: cancel,
 			client: adapter.redisClient.Sub(),
 			ready:  make(chan struct{}),
-			done:   make(chan struct{}),
 		}
 		if redisStreamsPollers.groups == nil {
 			redisStreamsPollers.groups = make(map[redisStreamsPollerKey]*redisStreamsPoller)
@@ -92,17 +84,16 @@ func acquireRedisStreamsPoller(adapter *redisStreamsAdapter) *redisStreamsPoller
 	redisStreamsPollers.mu.Unlock()
 
 	if created {
-		startID, err := poller.readInitialID()
+		startID, err := poller.readInitialID(adapter.ctx)
 		go poller.poll(startID, err == nil)
 		close(poller.ready)
-		if err != nil && poller.ctx.Err() == nil {
-			redisStreamsLog.Debug("error reading stream tail: %s", err.Error())
-			adapter.redisClient.Emit("error", err)
-		}
-	} else {
-		<-poller.ready
+		return poller, err
 	}
-	return poller
+	select {
+	case <-poller.ready:
+	case <-adapter.ctx.Done():
+	}
+	return poller, nil
 }
 
 func releaseRedisStreamsPoller(poller *redisStreamsPoller, adapter *redisStreamsAdapter) {
@@ -125,8 +116,8 @@ func releaseRedisStreamsPoller(poller *redisStreamsPoller, adapter *redisStreams
 	poller.cancel()
 }
 
-func (p *redisStreamsPoller) readInitialID() (string, error) {
-	entries, err := p.key.client.Client().XRevRangeN(p.ctx, p.key.streamName, "+", "-", 1).Result()
+func (p *redisStreamsPoller) readInitialID(ctx context.Context) (string, error) {
+	entries, err := p.key.client.Client().XRevRangeN(ctx, p.key.streamName, "+", "-", 1).Result()
 	if err != nil {
 		return "", err
 	}
@@ -138,7 +129,7 @@ func (p *redisStreamsPoller) readInitialID() (string, error) {
 
 func (p *redisStreamsPoller) retryInitialID() (string, bool) {
 	for p.ctx.Err() == nil {
-		startID, err := p.readInitialID()
+		startID, err := p.readInitialID(p.ctx)
 		if err == nil {
 			return startID, true
 		}
@@ -158,7 +149,6 @@ func (p *redisStreamsPoller) retryInitialID() (string, bool) {
 }
 
 func (p *redisStreamsPoller) poll(startID string, initialized bool) {
-	defer close(p.done)
 	if !initialized {
 		var ok bool
 		startID, ok = p.retryInitialID()

@@ -42,9 +42,9 @@ var (
 
 // Configuration constants for Redis Streams adapter.
 const (
-	// restoreSessionMaxXRangeCalls limits adapter-issued XRANGE calls while collecting missed packets.
-	restoreSessionMaxXRangeCalls = 100
-	restoreSessionPageSize       = 1000
+	// restoreSessionMinXRangeCalls matches the Node.js protection against chasing a moving stream forever.
+	restoreSessionMinXRangeCalls int64 = 100
+	restoreSessionPageSize       int64 = 1000
 )
 
 // isEphemeral determines whether a message should be sent via PUB/SUB instead of Streams.
@@ -183,7 +183,24 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 		r.pubSubSubscription.Subscribe(r.publicChannel, privateChannel)
 		_ = r.pubSub.flush(r.ctx)
 	}
-	r.streamPoller = acquireRedisStreamsPoller(r)
+	block, configErr := redisStreamsPollerBlock(r.opts.BlockTimeInMs())
+	if configErr != nil {
+		redisStreamsLog.Debug("invalid Redis Streams poller configuration: %s", configErr.Error())
+		block = time.Duration(DefaultBlockTimeInMs) * time.Millisecond
+	}
+	poller, initialErr := acquireRedisStreamsPoller(r, block)
+	r.streamPoller = poller
+	if r.ctx.Err() != nil {
+		releaseRedisStreamsPoller(poller, r)
+		return
+	}
+	if configErr != nil {
+		r.redisClient.Emit("error", configErr)
+	}
+	if initialErr != nil && r.ctx.Err() == nil {
+		redisStreamsLog.Debug("error reading stream tail: %s", initialErr.Error())
+		r.redisClient.Emit("error", initialErr)
+	}
 }
 
 func (r *redisStreamsAdapter) onPubSubMessage(payload []byte, _ string) {
@@ -428,7 +445,14 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 func (r *redisStreamsAdapter) collectMissedPackets(client rds.Cmdable, session *socket.Session, offset string) error {
 	broadcastTypeStr := strconv.Itoa(int(adapter.BROADCAST))
 
-	for range restoreSessionMaxXRangeCalls {
+	// Allow one page beyond MAXLEN for approximate trimming, plus the empty read that finds the tail.
+	maxLen := r.opts.MaxLen()
+	pages := maxLen / restoreSessionPageSize
+	if maxLen%restoreSessionPageSize != 0 {
+		pages++
+	}
+	maxCalls := max(restoreSessionMinXRangeCalls, pages+2)
+	for range maxCalls {
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}

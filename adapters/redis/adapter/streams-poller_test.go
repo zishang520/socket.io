@@ -171,15 +171,6 @@ func waitForPollerXReadCall(t *testing.T, calls <-chan pollerXReadCall) pollerXR
 	}
 }
 
-func waitForPollerExit(t *testing.T, poller *redisStreamsPoller) {
-	t.Helper()
-	select {
-	case <-poller.done:
-	case <-time.After(time.Second):
-		t.Fatal("stream poller did not exit after cancellation")
-	}
-}
-
 func TestRedisStreamsPollerSharesOneReadPerStream(t *testing.T) {
 	redisClient, hook := newBlockingPollerClient(t)
 	server := socket.NewServer(nil, nil)
@@ -210,7 +201,9 @@ func TestRedisStreamsPollerSharesOneReadPerStream(t *testing.T) {
 		t.Fatal("poller stopped while another namespace still referenced its stream")
 	}
 	second.Close()
-	waitForPollerExit(t, poller)
+	if poller.ctx.Err() == nil {
+		t.Fatal("poller was not canceled after its final namespace closed")
+	}
 }
 
 func TestRedisStreamsPollerFreezesInitialTail(t *testing.T) {
@@ -431,6 +424,59 @@ func TestRedisStreamsPollerRetriesInitialTailLookupInBackground(t *testing.T) {
 	}
 }
 
+func TestRedisStreamsPollerReentrantCloseOnConstructionError(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		invalidBlock bool
+		initialErr   error
+	}{
+		{name: "invalid block time", invalidBlock: true},
+		{name: "initial tail lookup", initialErr: errors.New("initial tail lookup failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := miniredis.RunT(t)
+			client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+			t.Cleanup(func() { _ = client.Close() })
+			hook := &initialTailPollerHook{
+				initialStarted: make(chan struct{}),
+				releaseInitial: make(chan struct{}),
+				xreads:         make(chan pollerXReadCall, 1),
+				initialErr:     test.initialErr,
+			}
+			close(hook.releaseInitial)
+			client.AddHook(hook)
+
+			redisClient := mustRedisClient(t, context.Background(), client)
+			current := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+			current.SetRedis(redisClient)
+			if test.invalidBlock {
+				opts := DefaultRedisStreamsAdapterOptions()
+				opts.SetBlockTimeInMs(0)
+				current.SetOpts(opts)
+			}
+			if err := redisClient.On("error", func(...any) { current.Close() }); err != nil {
+				t.Fatal(err)
+			}
+
+			current.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/reentrant-close"))
+			poller := current.streamPoller
+			if poller == nil {
+				t.Fatal("construction error was reported before the poller was assigned")
+			}
+			if current.ctx.Err() == nil || poller.ctx.Err() == nil {
+				t.Fatal("reentrant Close did not stop the adapter and its stream poller")
+			}
+
+			redisStreamsPollers.mu.Lock()
+			registered := redisStreamsPollers.groups[poller.key] == poller
+			redisStreamsPollers.mu.Unlock()
+			if registered {
+				t.Fatal("reentrant Close left the stream poller registered")
+			}
+		})
+	}
+}
+
 func TestRedisStreamsPollerKeepsInitialIDAfterTimeout(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
@@ -501,12 +547,16 @@ func TestRedisStreamsPollerIsolatesActualStreams(t *testing.T) {
 	}
 
 	first.Close()
-	waitForPollerExit(t, first.streamPoller)
+	if first.streamPoller.ctx.Err() == nil {
+		t.Fatal("closing the first stream did not cancel its poller")
+	}
 	if second.streamPoller.ctx.Err() != nil {
 		t.Fatal("closing one stream stopped another stream's poller")
 	}
 	second.Close()
-	waitForPollerExit(t, second.streamPoller)
+	if second.streamPoller.ctx.Err() == nil {
+		t.Fatal("closing the second stream did not cancel its poller")
+	}
 }
 
 func TestRedisStreamsPollerBlockPreservesValidValues(t *testing.T) {
@@ -659,5 +709,7 @@ func TestRedisStreamsPollerIgnoresStaleAdapterClose(t *testing.T) {
 	}
 
 	second.Close()
-	waitForPollerExit(t, poller)
+	if poller.ctx.Err() == nil {
+		t.Fatal("poller was not canceled after the current adapter closed")
+	}
 }

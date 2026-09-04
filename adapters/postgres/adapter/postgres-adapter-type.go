@@ -72,7 +72,7 @@ type (
 )
 
 // PostgresAdapterBuilder creates PostgreSQL adapters for Socket.IO namespaces.
-// It manages the shared LISTEN connection and notification loop across all namespace adapters.
+// It manages the shared LISTEN connection and routes notifications to namespace adapters.
 type PostgresAdapterBuilder struct {
 	// Postgres is the PostgreSQL client used for LISTEN/NOTIFY operations.
 	Postgres *postgres.PostgresClient

@@ -48,8 +48,9 @@ func MakePostgresAdapter() PostgresAdapter {
 	return a
 }
 
-// NewPostgresAdapter creates and initializes a new PostgreSQL adapter.
-// This is the preferred way to create a PostgreSQL adapter instance.
+// NewPostgresAdapter creates and initializes a PostgreSQL namespace adapter.
+// When installing it on a server, use PostgresAdapterBuilder so the shared
+// LISTEN connection and namespace routing are registered.
 func NewPostgresAdapter(nsp socket.Namespace, client *postgres.PostgresClient, opts any) PostgresAdapter {
 	a := MakePostgresAdapter()
 

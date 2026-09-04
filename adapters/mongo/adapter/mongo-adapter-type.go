@@ -78,7 +78,7 @@ type (
 )
 
 // MongoAdapterBuilder creates MongoDB adapters for Socket.IO namespaces.
-// It manages the shared Change Stream across all namespace adapters.
+// It manages the shared Change Stream and routes events to namespace adapters.
 type MongoAdapterBuilder struct {
 	Mongo *mongo.MongoClient
 	Opts  MongoAdapterOptionsInterface

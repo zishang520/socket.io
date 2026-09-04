@@ -443,7 +443,37 @@ func TestRedisResponse_MsgpackPreservesRequiredValues(t *testing.T) {
 	if value, exists := response["clientCount"]; !exists || value != uint64(0) {
 		t.Fatalf("clientCount = %#v, want 0", value)
 	}
-	if _, exists := response["packet"]; exists {
-		t.Fatal("nil packet must be omitted")
+
+	for _, test := range []struct {
+		name   string
+		packet any
+		want   any
+	}{
+		{name: "false", packet: false, want: false},
+		{name: "zero", packet: 0, want: int8(0)},
+		{name: "empty string", packet: "", want: ""},
+		{name: "empty slice", packet: []any{}, want: []any{}},
+		{name: "empty map", packet: map[string]any{}, want: map[string]any{}},
+		{name: "nil", packet: nil, want: nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := utils.MsgPack().Encode(&RedisResponse{
+				Type:      BROADCAST_ACK,
+				RequestId: "request",
+				Packet:    test.packet,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var response map[string]any
+			if err := utils.MsgPack().Decode(data, &response); err != nil {
+				t.Fatal(err)
+			}
+			packet, exists := response["packet"]
+			if !exists || !reflect.DeepEqual(packet, test.want) {
+				t.Fatalf("packet = %#v, want %#v", packet, test.want)
+			}
+		})
 	}
 }

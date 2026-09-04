@@ -207,3 +207,55 @@ func TestValkeyStreamsPollerRetriesInitialTailInBackground(t *testing.T) {
 		t.Fatal("poller did not recover after the primary became available")
 	}
 }
+
+func TestValkeyStreamsPollerReentrantCloseOnInitialTailError(t *testing.T) {
+	primaryServer := miniredis.RunT(t)
+	primary, err := vk.NewClient(vk.ClientOption{
+		InitAddress:  []string{primaryServer.Addr()},
+		DisableCache: true,
+		DisableRetry: true,
+		AlwaysRESP2:  true,
+		Dialer:       net.Dialer{Timeout: 50 * time.Millisecond},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(primary.Close)
+	primaryServer.Close()
+
+	subServer := miniredis.RunT(t)
+	client := newStreamsValkeyClient(t, primary, newValkeyRawClient(t, subServer.Addr()))
+	current := MakeValkeyStreamsAdapter().(*valkeyStreamsAdapter)
+	current.SetValkey(client)
+	opts := DefaultValkeyStreamsAdapterOptions()
+	opts.SetBlockTimeInMs(20)
+	current.SetOpts(opts)
+	closed := make(chan struct{}, 1)
+	if err := client.On("error", func(...any) {
+		current.Close()
+		closed <- struct{}{}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	current.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/reentrant-close"))
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("initial-tail error listener was not called")
+	}
+	poller := current.streamPoller
+	if poller == nil {
+		t.Fatal("initial-tail error was reported before the poller was assigned")
+	}
+	if current.ctx.Err() == nil || poller.ctx.Err() == nil {
+		t.Fatal("reentrant Close did not stop the adapter and its stream poller")
+	}
+
+	valkeyStreamsPollers.mu.Lock()
+	registered := valkeyStreamsPollers.groups[poller.key] == poller
+	valkeyStreamsPollers.mu.Unlock()
+	if registered {
+		t.Fatal("reentrant Close left the stream poller registered")
+	}
+}

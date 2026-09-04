@@ -33,7 +33,7 @@ var valkeyStreamsPollers struct {
 	groups map[valkeyStreamsPollerKey]*valkeyStreamsPoller
 }
 
-func acquireValkeyStreamsPoller(a *valkeyStreamsAdapter) {
+func acquireValkeyStreamsPoller(a *valkeyStreamsAdapter) (*valkeyStreamsPoller, error) {
 	key := valkeyStreamsPollerKey{
 		client:     a.valkeyClient,
 		streamName: a.streamName,
@@ -62,22 +62,19 @@ func acquireValkeyStreamsPoller(a *valkeyStreamsAdapter) {
 	nsp := a.Nsp().Name()
 	poller.adapters.Store(nsp, a)
 	valkeyStreamsPollers.mu.Unlock()
-	a.streamPoller = poller
 
 	if created {
-		startID, err := poller.readInitialID()
+		startID, err := poller.readInitialID(a.ctx)
 		go poller.poll(startID, err == nil)
 		close(poller.ready)
-		if err != nil && poller.ctx.Err() == nil {
-			valkeyStreamsLog.Debug("error reading stream tail: %s", err.Error())
-			a.valkeyClient.Emit("error", err)
-		}
-	} else {
-		select {
-		case <-poller.ready:
-		case <-a.ctx.Done():
-		}
+		return poller, err
 	}
+
+	select {
+	case <-poller.ready:
+	case <-a.ctx.Done():
+	}
+	return poller, nil
 }
 
 func releaseValkeyStreamsPoller(poller *valkeyStreamsPoller, a *valkeyStreamsAdapter) {
@@ -99,8 +96,8 @@ func releaseValkeyStreamsPoller(poller *valkeyStreamsPoller, a *valkeyStreamsAda
 	poller.cancel()
 }
 
-func (p *valkeyStreamsPoller) readInitialID() (string, error) {
-	entries, err := p.key.client.XRevRangeN(p.ctx, p.key.streamName, "+", "-", 1)
+func (p *valkeyStreamsPoller) readInitialID(ctx context.Context) (string, error) {
+	entries, err := p.key.client.XRevRangeN(ctx, p.key.streamName, "+", "-", 1)
 	if err != nil {
 		return "", err
 	}
@@ -112,7 +109,7 @@ func (p *valkeyStreamsPoller) readInitialID() (string, error) {
 
 func (p *valkeyStreamsPoller) retryInitialID() (string, bool) {
 	for p.ctx.Err() == nil {
-		startID, err := p.readInitialID()
+		startID, err := p.readInitialID(p.ctx)
 		if err == nil {
 			return startID, true
 		}

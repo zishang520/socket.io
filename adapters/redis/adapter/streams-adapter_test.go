@@ -1108,7 +1108,7 @@ func TestCollectMissedPacketsUsesBoundedPages(t *testing.T) {
 		t.Fatalf("XRANGE calls = %d, want 3", len(recorder.args))
 	}
 	for _, args := range recorder.args {
-		if len(args) < 6 || args[len(args)-2] != "count" || args[len(args)-1] != int64(restoreSessionPageSize) {
+		if len(args) < 6 || args[len(args)-2] != "count" || args[len(args)-1] != restoreSessionPageSize {
 			t.Fatalf("XRANGE args = %#v, want COUNT %d", args, restoreSessionPageSize)
 		}
 	}
@@ -1166,28 +1166,49 @@ func TestCollectMissedPacketsReadsEntriesAppendedAfterShortPage(t *testing.T) {
 }
 
 func TestCollectMissedPacketsReturnsErrorAtReadLimit(t *testing.T) {
-	server := miniredis.RunT(t)
-	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	hook := &xrangeNonEmptyHook{}
-	client.AddHook(hook)
-	ctx := context.Background()
+	for _, test := range []struct {
+		name      string
+		maxLen    int64
+		wantCalls int64
+	}{
+		{name: "default budget", wantCalls: restoreSessionMinXRangeCalls},
+		{
+			name:      "configured maxLen",
+			maxLen:    (restoreSessionMinXRangeCalls + 1) * restoreSessionPageSize,
+			wantCalls: restoreSessionMinXRangeCalls + 3,
+		},
+		{
+			name:      "partial configured maxLen page",
+			maxLen:    (restoreSessionMinXRangeCalls+1)*restoreSessionPageSize + 1,
+			wantCalls: restoreSessionMinXRangeCalls + 4,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := miniredis.RunT(t)
+			client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+			t.Cleanup(func() { _ = client.Close() })
+			hook := &xrangeNonEmptyHook{}
+			client.AddHook(hook)
+			ctx := context.Background()
 
-	streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
-	streamAdapter.ClusterAdapter.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
-	streamAdapter.redisClient = mustRedisClient(t, ctx, client)
-	streamAdapter.ctx = ctx
-	streamAdapter.streamName = "stream"
+			streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+			streamAdapter.ClusterAdapter.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
+			streamAdapter.redisClient = mustRedisClient(t, ctx, client)
+			streamAdapter.ctx = ctx
+			streamAdapter.streamName = "stream"
+			streamAdapter.opts.SetMaxLen(test.maxLen)
 
-	err := streamAdapter.collectMissedPackets(client, &socket.Session{}, "0-0")
-	if !errors.Is(err, errRestoreSessionReadLimit) {
-		t.Fatalf("error = %v, want %v", err, errRestoreSessionReadLimit)
-	}
-	hook.mu.Lock()
-	calls := hook.calls
-	hook.mu.Unlock()
-	if calls != restoreSessionMaxXRangeCalls {
-		t.Fatalf("XRANGE calls = %d, want %d", calls, restoreSessionMaxXRangeCalls)
+			err := streamAdapter.collectMissedPackets(client, &socket.Session{}, "0-0")
+			if !errors.Is(err, errRestoreSessionReadLimit) {
+				t.Fatalf("error = %v, want %v", err, errRestoreSessionReadLimit)
+			}
+			hook.mu.Lock()
+			calls := hook.calls
+			hook.mu.Unlock()
+			if calls != int(test.wantCalls) {
+				t.Fatalf("XRANGE calls = %d, want %d", calls, test.wantCalls)
+			}
+		})
 	}
 }
 

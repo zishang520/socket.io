@@ -73,7 +73,9 @@ func MakeMongoAdapter() MongoAdapter {
 	return a
 }
 
-// NewMongoAdapter creates and initializes a MongoDB adapter.
+// NewMongoAdapter creates and initializes a MongoDB namespace adapter. When
+// installing it on a server, use MongoAdapterBuilder so the shared Change Stream
+// and namespace routing are registered.
 func NewMongoAdapter(nsp socket.Namespace, mongoCollection *mongo.MongoClient, opts any) MongoAdapter {
 	a := MakeMongoAdapter()
 	a.SetMongo(mongoCollection)

@@ -115,6 +115,31 @@ func TestValkeyResponseNodeWireFields(t *testing.T) {
 	}
 }
 
+func TestValkeyResponseMsgpackPreservesAcknowledgementValues(t *testing.T) {
+	tests := map[string]any{
+		"false":        false,
+		"zero":         int64(0),
+		"empty string": "",
+		"empty slice":  []any{},
+		"empty map":    map[string]any{},
+	}
+	for name, packet := range tests {
+		t.Run(name, func(t *testing.T) {
+			data, err := utils.MsgPack().Encode(&ValkeyResponse{RequestId: "request", Packet: packet})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]any
+			if err := utils.MsgPack().Decode(data, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if got, exists := wire["packet"]; !exists || !reflect.DeepEqual(got, packet) {
+				t.Fatalf("packet = %#v, want %#v", got, packet)
+			}
+		})
+	}
+}
+
 func TestValkeyPacketWireEncoding(t *testing.T) {
 	binary := []byte{0, 9, 255}
 	packet := &parser.Packet{Type: parser.EVENT, Data: []any{"event", binary}}
