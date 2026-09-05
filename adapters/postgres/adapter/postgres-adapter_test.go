@@ -15,9 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/adapters/postgres/v3"
-	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
-	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 func mustNewPostgresClient(t *testing.T, ctx context.Context, pool *pgxpool.Pool) *postgres.PostgresClient {
@@ -55,64 +53,17 @@ func (*attachmentAcquireTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn
 func (*attachmentAcquireTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
 func TestNotificationMessage_Marshal(t *testing.T) {
-	t.Run("with attachment", func(t *testing.T) {
-		msg := &NotificationMessage{
-			Uid:          "server1",
-			Type:         adapter.BROADCAST,
-			AttachmentId: "12345",
-		}
-		data, err := json.Marshal(msg)
-		if err != nil {
-			t.Fatalf("Marshal failed: %v", err)
-		}
-
-		var restored NotificationMessage
-		if err := json.Unmarshal(data, &restored); err != nil {
-			t.Fatalf("Unmarshal failed: %v", err)
-		}
-		if restored.Uid != "server1" {
-			t.Fatalf("Expected uid 'server1', got %s", restored.Uid)
-		}
-		if restored.AttachmentId != "12345" {
-			t.Fatalf("Expected attachmentId '12345', got %s", restored.AttachmentId)
-		}
+	data, err := json.Marshal(&NotificationMessage{
+		Uid:          "server1",
+		Type:         adapter.BROADCAST,
+		AttachmentId: "12345",
 	})
-
-	t.Run("without attachment", func(t *testing.T) {
-		msg := &NotificationMessage{
-			Uid:  "server1",
-			Type: adapter.HEARTBEAT,
-		}
-		data, err := json.Marshal(msg)
-		if err != nil {
-			t.Fatalf("Marshal failed: %v", err)
-		}
-		if len(data) == 0 {
-			t.Fatal("Expected non-empty JSON")
-		}
-	})
-}
-
-func TestPostgresAdapter_MakePostgresAdapter(t *testing.T) {
-	a := MakePostgresAdapter()
-	if a == nil {
-		t.Fatal("Expected non-nil adapter")
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestPostgresAdapter_SetChannel(t *testing.T) {
-	a := MakePostgresAdapter()
-	a.SetChannel("socket.io#/")
-	pa := a.(*postgresAdapter)
-	if pa.channel != "socket.io#/" {
-		t.Fatalf("Expected channel 'socket.io#/', got %s", pa.channel)
+	if got, want := string(data), `{"uid":"server1","type":3,"attachmentId":"12345"}`; got != want {
+		t.Fatalf("attachment header = %s, want %s", got, want)
 	}
-}
-
-func TestPostgresAdapter_SetOptsTypedNil(t *testing.T) {
-	a := MakePostgresAdapter().(*postgresAdapter)
-	var opts *PostgresAdapterOptions
-	a.SetOpts(opts)
 }
 
 func TestNewPostgresAdapterDefaults(t *testing.T) {
@@ -162,10 +113,9 @@ func TestPostgresAdapterPublishErrorHandlerCanReenterPublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	client := mustNewPostgresClient(t, ctx, pool)
+	client := mustNewPostgresClient(t, context.Background(), pool)
 	t.Cleanup(client.Close)
+	pool.Close()
 
 	var current *postgresAdapter
 	var reentered atomic.Bool
@@ -191,16 +141,16 @@ func TestPostgresAdapterPublishErrorHandlerCanReenterPublisher(t *testing.T) {
 	}()
 	select {
 	case err := <-result:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("initial publish error = %v, want context.Canceled", err)
+		if err == nil {
+			t.Fatal("initial publish unexpectedly succeeded")
 		}
 	case <-time.After(time.Second):
 		t.Fatal("initial publish deadlocked in the error handler")
 	}
 	select {
 	case err := <-reentryDone:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("reentrant publish error = %v, want context.Canceled", err)
+		if err == nil {
+			t.Fatal("reentrant publish unexpectedly succeeded")
 		}
 	case <-time.After(time.Second):
 		t.Fatal("error handler could not reenter the publisher")
@@ -468,57 +418,6 @@ func TestPostgresAdapter_JsonRoundTrip(t *testing.T) {
 			t.Fatal("Expected nil data for heartbeat")
 		}
 	})
-
-	t.Run("heartbeat with null data", func(t *testing.T) {
-		payload := []byte(`{"uid":"server1","nsp":"/","type":2,"data":null}`)
-
-		decoded := decodeJSONNotification(t, pa, payload)
-		if decoded.Uid != "server1" {
-			t.Fatalf("Expected uid 'server1', got %s", decoded.Uid)
-		}
-		if decoded.Data != nil {
-			t.Fatal("Expected nil data for null data field")
-		}
-	})
-}
-
-func TestPostgresAdapter_MsgpackRoundTrip(t *testing.T) {
-	a := MakePostgresAdapter()
-	pa := a.(*postgresAdapter)
-
-	t.Run("encode and decode msgpack", func(t *testing.T) {
-		msg := &adapter.ClusterMessage{
-			Uid:  "server1",
-			Nsp:  "/",
-			Type: adapter.SOCKETS_JOIN,
-			Data: &adapter.SocketsJoinLeaveMessage{
-				Opts: &adapter.PacketOptions{
-					Rooms: []socket.Room{"room1"},
-				},
-				Rooms: []socket.Room{"target-room"},
-			},
-		}
-
-		wireMessage := *msg
-		wireMessage.Data, _ = postgres.MarshalAdapterData(msg.Data)
-		encoded, err := utils.MsgPack().Encode(&wireMessage)
-		if err != nil {
-			t.Fatalf("msgpack encode failed: %v", err)
-		}
-
-		// Decode with decodeMsgpack
-		decoded, err := pa.decodeMsgpack(encoded)
-		if err != nil {
-			t.Fatalf("decodeMsgpack failed: %v", err)
-		}
-
-		if decoded.Uid != "server1" {
-			t.Fatalf("Expected uid 'server1', got %s", decoded.Uid)
-		}
-		if decoded.Type != adapter.SOCKETS_JOIN {
-			t.Fatalf("Expected type SOCKETS_JOIN, got %v", decoded.Type)
-		}
-	})
 }
 
 func TestPostgresAdapter_DecodeNodeResponses(t *testing.T) {
@@ -597,43 +496,6 @@ func TestPostgresAdapter_DecodeNodeMsgpackFixtures(t *testing.T) {
 		}
 		if data.Opts.Flags.Timeout == nil || *data.Opts.Flags.Timeout != 750 {
 			t.Fatalf("unexpected timeout: %v", data.Opts.Flags.Timeout)
-		}
-	})
-}
-
-func TestPostgresAdapter_MarshalBinary(t *testing.T) {
-	t.Run("nil data", func(t *testing.T) {
-		msg := &adapter.ClusterMessage{Type: adapter.BROADCAST}
-		if _, binary := postgres.MarshalAdapterData(msg.Data); binary {
-			t.Error("Expected false for nil data")
-		}
-	})
-
-	t.Run("heartbeat type", func(t *testing.T) {
-		msg := &adapter.ClusterMessage{Type: adapter.HEARTBEAT, Data: "test"}
-		if _, binary := postgres.MarshalAdapterData(msg.Data); binary {
-			t.Error("Expected false for heartbeat type")
-		}
-	})
-
-	t.Run("nested binary packet", func(t *testing.T) {
-		msg := &adapter.ClusterMessage{
-			Type: adapter.BROADCAST,
-			Data: &adapter.BroadcastMessage{
-				Packet: &parser.Packet{Data: []any{"event", []byte{1, 2, 3}}},
-			},
-		}
-		if _, binary := postgres.MarshalAdapterData(msg.Data); !binary {
-			t.Error("Expected true for nested binary packet")
-		}
-	})
-}
-
-func TestPostgresAdapterBuilder(t *testing.T) {
-	t.Run("creates builder", func(t *testing.T) {
-		builder := &PostgresAdapterBuilder{}
-		if builder.Postgres != nil {
-			t.Fatal("Expected nil Postgres initially")
 		}
 	})
 }

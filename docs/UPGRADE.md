@@ -188,9 +188,36 @@ Direct field access must be replaced with accessors:
 `PostgresClient.Close` releases its listener connection; it does not cancel the
 caller-provided context or close the caller-owned pool.
 
-PostgreSQL adapter and emitter publishing, incoming attachment fetches, and
-initial LISTEN and UNLISTEN updates now use a fixed 5-second I/O deadline
-instead of waiting indefinitely.
+Finite PostgreSQL operations, including publishing, attachment access,
+listener connection attempts, LISTEN/UNLISTEN updates, and attachment cleanup,
+now use a fixed 5-second I/O deadline instead of waiting indefinitely. The
+steady-state notification wait remains open until a message, connection error,
+or lifecycle cancellation occurs.
+
+PostgreSQL notifications now use one receive queue per namespace. Attachment
+queries no longer block the shared listener or delivery to other namespaces.
+Messages within a namespace remain ordered, including attachment and direct
+notifications; slow attachment queries can still delay that namespace's heartbeats
+and responses. Node's concurrent attachment reads do not provide this ordering.
+
+Each `PostgresAdapterBuilder` must use its own `PostgresClient`, because the
+client owns that builder's listener and subscriptions. The underlying
+`*pgxpool.Pool` can still be shared by multiple clients and emitters. Close the
+Socket.IO server before closing its `PostgresClient`, then close the pool. The
+builder exclusively owns that client's listener, so application code must not
+call `Listen` or `Unlisten` on it directly.
+
+Opening a PostgreSQL listener now returns
+`postgres.ErrPostgresOnNotificationUnsupported` when the pool has a static
+`ConnConfig.OnNotification` callback. For listener clients, leave it nil and do not
+install it from `BeforeConnect`, because the adapter depends on pgx's default
+notification buffer. `NewPostgresClient` still accepts these pools for emitter-only
+use, which does not depend on notification buffering.
+
+`PostgresAdapter.SetChannel` was removed; configure `ChannelPrefix` and let the
+adapter derive the namespace channel. The PostgreSQL root package no longer
+re-exports `EMITTER_UID` or the shared cluster message constants; use the
+equivalent constants from `adapters/adapter` directly.
 
 A go-redis `*redis.ClusterClient` passed as the primary Redis client must not
 enable `ReadOnly`, `RouteByLatency`, or `RouteRandomly`; construction now

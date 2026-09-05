@@ -1,108 +1,55 @@
 package emitter
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestDefaultEmitterOptions(t *testing.T) {
 	opts := DefaultEmitterOptions()
-	opts.Assign(nil)
-
-	t.Run("ChannelPrefix", func(t *testing.T) {
-		if opts.GetRawChannelPrefix() != nil {
-			t.Fatal(`DefaultEmitterOptions.GetRawChannelPrefix() value must be nil`)
-		}
-		if opts.ChannelPrefix() != "" {
-			t.Fatal(`DefaultEmitterOptions.ChannelPrefix() value must be ""`)
-		}
-		opts.SetChannelPrefix("test")
-		if opts.ChannelPrefix() != "test" {
-			t.Fatal(`DefaultEmitterOptions.ChannelPrefix() value must be "test"`)
-		}
-	})
-
-	t.Run("TableName", func(t *testing.T) {
-		if opts.GetRawTableName() != nil {
-			t.Fatal(`DefaultEmitterOptions.GetRawTableName() value must be nil`)
-		}
-		if opts.TableName() != "" {
-			t.Fatal(`DefaultEmitterOptions.TableName() value must be ""`)
-		}
-		opts.SetTableName("my_table")
-		if opts.TableName() != "my_table" {
-			t.Fatal(`DefaultEmitterOptions.TableName() value must be "my_table"`)
-		}
-	})
-
-	t.Run("PayloadThreshold", func(t *testing.T) {
-		if opts.GetRawPayloadThreshold() != nil {
-			t.Fatal(`DefaultEmitterOptions.GetRawPayloadThreshold() value must be nil`)
-		}
-		if opts.PayloadThreshold() != 0 {
-			t.Fatal(`DefaultEmitterOptions.PayloadThreshold() value must be 0`)
-		}
-		opts.SetPayloadThreshold(4000)
-		if opts.PayloadThreshold() != 4000 {
-			t.Fatal(`DefaultEmitterOptions.PayloadThreshold() value must be 4000`)
-		}
-	})
+	if opts.GetRawChannelPrefix() != nil ||
+		opts.GetRawTableName() != nil ||
+		opts.GetRawPayloadThreshold() != nil {
+		t.Fatal("default options must remain unset until emitter construction")
+	}
 }
 
-func TestEmitterOptions_Assign(t *testing.T) {
-	t.Run("assign nil", func(t *testing.T) {
-		opts := DefaultEmitterOptions()
-		result := opts.Assign(nil)
-		if result != opts {
-			t.Fatal("Expected same instance when assigning nil")
-		}
-	})
+func TestEmitterOptionsAssign(t *testing.T) {
+	source := DefaultEmitterOptions()
+	source.SetChannelPrefix("custom-prefix")
+	source.SetTableName("custom_table")
+	source.SetPayloadThreshold(4_000)
 
-	t.Run("assign typed nil", func(t *testing.T) {
-		opts := DefaultEmitterOptions()
-		opts.SetChannelPrefix("existing")
-		var source *EmitterOptions
-		result := opts.Assign(source)
-		if result != opts {
-			t.Fatal("Expected same instance when assigning typed nil")
-		}
-		if opts.ChannelPrefix() != "existing" {
-			t.Fatal("typed-nil Assign() changed the target options")
-		}
-	})
+	target := DefaultEmitterOptions()
+	target.Assign(source)
+	if target.ChannelPrefix() != "custom-prefix" ||
+		target.TableName() != "custom_table" ||
+		target.PayloadThreshold() != 4_000 {
+		t.Fatalf("assigned options do not match source: %#v", target)
+	}
+}
 
-	t.Run("assign all fields", func(t *testing.T) {
-		source := DefaultEmitterOptions()
-		source.SetChannelPrefix("custom-key")
-		source.SetTableName("custom_table")
-		source.SetPayloadThreshold(4000)
+func TestEmitterOptionsAssignPreservesUnsetFields(t *testing.T) {
+	source := DefaultEmitterOptions()
+	source.SetChannelPrefix("new-prefix")
 
-		target := DefaultEmitterOptions()
-		target.Assign(source)
+	target := DefaultEmitterOptions()
+	target.SetTableName("existing_table")
+	target.SetPayloadThreshold(4_000)
+	target.Assign(source)
+	if target.ChannelPrefix() != "new-prefix" ||
+		target.TableName() != "existing_table" ||
+		target.PayloadThreshold() != 4_000 {
+		t.Fatalf("partial assignment replaced an unset field: %#v", target)
+	}
+}
 
-		if target.ChannelPrefix() != "custom-key" {
-			t.Fatalf("Expected 'custom-key', got %s", target.ChannelPrefix())
-		}
-		if target.TableName() != "custom_table" {
-			t.Fatalf("Expected 'custom_table', got %s", target.TableName())
-		}
-		if target.PayloadThreshold() != 4000 {
-			t.Fatalf("Expected 4000, got %d", target.PayloadThreshold())
-		}
-	})
+func TestEmitterOptionsAssignTypedNil(t *testing.T) {
+	target := DefaultEmitterOptions()
+	target.SetChannelPrefix("existing")
+	var source *EmitterOptions
 
-	t.Run("partial assign preserves existing", func(t *testing.T) {
-		source := DefaultEmitterOptions()
-		source.SetChannelPrefix("new-key")
-
-		target := DefaultEmitterOptions()
-		target.SetTableName("existing_table")
-		target.Assign(source)
-
-		if target.ChannelPrefix() != "new-key" {
-			t.Fatalf("Expected 'new-key', got %s", target.ChannelPrefix())
-		}
-		if target.TableName() != "existing_table" {
-			t.Fatalf("Expected 'existing_table' to be preserved, got %s", target.TableName())
-		}
-	})
+	if result := target.Assign(source); result != target {
+		t.Fatal("Assign must return its receiver")
+	}
+	if target.ChannelPrefix() != "existing" {
+		t.Fatal("typed-nil assignment changed the target")
+	}
 }

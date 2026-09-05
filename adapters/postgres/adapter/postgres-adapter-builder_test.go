@@ -2,13 +2,142 @@ package adapter
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
+
+func TestPostgresAdapterBuilderNotificationQueues(t *testing.T) {
+	config, err := pgxpool.ParseConfig("postgres://root@127.0.0.1/socket_io_test?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialStarted := make(chan struct{}, 1)
+	dialCtx, releaseDial := context.WithCancel(t.Context())
+	defer releaseDial()
+	config.ConnConfig.DialFunc = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		select {
+		case dialStarted <- struct{}{}:
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-dialCtx.Done():
+			return nil, net.ErrClosed
+		}
+	}
+	pool, err := pgxpool.NewWithConfig(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientCtx, cancelClient := context.WithCancel(t.Context())
+	client := mustNewPostgresClient(t, clientCtx, pool)
+	received := make(chan string, 3)
+	opts := DefaultPostgresAdapterOptions()
+	opts.SetErrorHandler(func(error) { received <- "attachment" })
+	server := socket.NewServer(nil, nil)
+	slow := NewPostgresAdapter(socket.NewNamespace(server, "/slow"), client, opts).(*postgresAdapter)
+	fast := NewPostgresAdapter(socket.NewNamespace(server, "/fast"), client, nil).(*postgresAdapter)
+	t.Cleanup(func() {
+		cancelClient()
+		releaseDial()
+		slow.Close()
+		fast.Close()
+		client.Close()
+		pool.Close()
+		slow.messages.Close()
+		fast.messages.Close()
+	})
+	for _, instance := range []*postgresAdapter{slow, fast} {
+		if err := instance.Nsp().On("probe", func(...any) { received <- instance.Nsp().Name() }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	builder := &PostgresAdapterBuilder{Postgres: client}
+	builder.namespaces.Store(slow.channel, slow)
+	builder.namespaces.Store(fast.channel, fast)
+	builder.onNotification(t.Context(), &pgconn.Notification{
+		Channel: slow.channel,
+		Payload: `{"uid":"node","type":3,"attachmentId":"1"}`,
+	})
+	select {
+	case <-dialStarted:
+	case <-time.After(time.Second):
+		t.Fatal("attachment query did not start")
+	}
+	for _, instance := range []*postgresAdapter{slow, fast} {
+		builder.onNotification(t.Context(), &pgconn.Notification{
+			Channel: instance.channel,
+			Payload: `{"uid":"emitter","type":9,"data":{"packet":["probe"]}}`,
+		})
+	}
+	select {
+	case got := <-received:
+		if got != "/fast" {
+			t.Fatalf("received %q while the attachment query was blocked", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("slow attachment blocked another namespace")
+	}
+	releaseDial()
+	for _, want := range []string{"attachment", "/slow"} {
+		select {
+		case got := <-received:
+			if got != want {
+				t.Fatalf("received %q, want %q: namespace delivery was reordered", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("did not receive %q after releasing the attachment query", want)
+		}
+	}
+}
+
+func TestPostgresAdapterBuilderNotificationCanCloseAdapter(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	pool, err := pgxpool.New(ctx, "postgres://localhost/socket_io_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	client := mustNewPostgresClient(t, ctx, pool)
+	t.Cleanup(client.Close)
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	a := NewPostgresAdapter(nsp, client, nil).(*postgresAdapter)
+	t.Cleanup(a.Close)
+	closed := make(chan struct{})
+	calls := 0
+	if err := nsp.On("stop", func(...any) {
+		calls++
+		a.Close()
+		close(closed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	builder := &PostgresAdapterBuilder{Postgres: client}
+	builder.namespaces.Store(a.channel, a)
+	notification := &pgconn.Notification{
+		Channel: a.channel,
+		Payload: `{"uid":"emitter","type":9,"data":{"packet":["stop"]}}`,
+	}
+	builder.onNotification(t.Context(), notification)
+	builder.onNotification(t.Context(), notification)
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("notification callback deadlocked while closing its adapter")
+	}
+	a.messages.Close()
+	if calls != 1 {
+		t.Fatalf("received %d callbacks, want one before closing", calls)
+	}
+}
 
 func TestPostgresAdapterBuilderListenErrorUsesErrorHandler(t *testing.T) {
 	pool, err := pgxpool.New(t.Context(), "postgres://localhost/socket_io_test")
@@ -142,36 +271,6 @@ func TestPostgresAdapterBuilderStopsCleanupWithListener(t *testing.T) {
 	}
 }
 
-func TestPostgresAdapterBuilderSerializesListenerGenerations(t *testing.T) {
-	pool, err := pgxpool.New(t.Context(), "postgres://localhost/socket_io_test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	client := mustNewPostgresClient(t, context.Background(), pool)
-	client.Close()
-	previousDone := make(chan struct{})
-	builder := &PostgresAdapterBuilder{
-		Postgres:     client,
-		listenerDone: previousDone,
-	}
-
-	builder.New(socket.NewNamespace(socket.NewServer(nil, nil), "/test"))
-	currentDone := builder.listenerDone
-	select {
-	case <-currentDone:
-		t.Fatal("new listener started before the previous generation stopped")
-	default:
-	}
-
-	close(previousDone)
-	select {
-	case <-currentDone:
-	case <-time.After(time.Second):
-		t.Fatal("new listener did not start after the previous generation stopped")
-	}
-}
-
 func TestPostgresAdapterBuilderClientContextCancellationClosesAdapter(t *testing.T) {
 	pool, err := pgxpool.New(t.Context(), "postgres://localhost/socket_io_test")
 	if err != nil {
@@ -188,15 +287,8 @@ func TestPostgresAdapterBuilderClientContextCancellationClosesAdapter(t *testing
 	adapterInstance := builder.New(
 		socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
 	).(*postgresAdapter)
-	listenerDone := builder.listenerDone
 
 	cancel()
-	select {
-	case <-listenerDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("listener did not stop after PostgreSQL client context cancellation")
-	}
-
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		builder.mu.Lock()

@@ -55,6 +55,7 @@ func main() {
     defer pgClient.Close()
 
     io := socket.NewServer(nil, nil)
+    defer io.Close(nil)
     io.SetAdapter(&pgadapter.PostgresAdapterBuilder{
         Postgres: pgClient,
     })
@@ -112,25 +113,32 @@ func main() {
 ### Adapter Options
 
 ```golang
-type PostgresAdapterOptions struct {
-    ChannelPrefix     string        // PostgreSQL channel prefix (default: "socket.io")
-    TableName         string        // Attachment storage table name (default: "socket_io_attachments")
-    PayloadThreshold  int           // Byte threshold for attachment storage (default: 8000)
-    CleanupInterval   int64         // Cleanup interval in milliseconds (default: 30000)
-    HeartbeatInterval time.Duration // Interval between heartbeats (default: 5000ms)
-    HeartbeatTimeout  int64         // Heartbeat response timeout (default: 10000)
-    ErrorHandler      func(error)   // Custom error handler callback
+opts := pgadapter.DefaultPostgresAdapterOptions()
+opts.SetChannelPrefix("socket.io")
+opts.SetTableName("socket_io_attachments")
+opts.SetPayloadThreshold(8_000)
+opts.SetCleanupInterval(30_000)
+opts.SetHeartbeatInterval(5 * time.Second)
+opts.SetHeartbeatTimeout(10_000)
+opts.SetErrorHandler(func(err error) {
+    log.Printf("PostgreSQL adapter: %v", err)
+})
+
+builder := &pgadapter.PostgresAdapterBuilder{
+    Postgres: pgClient,
+    Opts:     opts,
 }
 ```
 
 ### Emitter Options
 
 ```golang
-type EmitterOptions struct {
-    ChannelPrefix    string // PostgreSQL channel prefix (default: "socket.io")
-    TableName        string // Attachment storage table name (default: "socket_io_attachments")
-    PayloadThreshold int    // Byte threshold for attachment storage (default: 8000)
-}
+opts := pgemitter.DefaultEmitterOptions()
+opts.SetChannelPrefix("socket.io")
+opts.SetTableName("socket_io_attachments")
+opts.SetPayloadThreshold(8_000)
+
+emitter := pgemitter.NewEmitter(pgClient, opts)
 ```
 
 `TableName` accepts unquoted, schema-qualified names such as `public.socket_io_attachments`.
@@ -144,7 +152,32 @@ The PostgreSQL adapter uses two mechanisms for inter-node communication:
 
 Messages are serialized as JSON for direct NOTIFY, or MessagePack for attachment storage. This ensures compatibility with the Node.js `socket.io-postgres-adapter`, allowing mixed Go/Node.js deployments in the same cluster.
 
-Go adapter and emitter publish operations, incoming attachment fetches, and initial LISTEN and UNLISTEN updates use a 5-second PostgreSQL I/O deadline so an unavailable connection cannot block them indefinitely.
+Finite PostgreSQL operations, including publish, attachment access, listener
+connection attempts, LISTEN/UNLISTEN updates, and cleanup, use a 5-second I/O
+deadline. The steady-state notification wait remains blocking until a message,
+connection error, or lifecycle cancellation occurs.
+
+Notifications are processed in arrival order within each namespace, using a
+separate receive queue per namespace. An attachment query does not block the
+shared listener or another namespace's delivery. Messages in the same namespace
+still wait for earlier attachment queries, so slow queries can delay its heartbeats
+and responses. This preserves ordering unlike Node's concurrent attachment reads.
+
+Each `PostgresAdapterBuilder` must own a distinct `PostgresClient`, since the
+client owns that builder's LISTEN connection and subscriptions. Multiple clients
+and emitters may share the same underlying `*pgxpool.Pool`. The builder is the
+exclusive owner of its client's listener; do not call `Listen` or `Unlisten`
+directly on that client.
+
+For clients used as listeners, leave `ConnConfig.OnNotification` nil and do not
+install that callback from `BeforeConnect`: the adapter relies on pgx's default
+notification buffer. Opening a listener rejects a statically configured callback
+with `postgres.ErrPostgresOnNotificationUnsupported`. Clients used only by an
+emitter may use a pool with a custom notification callback.
+
+During shutdown, close the Socket.IO server (and therefore its namespace
+adapters) first, then close the `PostgresClient`, and finally close the shared
+pool. The adapter example above uses this order through `defer` calls.
 
 ### Database Schema
 

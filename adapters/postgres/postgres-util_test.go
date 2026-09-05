@@ -215,6 +215,11 @@ func TestAdapterDataRequiredWireFields(t *testing.T) {
 			t.Fatalf("missing %s in %s", field, encoded)
 		}
 	}
+
+	trueWire, _ := MarshalAdapterData(&adapter.DisconnectSocketsMessage{Close: true})
+	if close := trueWire.(*EventData).Close; close == nil || !*close {
+		t.Fatalf("close = %v, want true", close)
+	}
 }
 
 func TestAdapterDataScalarResponses(t *testing.T) {

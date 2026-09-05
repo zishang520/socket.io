@@ -279,6 +279,37 @@ func TestPostgresClientWaitTimeoutKeepsListener(t *testing.T) {
 	}
 }
 
+func TestPostgresClientCanceledWaitKeepsBufferedNotification(t *testing.T) {
+	client, _ := integrationClient(t)
+	channel := fmt.Sprintf("socket_io_go_buffered_%d", time.Now().UnixNano())
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if err := client.Listen(ctx, channel); err != nil {
+		t.Fatal(err)
+	}
+
+	// A query after a self-notification makes pgx buffer it before the wait.
+	conn := client.listenerConn
+	if _, err := conn.Exec(ctx, "SELECT pg_notify($1, $2)", channel, "buffered"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, "SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+	oldCtx, cancelOld := context.WithCancel(ctx)
+	cancelOld()
+	if notification, err := client.WaitForNotification(oldCtx); notification != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled wait = (%#v, %v), want (nil, context.Canceled)", notification, err)
+	}
+	notification, err := client.WaitForNotification(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notification == nil || notification.Channel != channel || notification.Payload != "buffered" {
+		t.Fatalf("buffered notification was lost: %#v", notification)
+	}
+}
+
 func waitForListenerWait(t *testing.T, client *PostgresClient) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

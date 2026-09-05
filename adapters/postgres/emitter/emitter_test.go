@@ -45,68 +45,36 @@ func TestEmitter_ExplicitEmptyNamespace(t *testing.T) {
 }
 
 func TestEmitter_Of(t *testing.T) {
-	// Test Of with nil client - just testing namespace handling
-	e := MakeEmitter()
-	e.opts.SetChannelPrefix(DefaultChannelPrefix)
-	e.opts.SetTableName(DefaultTableName)
-	e.opts.SetPayloadThreshold(DefaultPayloadThreshold)
-	e.broadcastOptions = &BroadcastOptions{
-		Nsp:              "/",
-		BroadcastChannel: DefaultChannelPrefix + "#/",
-		TableName:        DefaultTableName,
-		PayloadThreshold: DefaultPayloadThreshold,
-	}
+	opts := DefaultEmitterOptions()
+	opts.SetChannelPrefix("custom")
+	opts.SetTableName("custom_attachments")
+	opts.SetPayloadThreshold(4_000)
+	e := NewEmitter(nil, opts)
 
 	t.Run("with leading slash", func(t *testing.T) {
 		ne := e.Of("/admin")
 		if ne.broadcastOptions.Nsp != "/admin" {
-			t.Fatalf("Expected '/admin', got %s", ne.broadcastOptions.Nsp)
+			t.Fatalf("namespace = %q, want /admin", ne.broadcastOptions.Nsp)
+		}
+		if ne.broadcastOptions.BroadcastChannel != "custom#/admin" {
+			t.Fatalf("channel = %q, want custom#/admin", ne.broadcastOptions.BroadcastChannel)
+		}
+		if ne.broadcastOptions.TableName != "custom_attachments" || ne.broadcastOptions.PayloadThreshold != 4_000 {
+			t.Fatal("Of() did not preserve emitter options")
 		}
 	})
 
 	t.Run("without leading slash", func(t *testing.T) {
 		ne := e.Of("admin")
 		if ne.broadcastOptions.Nsp != "/admin" {
-			t.Fatalf("Expected '/admin', got %s", ne.broadcastOptions.Nsp)
+			t.Fatalf("namespace = %q, want /admin", ne.broadcastOptions.Nsp)
 		}
 	})
 }
 
 func TestEmitter_ServerSideEmit_WithAck(t *testing.T) {
-	e := MakeEmitter()
-	e.opts.SetChannelPrefix(DefaultChannelPrefix)
-	e.opts.SetTableName(DefaultTableName)
-	e.opts.SetPayloadThreshold(DefaultPayloadThreshold)
-	e.broadcastOptions = &BroadcastOptions{
-		Nsp:              "/",
-		BroadcastChannel: DefaultChannelPrefix + "#/",
-		TableName:        DefaultTableName,
-		PayloadThreshold: DefaultPayloadThreshold,
-	}
-
-	// ServerSideEmit with ack callback should return error
-	err := e.ServerSideEmit("test", "data", func([]any, error) {})
+	err := NewEmitter(nil, nil).ServerSideEmit("test", "data", func([]any, error) {})
 	if err == nil || err.Error() != "Acknowledgements are not supported" {
 		t.Fatalf("expected Node.js acknowledgement error, got %v", err)
 	}
-}
-
-func TestEmitter_ChainedMethods(t *testing.T) {
-	e := MakeEmitter()
-	e.opts.SetChannelPrefix(DefaultChannelPrefix)
-	e.opts.SetTableName(DefaultTableName)
-	e.opts.SetPayloadThreshold(DefaultPayloadThreshold)
-	e.broadcastOptions = &BroadcastOptions{
-		Nsp:              "/",
-		BroadcastChannel: DefaultChannelPrefix + "#/",
-		TableName:        DefaultTableName,
-		PayloadThreshold: DefaultPayloadThreshold,
-	}
-
-	// Just verify these don't panic
-	e.To("room1")
-	e.In("room1")
-	e.Except("room1")
-	e.Volatile()
-	e.Compress(false)
 }

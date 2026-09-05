@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -58,6 +59,27 @@ func TestNewPostgresClient(t *testing.T) {
 		}
 		if !errors.Is(err, ErrPostgresPoolRequired) {
 			t.Fatalf("error = %v, want %v", err, ErrPostgresPoolRequired)
+		}
+	})
+
+	t.Run("defers custom notification callback rejection to listener use", func(t *testing.T) {
+		config, err := pgxpool.ParseConfig("postgres://localhost/socket_io_test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		config.ConnConfig.OnNotification = func(*pgconn.PgConn, *pgconn.Notification) {}
+		pool, err := pgxpool.NewWithConfig(t.Context(), config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(pool.Close)
+		client, err := NewPostgresClient(t.Context(), pool)
+		if err != nil {
+			t.Fatalf("NewPostgresClient() failed for pool-only use: %v", err)
+		}
+		t.Cleanup(client.Close)
+		if err := client.Listen(t.Context(), "socket.io#/"); !errors.Is(err, ErrPostgresOnNotificationUnsupported) {
+			t.Fatalf("Listen() error = %v, want %v", err, ErrPostgresOnNotificationUnsupported)
 		}
 	})
 }
@@ -139,6 +161,24 @@ func TestPostgresClientCloseCancelsListenerAcquire(t *testing.T) {
 		close(releaseDial)
 		t.Fatal("listener connection was not attempted")
 	}
+
+	t.Run("queued wait honors context", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+		result := make(chan error, 1)
+		go func() {
+			_, err := client.WaitForNotification(ctx)
+			result <- err
+		}()
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("queued WaitForNotification() returned %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("queued WaitForNotification() ignored its context")
+		}
+	})
 
 	closeDone := make(chan struct{})
 	go func() {

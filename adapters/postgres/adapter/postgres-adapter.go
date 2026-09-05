@@ -15,6 +15,7 @@ import (
 	"github.com/zishang520/socket.io/adapters/postgres/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
@@ -31,6 +32,7 @@ type postgresAdapter struct {
 	postgresClient *postgres.PostgresClient
 	opts           *PostgresAdapterOptions
 	channel        string
+	messages       *queue.Queue
 	cleanupFunc    atomic.Pointer[types.Callable]
 	isClosed       atomic.Bool
 }
@@ -41,6 +43,7 @@ func MakePostgresAdapter() PostgresAdapter {
 	a := &postgresAdapter{
 		ClusterAdapterWithHeartbeat: adapter.MakeClusterAdapterWithHeartbeat(),
 		opts:                        DefaultPostgresAdapterOptions(),
+		messages:                    queue.New(),
 	}
 
 	a.Prototype(a)
@@ -76,11 +79,6 @@ func (a *postgresAdapter) SetOpts(opts any) {
 	}
 }
 
-// SetChannel sets the PostgreSQL notification channel for this adapter.
-func (a *postgresAdapter) SetChannel(channel string) {
-	a.channel = channel
-}
-
 // Construct initializes the PostgreSQL adapter for the given namespace.
 // This method must be called before using the adapter.
 func (a *postgresAdapter) Construct(nsp socket.Namespace) {
@@ -103,9 +101,7 @@ func (a *postgresAdapter) Construct(nsp socket.Namespace) {
 			postgresLog.Debug("%s", err.Error())
 		})
 	}
-	if a.channel == "" {
-		a.channel = a.opts.ChannelPrefix() + "#" + nsp.Name()
-	}
+	a.channel = a.opts.ChannelPrefix() + "#" + nsp.Name()
 }
 
 // DoPublish publishes a cluster message to other nodes via PostgreSQL pg_notify.
@@ -117,7 +113,7 @@ func (a *postgresAdapter) DoPublish(message *ClusterMessage) (offset adapter.Off
 	ctx, cancel := context.WithTimeout(a.postgresClient.Context(), postgres.DefaultOperationTimeout)
 	defer cancel()
 	defer func() {
-		if err != nil {
+		if err != nil && a.postgresClient.Context().Err() == nil {
 			go a.onError(err)
 		}
 	}()
@@ -277,7 +273,7 @@ func (a *postgresAdapter) decodeNotification(notification *NotificationMessage) 
 		Type: notification.Type,
 	}
 
-	if len(notification.Data) == 0 || isJSONNull(notification.Data) {
+	if len(notification.Data) == 0 {
 		return message, nil
 	}
 
@@ -291,10 +287,6 @@ func (a *postgresAdapter) decodeNotification(notification *NotificationMessage) 
 	message.Data = postgres.UnmarshalAdapterData(message.Type, target)
 
 	return message, nil
-}
-
-func isJSONNull(data json.RawMessage) bool {
-	return len(data) == 4 && data[0] == 'n' && data[1] == 'u' && data[2] == 'l' && data[3] == 'l'
 }
 
 // decodeMsgpack converts a msgpack-encoded attachment payload into a typed ClusterResponse.
@@ -352,6 +344,7 @@ func (a *postgresAdapter) Close() {
 	if !a.isClosed.CompareAndSwap(false, true) {
 		return
 	}
+	a.messages.TryClose()
 	a.ClusterAdapterWithHeartbeat.Close()
 
 	if callback := a.cleanupFunc.Swap(nil); callback != nil {

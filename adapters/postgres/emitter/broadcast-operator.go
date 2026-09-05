@@ -151,9 +151,8 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 	return b.publish(message)
 }
 
-// publish sends a ClusterMessage via PostgreSQL NOTIFY, handling binary detection
-// and attachment storage for large payloads. This matches the Node.js emitter's
-// publish() method behavior exactly.
+// publish sends a ClusterMessage via PostgreSQL NOTIFY, using the attachment
+// table for binary or large payloads in the Node.js-compatible wire format.
 func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 	ctx, cancel := context.WithTimeout(b.postgresClient.Context(), postgres.DefaultOperationTimeout)
 	defer cancel()
@@ -187,7 +186,7 @@ func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 
 // publishWithAttachment msgpack-encodes the full ClusterMessage, stores it in the
 // attachment table, and sends a lightweight NOTIFY header with the attachment ID.
-// This matches the Node.js emitter's publishWithAttachment() behavior.
+// The stored payload and notification header match the Node.js attachment protocol.
 func (b *BroadcastOperator) publishWithAttachment(ctx context.Context, message *adapter.ClusterMessage) error {
 	payload, err := utils.MsgPack().Encode(message)
 	if err != nil {
