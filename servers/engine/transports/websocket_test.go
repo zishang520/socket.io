@@ -2,6 +2,7 @@ package transports
 
 import (
 	"bufio"
+	"context"
 	"net"
 	"net/http"
 	"sync/atomic"
@@ -73,10 +74,16 @@ func TestWebsocketTransportClosesConnectionOnPeerClose(t *testing.T) {
 	}()
 
 	// Server side: read the client's upgrade request from the pipe and upgrade.
+	// The client sends nothing beyond the request until the handshake completes,
+	// so no bytes are stranded in the ReadRequest buffer when gorilla creates
+	// its own reader after the upgrade.
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	defer cancelReq()
 	req, err := http.ReadRequest(bufio.NewReader(server))
 	if err != nil {
 		t.Fatalf("read upgrade request: %v", err)
 	}
+	req = req.WithContext(reqCtx)
 	upgrader := ws.Upgrader{}
 	serverWS, err := upgrader.Upgrade(&hijackResponseWriter{conn: server}, req, nil)
 	if err != nil {
