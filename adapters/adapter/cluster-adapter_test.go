@@ -449,14 +449,13 @@ func TestClusterAckPacketWireShape(t *testing.T) {
 		},
 	}
 	packets := []struct {
-		name    string
-		value   any
-		json    string
-		present bool
+		name  string
+		value any
+		json  string
 	}{
-		{name: "scalar", value: "response", json: `,"packet":"response"`, present: true},
-		{name: "array", value: []any{"response"}, json: `,"packet":["response"]`, present: true},
-		{name: "undefined", present: true},
+		{name: "scalar", value: "response", json: `,"packet":"response"`},
+		{name: "array", value: []any{"response"}, json: `,"packet":["response"]`},
+		{name: "null", json: `,"packet":null`},
 	}
 
 	for _, responseType := range responseTypes {
@@ -485,8 +484,8 @@ func TestClusterAckPacketWireShape(t *testing.T) {
 				if unmarshalErr := msgpack.Unmarshal(msgpackData, &msgpackWire); unmarshalErr != nil {
 					t.Fatal(unmarshalErr)
 				}
-				if wirePacket, present := msgpackWire["packet"]; present != packet.present || !reflect.DeepEqual(wirePacket, packet.value) {
-					t.Fatalf("MessagePack packet = %#v, %t; want %#v, %t", wirePacket, present, packet.value, packet.present)
+				if wirePacket, present := msgpackWire["packet"]; !present || !reflect.DeepEqual(wirePacket, packet.value) {
+					t.Fatalf("MessagePack packet = %#v, present = %t; want %#v", wirePacket, present, packet.value)
 				}
 				msgpackDecoded := responseType.decoded()
 				if unmarshalErr := msgpack.Unmarshal(msgpackData, msgpackDecoded); unmarshalErr != nil {
@@ -513,9 +512,9 @@ func TestClusterMessageRequiredWireFields(t *testing.T) {
 		{"fetch sockets", FetchSocketsMessage{}, []string{"opts", "requestId"}},
 		{"fetch sockets response", FetchSocketsResponse{}, []string{"requestId", "sockets"}},
 		{"server-side emit", ServerSideEmitMessage{}, []string{"packet"}},
-		{"server-side emit response", ServerSideEmitResponse{}, []string{"requestId"}},
+		{"server-side emit response", ServerSideEmitResponse{}, []string{"requestId", "packet"}},
 		{"broadcast client count", BroadcastClientCount{}, []string{"requestId", "clientCount"}},
-		{"broadcast acknowledgement", BroadcastAck{}, []string{"requestId"}},
+		{"broadcast acknowledgement", BroadcastAck{}, []string{"requestId", "packet"}},
 	}
 
 	for _, tt := range tests {
@@ -1184,6 +1183,7 @@ func TestClusterBroadcastAckUsesFirstArgument(t *testing.T) {
 	}{
 		{name: "scalar", args: []any{"first", "ignored"}, want: "first"},
 		{name: "array", args: []any{[]any{"first", "second"}}, want: []any{"first", "second"}},
+		{name: "explicit null", args: []any{nil}},
 		{name: "empty"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1233,6 +1233,15 @@ func TestClusterBroadcastAckUsesFirstArgument(t *testing.T) {
 			if !reflect.DeepEqual(packet, test.want) {
 				t.Fatalf("packet = %#v, want %#v", packet, test.want)
 			}
+			if packet == nil {
+				payload, err := EncodeClusterMessage(response)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Contains(payload, []byte(`"packet":null`)) {
+					t.Fatalf("null acknowledgement was omitted: %s", payload)
+				}
+			}
 		})
 	}
 }
@@ -1245,6 +1254,7 @@ func TestClusterServerSideAckUsesFirstArgument(t *testing.T) {
 	}{
 		{name: "scalar", args: []any{"first", "ignored"}, want: "first"},
 		{name: "array", args: []any{[]any{"first", "second"}}, want: []any{"first", "second"}},
+		{name: "explicit null", args: []any{nil}},
 		{name: "empty"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1290,6 +1300,15 @@ func TestClusterServerSideAckUsesFirstArgument(t *testing.T) {
 			packet := response.Data.(*ServerSideEmitResponse).Packet
 			if !reflect.DeepEqual(packet, test.want) {
 				t.Fatalf("packet = %#v, want %#v", packet, test.want)
+			}
+			if packet == nil {
+				payload, err := EncodeClusterMessage(response)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Contains(payload, []byte(`"packet":null`)) {
+					t.Fatalf("null acknowledgement was omitted: %s", payload)
+				}
 			}
 		})
 	}

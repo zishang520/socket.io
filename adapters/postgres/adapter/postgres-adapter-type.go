@@ -14,6 +14,7 @@ import (
 	"github.com/zishang520/socket.io/adapters/postgres/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 type (
@@ -214,7 +215,7 @@ func (pb *PostgresAdapterBuilder) isActiveListener(
 
 // cleanupLoop periodically cleans up old attachments from the storage table.
 func (pb *PostgresAdapterBuilder) cleanupLoop(ctx context.Context, intervalMs int64, tableName string, errorHandler func(error)) {
-	ticker := time.NewTicker(time.Duration(intervalMs) * time.Millisecond)
+	ticker := time.NewTicker(utils.NormalizeTimerMilliseconds(float64(intervalMs)))
 	defer ticker.Stop()
 
 	for {

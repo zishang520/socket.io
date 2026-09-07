@@ -94,9 +94,10 @@ type (
 	}
 
 	// ServerSideEmitResponse represents a response for server-side emit.
+	// A nil Packet is encoded as null.
 	ServerSideEmitResponse struct {
 		RequestId string `json:"requestId" msgpack:"requestId"`
-		Packet    any    `json:"packet,omitzero" msgpack:"packet"`
+		Packet    any    `json:"packet" msgpack:"packet"`
 	}
 
 	// BroadcastClientCount represents a broadcast client count.
@@ -106,9 +107,10 @@ type (
 	}
 
 	// BroadcastAck represents a broadcast acknowledgment.
+	// A nil Packet is encoded as null.
 	BroadcastAck struct {
 		RequestId string `json:"requestId" msgpack:"requestId"`
-		Packet    any    `json:"packet,omitzero" msgpack:"packet"`
+		Packet    any    `json:"packet" msgpack:"packet"`
 	}
 
 	// ClusterAckRequest represents a cluster acknowledgment request.

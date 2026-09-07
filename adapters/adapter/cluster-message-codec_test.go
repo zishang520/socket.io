@@ -388,7 +388,7 @@ func TestClusterMessageJSONRequiredValues(t *testing.T) {
 	if err = json.Unmarshal(payload, &ack); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := ack.Data["packet"]; exists {
-		t.Fatal("undefined packet must be omitted")
+	if packet := string(ack.Data["packet"]); packet != "null" {
+		t.Fatalf("packet = %s, want explicit null", packet)
 	}
 }

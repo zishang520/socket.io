@@ -63,7 +63,12 @@ func (b *BroadcastOperator) Construct(
 	b.postgresClient = client
 
 	if broadcastOptions == nil {
-		broadcastOptions = &BroadcastOptions{}
+		broadcastOptions = &BroadcastOptions{
+			Nsp:              defaultNamespace,
+			BroadcastChannel: DefaultChannelPrefix + "#" + defaultNamespace,
+			TableName:        DefaultTableName,
+			PayloadThreshold: DefaultPayloadThreshold,
+		}
 	}
 	b.broadcastOptions = broadcastOptions
 

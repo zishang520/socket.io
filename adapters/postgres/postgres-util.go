@@ -2,15 +2,12 @@ package postgres
 
 import (
 	"encoding/json"
-	"io"
 	"maps"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
-	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
@@ -156,53 +153,6 @@ func UnmarshalAdapterData(messageType adapter.MessageType, data any) any {
 
 func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 	switch value := data.(type) {
-	case nil:
-		return nil, false, false
-	case *strings.Reader:
-		if value == nil {
-			return nil, true, false
-		}
-		var payload strings.Builder
-		payload.Grow(value.Len())
-		_, _ = value.WriteTo(&payload)
-		return payload.String(), true, false
-	case *types.StringBuffer:
-		if value == nil || value.Buffer == nil {
-			return nil, true, false
-		}
-		return value.String(), true, false
-	case []byte:
-		payload := utils.NonNilSlice(value)
-		if jsonFormat {
-			return nodeBufferJSON(payload), true, true
-		}
-		return payload, value == nil, true
-	case *types.BytesBuffer:
-		if value == nil {
-			return nil, true, false
-		}
-		var payload []byte
-		if value.Buffer != nil {
-			payload = value.Bytes()
-		}
-		payload = utils.NonNilSlice(payload)
-		if jsonFormat {
-			return nodeBufferJSON(payload), true, true
-		}
-		return payload, true, true
-	case io.Reader:
-		if utils.IsNil(data) {
-			return data, false, false
-		}
-		payload, _ := io.ReadAll(value)
-		if closer, ok := data.(io.Closer); ok {
-			_ = closer.Close()
-		}
-		payload = utils.NonNilSlice(payload)
-		if jsonFormat {
-			return nodeBufferJSON(payload), true, true
-		}
-		return payload, true, true
 	case []any:
 		var result []any
 		var binary bool
@@ -240,9 +190,11 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 		}
 		return data, false, binary
 	}
-	// Keep traversal aligned with parser.HasBinary so local and remote
-	// Socket.IO delivery select the same binary encoding path.
-	return data, false, false
+	prepared, changed, binary := adapter.PrepareClusterData(data)
+	if jsonFormat && binary {
+		return nodeBufferJSON(prepared.([]byte)), true, true
+	}
+	return prepared, changed, binary
 }
 
 func unmarshalEventData(messageType adapter.MessageType, data *EventData) any {

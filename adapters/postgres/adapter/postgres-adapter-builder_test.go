@@ -271,6 +271,28 @@ func TestPostgresAdapterBuilderStopsCleanupWithListener(t *testing.T) {
 	}
 }
 
+func TestPostgresAdapterBuilderCleanupNormalizesOverflow(t *testing.T) {
+	pool, err := pgxpool.New(t.Context(), "postgres://localhost/socket_io_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+	client := mustNewPostgresClient(t, t.Context(), pool)
+	t.Cleanup(client.Close)
+	builder := &PostgresAdapterBuilder{Postgres: client}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	cleaned := false
+	// A closed pool reports each attempted cleanup without requiring a database.
+	builder.cleanupLoop(ctx, 1<<63-1, DefaultTableName, func(error) {
+		cleaned = true
+		cancel()
+	})
+	if !cleaned {
+		t.Fatal("overflowing cleanup interval did not trigger a cleanup query")
+	}
+}
+
 func TestPostgresAdapterBuilderClientContextCancellationClosesAdapter(t *testing.T) {
 	pool, err := pgxpool.New(t.Context(), "postgres://localhost/socket_io_test")
 	if err != nil {

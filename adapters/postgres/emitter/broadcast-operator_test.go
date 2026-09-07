@@ -11,6 +11,24 @@ import (
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
 
+func TestBroadcastOperatorNilOptionsUseDefaults(t *testing.T) {
+	operator := NewBroadcastOperator(nil, nil, nil, nil, nil)
+	want := BroadcastOptions{
+		Nsp:              "/",
+		BroadcastChannel: "socket.io#/",
+		TableName:        "socket_io_attachments",
+		PayloadThreshold: 8000,
+	}
+	if got := *operator.broadcastOptions; got != want {
+		t.Fatalf("default options = %#v, want %#v", got, want)
+	}
+
+	explicit := NewBroadcastOperator(nil, &BroadcastOptions{}, nil, nil, nil)
+	if got := *explicit.broadcastOptions; got != (BroadcastOptions{}) {
+		t.Fatalf("explicit empty options were overwritten: %#v", got)
+	}
+}
+
 func TestBroadcastOperatorIsImmutable(t *testing.T) {
 	base := NewBroadcastOperator(nil, &BroadcastOptions{Nsp: "/"}, nil, nil, nil)
 	targeted := base.To("room1", "room2").In("room3").(*BroadcastOperator)

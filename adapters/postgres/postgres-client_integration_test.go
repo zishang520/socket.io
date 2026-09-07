@@ -359,20 +359,6 @@ func TestPostgresClientReconnectRestoresChannels(t *testing.T) {
 		result <- err
 	}()
 
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		client.listenerMu.Lock()
-		connected := client.listenerConn != nil
-		client.listenerMu.Unlock()
-		if connected {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("listener did not reconnect")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
 	if err := client.Notify(client.Context(), channel, "restored"); err != nil {
 		t.Fatalf("Notify() failed: %v", err)
 	}

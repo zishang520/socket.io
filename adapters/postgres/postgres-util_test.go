@@ -266,34 +266,42 @@ func TestAdapterDataRequiredWireFields(t *testing.T) {
 }
 
 func TestAdapterDataScalarResponses(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		messageType adapter.MessageType
-		data        any
+	for _, format := range []struct {
+		name   string
+		encode func(any) ([]byte, error)
+		decode func([]byte, any) error
 	}{
-		{
-			name:        "server-side emit response",
-			messageType: adapter.SERVER_SIDE_EMIT_RESPONSE,
-			data:        &adapter.ServerSideEmitResponse{RequestId: "request", Packet: "response"},
-		},
-		{
-			name:        "broadcast acknowledgement",
-			messageType: adapter.BROADCAST_ACK,
-			data:        &adapter.BroadcastAck{RequestId: "request", Packet: "response"},
-		},
+		{"JSON", json.Marshal, json.Unmarshal},
+		{"MessagePack", utils.MsgPack().Encode, utils.MsgPack().Decode},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			wireData, _ := MarshalAdapterData(test.data)
-			decoded := UnmarshalAdapterData(test.messageType, wireData)
-			var packet any
-			switch value := decoded.(type) {
-			case *adapter.ServerSideEmitResponse:
-				packet = value.Packet
-			case *adapter.BroadcastAck:
-				packet = value.Packet
-			}
-			if packet != "response" {
-				t.Fatalf("expected scalar packet, got %#v", packet)
+		t.Run(format.name, func(t *testing.T) {
+			for _, test := range []struct {
+				name string
+				data any
+				want any
+			}{
+				{"server-side emit response/string", &adapter.ServerSideEmitResponse{RequestId: "request", Packet: "response"}, "response"},
+				{"server-side emit response/null", &adapter.ServerSideEmitResponse{RequestId: "request", Packet: nil}, nil},
+				{"broadcast acknowledgement/string", &adapter.BroadcastAck{RequestId: "request", Packet: "response"}, "response"},
+				{"broadcast acknowledgement/null", &adapter.BroadcastAck{RequestId: "request", Packet: nil}, nil},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					wireData, _ := MarshalAdapterData(test.data)
+					payload, err := format.encode(wireData)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var decoded map[string]any
+					if err := format.decode(payload, &decoded); err != nil {
+						t.Fatal(err)
+					}
+					if packet, exists := decoded["packet"]; !exists || packet != test.want {
+						t.Fatalf("wire packet = %#v (present %t), want %#v", packet, exists, test.want)
+					}
+					if decoded["requestId"] != "request" {
+						t.Fatalf("requestId = %#v, want request", decoded["requestId"])
+					}
+				})
 			}
 		})
 	}
