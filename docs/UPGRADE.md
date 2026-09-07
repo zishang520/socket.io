@@ -336,6 +336,25 @@ the transport framing, including Linux's move from `unixpacket` to
 ### Medium Impact Changes
 
 <details>
+<summary>Broadcast Timeout Uses Fractional Milliseconds</summary>
+
+`socket.BroadcastFlags.Timeout` is now `*float64` instead of `*int64`.
+JSON, MessagePack, and BSON preserve fractional milliseconds received from
+Node.js adapters. Update direct field assignments to use a floating-point value:
+
+```go
+flags := &socket.BroadcastFlags{Timeout: new(16.5)}
+```
+
+The chainable `Timeout(time.Duration)` methods keep their signatures and now
+preserve fractional milliseconds. Timer delays are truncated and bounded when
+the timer is created. A nil timeout remains distinct from an explicit zero.
+`utils.NormalizeTimerMilliseconds` likewise now accepts `float64`; convert
+existing integer variables with `float64(delay)` when calling it directly.
+
+</details>
+
+<details>
 <summary>Socket Handshake Type Updates</summary>
 
 The `socket.Handshake` structure now uses more strongly typed fields:

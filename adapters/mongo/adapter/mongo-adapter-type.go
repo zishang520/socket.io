@@ -3,9 +3,9 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 
@@ -145,7 +145,7 @@ func (mb *MongoAdapterBuilder) initChangeStream(ctx context.Context) {
 
 		mb.mu.Lock()
 		changeStreamOpts := mb.changeStreamOpts
-		resumeToken := bytes.Clone(mb.resumeToken)
+		resumeToken := slices.Clone(mb.resumeToken)
 		uid := mb.uid
 		mb.mu.Unlock()
 
@@ -154,7 +154,7 @@ func (mb *MongoAdapterBuilder) initChangeStream(ctx context.Context) {
 			watchOptions.Opts = append(watchOptions.Opts, changeStreamOpts.List()...)
 		}
 		if len(resumeToken) != 0 {
-			watchOptions.SetResumeAfter(resumeToken)
+			watchOptions.SetStartAfter(nil).SetStartAtOperationTime(nil).SetResumeAfter(resumeToken)
 		}
 
 		changeStream, err := mb.Mongo.Collection().Watch(ctx, mongod.Pipeline{

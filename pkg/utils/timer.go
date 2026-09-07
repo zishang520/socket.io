@@ -7,7 +7,7 @@ import (
 
 const (
 	minTimerDuration     = time.Millisecond
-	maxTimerMilliseconds = int64(1<<31 - 1)
+	maxTimerMilliseconds = 1<<31 - 1
 	maxTimerDuration     = time.Duration(maxTimerMilliseconds) * time.Millisecond
 )
 
@@ -22,9 +22,10 @@ func NormalizeTimerDuration(delay time.Duration) time.Duration {
 }
 
 // NormalizeTimerMilliseconds converts a millisecond value using JavaScript
-// timer bounds without overflowing time.Duration.
-func NormalizeTimerMilliseconds(delay int64) time.Duration {
-	if delay < 1 || delay > maxTimerMilliseconds {
+// timer bounds without overflowing time.Duration. Invalid values, including
+// NaN, become one millisecond; valid values are truncated to whole milliseconds.
+func NormalizeTimerMilliseconds(delay float64) time.Duration {
+	if !(delay >= 1 && delay <= maxTimerMilliseconds) {
 		return minTimerDuration
 	}
 	return time.Duration(delay) * time.Millisecond

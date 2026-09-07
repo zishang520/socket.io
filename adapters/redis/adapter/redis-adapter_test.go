@@ -884,7 +884,7 @@ func TestRedisAdapterTypedNilOptionsAndParserUseDefaults(t *testing.T) {
 func TestClassicBroadcastAckTimeoutNormalization(t *testing.T) {
 	tests := []struct {
 		name        string
-		timeout     int64
+		timeout     float64
 		stillActive time.Duration
 	}{
 		{name: "zero"},

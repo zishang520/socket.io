@@ -62,7 +62,7 @@ func (b *BroadcastOperator) Construct(
 	b.mongoClient = client
 
 	if broadcastOptions == nil {
-		broadcastOptions = &BroadcastOptions{}
+		broadcastOptions = &BroadcastOptions{Nsp: defaultNamespace}
 	}
 	b.broadcastOptions = broadcastOptions
 

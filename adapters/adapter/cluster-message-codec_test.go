@@ -95,6 +95,51 @@ func TestClusterMessageCodecSupportsEveryMessageType(t *testing.T) {
 	}
 }
 
+func TestClusterMessageCodecAcceptsNodeFractionalTimeout(t *testing.T) {
+	wire := map[string]any{
+		"uid": "node", "nsp": "/chat", "type": int(BROADCAST),
+		"data": map[string]any{
+			"packet": map[string]any{"type": int(parser.EVENT), "data": []any{"event"}},
+			"opts": map[string]any{
+				"rooms": []string{}, "except": []string{},
+				"flags": map[string]any{
+					"timeout": 16.5, "compress": false, "volatile": true,
+					"local": true, "broadcast": true, "binary": true, "expectSingleResponse": true,
+				},
+			},
+		},
+	}
+	for _, format := range []struct {
+		name   string
+		encode func(any) ([]byte, error)
+	}{
+		{"JSON", json.Marshal},
+		{"MessagePack", msgpack.Marshal},
+	} {
+		t.Run(format.name, func(t *testing.T) {
+			payload, err := format.encode(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			message, err := DecodeClusterMessage(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := message.Data.(*BroadcastMessage)
+			if !data.Opts.IsValid() || data.Opts.Flags == nil {
+				t.Fatalf("decoded options = %#v", data.Opts)
+			}
+			flags := data.Opts.Flags
+			if flags.Timeout == nil || *flags.Timeout != 16.5 {
+				t.Fatalf("timeout = %v, want 16.5 milliseconds", flags.Timeout)
+			}
+			if flags.Compress == nil || *flags.Compress || !flags.Volatile || !flags.Local || !flags.Broadcast || !flags.Binary || !flags.ExpectSingleResponse {
+				t.Fatalf("other broadcast flags changed: %#v", flags)
+			}
+		})
+	}
+}
+
 func TestClusterMessageCodecNormalizesRequiredValues(t *testing.T) {
 	tests := []struct {
 		name    string

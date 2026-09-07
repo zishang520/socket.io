@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -57,21 +58,27 @@ func TestTimerDelayNormalization(t *testing.T) {
 func TestNormalizeTimerMilliseconds(t *testing.T) {
 	tests := []struct {
 		name  string
-		delay int64
+		delay float64
 		want  time.Duration
 	}{
 		{name: "negative", delay: -1, want: time.Millisecond},
 		{name: "zero", want: time.Millisecond},
+		{name: "below minimum", delay: 0.5, want: time.Millisecond},
+		{name: "fractional", delay: 16.5, want: 16 * time.Millisecond},
 		{name: "normal", delay: 25, want: 25 * time.Millisecond},
 		{name: "maximum", delay: maxTimerMilliseconds, want: maxTimerDuration},
 		{name: "above maximum", delay: maxTimerMilliseconds + 1, want: time.Millisecond},
-		{name: "maximum int64", delay: int64(^uint64(0) >> 1), want: time.Millisecond},
+		{name: "fraction above maximum", delay: maxTimerMilliseconds + 0.5, want: time.Millisecond},
+		{name: "maximum float64", delay: math.MaxFloat64, want: time.Millisecond},
+		{name: "NaN", delay: math.NaN(), want: time.Millisecond},
+		{name: "positive infinity", delay: math.Inf(1), want: time.Millisecond},
+		{name: "negative infinity", delay: math.Inf(-1), want: time.Millisecond},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if got := NormalizeTimerMilliseconds(test.delay); got != test.want {
-				t.Fatalf("NormalizeTimerMilliseconds(%d) = %v, want %v", test.delay, got, test.want)
+				t.Fatalf("NormalizeTimerMilliseconds(%g) = %v, want %v", test.delay, got, test.want)
 			}
 		})
 	}

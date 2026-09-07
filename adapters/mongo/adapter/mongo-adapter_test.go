@@ -189,6 +189,48 @@ func TestRequestResponseCompletesOnceConcurrently(t *testing.T) {
 	}
 }
 
+func TestServerSideEmitEncodingErrorHandlerCanWaitForAckTimeout(t *testing.T) {
+	client, err := mongo.NewMongoClient(context.Background(), new(mongod.Collection))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := DefaultMongoAdapterOptions()
+	opts.SetRequestsTimeout(20 * time.Millisecond)
+	opts.SetHeartbeatInterval(time.Hour)
+	current := NewMongoAdapter(socket.NewServer(nil, nil).Sockets(), client, opts)
+	defer current.Close()
+	current.OnEvent(&mongo.AdapterEvent{Uid: "remote", Nsp: "/", Type: mongo.HEARTBEAT})
+
+	ackResult := make(chan error, 1)
+	handlerResult := make(chan error, 1)
+	if err := client.On("error", func(...any) {
+		select {
+		case timeoutErr := <-ackResult:
+			handlerResult <- timeoutErr
+		case <-time.After(time.Second):
+			// Bound the wait so a regression releases the request lock and fails.
+			handlerResult <- nil
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := current.ServerSideEmit([]any{
+		"event",
+		make(chan int), // BSON encoding fails before any MongoDB operation.
+		func(_ []any, err error) { ackResult <- err },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case timeoutErr := <-handlerResult:
+		if timeoutErr == nil {
+			t.Fatal("encoding error handler blocked the acknowledgement timeout")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("encoding error handler did not complete")
+	}
+}
+
 func TestBroadcastAckKeepsScalarShape(t *testing.T) {
 	a := &mongoAdapter{}
 	response := make(chan []any, 1)
@@ -363,7 +405,7 @@ func TestBroadcastStopsWhenPublishFails(t *testing.T) {
 }
 
 func TestCloseRunsCleanupOnceConcurrently(t *testing.T) {
-	a := &mongoAdapter{}
+	a := MakeMongoAdapter().(*mongoAdapter)
 	var calls atomic.Int32
 	a.Cleanup(func() {
 		calls.Add(1)
@@ -381,7 +423,8 @@ func TestCloseRunsCleanupOnceConcurrently(t *testing.T) {
 }
 
 func TestHeartbeatSchedulingDoesNotSurviveClose(t *testing.T) {
-	a := &mongoAdapter{heartbeatInterval: time.Hour}
+	a := MakeMongoAdapter().(*mongoAdapter)
+	a.heartbeatInterval = time.Hour
 
 	var waitGroup sync.WaitGroup
 	for range 32 {
@@ -397,7 +440,8 @@ func TestHeartbeatSchedulingDoesNotSurviveClose(t *testing.T) {
 }
 
 func TestHeartbeatSchedulingReusesTimer(t *testing.T) {
-	a := &mongoAdapter{heartbeatInterval: time.Hour}
+	a := MakeMongoAdapter().(*mongoAdapter)
+	a.heartbeatInterval = time.Hour
 	a.scheduleHeartbeat()
 	first := a.heartbeatTimer.Load()
 	if first == nil {

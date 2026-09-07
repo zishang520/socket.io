@@ -101,7 +101,7 @@ func (b *BroadcastOperator) Local() *BroadcastOperator {
 // Timeout adds a timeout for the next operation.
 func (b *BroadcastOperator) Timeout(timeout time.Duration) *BroadcastOperator {
 	flags := new(*b.flags)
-	flags.Timeout = new(timeout.Milliseconds())
+	flags.Timeout = new(float64(timeout) / float64(time.Millisecond))
 	return NewBroadcastOperator(b.adapter, b.rooms, b.exceptRooms, flags)
 }
 
@@ -161,7 +161,7 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 				ack(responses.All(), errors.New("operation has timed out"))
 			}
 		})
-	}, utils.FromMilliseconds(*b.flags.Timeout))
+	}, utils.NormalizeTimerMilliseconds(*b.flags.Timeout))
 
 	var expectedServerCount atomic.Int64
 	expectedServerCount.Store(-1)

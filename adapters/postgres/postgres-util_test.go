@@ -23,7 +23,7 @@ func (*failingBinaryReader) MarshalBinary() ([]byte, error) {
 }
 
 func TestAdapterDataOptionsWireFormat(t *testing.T) {
-	timeout := int64(750)
+	timeout := float64(750)
 	wireData, _ := MarshalAdapterData(&adapter.BroadcastMessage{
 		Packet: &parser.Packet{Type: parser.EVENT},
 		Opts: &adapter.PacketOptions{
@@ -41,7 +41,50 @@ func TestAdapterDataOptionsWireFormat(t *testing.T) {
 
 	decoded := UnmarshalAdapterData(adapter.BROADCAST, wire).(*adapter.BroadcastMessage)
 	if decoded.Opts.Flags.Timeout == nil || *decoded.Opts.Flags.Timeout != timeout {
-		t.Fatalf("expected timeout %d, got %v", timeout, decoded.Opts.Flags.Timeout)
+		t.Fatalf("expected timeout %v, got %v", timeout, decoded.Opts.Flags.Timeout)
+	}
+}
+
+func TestUnmarshalAdapterDataAcceptsNodeFractionalTimeout(t *testing.T) {
+	wire := map[string]any{
+		"packet": map[string]any{"type": int(parser.EVENT), "data": []any{"event"}},
+		"opts": map[string]any{
+			"rooms": []string{}, "except": []string{},
+			"flags": map[string]any{
+				"timeout": 16.5, "compress": false, "volatile": true,
+				"local": true, "broadcast": true, "binary": true, "expectSingleResponse": true,
+			},
+		},
+	}
+	for _, format := range []struct {
+		name   string
+		encode func(any) ([]byte, error)
+		decode func([]byte, any) error
+	}{
+		{"JSON", json.Marshal, json.Unmarshal},
+		{"MessagePack", utils.MsgPack().Encode, utils.MsgPack().Decode},
+	} {
+		t.Run(format.name, func(t *testing.T) {
+			payload, err := format.encode(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := AdapterDataTarget(adapter.BROADCAST)
+			if decodeErr := format.decode(payload, target); decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			data := UnmarshalAdapterData(adapter.BROADCAST, target).(*adapter.BroadcastMessage)
+			if !data.Opts.IsValid() || data.Opts.Flags == nil {
+				t.Fatalf("decoded options = %#v", data.Opts)
+			}
+			flags := data.Opts.Flags
+			if flags.Timeout == nil || *flags.Timeout != 16.5 {
+				t.Fatalf("timeout = %v, want 16.5 milliseconds", flags.Timeout)
+			}
+			if flags.Compress == nil || *flags.Compress || !flags.Volatile || !flags.Local || !flags.Broadcast || !flags.Binary || !flags.ExpectSingleResponse {
+				t.Fatalf("other broadcast flags changed: %#v", flags)
+			}
+		})
 	}
 }
 

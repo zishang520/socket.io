@@ -3,11 +3,13 @@ package mongo
 import (
 	"bytes"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
+	"github.com/zishang520/socket.io/v3/pkg/types"
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -76,6 +78,115 @@ func TestMarshalAdapterDataUsesNodeFieldNames(t *testing.T) {
 	})
 }
 
+func TestMarshalAdapterDataPreservesBroadcastBuffersForLocalEncoding(t *testing.T) {
+	tests := []struct {
+		name   string
+		value  any
+		binary bool
+	}{
+		{"bytes", []byte("payload"), true},
+		{"bytes buffer", types.NewBytesBuffer([]byte("payload")), true},
+		{"binary reader", bytes.NewReader([]byte("payload")), true},
+		{"string buffer", types.NewStringBufferString("payload"), false},
+		{"string reader", strings.NewReader("payload"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			packet := &parser.Packet{Type: parser.EVENT, Nsp: "/", Data: []any{"event", tt.value}}
+			raw := mustMarshalAdapterData(t, &adapter.BroadcastMessage{Packet: packet})
+			value := raw.Lookup("packet", "data", "1")
+			if tt.binary {
+				subtype, payload, ok := value.BinaryOK()
+				if !ok || subtype != 0 || !bytes.Equal(payload, []byte("payload")) {
+					t.Fatalf("wire payload = %v, want BSON binary payload", value)
+				}
+			} else if payload, ok := value.StringValueOK(); !ok || payload != "payload" {
+				t.Fatalf("wire payload = %v, want string payload", value)
+			}
+
+			// Mongo publication precedes local delivery, which must still see the
+			// reader's contents after BSON serialization has consumed the reader.
+			buffers := parser.NewEncoder().Encode(packet)
+			if tt.binary {
+				if len(buffers) != 2 || !bytes.Equal(buffers[1].Bytes(), []byte("payload")) {
+					t.Fatalf("local binary buffers = %v, want payload attachment", buffers)
+				}
+			} else if len(buffers) != 1 || buffers[0].String() != `2["event","payload"]` {
+				t.Fatalf("local text buffers = %v, want event with payload", buffers)
+			}
+		})
+	}
+}
+
+func TestMarshalAdapterDataMaterializesNestedMessagePayloads(t *testing.T) {
+	payload := []byte{0x00, 0x7f, 0x80, 0xff}
+	newData := func() map[string]any {
+		return map[string]any{"nested": []any{types.NewBytesBuffer(payload), bytes.NewReader(payload), strings.NewReader("text")}}
+	}
+	tests := []struct {
+		name string
+		data any
+		path []string
+	}{
+		{"broadcast with ack", &adapter.BroadcastMessage{
+			Packet: &parser.Packet{Type: parser.EVENT, Data: []any{"event", newData()}}, RequestId: new("request"),
+		}, []string{"packet", "data", "1"}},
+		{"broadcast ack", &adapter.BroadcastAck{RequestId: "request", Packet: newData()}, []string{"packet"}},
+		{"server-side emit", &adapter.ServerSideEmitMessage{Packet: []any{"event", newData()}}, []string{"packet", "1"}},
+		{"server-side response", &adapter.ServerSideEmitResponse{RequestId: "request", Packet: newData()}, []string{"packet"}},
+		{"fetch socket data", &adapter.FetchSocketsResponse{
+			Sockets: []adapter.SocketResponse{{Id: "socket", Data: newData()}},
+		}, []string{"sockets", "0", "data"}},
+		{"fetch socket auth", &adapter.FetchSocketsResponse{
+			Sockets: []adapter.SocketResponse{{Id: "socket", Handshake: &socket.Handshake{Auth: newData()}}},
+		}, []string{"sockets", "0", "handshake", "auth"}},
+		{"session", &SessionDocument{Sid: "socket", Pid: "private", Data: newData()}, []string{"data"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := mustMarshalAdapterData(t, tt.data).Lookup(tt.path...).Document().Lookup("nested").Array()
+			for index := range uint(2) {
+				value := raw.Index(index)
+				subtype, got, ok := value.BinaryOK()
+				if !ok || subtype != 0 || !bytes.Equal(got, payload) {
+					t.Fatalf("nested payload %d = %v, want BSON binary %x", index, value, payload)
+				}
+			}
+			if got := raw.Index(2).StringValue(); got != "text" {
+				t.Fatalf("nested text = %q, want text", got)
+			}
+		})
+	}
+}
+
+func TestMarshalAdapterDataPreservesBSONValues(t *testing.T) {
+	document := bson.D{{Key: "value", Value: "document"}}
+	rawDocument := mustMarshalNodeDocument(t, document)
+	for _, value := range []any{
+		bson.Binary{Subtype: 0x80, Data: []byte("binary")},
+		document,
+		rawDocument,
+		mongoValueMarshaler{},
+	} {
+		wantType, wantValue, err := bson.MarshalValue(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw := mustMarshalAdapterData(t, &SessionDocument{Data: map[string]any{"value": value}})
+		got := raw.Lookup("data", "value")
+		if got.Type != wantType || !bytes.Equal(got.Value, wantValue) {
+			t.Fatalf("%T encoded as %v, want original BSON representation", value, got)
+		}
+	}
+}
+
+type mongoValueMarshaler struct{}
+
+func (mongoValueMarshaler) MarshalBSONValue() (byte, []byte, error) {
+	valueType, value, err := bson.MarshalValue("custom BSON value")
+	return byte(valueType), value, err
+}
+
 func TestMarshalAdapterDataNormalizesSocketRoomsWithoutMutation(t *testing.T) {
 	response := &adapter.FetchSocketsResponse{
 		RequestId: "request-1",
@@ -127,7 +238,7 @@ func TestMarshalAdapterDataOmitsOptionalRequestAndPacketID(t *testing.T) {
 
 func TestMarshalAdapterDataUsesNodeOptionsShape(t *testing.T) {
 	compress := false
-	timeout := int64(1_750)
+	timeout := 1_750.0
 	flags := &socket.BroadcastFlags{
 		Local:                true,
 		Broadcast:            true,
@@ -159,8 +270,8 @@ func TestMarshalAdapterDataUsesNodeOptionsShape(t *testing.T) {
 			t.Fatalf("%s=true was not preserved", key)
 		}
 	}
-	if got := wireFlags.Lookup("timeout").AsInt64(); got != 1_750 {
-		t.Fatalf("timeout was not converted to milliseconds: got %d", got)
+	if got := wireFlags.Lookup("timeout").Double(); got != timeout {
+		t.Fatalf("timeout = %g milliseconds, want %g", got, timeout)
 	}
 	assertMongoMissing(t, wireFlags, "writeOptions")
 	assertMongoMissing(t, wireFlags, "preEncoded")
@@ -217,6 +328,51 @@ func TestUnmarshalAdapterDataAcceptsNodeOptions(t *testing.T) {
 	}
 	if !message.Opts.Flags.ExpectSingleResponse {
 		t.Fatal("expectSingleResponse=true was not decoded")
+	}
+}
+
+func TestUnmarshalAdapterDataPreservesNodeTimeout(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		timeout any
+		want    float64
+	}{
+		{"fractional", 16.5, 16.5},
+		{"int32", int32(16), 16},
+		{"int64", int64(16), 16},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := mustMarshalNodeDocument(t, bson.D{
+				{Key: "packet", Value: bson.D{{Key: "type", Value: int32(parser.EVENT)}, {Key: "data", Value: bson.A{"event"}}}},
+				{Key: "opts", Value: bson.D{
+					{Key: "rooms", Value: bson.A{}},
+					{Key: "except", Value: bson.A{}},
+					{Key: "flags", Value: bson.D{{Key: "timeout", Value: tt.timeout}}},
+				}},
+			})
+			decoded, err := UnmarshalAdapterData(BROADCAST, bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: raw})
+			if err != nil {
+				t.Fatal(err)
+			}
+			timeout := decoded.(*adapter.BroadcastMessage).Opts.Flags.Timeout
+			if timeout == nil || *timeout != tt.want {
+				t.Fatalf("timeout = %v, want %g milliseconds", timeout, tt.want)
+			}
+			encoded := mustMarshalAdapterData(t, decoded)
+			if got := encoded.Lookup("opts", "flags", "timeout").Double(); got != tt.want {
+				t.Fatalf("round-trip timeout = %g milliseconds, want %g", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnmarshalAdapterDataRejectsFractionalClientCount(t *testing.T) {
+	raw := mustMarshalNodeDocument(t, bson.D{
+		{Key: "requestId", Value: "request"},
+		{Key: "clientCount", Value: 2.5},
+	})
+	if _, err := UnmarshalAdapterData(BROADCAST_CLIENT_COUNT, bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: raw}); err == nil {
+		t.Fatal("fractional clientCount was accepted")
 	}
 }
 

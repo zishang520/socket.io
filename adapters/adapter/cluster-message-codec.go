@@ -129,19 +129,19 @@ func EncodeClusterMessageData(data any, onlyPlaintext bool) (any, bool) {
 		return &payload, binary
 	case *ServerSideEmitMessage:
 		payload := *value
-		packet, _, binary := prepareClusterData(value.Packet)
+		packet, _, binary := PrepareClusterData(value.Packet)
 		payload.Packet = utils.NonNilSlice(packet.([]any))
 		return &payload, binary
 	case *ServerSideEmitResponse:
 		payload := *value
-		packet, _, binary := prepareClusterData(value.Packet)
+		packet, _, binary := PrepareClusterData(value.Packet)
 		payload.Packet = packet
 		return &payload, binary
 	case *BroadcastClientCount:
 		return value, false
 	case *BroadcastAck:
 		payload := *value
-		packet, _, binary := prepareClusterData(value.Packet)
+		packet, _, binary := PrepareClusterData(value.Packet)
 		payload.Packet = packet
 		return &payload, binary
 	default:
@@ -262,13 +262,13 @@ func prepareClusterSocketResponses(sockets []SocketResponse) ([]SocketResponse, 
 	var binary bool
 	for i := range sockets {
 		details := sockets[i]
-		data, changed, hasBinary := prepareClusterData(details.Data)
+		data, changed, hasBinary := PrepareClusterData(details.Data)
 		binary = binary || hasBinary
 		if changed {
 			details.Data = data
 		}
 		if handshake := details.Handshake; handshake != nil && handshake.Auth != nil {
-			auth, authChanged, authBinary := prepareClusterData(handshake.Auth)
+			auth, authChanged, authBinary := PrepareClusterData(handshake.Auth)
 			binary = binary || authBinary
 			if authChanged {
 				details.Handshake = new(*handshake)
@@ -314,7 +314,7 @@ func prepareClusterPacket(packet *parser.Packet) (*parser.Packet, bool) {
 	if packet == nil {
 		return nil, false
 	}
-	data, changed, binary := prepareClusterData(packet.Data)
+	data, changed, binary := PrepareClusterData(packet.Data)
 	if changed {
 		// Readers are consumed while being materialized. Keep the native value on
 		// the original packet so a subsequent local broadcast sees the same data.
@@ -323,7 +323,12 @@ func prepareClusterPacket(packet *parser.Packet) (*parser.Packet, bool) {
 	return packet, binary
 }
 
-func prepareClusterData(data any) (any, bool, bool) {
+// PrepareClusterData materializes Socket.IO buffers and readers as native
+// strings or byte slices for a wire encoder. It visits []any and map[string]any
+// values, consuming and closing binary readers as the Socket.IO parser does.
+// It returns the prepared value, whether the value was replaced, and whether
+// it contains binary data.
+func PrepareClusterData(data any) (any, bool, bool) {
 	switch value := data.(type) {
 	case nil:
 		return nil, false, false
@@ -364,7 +369,7 @@ func prepareClusterData(data any) (any, bool, bool) {
 		var result []any
 		var binary bool
 		for i, item := range value {
-			encoded, changed, hasBinary := prepareClusterData(item)
+			encoded, changed, hasBinary := PrepareClusterData(item)
 			binary = binary || hasBinary
 			if !changed {
 				continue
@@ -382,7 +387,7 @@ func prepareClusterData(data any) (any, bool, bool) {
 		var result map[string]any
 		var binary bool
 		for key, item := range value {
-			encoded, changed, hasBinary := prepareClusterData(item)
+			encoded, changed, hasBinary := PrepareClusterData(item)
 			binary = binary || hasBinary
 			if !changed {
 				continue

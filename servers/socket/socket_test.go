@@ -31,14 +31,14 @@ func TestSocketNewBroadcastOperatorConsumesFlags(t *testing.T) {
 	t.Cleanup(socket.taskQueue.Close)
 	socket.id = "socket"
 	socket.adapter = newTestAdapter()
-	timeout := time.Second
+	timeout := 16_500 * time.Microsecond
 	socket.Compress(false).Volatile().Timeout(timeout)
 
 	operator := socket.newBroadcastOperator()
 	if operator.flags.Compress == nil || *operator.flags.Compress {
 		t.Fatal("Expected compression to be disabled")
 	}
-	if !operator.flags.Volatile || operator.flags.Timeout == nil || *operator.flags.Timeout != timeout.Milliseconds() {
+	if !operator.flags.Volatile || operator.flags.Timeout == nil || *operator.flags.Timeout != 16.5 {
 		t.Fatal("Expected broadcast flags to be preserved")
 	}
 	if !operator.exceptRooms.Has(Room(socket.id)) {

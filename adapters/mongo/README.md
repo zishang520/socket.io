@@ -65,6 +65,7 @@ func main() {
     })
 
     io := socket.NewServer(nil, nil)
+    defer io.Close(nil)
     io.SetAdapter(&mgadapter.MongoAdapterBuilder{
         Mongo: mongoClient,
     })
@@ -73,6 +74,8 @@ func main() {
         s := args[0].(*socket.Socket)
         fmt.Printf("connect %s\n", s.Id())
     })
+
+    io.Listen(3000, nil)
 
     exit := make(chan struct{})
     sig := make(chan os.Signal, 1)
@@ -118,8 +121,12 @@ func main() {
     }
 
     emitter := mgemitter.NewEmitter(mongoClient, nil)
-    emitter.Emit("hello", "world")
-    emitter.To("room1").Emit("hello", "world")
+    if err := emitter.Emit("hello", "world"); err != nil {
+        panic(err)
+    }
+    if err := emitter.To("room1").Emit("hello", "world"); err != nil {
+        panic(err)
+    }
 }
 ```
 
@@ -138,17 +145,46 @@ db.createCollection("socket.io-adapter-events", { capped: true, size: 1e6 })
 
 #### TTL Index
 ```javascript
-db.collection("socket.io-adapter-events").createIndex(
+db.getCollection("socket.io-adapter-events").createIndex(
     { createdAt: 1 },
     { expireAfterSeconds: 3600 }
 )
 ```
 
-When using a TTL index, set the `AddCreatedAtField` option to `true`:
+When using a TTL index, set `AddCreatedAtField` to `true` on every adapter and
+emitter that writes to the collection. Documents without `createdAt` will not
+expire through this index.
+
+In the adapter example above, pass the configured options to `MongoAdapterBuilder`:
+
 ```golang
-opts := &mgadapter.MongoAdapterOptions{}
-opts.SetAddCreatedAtField(true)
+adapterOpts := mgadapter.DefaultMongoAdapterOptions()
+adapterOpts.SetAddCreatedAtField(true)
+
+io.SetAdapter(&mgadapter.MongoAdapterBuilder{
+    Mongo: mongoClient,
+    Opts:  adapterOpts,
+})
 ```
+
+In the emitter example above, pass the emitter options to `NewEmitter`:
+
+```golang
+emitterOpts := mgemitter.DefaultEmitterOptions()
+emitterOpts.SetAddCreatedAtField(true)
+
+emitter := mgemitter.NewEmitter(mongoClient, emitterOpts)
+if err := emitter.Emit("hello", "world"); err != nil {
+    panic(err)
+}
+```
+
+## Testing
+
+Set `SOCKET_IO_MONGO_TEST_URI` to a MongoDB test instance to include the database
+integration tests when running `go test -race ./...` from this module. Each test
+creates and removes its own database. Without this variable, database integration
+tests are skipped.
 
 ## License
 

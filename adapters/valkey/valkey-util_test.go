@@ -13,6 +13,58 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
+func TestValkeyFractionalBroadcastTimeout(t *testing.T) {
+	packet := map[string]any{"type": parser.EVENT, "nsp": "/", "data": []any{"event"}}
+	opts := map[string]any{
+		"rooms": []string{}, "except": []string{},
+		"flags": map[string]any{"timeout": 16.5, "local": true, "volatile": true},
+	}
+	for _, tt := range []struct {
+		name    string
+		request bool
+		json    bool
+	}{
+		{"broadcast MessagePack", false, false},
+		{"request JSON", true, true},
+		{"request MessagePack", true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var wire any = []any{"remote", packet, opts}
+			if tt.request {
+				wire = map[string]any{"type": BROADCAST, "requestId": "request", "packet": packet, "opts": opts}
+			}
+			encode, decode := utils.MsgPack().Encode, utils.MsgPack().Decode
+			if tt.json {
+				encode, decode = json.Marshal, json.Unmarshal
+			}
+			payload, err := encode(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decodedOpts *adapter.PacketOptions
+			if tt.request {
+				var decoded ValkeyRequest
+				err = decode(payload, &decoded)
+				decodedOpts = decoded.Opts
+			} else {
+				var decoded ValkeyPacket
+				err = decode(payload, &decoded)
+				decodedOpts = decoded.Opts
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decodedOpts == nil || decodedOpts.Flags == nil || decodedOpts.Flags.Timeout == nil ||
+				*decodedOpts.Flags.Timeout != 16.5 {
+				t.Fatalf("fractional timeout was not preserved as 16.5 milliseconds: %#v", decodedOpts)
+			}
+			if !decodedOpts.Flags.Local || !decodedOpts.Flags.Volatile {
+				t.Fatalf("other broadcast flags were lost: %#v", decodedOpts.Flags)
+			}
+		})
+	}
+}
+
 func TestRequestTypesMatchNodeProtocol(t *testing.T) {
 	requestTypes := []RequestType{
 		SOCKETS,

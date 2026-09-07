@@ -31,8 +31,8 @@ type (
 		Local     bool `json:"local,omitempty" msgpack:"local,omitempty" bson:"local,omitempty"`
 		Broadcast bool `json:"broadcast,omitempty" msgpack:"broadcast,omitempty" bson:"broadcast,omitempty"`
 		Binary    bool `json:"binary,omitempty" msgpack:"binary,omitempty" bson:"binary,omitempty"`
-		// Timeout is expressed in milliseconds.
-		Timeout *int64 `json:"timeout,omitempty" msgpack:"timeout,omitempty" bson:"timeout,omitempty"`
+		// Timeout is expressed in milliseconds and may include a fractional part.
+		Timeout *float64 `json:"timeout,omitempty" msgpack:"timeout,omitempty" bson:"timeout,omitempty"`
 
 		ExpectSingleResponse bool `json:"expectSingleResponse,omitempty" msgpack:"expectSingleResponse,omitempty" bson:"expectSingleResponse,omitempty"`
 	}

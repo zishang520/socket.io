@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -17,7 +18,7 @@ import (
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
 
-const overflowingTimerMilliseconds int64 = 18_446_744_074_709
+const overflowingTimerMilliseconds float64 = 18_446_744_074_709
 
 type fixedServerCountAdapter struct {
 	socket.Adapter
@@ -173,7 +174,7 @@ func TestClusterAdapterUsesPrototypeDispatch(t *testing.T) {
 
 	cluster.BroadcastWithAck(
 		&parser.Packet{Type: parser.EVENT},
-		&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: new(int64(1))}},
+		&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: new(float64(1))}},
 		func(uint64) {},
 		func([]any, error) {},
 	)
@@ -729,7 +730,7 @@ func TestClusterBroadcastAckDoesNotWaitForPublish(t *testing.T) {
 		cluster.Prototype(transport)
 		cluster.Construct(nsp)
 
-		timeout := int64(10)
+		timeout := float64(10)
 		packet := &parser.Packet{Type: parser.EVENT, Data: []any{"event"}}
 		returned := make(chan struct{})
 		var remoteAcks atomic.Int64
@@ -797,7 +798,7 @@ func TestClusterBroadcastAckPreservesPublishOrder(t *testing.T) {
 	cluster.Construct(nsp)
 	defer cluster.Close()
 
-	timeout := int64(10_000)
+	timeout := float64(10_000)
 	cluster.BroadcastWithAck(
 		&parser.Packet{Type: parser.EVENT, Data: []any{"first"}},
 		&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: &timeout}},
@@ -1055,7 +1056,7 @@ func TestClusterBroadcastAckSnapshotsPacketForAsyncPublish(t *testing.T) {
 			mutable,
 		},
 	}
-	timeout := int64(10_000)
+	timeout := float64(10_000)
 	cluster.BroadcastWithAck(
 		packet,
 		&socket.BroadcastOptions{Flags: &socket.BroadcastFlags{Timeout: &timeout}},
@@ -1318,12 +1319,16 @@ func TestClusterBroadcastAckWrapsPacketValue(t *testing.T) {
 func TestFetchSocketsTimeout(t *testing.T) {
 	for _, test := range []struct {
 		name    string
-		timeout int64
+		timeout *float64
 		delay   time.Duration
 	}{
-		{name: "zero uses default", delay: DEFAULT_TIMEOUT},
-		{name: "explicit timeout", timeout: 1, delay: time.Millisecond},
-		{name: "overflowing timeout", timeout: overflowingTimerMilliseconds, delay: time.Millisecond},
+		{name: "nil uses default", delay: DEFAULT_TIMEOUT},
+		{name: "zero uses default", timeout: new(float64(0)), delay: DEFAULT_TIMEOUT},
+		{name: "NaN uses default", timeout: new(math.NaN()), delay: DEFAULT_TIMEOUT},
+		{name: "explicit timeout", timeout: new(float64(1)), delay: time.Millisecond},
+		{name: "fractional timeout", timeout: new(16.5), delay: 16 * time.Millisecond},
+		{name: "sub-millisecond timeout", timeout: new(0.5), delay: time.Millisecond},
+		{name: "overflowing timeout", timeout: new(overflowingTimerMilliseconds), delay: time.Millisecond},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -1338,7 +1343,7 @@ func TestFetchSocketsTimeout(t *testing.T) {
 
 				result := make(chan error, 1)
 				cluster.FetchSockets(&socket.BroadcastOptions{
-					Flags: &socket.BroadcastFlags{Timeout: &test.timeout},
+					Flags: &socket.BroadcastFlags{Timeout: test.timeout},
 				})(func(_ []socket.SocketDetails, err error) {
 					result <- err
 				})
@@ -1375,11 +1380,15 @@ func TestFetchSocketsTimeout(t *testing.T) {
 func TestHeartbeatFetchSocketsTimeout(t *testing.T) {
 	for _, test := range []struct {
 		name    string
-		timeout int64
+		timeout *float64
 		delay   time.Duration
 	}{
-		{name: "zero uses default", delay: DEFAULT_TIMEOUT},
-		{name: "overflowing timeout", timeout: overflowingTimerMilliseconds, delay: time.Millisecond},
+		{name: "nil uses default", delay: DEFAULT_TIMEOUT},
+		{name: "zero uses default", timeout: new(float64(0)), delay: DEFAULT_TIMEOUT},
+		{name: "NaN uses default", timeout: new(math.NaN()), delay: DEFAULT_TIMEOUT},
+		{name: "fractional timeout", timeout: new(16.5), delay: 16 * time.Millisecond},
+		{name: "sub-millisecond timeout", timeout: new(0.5), delay: time.Millisecond},
+		{name: "overflowing timeout", timeout: new(overflowingTimerMilliseconds), delay: time.Millisecond},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -1391,7 +1400,7 @@ func TestHeartbeatFetchSocketsTimeout(t *testing.T) {
 
 				result := make(chan error, 1)
 				cluster.FetchSockets(&socket.BroadcastOptions{
-					Flags: &socket.BroadcastFlags{Timeout: &test.timeout},
+					Flags: &socket.BroadcastFlags{Timeout: test.timeout},
 				})(func(_ []socket.SocketDetails, err error) {
 					result <- err
 				})

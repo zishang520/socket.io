@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -304,7 +305,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 			requestId := RandomId()
 
 			t := DEFAULT_TIMEOUT
-			if opts.Flags != nil && opts.Flags.Timeout != nil && *opts.Flags.Timeout != 0 {
+			if opts.Flags != nil && opts.Flags.Timeout != nil && *opts.Flags.Timeout != 0 && !math.IsNaN(*opts.Flags.Timeout) {
 				t = utils.NormalizeTimerMilliseconds(*opts.Flags.Timeout)
 			}
 

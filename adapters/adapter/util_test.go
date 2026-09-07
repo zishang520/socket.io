@@ -64,7 +64,7 @@ func TestNormalizeOptions(t *testing.T) {
 }
 
 func TestPacketOptionsWireCompatibility(t *testing.T) {
-	timeout := int64(750)
+	timeout := float64(750)
 	flags := &socket.BroadcastFlags{
 		Local:   true,
 		Timeout: &timeout,
@@ -110,7 +110,7 @@ func TestPacketOptionsWireCompatibility(t *testing.T) {
 
 			runtime := DecodeOptions(&decoded)
 			if runtime.Flags == nil || runtime.Flags.Timeout == nil || *runtime.Flags.Timeout != timeout {
-				t.Fatalf("decoded timeout = %#v, want %d", runtime.Flags, timeout)
+				t.Fatalf("decoded timeout = %#v, want %v", runtime.Flags, timeout)
 			}
 		})
 	}

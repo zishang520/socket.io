@@ -45,6 +45,15 @@ func TestServerSideEmitRejectsAck(t *testing.T) {
 }
 
 func TestEmitterNamespaceDefaultsMatchNode(t *testing.T) {
+	operator := NewBroadcastOperator(nil, nil, nil, nil, nil)
+	if operator.broadcastOptions.Nsp != "/" {
+		t.Fatalf("default operator namespace = %q, want %q", operator.broadcastOptions.Nsp, "/")
+	}
+	emptyOperator := NewBroadcastOperator(nil, &BroadcastOptions{Nsp: ""}, nil, nil, nil)
+	if emptyOperator.broadcastOptions.Nsp != "" {
+		t.Fatalf("explicit operator namespace = %q, want an empty string", emptyOperator.broadcastOptions.Nsp)
+	}
+
 	root := NewEmitter(nil, nil)
 	if root.broadcastOptions.Nsp != "/" {
 		t.Fatalf("default namespace = %q, want %q", root.broadcastOptions.Nsp, "/")

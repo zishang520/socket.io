@@ -75,7 +75,7 @@ func TestBroadcastOperatorWaitsForTimeoutWhenServerCountFails(t *testing.T) {
 			err:                 countErr,
 		}
 		result := make(chan error, 1)
-		if err := NewBroadcastOperator(adapter, nil, nil, nil).Timeout(time.Millisecond).Emit(
+		if err := NewBroadcastOperator(adapter, nil, nil, nil).Timeout(1_500*time.Microsecond).Emit(
 			"event",
 			func(_ []any, err error) { result <- err },
 		); err != nil {
@@ -113,7 +113,7 @@ func TestBroadcastOperatorKeepsFirstAckValue(t *testing.T) {
 		{name: "single response", args: []any{"response"}, single: true, want: []any{"response"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			timeout := time.Hour.Milliseconds()
+			timeout := float64(time.Hour / time.Millisecond)
 			operator := NewBroadcastOperator(
 				&broadcastAckAdapter{response: test.args},
 				nil,
@@ -267,9 +267,9 @@ func TestBroadcastOperatorTimeout(t *testing.T) {
 	op := MakeBroadcastOperator()
 	op.Construct(nil, nil, nil, nil)
 
-	timeout := 5 * time.Second
+	timeout := 16_500 * time.Microsecond
 	result := op.Timeout(timeout)
-	if result.flags.Timeout == nil || *result.flags.Timeout != timeout.Milliseconds() {
+	if result.flags.Timeout == nil || *result.flags.Timeout != 16.5 {
 		t.Errorf("Expected Timeout to be %v", timeout)
 	}
 	if op.flags.Timeout != nil {

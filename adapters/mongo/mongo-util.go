@@ -21,26 +21,27 @@ var decoderRegistry = func() *bson.Registry {
 // MarshalAdapterData encodes message data with the exact field names and value
 // shapes used by the Node.js MongoDB adapter.
 func MarshalAdapterData(data any) (bson.RawValue, error) {
+	data, _ = adapter.EncodeClusterMessageData(data, false)
 	switch value := data.(type) {
 	case *adapter.BroadcastMessage:
 		data = &PacketData[*SocketPacket]{
 			Packet:    (*SocketPacket)(value.Packet),
-			Opts:      adapter.NormalizeOptions(value.Opts),
+			Opts:      value.Opts,
 			RequestId: value.RequestId,
 		}
 	case *adapter.SocketsJoinLeaveMessage:
 		data = &EventData{
-			Opts:  adapter.NormalizeOptions(value.Opts),
-			Rooms: new(utils.NonNilSlice(value.Rooms)),
+			Opts:  value.Opts,
+			Rooms: new(value.Rooms),
 		}
 	case *adapter.DisconnectSocketsMessage:
 		data = &EventData{
-			Opts:  adapter.NormalizeOptions(value.Opts),
+			Opts:  value.Opts,
 			Close: new(value.Close),
 		}
 	case *adapter.FetchSocketsMessage:
 		data = &EventData{
-			Opts:      adapter.NormalizeOptions(value.Opts),
+			Opts:      value.Opts,
 			RequestId: value.RequestId,
 		}
 	case *adapter.FetchSocketsResponse:
@@ -51,7 +52,7 @@ func MarshalAdapterData(data any) (bson.RawValue, error) {
 	case *adapter.ServerSideEmitMessage:
 		data = &PacketData[[]any]{
 			RequestId: value.RequestId,
-			Packet:    utils.NonNilSlice(value.Packet),
+			Packet:    value.Packet,
 		}
 	case *adapter.ServerSideEmitResponse:
 		data = &PacketData[any]{
@@ -71,6 +72,7 @@ func MarshalAdapterData(data any) (bson.RawValue, error) {
 	case *SessionDocument:
 		session := *value
 		session.Rooms = utils.NonNilSlice(session.Rooms)
+		session.Data, _, _ = adapter.PrepareClusterData(session.Data)
 		data = &session
 	}
 
@@ -206,7 +208,6 @@ func encodeSocketResponses(sockets []adapter.SocketResponse) []SocketResponse {
 	responses := make([]SocketResponse, len(sockets))
 	for i, details := range sockets {
 		responses[i] = SocketResponse(details)
-		responses[i].Rooms = utils.NonNilSlice(responses[i].Rooms)
 	}
 	return responses
 }

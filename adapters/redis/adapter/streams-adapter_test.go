@@ -378,7 +378,7 @@ func TestRedisStreamsBroadcastWithAckAcrossNodes(t *testing.T) {
 		return firstErr == nil && secondErr == nil && firstCount == 2 && secondCount == 2
 	})
 
-	timeout := int64(3_000)
+	timeout := float64(3_000)
 	counts := make(chan uint64, 2)
 	acks := make(chan []any, 1)
 	first.BroadcastWithAck(

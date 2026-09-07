@@ -17,6 +17,7 @@ import (
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 	"github.com/zishang520/socket.io/v3/pkg/log"
+	"github.com/zishang520/socket.io/v3/pkg/queue"
 	sliceUtils "github.com/zishang520/socket.io/v3/pkg/slices"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
@@ -32,6 +33,7 @@ var (
 	errFetchSession            = errors.New("error while fetching session")
 	errSessionOrOffsetNotFound = errors.New("session or offset not found")
 	errFetchMissedPackets      = errors.New("error while fetching missed packets")
+	errPublishPanicked         = errors.New("MongoDB publish panicked")
 )
 
 // mongoAdapter follows the standalone protocol implemented by
@@ -52,14 +54,14 @@ type mongoAdapter struct {
 	requests        types.Map[string, *mongo.Request]
 	ackRequests     types.Map[string, *mongo.AckRequest]
 	isClosed        atomic.Bool
+	queueMu         sync.Mutex
+	publisher       *queue.Queue
+	responses       *queue.Queue
 
 	cleanupFunc atomic.Pointer[types.Callable]
 }
 
 func (a *mongoAdapter) onPublishError(err error) {
-	if err == nil {
-		return
-	}
 	mongoLog.Debug("something went wrong when inserting the MongoDB document: %s", err.Error())
 	a.mongoCollection.Emit("error", err)
 }
@@ -67,7 +69,9 @@ func (a *mongoAdapter) onPublishError(err error) {
 // MakeMongoAdapter creates a new uninitialized MongoDB adapter.
 func MakeMongoAdapter() MongoAdapter {
 	a := &mongoAdapter{
-		Adapter: adapter.MakeAdapter(),
+		Adapter:   adapter.MakeAdapter(),
+		publisher: queue.New(),
+		responses: queue.New(),
 	}
 	a.Prototype(a)
 	return a
@@ -146,7 +150,6 @@ func (a *mongoAdapter) scheduleHeartbeat() {
 	heartbeatTimer := utils.SetTimeout(func() {
 		mongoLog.Debug("sending heartbeat")
 		a.Publish(&ClusterMessage{Type: mongo.HEARTBEAT})
-		a.scheduleHeartbeat()
 	}, a.heartbeatInterval)
 	if !a.heartbeatTimer.CompareAndSwap(nil, heartbeatTimer) {
 		heartbeatTimer.Stop()
@@ -165,31 +168,60 @@ func (a *mongoAdapter) Uid() adapter.ServerId {
 }
 
 func (a *mongoAdapter) Publish(message *ClusterMessage) {
+	a.publishAsync(a.publisher, message)
+}
+
+func (a *mongoAdapter) publishAsync(tasks *queue.Queue, message *ClusterMessage) {
 	document, err := a.prepareDocument(message)
 	if err != nil {
 		a.onPublishError(err)
 		return
 	}
-	go func() {
+	if err := a.enqueue(tasks, func() {
 		_, err := a.insertDocument(document)
+		if err != nil {
+			// Error handlers may publish synchronously on this adapter.
+			go a.onPublishError(err)
+		}
+	}); err != nil {
 		a.onPublishError(err)
-	}()
+	}
 }
 
 func (a *mongoAdapter) PublishAndReturnOffset(message *ClusterMessage) (adapter.Offset, error) {
-	return a.publish(message)
+	return a.publish(a.publisher, message)
 }
 
 func (a *mongoAdapter) DoPublish(message *ClusterMessage) (adapter.Offset, error) {
-	return a.publish(message)
+	return a.publish(a.publisher, message)
 }
 
-func (a *mongoAdapter) publish(document *ClusterMessage) (adapter.Offset, error) {
+func (a *mongoAdapter) publish(tasks *queue.Queue, document *ClusterMessage) (adapter.Offset, error) {
 	event, err := a.prepareDocument(document)
 	if err != nil {
 		return "", err
 	}
-	return a.insertDocument(event)
+	var offset adapter.Offset
+	err = errPublishPanicked
+	done := make(chan struct{})
+	if enqueueErr := a.enqueue(tasks, func() {
+		defer close(done)
+		offset, err = a.insertDocument(event)
+	}); enqueueErr != nil {
+		return "", enqueueErr
+	}
+	<-done
+	return offset, err
+}
+
+func (a *mongoAdapter) enqueue(tasks *queue.Queue, task func()) error {
+	a.queueMu.Lock()
+	defer a.queueMu.Unlock()
+	if a.isClosed.Load() {
+		return adapter.ErrAdapterClosed
+	}
+	tasks.Enqueue(task)
+	return nil
 }
 
 func (a *mongoAdapter) prepareDocument(document *ClusterMessage) (*mongo.AdapterEvent, error) {
@@ -231,13 +263,13 @@ func (a *mongoAdapter) insertDocument(document *mongo.AdapterEvent) (adapter.Off
 }
 
 func (a *mongoAdapter) PublishResponse(_ adapter.ServerId, response *ClusterResponse) {
-	a.Publish(response)
+	a.publishAsync(a.responses, response)
 }
 
 // MongoDB responses share the same collection, so requesterUid is carried by
 // the request ID rather than a transport-specific channel.
 func (a *mongoAdapter) DoPublishResponse(_ adapter.ServerId, response *ClusterResponse) error {
-	_, err := a.publish(response)
+	_, err := a.publish(a.responses, response)
 	return err
 }
 
@@ -478,7 +510,7 @@ func (a *mongoAdapter) ServerCount() (int64, error) {
 func (a *mongoAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOptions) {
 	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
 	if !onlyLocal {
-		offset, err := a.publish(&ClusterMessage{
+		offset, err := a.publish(a.publisher, &ClusterMessage{
 			Type: mongo.BROADCAST,
 			Data: &BroadcastMessage{
 				Packet: packet,
@@ -519,7 +551,7 @@ func (a *mongoAdapter) BroadcastWithAck(
 
 		var timeout time.Duration
 		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-			timeout = utils.FromMilliseconds(*opts.Flags.Timeout)
+			timeout = utils.NormalizeTimerMilliseconds(*opts.Flags.Timeout)
 		}
 		utils.SetTimeout(func() {
 			a.ackRequests.Delete(requestId)
@@ -617,6 +649,7 @@ func (a *mongoAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 					current, expected,
 				))
 			}, a.requestsTimeout)
+			request.Unlock()
 
 			a.Publish(&ClusterMessage{
 				Type: mongo.FETCH_SOCKETS,
@@ -625,7 +658,6 @@ func (a *mongoAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([]s
 					RequestId: requestId,
 				},
 			})
-			request.Unlock()
 		})
 	}
 }
@@ -686,6 +718,7 @@ func (a *mongoAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 			),
 		)
 	}, a.requestsTimeout)
+	request.Unlock()
 
 	a.Publish(&ClusterMessage{
 		Type: mongo.SERVER_SIDE_EMIT,
@@ -694,7 +727,6 @@ func (a *mongoAdapter) serverSideEmitWithAck(packet []any, ack socket.Ack) error
 			Packet:    packet,
 		},
 	})
-	request.Unlock()
 	return nil
 }
 
@@ -723,29 +755,25 @@ func (a *mongoAdapter) RestoreSession(pid socket.PrivateSessionId, offset string
 		return nil, errInvalidOffset
 	}
 
-	var (
-		session    *mongo.SessionDocument
-		sessionErr error
-		offsetErr  error
-		waitGroup  sync.WaitGroup
-	)
-	waitGroup.Go(func() {
-		session, sessionErr = a.findSession(pid)
-	})
-	waitGroup.Go(func() {
-		offsetErr = a.mongoCollection.Collection().FindOne(a.mongoCollection.Context(), bson.D{
-			{Key: "type", Value: mongo.BROADCAST},
-			{Key: "_id", Value: eventOffset},
-		}, options.FindOne().SetProjection(bson.D{
-			{Key: "_id", Value: 1},
-		})).Err()
-	})
-	waitGroup.Wait()
-
-	if sessionErr != nil || (offsetErr != nil && !errors.Is(offsetErr, mongod.ErrNoDocuments)) {
+	// Validate the offset before findSession consumes the stored session.
+	err = a.mongoCollection.Collection().FindOne(a.mongoCollection.Context(), bson.D{
+		{Key: "type", Value: mongo.BROADCAST},
+		{Key: "_id", Value: eventOffset},
+		{Key: "nsp", Value: a.Nsp().Name()},
+	}, options.FindOne().SetProjection(bson.D{
+		{Key: "_id", Value: 1},
+	})).Err()
+	if errors.Is(err, mongod.ErrNoDocuments) {
+		return nil, errSessionOrOffsetNotFound
+	}
+	if err != nil {
 		return nil, errFetchSession
 	}
-	if session == nil || errors.Is(offsetErr, mongod.ErrNoDocuments) {
+	session, err := a.findSession(pid)
+	if err != nil {
+		return nil, errFetchSession
+	}
+	if session == nil {
 		return nil, errSessionOrOffsetNotFound
 	}
 
@@ -753,6 +781,10 @@ func (a *mongoAdapter) RestoreSession(pid socket.PrivateSessionId, offset string
 		bson.D{{Key: "type", Value: mongo.BROADCAST}},
 		bson.D{{Key: "_id", Value: bson.D{{Key: "$gt", Value: eventOffset}}}},
 		bson.D{{Key: "nsp", Value: a.Nsp().Name()}},
+		bson.D{{Key: "data.packet.type", Value: parser.EVENT}},
+		bson.D{{Key: "data.packet.id", Value: bson.D{{Key: "$exists", Value: false}}}},
+		bson.D{{Key: "data.requestId", Value: bson.D{{Key: "$exists", Value: false}}}},
+		bson.D{{Key: "data.opts.flags.volatile", Value: bson.D{{Key: "$ne", Value: true}}}},
 		bson.D{{Key: "$or", Value: bson.A{
 			bson.D{{Key: "data.opts.rooms", Value: bson.D{{Key: "$size", Value: 0}}}},
 			bson.D{{Key: "data.opts.rooms", Value: bson.D{{Key: "$in", Value: session.Rooms}}}},
@@ -766,9 +798,8 @@ func (a *mongoAdapter) RestoreSession(pid socket.PrivateSessionId, offset string
 		a.mongoCollection.Context(),
 		filter,
 		options.Find().SetProjection(bson.D{
-			{Key: "data.packet.data", Value: 1},
-			{Key: "_id", Value: 0},
-		}),
+			{Key: "data.packet", Value: 1},
+		}).SetSort(bson.D{{Key: "_id", Value: 1}}),
 	)
 	if err != nil {
 		return nil, errFetchMissedPackets
@@ -777,19 +808,19 @@ func (a *mongoAdapter) RestoreSession(pid socket.PrivateSessionId, offset string
 
 	missedPackets := make([]any, 0)
 	for cursor.Next(a.mongoCollection.Context()) {
-		var event struct {
-			Data struct {
-				Packet struct {
-					Data any `bson:"data"`
-				} `bson:"packet"`
-			} `bson:"data"`
-		}
-		if err := mongo.UnmarshalDocument(cursor.Current, &event); err != nil {
+		var event mongo.AdapterEvent
+		if err := cursor.Decode(&event); err != nil {
 			return nil, errFetchMissedPackets
 		}
-		if event.Data.Packet.Data != nil {
-			missedPackets = append(missedPackets, event.Data.Packet.Data)
+		decoded, err := mongo.UnmarshalAdapterData(mongo.BROADCAST, event.Data)
+		if err != nil {
+			return nil, errFetchMissedPackets
 		}
+		packetData, ok := decoded.(*BroadcastMessage).Packet.Data.([]any)
+		if !ok {
+			return nil, errFetchMissedPackets
+		}
+		missedPackets = append(missedPackets, append(packetData, event.ID.Hex()))
 	}
 	if cursor.Err() != nil {
 		return nil, errFetchMissedPackets
@@ -810,6 +841,7 @@ func (a *mongoAdapter) findSession(pid socket.PrivateSessionId) (*mongo.SessionD
 	filter := bson.D{
 		{Key: "type", Value: mongo.SESSION},
 		{Key: "data.pid", Value: pid},
+		{Key: "nsp", Value: a.Nsp().Name()},
 	}
 	projection := bson.D{
 		{Key: "data", Value: 1},
@@ -889,6 +921,10 @@ func (a *mongoAdapter) Close() {
 	if !a.isClosed.CompareAndSwap(false, true) {
 		return
 	}
+	a.queueMu.Lock()
+	a.publisher.TryClose()
+	a.responses.TryClose()
+	a.queueMu.Unlock()
 	utils.ClearTimeout(a.heartbeatTimer.Swap(nil))
 	if callback := a.cleanupFunc.Swap(nil); callback != nil {
 		(*callback)()
