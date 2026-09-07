@@ -42,9 +42,9 @@ func newStreamsValkeyClient(t *testing.T, primary vk.Client, sub vk.Client) *val
 	return client
 }
 
-func xaddAt(t *testing.T, client vk.Client, stream, id string, fields map[string]string) {
+func xaddAt(t *testing.T, client vk.Client, id string, fields map[string]string) {
 	t.Helper()
-	command := client.B().Xadd().Key(stream).Id(id).FieldValue()
+	command := client.B().Xadd().Key("stream").Id(id).FieldValue()
 	for _, field := range [...]string{"uid", "nsp", "type", "data"} {
 		if value, ok := fields[field]; ok {
 			command = command.FieldValue(field, value)
@@ -294,7 +294,7 @@ func TestValkeyStreamsRestoreSessionReadsPagedMissedPackets(t *testing.T) {
 		"type": strconv.Itoa(int(adapter.HEARTBEAT)),
 	}
 	for range restoreSessionPageSize + 1 {
-		if _, err := client.XAdd(context.Background(), DefaultStreamName, other, DefaultStreamMaxLen); err != nil {
+		if _, err = client.XAdd(context.Background(), DefaultStreamName, other, DefaultStreamMaxLen); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -331,7 +331,7 @@ func TestValkeyStreamsRestoreSessionRejectsMissingSessionData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Set(
+	if err = client.Set(
 		context.Background(),
 		DefaultSessionKeyPrefix+"pid",
 		base64.StdEncoding.EncodeToString(payload),

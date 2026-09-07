@@ -222,7 +222,7 @@ func TestShardedEmitterUsesCommonCodecAndDynamicRouting(t *testing.T) {
 	opts.SetSharded(true)
 	emitter := NewEmitter(valkeyClient, opts)
 
-	if err := emitter.Emit("event", "value"); err != nil {
+	if err = emitter.Emit("event", "value"); err != nil {
 		t.Fatal(err)
 	}
 	if len(recorder.commands) != 1 || len(recorder.commands[0]) != 3 ||
@@ -260,7 +260,7 @@ func TestServerSideEmitRejectsAcknowledgements(t *testing.T) {
 		MakeShardedBroadcastOperator(),
 		MakeValkeyStreamsBroadcastOperator(),
 	} {
-		if err := operator.ServerSideEmit("event", socket.Ack(func([]any, error) {})); !errors.Is(err, errAcknowledgementsNotSupported) {
+		if err := operator.ServerSideEmit("event", func([]any, error) {}); !errors.Is(err, errAcknowledgementsNotSupported) {
 			t.Fatalf("error = %v, want %v", err, errAcknowledgementsNotSupported)
 		}
 	}

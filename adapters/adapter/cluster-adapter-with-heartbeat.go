@@ -165,15 +165,16 @@ func (a *clusterAdapterWithHeartbeat) ServerCount() (int64, error) {
 	return int64(a.nodesMap.Len() + 1), nil
 }
 
-func (a *clusterAdapterWithHeartbeat) publishAndReturnOffset(message *ClusterMessage) (Offset, error) {
+func (a *clusterAdapterWithHeartbeat) publishAndWait(message *ClusterMessage) error {
 	a.publishMu.Lock()
 	if a.closed.Load() {
 		a.publishMu.Unlock()
-		return "", ErrAdapterClosed
+		return ErrAdapterClosed
 	}
 	a.scheduleHeartbeat()
 	a.publishMu.Unlock()
-	return a.ClusterAdapter.PublishAndReturnOffset(message)
+	_, err := a.PublishAndReturnOffset(message)
+	return err
 }
 
 // registerRequest registers a timed request and reconciles nodes removed after its snapshot.
@@ -220,13 +221,12 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 	packetLen := len(packet)
 	ack, withAck := packet[packetLen-1].(socket.Ack)
 	if !withAck {
-		_, err := a.publishAndReturnOffset(&ClusterMessage{
+		return a.publishAndWait(&ClusterMessage{
 			Type: SERVER_SIDE_EMIT,
 			Data: &ServerSideEmitMessage{
 				Packet: packet,
 			},
 		})
-		return err
 	}
 	missingUids := types.NewSet(a.nodesMap.Keys()...)
 	expectedResponseCount := missingUids.Len()
@@ -262,7 +262,7 @@ func (a *clusterAdapterWithHeartbeat) ServerSideEmit(packet []any) error {
 		return nil
 	}
 
-	_, err := a.publishAndReturnOffset(&ClusterMessage{
+	err := a.publishAndWait(&ClusterMessage{
 		Type: SERVER_SIDE_EMIT,
 		Data: &ServerSideEmitMessage{
 			RequestId: new(requestId), // the presence of this attribute defines whether an acknowledgement is needed
@@ -324,7 +324,7 @@ func (a *clusterAdapterWithHeartbeat) FetchSockets(opts *socket.BroadcastOptions
 				return
 			}
 
-			_, publishErr := a.publishAndReturnOffset(&ClusterMessage{
+			publishErr := a.publishAndWait(&ClusterMessage{
 				Type: FETCH_SOCKETS,
 				Data: &FetchSocketsMessage{
 					Opts:      EncodeOptions(opts),

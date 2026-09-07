@@ -21,7 +21,7 @@ func Base64Id() *base64Id {
 
 func (b *base64Id) GenerateId() string {
 	r := make([]byte, 15)
-	sequence := uint32(b.sequenceNumber.Add(1) - 1)
+	sequence := b.sequenceNumber.Add(1) - 1
 	binary.BigEndian.PutUint32(r[11:], sequence)
 	_, _ = rand.Read(r[:12])
 	return base64.RawURLEncoding.EncodeToString(r)

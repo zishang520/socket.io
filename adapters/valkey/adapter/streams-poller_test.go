@@ -87,8 +87,8 @@ func TestValkeyStreamsPollerFreezesPrimaryTailBeforeReadingSubClient(t *testing.
 		"nsp":  "/tail",
 		"type": strconv.Itoa(int(adapter.HEARTBEAT)),
 	}
-	xaddAt(t, sub, "stream", "1-0", fields)
-	xaddAt(t, primary, "stream", "2-0", fields)
+	xaddAt(t, sub, "1-0", fields)
+	xaddAt(t, primary, "2-0", fields)
 
 	streamAdapter := MakeValkeyStreamsAdapter().(*valkeyStreamsAdapter)
 	recorder := &recordingValkeyStreamsClusterAdapter{
@@ -104,7 +104,7 @@ func TestValkeyStreamsPollerFreezesPrimaryTailBeforeReadingSubClient(t *testing.
 	streamAdapter.Construct(socket.NewNamespace(socket.NewServer(nil, nil), "/tail"))
 	t.Cleanup(streamAdapter.Close)
 
-	xaddAt(t, sub, "stream", "3-0", fields)
+	xaddAt(t, sub, "3-0", fields)
 	select {
 	case got := <-recorder.messages:
 		if got.offset != "3-0" || got.message.Nsp != "/tail" {
@@ -136,8 +136,8 @@ func TestValkeyStreamsPollerRetriesInitialTailInBackground(t *testing.T) {
 		"nsp":  "/retry",
 		"type": strconv.Itoa(int(adapter.HEARTBEAT)),
 	}
-	xaddAt(t, primary, "stream", "2-0", fields)
-	xaddAt(t, sub, "stream", "1-0", fields)
+	xaddAt(t, primary, "2-0", fields)
+	xaddAt(t, sub, "1-0", fields)
 	primaryServer.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -196,7 +196,7 @@ func TestValkeyStreamsPollerRetriesInitialTailInBackground(t *testing.T) {
 	if err := primaryServer.Restart(); err != nil {
 		t.Fatal(err)
 	}
-	xaddAt(t, sub, "stream", "3-0", fields)
+	xaddAt(t, sub, "3-0", fields)
 
 	select {
 	case got := <-recorder.messages:

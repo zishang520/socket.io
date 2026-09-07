@@ -344,7 +344,7 @@ func TestSet_MarshalMsgpack(t *testing.T) {
 		t.Fatalf("MarshalMsgpack empty error: %v", err)
 	}
 	var emptyKeys []int
-	if err := msgpack.Unmarshal(empty, &emptyKeys); err != nil {
+	if err = msgpack.Unmarshal(empty, &emptyKeys); err != nil {
 		t.Fatalf("UnmarshalMsgpack empty error: %v", err)
 	}
 	if emptyKeys == nil || len(emptyKeys) != 0 {
@@ -357,7 +357,7 @@ func TestSet_MarshalMsgpack(t *testing.T) {
 		t.Fatalf("MarshalMsgpack error: %v", err)
 	}
 	s2 := &Set[int]{}
-	if err := msgpack.Unmarshal(data, s2); err != nil {
+	if err = msgpack.Unmarshal(data, s2); err != nil {
 		t.Fatalf("UnmarshalMsgpack error: %v", err)
 	}
 	if s2.Len() != 3 {

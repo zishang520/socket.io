@@ -659,8 +659,8 @@ func (c *clusterAdapter) PublishResponse(requesterUid ServerId, response *Cluste
 	publish := c.Proto().(ClusterAdapter).DoPublishResponse
 
 	if err = c.enqueue(c.responses, func() {
-		if err := publish(requesterUid, published); err != nil {
-			adapterLog.Debug(`[%s] error while publishing response: %s`, c.uid, err.Error())
+		if publishErr := publish(requesterUid, published); publishErr != nil {
+			adapterLog.Debug(`[%s] error while publishing response: %s`, c.uid, publishErr.Error())
 		}
 	}); err != nil {
 		adapterLog.Debug(`[%s] error while publishing response: %s`, c.uid, err.Error())

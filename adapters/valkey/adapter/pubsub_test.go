@@ -168,7 +168,7 @@ func TestClassicValkeyPubSubWaitsForPatternBeforeChannel(t *testing.T) {
 
 	pubSub.newSubscription(func([]byte, string) {}).PSubscribe("ready:*")
 	pubSub.newSubscription(func([]byte, string) {}).Subscribe("ready:request")
-	if err := pubSub.flush(t.Context()); err != nil {
+	if err = pubSub.flush(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	select {

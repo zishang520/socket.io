@@ -509,7 +509,7 @@ func TestValkeyClientUsesSeparateRoles(t *testing.T) {
 
 	pubSub := client.Subscribe(ctx, "sio:test:roles")
 	defer pubSub.Close() //nolint:errcheck
-	if err := subscriber.Do(ctx,
+	if err = subscriber.Do(ctx,
 		subscriber.B().Publish().Channel("sio:test:roles").Message("from-sub").Build(),
 	).Error(); err != nil {
 		t.Fatal(err)
@@ -523,7 +523,7 @@ func TestValkeyClientUsesSeparateRoles(t *testing.T) {
 		t.Fatalf("subscriber count = %v, %v", counts, err)
 	}
 
-	if err := client.Set(ctx, "sio:test:session", "value", time.Second); err != nil {
+	if err = client.Set(ctx, "sio:test:session", "value", time.Second); err != nil {
 		t.Fatal(err)
 	}
 	value, err := client.GetDel(ctx, "sio:test:session")
@@ -531,7 +531,7 @@ func TestValkeyClientUsesSeparateRoles(t *testing.T) {
 		t.Fatalf("GetDel did not use primary: %q, %v", value, err)
 	}
 
-	if _, err := client.XAdd(ctx, "sio:test:primary-stream", valkey.RawClusterMessage{
+	if _, err = client.XAdd(ctx, "sio:test:primary-stream", valkey.RawClusterMessage{
 		"uid": "1", "nsp": "/", "type": "2",
 	}, 100); err != nil {
 		t.Fatal(err)
@@ -541,7 +541,7 @@ func TestValkeyClientUsesSeparateRoles(t *testing.T) {
 		t.Fatalf("XRangeN did not use primary: %d, %v", len(entries), err)
 	}
 
-	if err := subscriber.Do(ctx,
+	if err = subscriber.Do(ctx,
 		subscriber.B().Xadd().Key("sio:test:sub-stream").Id("*").FieldValue().FieldValue("uid", "2").Build(),
 	).Error(); err != nil {
 		t.Fatal(err)
