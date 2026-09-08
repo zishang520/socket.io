@@ -22,8 +22,8 @@ var (
 	// Socket.IO supports standalone, Sentinel, and Redis Cluster deployments.
 	ErrUnsupportedRedisClient = errors.New("redis: *redis.Ring is not supported")
 
-	// ErrReadOnlyRedisClient is returned when the primary Redis Cluster client
-	// may route consistency-sensitive reads to replicas.
+	// ErrReadOnlyRedisClient is emitted when a Redis Streams adapter's primary
+	// cluster client may route consistency-sensitive reads to replicas.
 	ErrReadOnlyRedisClient = errors.New("redis: primary cluster client must not enable read-only routing")
 )
 
@@ -122,9 +122,6 @@ func NewRedisClientWithSub(ctx context.Context, client, subClient redis.Universa
 	}
 	if err := validateClient(client); err != nil {
 		return nil, err
-	}
-	if cluster, ok := client.(*redis.ClusterClient); ok && cluster.Options().ReadOnly {
-		return nil, ErrReadOnlyRedisClient
 	}
 	if utils.IsNil(subClient) {
 		subClient = client

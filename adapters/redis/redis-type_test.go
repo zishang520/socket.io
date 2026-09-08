@@ -477,3 +477,36 @@ func TestRedisResponse_MsgpackPreservesRequiredValues(t *testing.T) {
 		})
 	}
 }
+
+func TestRedisResponseJSONAckFields(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		response RedisResponse
+		want     string
+	}{
+		{"server null", RedisResponse{Type: SERVER_SIDE_EMIT}, `{"type":6,"requestId":"request","data":null}`},
+		{"broadcast null", RedisResponse{Type: BROADCAST_ACK}, `{"type":9,"requestId":"request","packet":null}`},
+		{"server buffer", RedisResponse{Type: SERVER_SIDE_EMIT, Data: []byte{1, 2}}, `{"type":6,"requestId":"request","data":{"type":"Buffer","data":[1,2]}}`},
+		{"broadcast buffer", RedisResponse{Type: BROADCAST_ACK, Packet: []byte{1, 2}}, `{"type":9,"requestId":"request","packet":{"type":"Buffer","data":[1,2]}}`},
+		{"client count", RedisResponse{Type: BROADCAST_CLIENT_COUNT, ClientCount: new(uint64(0))}, `{"type":8,"requestId":"request","clientCount":0}`},
+		{"legacy response", RedisResponse{}, `{"requestId":"request"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.response.RequestId = "request"
+			payload, err := json.Marshal(&test.response)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want map[string]any
+			if err := json.Unmarshal(payload, &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(test.want), &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("response = %s, want %s", payload, test.want)
+			}
+		})
+	}
+}

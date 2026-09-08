@@ -2,6 +2,7 @@ package emitter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -144,17 +145,14 @@ func TestClassicEmitterTypedNilEncoderUsesDefault(t *testing.T) {
 }
 
 func TestClassicEmitterPreservesConstructorRoutingValues(t *testing.T) {
-	server := miniredis.RunT(t)
-	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
-	redisClient := mustRedisClient(t, client)
-	emit := NewEmitter(redisClient, nil, "")
+	emit := NewEmitter(nil, nil, "")
 	if emit.broadcastOptions.Nsp != "" || emit.broadcastOptions.BroadcastChannel != "socket.io##" {
 		t.Fatalf("namespace = %q, channel = %q", emit.broadcastOptions.Nsp, emit.broadcastOptions.BroadcastChannel)
 	}
 	if got := emit.Of("").broadcastOptions.Nsp; got != "/" {
 		t.Fatalf("Of empty namespace = %q, want /", got)
 	}
-	if got := NewEmitter(redisClient, nil, "chat").broadcastOptions.Nsp; got != "chat" {
+	if got := NewEmitter(nil, nil, "chat").broadcastOptions.Nsp; got != "chat" {
 		t.Fatalf("direct namespace = %q, want raw chat", got)
 	}
 	if got := emit.Of("chat").broadcastOptions.Nsp; got != "/chat" {
@@ -163,7 +161,7 @@ func TestClassicEmitterPreservesConstructorRoutingValues(t *testing.T) {
 
 	options := DefaultEmitterOptions()
 	options.SetKey("")
-	emptyKeyEmitter := NewEmitter(redisClient, options)
+	emptyKeyEmitter := NewEmitter(nil, options)
 	if got := emptyKeyEmitter.broadcastOptions.BroadcastChannel; got != "#/#" {
 		t.Fatalf("explicit empty key channel = %q, want #/#", got)
 	}
@@ -334,114 +332,98 @@ func TestRedisStreamsEmitterPreservesEmptyNamespace(t *testing.T) {
 
 func TestEmitter(t *testing.T) {
 	server := miniredis.RunT(t)
-	redisClient := mustRedisClient(t, rds.NewClient(&rds.Options{
-		Addr: server.Addr(),
-	}))
-
-	emit := NewEmitter(redisClient, nil)
-
-	t.Run("Of", func(t *testing.T) {
-		emit.Of("test")
-	})
-
-	t.Run("Emit", func(t *testing.T) {
-		if err := emit.Emit("test", "data", "data"); err != nil {
-			t.Fatal(`emit.Emit() value must be nil`)
-		}
-	})
-
-	t.Run("To", func(t *testing.T) {
-		emit.To("test")
-	})
-
-	t.Run("In", func(t *testing.T) {
-		emit.In("test")
-	})
-
-	t.Run("Except", func(t *testing.T) {
-		emit.Except("test")
-	})
-
-	t.Run("Volatile", func(t *testing.T) {
-		emit.Volatile()
-	})
-
-	t.Run("Compress", func(t *testing.T) {
-		emit.Compress(false)
-	})
-
-	t.Run("SocketsJoin", func(t *testing.T) {
-		_ = emit.SocketsJoin("room")
-	})
-
-	t.Run("SocketsLeave", func(t *testing.T) {
-		_ = emit.SocketsLeave("room")
-	})
-
-	t.Run("DisconnectSockets", func(t *testing.T) {
-		_ = emit.DisconnectSockets(false)
-	})
-
-	t.Run("ServerSideEmit", func(t *testing.T) {
-		err := emit.ServerSideEmit("false", "aaa", func([]any, error) {})
-		if !errors.Is(err, errAcknowledgementsNotSupported) {
-			t.Fatalf("ServerSideEmit error = %v, want %v", err, errAcknowledgementsNotSupported)
-		}
-		err = emit.ServerSideEmit("false", "aaa")
-		if err != nil {
-			t.Fatalf(`ServerSideEmit error not as expected: %v, want match for %v`, nil, err)
-		}
-	})
-}
-
-func TestBroadcastOperator(t *testing.T) {
-	server := miniredis.RunT(t)
-	redisClient := mustRedisClient(t, rds.NewClient(&rds.Options{
-		Addr: server.Addr(),
-	}))
-
-	b := NewBroadcastOperator(redisClient, &BroadcastOptions{
-		Nsp:              "",
-		BroadcastChannel: "",
-		RequestChannel:   "",
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, client)
+	operator := NewBroadcastOperator(redisClient, &BroadcastOptions{
+		Nsp:              "/chat",
+		BroadcastChannel: "custom#/chat#",
+		RequestChannel:   "custom-request#/chat#",
 		Encoder:          utils.MsgPack(),
-	}, nil, nil, nil)
+	}, nil, nil, nil).To("selected").Except("excluded")
 
-	t.Run("Emit", func(t *testing.T) {
-		if err := b.Emit("test", "data", "data"); err != nil {
-			t.Fatalf(`emit.Emit() value must be nil: %v`, err)
-		}
-	})
+	for _, tt := range []struct {
+		name     string
+		operator BroadcastOperatorInterface
+		channel  string
+		opts     *adapter.PacketOptions
+	}{
+		{
+			name:     "emitter",
+			operator: NewEmitter(redisClient, nil),
+			channel:  "socket.io-request#/#",
+			opts:     &adapter.PacketOptions{Rooms: []socket.Room{}, Except: []socket.Room{}},
+		},
+		{
+			name:     "operator",
+			operator: operator,
+			channel:  "custom-request#/chat#",
+			opts:     &adapter.PacketOptions{Rooms: []socket.Room{"selected"}, Except: []socket.Room{"excluded"}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			pubsub := client.Subscribe(ctx, tt.channel)
+			defer func() { _ = pubsub.Close() }()
+			if _, err := pubsub.Receive(ctx); err != nil {
+				t.Fatal(err)
+			}
 
-	t.Run("To", func(t *testing.T) {
-		b.To("test")
-	})
+			t.Run("Emit", func(t *testing.T) {
+				if err := tt.operator.Emit("test", "data", "data"); err != nil {
+					t.Fatal(err)
+				}
+			})
 
-	t.Run("In", func(t *testing.T) {
-		b.In("test")
-	})
+			for _, operation := range []struct {
+				name    string
+				publish func() error
+				want    redis.RedisRequest
+			}{
+				{
+					name:    "SocketsJoin",
+					publish: func() error { return tt.operator.SocketsJoin("room") },
+					want:    redis.RedisRequest{Type: redis.REMOTE_JOIN, Opts: tt.opts, Rooms: []socket.Room{"room"}},
+				},
+				{
+					name:    "SocketsLeave",
+					publish: func() error { return tt.operator.SocketsLeave("room") },
+					want:    redis.RedisRequest{Type: redis.REMOTE_LEAVE, Opts: tt.opts, Rooms: []socket.Room{"room"}},
+				},
+				{
+					name:    "DisconnectSockets",
+					publish: func() error { return tt.operator.DisconnectSockets(false) },
+					want:    redis.RedisRequest{Type: redis.REMOTE_DISCONNECT, Opts: tt.opts, Close: new(false)},
+				},
+			} {
+				t.Run(operation.name, func(t *testing.T) {
+					if err := operation.publish(); err != nil {
+						t.Fatal(err)
+					}
+					message, err := pubsub.ReceiveMessage(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var request redis.RedisRequest
+					if err = json.Unmarshal([]byte(message.Payload), &request); err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(request, operation.want) {
+						t.Fatalf("request = %s, want %#v", message.Payload, operation.want)
+					}
+				})
+			}
 
-	t.Run("Except", func(t *testing.T) {
-		b.Except("test")
-	})
-
-	t.Run("Volatile", func(t *testing.T) {
-		b.Volatile()
-	})
-
-	t.Run("Compress", func(t *testing.T) {
-		b.Compress(false)
-	})
-
-	t.Run("SocketsJoin", func(t *testing.T) {
-		_ = b.SocketsJoin("room")
-	})
-
-	t.Run("SocketsLeave", func(t *testing.T) {
-		_ = b.SocketsLeave("room")
-	})
-
-	t.Run("DisconnectSockets", func(t *testing.T) {
-		_ = b.DisconnectSockets(false)
-	})
+			t.Run("ServerSideEmit", func(t *testing.T) {
+				err := tt.operator.ServerSideEmit("false", "aaa", func([]any, error) {})
+				if !errors.Is(err, errAcknowledgementsNotSupported) {
+					t.Fatalf("ServerSideEmit error = %v, want %v", err, errAcknowledgementsNotSupported)
+				}
+				if err = tt.operator.ServerSideEmit("false", "aaa"); err != nil {
+					t.Fatal(err)
+				}
+			})
+		})
+	}
 }

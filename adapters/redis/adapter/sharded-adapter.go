@@ -89,6 +89,11 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	}
 	s.subscription.Subscribe(s.channel)
 	s.subscription.Subscribe(responseChannel)
+	context.AfterFunc(s.ctx, s.Close)
+	if s.ctx.Err() != nil {
+		s.Close()
+		return
+	}
 	if err := s.pubSub.flush(s.ctx); err != nil && s.ctx.Err() == nil {
 		s.redisClient.Emit("error", err)
 	}

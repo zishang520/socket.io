@@ -136,7 +136,7 @@ func TestRedisClient_WithClusterClient(t *testing.T) {
 	})
 }
 
-func TestRedisClientRejectsReadOnlyPrimaryCluster(t *testing.T) {
+func TestRedisClientAcceptsReadOnlyPrimaryCluster(t *testing.T) {
 	for name, options := range map[string]*rds.ClusterOptions{
 		"read-only":        {ReadOnly: true},
 		"route by latency": {RouteByLatency: true},
@@ -148,11 +148,8 @@ func TestRedisClientRejectsReadOnlyPrimaryCluster(t *testing.T) {
 			t.Cleanup(func() { _ = primary.Close() })
 
 			client, err := NewRedisClient(context.Background(), primary)
-			if client != nil {
-				t.Fatal("expected nil RedisClient")
-			}
-			if !errors.Is(err, ErrReadOnlyRedisClient) {
-				t.Fatalf("error = %v, want %v", err, ErrReadOnlyRedisClient)
+			if err != nil || client == nil || client.Client() != primary {
+				t.Fatalf("read-only primary client = %v, error = %v", client, err)
 			}
 		})
 	}

@@ -428,7 +428,7 @@ func TestRedisStreamsAdapterCloseStopsOwnedRedisOperations(t *testing.T) {
 		nil,
 	).(*redisStreamsAdapter)
 
-	restoreKey := DefaultSessionKeyPrefix + "restore"
+	restoreKey := DefaultSessionKeyPrefix + "L3Rlc3Q#restore"
 	if err := client.Set(t.Context(), restoreKey, "session", time.Minute).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ func TestRedisStreamsAdapterCloseStopsOwnedRedisOperations(t *testing.T) {
 	}
 
 	current.PersistSession(&socket.SessionToPersist{Pid: "persist"})
-	if exists, err := client.Exists(t.Context(), DefaultSessionKeyPrefix+"persist").Result(); err != nil || exists != 0 {
+	if exists, err := client.Exists(t.Context(), DefaultSessionKeyPrefix+"L3Rlc3Q#persist").Result(); err != nil || exists != 0 {
 		t.Fatalf("persisted session count/error after Close = %d/%v, want 0/nil", exists, err)
 	}
 
@@ -894,7 +894,7 @@ func TestRestoreSessionReturnsEmptyMissedPackets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = client.Set(context.Background(), DefaultSessionKeyPrefix+"pid", base64.StdEncoding.EncodeToString(payload), 0).Err()
+	err = client.Set(context.Background(), DefaultSessionKeyPrefix+"L3Rlc3Q#pid", base64.StdEncoding.EncodeToString(payload), 0).Err()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -943,7 +943,7 @@ func TestPersistSessionSetsPositiveTTL(t *testing.T) {
 	streamAdapter, client := newRedisStreamsPersistenceAdapter(t, duration)
 	streamAdapter.PersistSession(&socket.SessionToPersist{Pid: "pid"})
 
-	ttl, err := client.PTTL(context.Background(), DefaultSessionKeyPrefix+"pid").Result()
+	ttl, err := client.PTTL(context.Background(), DefaultSessionKeyPrefix+"L3Rlc3Q#pid").Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -972,7 +972,7 @@ func TestPersistSessionReportsEncodingError(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("session encoding failure did not emit an error")
 	}
-	if exists, err := client.Exists(context.Background(), DefaultSessionKeyPrefix+"pid").Result(); err != nil || exists != 0 {
+	if exists, err := client.Exists(context.Background(), DefaultSessionKeyPrefix+"L3Rlc3Q#pid").Result(); err != nil || exists != 0 {
 		t.Fatalf("encoded session count/error = %d/%v, want 0/nil", exists, err)
 	}
 }
@@ -998,7 +998,7 @@ func TestPersistSessionRejectsInvalidDuration(t *testing.T) {
 			})
 			streamAdapter.PersistSession(&socket.SessionToPersist{Pid: "pid"})
 
-			exists, err := client.Exists(context.Background(), DefaultSessionKeyPrefix+"pid").Result()
+			exists, err := client.Exists(context.Background(), DefaultSessionKeyPrefix+"L3Rlc3Q#pid").Result()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1018,59 +1018,44 @@ func TestPersistSessionRejectsInvalidDuration(t *testing.T) {
 }
 
 func TestRestoreSessionRejectsMalformedPersistedSession(t *testing.T) {
-	tests := []struct {
-		name      string
-		session   any
-		wantError string
-	}{
-		{
-			name:      "missing session data",
-			session:   (*socket.SessionToPersist)(nil),
-			wantError: "invalid persisted session: missing session data",
-		},
+	server := miniredis.RunT(t)
+	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	redisClient := mustRedisClient(t, ctx, client)
+
+	payload, err := utils.MsgPack().Encode((*socket.SessionToPersist)(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.Set(
+		ctx,
+		DefaultSessionKeyPrefix+"L3Rlc3Q#pid",
+		base64.StdEncoding.EncodeToString(payload),
+		0,
+	).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err = client.XAdd(ctx, &rds.XAddArgs{
+		Stream: "stream",
+		ID:     "1-0",
+		Values: map[string]any{"uid": "node", "nsp": "/test", "type": "1"},
+	}).Err(); err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := miniredis.RunT(t)
-			client := rds.NewClient(&rds.Options{Addr: server.Addr()})
-			t.Cleanup(func() { _ = client.Close() })
-			ctx := context.Background()
-			redisClient := mustRedisClient(t, ctx, client)
+	streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
+	streamAdapter.ClusterAdapter.Construct(
+		socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
+	)
+	streamAdapter.redisClient = redisClient
+	streamAdapter.ctx = ctx
+	streamAdapter.streamName = "stream"
+	streamAdapter.opts.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
 
-			payload, err := utils.MsgPack().Encode(tt.session)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = client.Set(
-				ctx,
-				DefaultSessionKeyPrefix+"pid",
-				base64.StdEncoding.EncodeToString(payload),
-				0,
-			).Err(); err != nil {
-				t.Fatal(err)
-			}
-			if err = client.XAdd(ctx, &rds.XAddArgs{
-				Stream: "stream",
-				ID:     "1-0",
-				Values: map[string]any{"uid": "node", "nsp": "/test", "type": "1"},
-			}).Err(); err != nil {
-				t.Fatal(err)
-			}
-
-			streamAdapter := MakeRedisStreamsAdapter().(*redisStreamsAdapter)
-			streamAdapter.ClusterAdapter.Construct(
-				socket.NewNamespace(socket.NewServer(nil, nil), "/test"),
-			)
-			streamAdapter.redisClient = redisClient
-			streamAdapter.ctx = ctx
-			streamAdapter.streamName = "stream"
-			streamAdapter.opts.SetSessionKeyPrefix(DefaultSessionKeyPrefix)
-
-			if _, err = streamAdapter.RestoreSession("pid", "1-0"); err == nil || err.Error() != tt.wantError {
-				t.Fatalf("error = %v, want %q", err, tt.wantError)
-			}
-		})
+	const wantError = "invalid persisted session: missing session data"
+	if _, err = streamAdapter.RestoreSession("pid", "1-0"); err == nil || err.Error() != wantError {
+		t.Fatalf("error = %v, want %q", err, wantError)
 	}
 }
 
@@ -1428,7 +1413,7 @@ func TestRestoreSessionUsesWriteClientForStreamReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = writeClient.Set(ctx, DefaultSessionKeyPrefix+"pid", base64.StdEncoding.EncodeToString(payload), 0).Err(); err != nil {
+	if err = writeClient.Set(ctx, DefaultSessionKeyPrefix+"L3Rlc3Q#pid", base64.StdEncoding.EncodeToString(payload), 0).Err(); err != nil {
 		t.Fatal(err)
 	}
 

@@ -18,21 +18,17 @@ var (
 	_ RedisStreamsEmitterOptionsInterface = (*customRedisStreamsEmitterOptions)(nil)
 )
 
-func newStreamsEmitterTestClient(t *testing.T) (*redis.RedisClient, *rds.Client, <-chan error) {
+func newStreamsEmitterTestClient(t *testing.T) (*redis.RedisClient, *rds.Client) {
 	t.Helper()
 	server := miniredis.RunT(t)
 	client := rds.NewClient(&rds.Options{Addr: server.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	redisClient := mustRedisClient(t, client)
-	redisErrors := make(chan error, 2)
 	_ = redisClient.On("error", func(args ...any) {
-		if len(args) > 0 {
-			if err, ok := args[0].(error); ok {
-				redisErrors <- err
-			}
-		}
+		t.Errorf("unexpected Redis error: %v", args)
 	})
-	return redisClient, client, redisErrors
+	t.Cleanup(func() { redisClient.RemoveAllListeners("error") })
+	return redisClient, client
 }
 
 func TestRedisStreamsEmitterOptions(t *testing.T) {
@@ -126,7 +122,7 @@ func TestRedisStreamsEmitterRoutesStreamCount(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			redisClient, client, redisErrors := newStreamsEmitterTestClient(t)
+			redisClient, client := newStreamsEmitterTestClient(t)
 
 			opts := DefaultRedisStreamsEmitterOptions()
 			opts.SetStreamName("events")
@@ -156,12 +152,6 @@ func TestRedisStreamsEmitterRoutesStreamCount(t *testing.T) {
 			if len(entries) != 1 {
 				t.Fatalf("entries in routed stream = %d, want 1", len(entries))
 			}
-
-			select {
-			case err := <-redisErrors:
-				t.Fatalf("stream count emitted an error: %v", err)
-			default:
-			}
 		})
 	}
 }
@@ -175,7 +165,7 @@ func TestRedisStreamsBroadcastOperatorRoutesNonPositiveStreamCountToBaseStream(t
 		{name: "negative", raw: -2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			redisClient, client, redisErrors := newStreamsEmitterTestClient(t)
+			redisClient, client := newStreamsEmitterTestClient(t)
 			opts := DefaultRedisStreamsEmitterOptions()
 			opts.SetStreamName("events")
 			opts.SetStreamCount(tt.raw)
@@ -197,11 +187,6 @@ func TestRedisStreamsBroadcastOperatorRoutesNonPositiveStreamCountToBaseStream(t
 			}
 			if len(entries) != 1 {
 				t.Fatalf("entries in routed stream = %d, want 1", len(entries))
-			}
-			select {
-			case err := <-redisErrors:
-				t.Fatalf("non-positive stream count emitted an error: %v", err)
-			default:
 			}
 		})
 	}

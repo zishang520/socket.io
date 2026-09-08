@@ -6,17 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/zishang520/socket.io/adapters/adapter/v3"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/servers/socket/v3"
-	"github.com/zishang520/socket.io/v3/pkg/types"
 	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
@@ -161,6 +158,18 @@ func (r *RedisResponse) MarshalJSON() ([]byte, error) {
 	}
 	if payload.Packet != nil {
 		payload.Packet = normalizeJSONData(payload.Packet)
+	}
+	switch payload.Type {
+	case SERVER_SIDE_EMIT:
+		return json.Marshal(struct {
+			redisResponse
+			Data any `json:"data"`
+		}{payload, payload.Data})
+	case BROADCAST_ACK:
+		return json.Marshal(struct {
+			redisResponse
+			Packet any `json:"packet"`
+		}{payload, payload.Packet})
 	}
 	return json.Marshal(payload)
 }
@@ -393,52 +402,6 @@ func marshalPacket(packet *parser.Packet, jsonFormat bool) *parser.Packet {
 
 func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 	switch value := data.(type) {
-	case nil:
-		return nil, false, false
-	case *strings.Reader:
-		if value == nil {
-			return nil, true, false
-		}
-		var payload strings.Builder
-		payload.Grow(value.Len())
-		_, _ = value.WriteTo(&payload)
-		return payload.String(), true, false
-	case *types.StringBuffer:
-		if value == nil || value.Buffer == nil {
-			return nil, true, false
-		}
-		return value.String(), true, false
-	case []byte:
-		if jsonFormat {
-			return nodeBufferJSON(value), true, true
-		}
-		return utils.NonNilSlice(value), value == nil, true
-	case *types.BytesBuffer:
-		if value == nil {
-			return nil, true, false
-		}
-		var payload []byte
-		if value.Buffer != nil {
-			payload = value.Bytes()
-		}
-		payload = utils.NonNilSlice(payload)
-		if jsonFormat {
-			return nodeBufferJSON(payload), true, true
-		}
-		return payload, true, true
-	case io.Reader:
-		if utils.IsNil(data) {
-			return data, false, false
-		}
-		payload, _ := io.ReadAll(value)
-		if closer, ok := data.(io.Closer); ok {
-			_ = closer.Close()
-		}
-		payload = utils.NonNilSlice(payload)
-		if jsonFormat {
-			return nodeBufferJSON(payload), true, true
-		}
-		return payload, true, true
 	case []any:
 		var result []any
 		var binary bool
@@ -475,7 +438,10 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 			return result, true, binary
 		}
 		return data, false, binary
-	default:
-		return data, false, false
 	}
+	prepared, changed, binary := adapter.PrepareClusterData(data)
+	if jsonFormat && binary {
+		return nodeBufferJSON(prepared.([]byte)), true, true
+	}
+	return prepared, changed, binary
 }

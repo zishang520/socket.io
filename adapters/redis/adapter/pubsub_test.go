@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -79,6 +80,131 @@ func currentRedisPubSubTransport(pubSub *redisPubSub) *rds.PubSub {
 	pubSub.mu.RLock()
 	defer pubSub.mu.RUnlock()
 	return pubSub.pubSub
+}
+
+func TestRedisPubSubErrorHandlerCanFlush(t *testing.T) {
+	client := rds.NewClient(&rds.Options{
+		MaxRetries: -1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, net.ErrClosed
+		},
+	})
+	t.Cleanup(func() { _ = client.Close() })
+	initialized := make(chan struct{})
+	results := make(chan error, 1)
+	var pubSub *redisPubSub
+	pubSub = newRedisPubSub(t.Context(), client, func(error) {
+		<-initialized
+		ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+		defer cancel()
+		err := pubSub.flush(ctx)
+		select {
+		case results <- err:
+		default:
+		}
+	})
+	t.Cleanup(pubSub.Close)
+	pubSub.newSubscription(func([]byte, string) {}).Subscribe("reentrant")
+	close(initialized)
+
+	select {
+	case err := <-results:
+		if err != nil {
+			t.Fatalf("error handler could not flush subscriptions: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("subscription error handler did not complete")
+	}
+}
+
+func TestRedisPubSubAdaptersCloseWithContext(t *testing.T) {
+	for _, kind := range []string{"classic", "sharded"} {
+		for _, canceledBeforeConstruct := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/canceledBeforeConstruct=%t", kind, canceledBeforeConstruct), func(t *testing.T) {
+				server, _ := newShardedPubSubRecorder(t, 0)
+				client := rds.NewClient(&rds.Options{Addr: server.Addr()})
+				t.Cleanup(func() { _ = client.Close() })
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				redisClient := mustRedisClient(t, ctx, client)
+				io := socket.NewServer(nil, nil)
+				refs := func() int {
+					if kind == "classic" {
+						redisPubSubs.mu.Lock()
+						defer redisPubSubs.mu.Unlock()
+						if shared := redisPubSubs.groups[redisPubSubCacheKey{server: io, client: redisClient}]; shared != nil {
+							return shared.refs
+						}
+					} else {
+						shardedRedisPubSubs.mu.Lock()
+						defer shardedRedisPubSubs.mu.Unlock()
+						if shared := shardedRedisPubSubs.groups[shardedPubSubCacheKey{server: io, client: redisClient}]; shared != nil {
+							return shared.refs
+						}
+					}
+					return 0
+				}
+				if canceledBeforeConstruct {
+					cancel()
+				}
+				for _, name := range []string{"/first", "/second"} {
+					nsp := socket.NewNamespace(io, name)
+					var current socket.Adapter
+					if kind == "classic" {
+						current = NewRedisAdapter(nsp, redisClient, nil)
+					} else {
+						current = NewShardedRedisAdapter(nsp, redisClient, nil)
+					}
+					t.Cleanup(current.Close)
+				}
+				if canceledBeforeConstruct {
+					if got := refs(); got != 0 {
+						t.Fatalf("canceled construction retained %d shared Pub/Sub references", got)
+					}
+					return
+				}
+				if got := refs(); got != 2 {
+					t.Fatalf("shared Pub/Sub references = %d, want 2", got)
+				}
+				cancel()
+				waitForRedisPubSub(t, func() bool { return refs() == 0 })
+			})
+		}
+	}
+}
+
+func TestRedisAdapterConstructionErrorHandlerCanClose(t *testing.T) {
+	client := rds.NewClient(&rds.Options{
+		MaxRetries: -1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, net.ErrClosed
+		},
+	})
+	t.Cleanup(func() { _ = client.Close() })
+	redisClient := mustRedisClient(t, t.Context(), client)
+	current := MakeRedisAdapter()
+	current.SetRedis(redisClient)
+	t.Cleanup(current.Close)
+	closed := make(chan struct{})
+	if err := redisClient.Once("error", func(...any) {
+		current.Close()
+		close(closed)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	io := socket.NewServer(nil, nil)
+	current.Construct(socket.NewNamespace(io, "/construction-error"))
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("construction error handler did not finish closing the adapter")
+	}
+	redisPubSubs.mu.Lock()
+	_, registered := redisPubSubs.groups[redisPubSubCacheKey{server: io, client: redisClient}]
+	redisPubSubs.mu.Unlock()
+	if registered {
+		t.Fatal("construction error handler left a shared Pub/Sub registration")
+	}
 }
 
 func TestRedisPubSubSharesConnectionAndRoutesHandlers(t *testing.T) {
@@ -467,27 +593,22 @@ func TestRedisPubSubBatchesSubscriptionChanges(t *testing.T) {
 }
 
 func TestRedisPubSubReportsBatchFailureOnce(t *testing.T) {
-	server := miniredis.RunT(t)
-	addr := server.Addr()
-	server.Close()
 	client := rds.NewClient(&rds.Options{
-		Addr:         addr,
-		MaxRetries:   -1,
-		DialTimeout:  20 * time.Millisecond,
-		ReadTimeout:  20 * time.Millisecond,
-		WriteTimeout: 20 * time.Millisecond,
+		MaxRetries: -1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, net.ErrClosed
+		},
 	})
 	t.Cleanup(func() { _ = client.Close() })
 
 	ctx, cancel := context.WithCancel(context.Background())
-	var errors atomic.Int64
 	pubSub := &redisPubSub{
 		ctx:      ctx,
 		cancel:   cancel,
 		pubSub:   client.Subscribe(ctx),
 		channels: newRedisPubSubRoutes(),
 		patterns: newRedisPubSubRoutes(),
-		onError:  func(error) { errors.Add(1) },
+		errors:   make(chan error, 2),
 	}
 	t.Cleanup(pubSub.Close)
 
@@ -500,7 +621,7 @@ func TestRedisPubSubReportsBatchFailureOnce(t *testing.T) {
 	if !pubSub.reconcile(&pubSub.channels, false) {
 		t.Fatal("failed batch was reported as successful")
 	}
-	if got := errors.Load(); got != 1 {
+	if got := len(pubSub.errors); got != 1 {
 		t.Fatalf("reported errors = %d, want one error for the batch", got)
 	}
 	if got := len(pubSub.channels.dirty); got != 64 {

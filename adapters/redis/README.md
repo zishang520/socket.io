@@ -35,11 +35,16 @@ constructors return an error for invalid configurations, and the resulting
 client configuration is immutable. Use `Client()`, `Sub()`, and `Context()` to
 access it.
 
-A go-redis `*redis.ClusterClient` passed as the primary client must not enable
+Canceling that context closes the classic, sharded, and Streams adapters and
+releases their shared subscriptions and pollers. The caller remains responsible
+for closing the underlying go-redis clients.
+
+The Redis Streams adapter's primary `*redis.ClusterClient` must not enable
 `ReadOnly`, `RouteByLatency`, or `RouteRandomly`; these settings may route
-recovery reads to replicas, so construction returns `redis.ErrReadOnlyRedisClient`.
-A read-only cluster client may instead be passed as `subClient` to
-`NewRedisClientWithSub`.
+initial-tail and recovery reads to replicas. An invalid Streams adapter emits
+`redis.ErrReadOnlyRedisClient` and closes without starting subscriptions or a
+poller. Classic and sharded adapters, all emitters, and the separate `subClient`
+may use these settings.
 
 For standalone and Sentinel deployments, every Socket.IO process must route
 `Sub()` to the same Pub/Sub node or logical endpoint. Redis subscriber counts
@@ -152,6 +157,22 @@ When using the Redis Streams adapter or emitter:
 - Each distinct active stream poller holds one connection from the `Sub()` pool during blocking `XREAD`. Size that pool for the active pollers plus Pub/Sub and regular command headroom, or provide a separate `subClient`; namespaces on the same server that use the same `RedisClient`, route to the same stream, and have identical read settings share a poller.
 
 ## Cross-language payloads
+
+Redis Streams recovery sessions are stored under
+`sessionKeyPrefix + base64url(namespace, without padding) + "#" + pid`, which
+isolates each namespace's recovery credentials. The stream offset is validated
+against the target namespace before the session is atomically claimed.
+For example, the default root-namespace key is `sio:session:Lw#<pid>`.
+
+Sessions written with the old Go or Node.js global `sessionKeyPrefix + pid`
+format are not restored by this adapter. Those clients establish a new
+connection and run the normal namespace middleware. Cross-language session
+recovery requires all participating servers to use the namespace-scoped key
+format; broadcasts and other cluster messages retain the Node.js protocol.
+All recovery endpoints must enforce namespace binding. Older Node.js adapters
+that read `sessionKeyPrefix + pid` with a client-supplied PID must be patched or
+have recovery disabled; changing the keys written by Go does not protect those
+older recovery endpoints.
 
 To preserve binary values when communicating with Node.js, compound payloads must use `[]any` and
 `map[string]any`. A `[]byte` value can be sent directly or nested inside either supported container.

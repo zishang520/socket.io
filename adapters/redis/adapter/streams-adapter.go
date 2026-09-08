@@ -92,9 +92,10 @@ type redisStreamsAdapter struct {
 	streamPoller       *redisStreamsPoller
 	server             *socket.Server
 
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closeOnce sync.Once
+	ctx        context.Context
+	cancel     context.CancelFunc
+	resourceMu sync.Mutex
+	closeOnce  sync.Once
 }
 
 // MakeRedisStreamsAdapter creates a new uninitialized redisStreamsAdapter.
@@ -158,6 +159,11 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 
 	r.ctx, r.cancel = context.WithCancel(r.redisClient.Context())
 	r.server = nsp.Server()
+	if cluster, ok := r.redisClient.Client().(*rds.ClusterClient); ok && cluster.Options().ReadOnly {
+		r.Close()
+		r.redisClient.Emit("error", redis.ErrReadOnlyRedisClient)
+		return
+	}
 
 	// Each namespace is routed to a specific stream to ensure ordering
 	r.streamName = redis.StreamNameForNamespace(
@@ -171,6 +177,8 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	privateChannel := r.publicChannel + string(r.Uid()) + "#"
 
 	// Subscribe to both public and private channels for PUB/SUB messages
+	// Error callbacks may close the adapter before its resources are assigned.
+	r.resourceMu.Lock()
 	if r.opts.UseShardedPubSub() {
 		r.shardedPubSub = acquireShardedPubSub(r.server, r.redisClient)
 		r.subscription = r.shardedPubSub.newSubscription(r.onPubSubMessage)
@@ -190,8 +198,11 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 	}
 	poller, initialErr := acquireRedisStreamsPoller(r, block)
 	r.streamPoller = poller
+	r.resourceMu.Unlock()
+	// Register only after all resources are assigned, so Close can release them.
+	context.AfterFunc(r.ctx, r.Close)
 	if r.ctx.Err() != nil {
-		releaseRedisStreamsPoller(poller, r)
+		r.Close()
 		return
 	}
 	if configErr != nil {
@@ -204,7 +215,7 @@ func (r *redisStreamsAdapter) Construct(nsp socket.Namespace) {
 }
 
 func (r *redisStreamsAdapter) onPubSubMessage(payload []byte, _ string) {
-	if r.ctx != nil && r.ctx.Err() != nil {
+	if r.ctx.Err() != nil {
 		return
 	}
 	message, err := adapter.DecodeClusterMessage(payload)
@@ -285,6 +296,8 @@ func (r *redisStreamsAdapter) Close() {
 		if r.cancel != nil {
 			r.cancel()
 		}
+		r.resourceMu.Lock()
+		defer r.resourceMu.Unlock()
 		if r.pubSubSubscription != nil {
 			r.pubSubSubscription.Close()
 		}
@@ -346,7 +359,7 @@ func (r *redisStreamsAdapter) PersistSession(session *socket.SessionToPersist) {
 		return
 	}
 
-	sessionKey := r.opts.SessionKeyPrefix() + string(session.Pid)
+	sessionKey := r.sessionKey(session.Pid)
 	data, err := utils.MsgPack().Encode(session)
 	if err != nil {
 		r.redisClient.Emit("error", fmt.Errorf("redis streams: failed to encode session: %w", err))
@@ -361,6 +374,12 @@ func (r *redisStreamsAdapter) PersistSession(session *socket.SessionToPersist) {
 	).Err(); err != nil && r.ctx.Err() == nil {
 		r.redisClient.Emit("error", err)
 	}
+}
+
+// sessionKey binds recovery credentials to their namespace. Encoding prevents
+// namespace delimiters from colliding with the private session ID.
+func (r *redisStreamsAdapter) sessionKey(pid socket.PrivateSessionId) string {
+	return r.opts.SessionKeyPrefix() + base64.RawURLEncoding.EncodeToString([]byte(r.Nsp().Name())) + "#" + string(pid)
 }
 
 // RestoreSession restores a session from Redis and collects missed packets.
@@ -381,23 +400,7 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 	// boundary. ClusterClient handles MOVED and ASK redirections itself.
 	streamClient := r.redisClient.Client()
 
-	sessionKey := r.opts.SessionKeyPrefix() + string(pid)
-
-	// Use MULTI GET DEL for compatibility with Redis versions before 6.2.
-	pipeline := r.redisClient.Client().TxPipeline()
-	sessionCmd := pipeline.Get(r.ctx, sessionKey)
-	pipeline.Del(r.ctx, sessionKey)
-	_, err := pipeline.Exec(r.ctx)
-	if err != nil && !errors.Is(err, rds.Nil) {
-		return nil, fmt.Errorf("failed to retrieve session: %w", err)
-	}
-
-	rawSession := sessionCmd.Val()
-	if rawSession == "" {
-		return nil, errors.New("session not found")
-	}
-
-	// Verify the offset exists in the stream
+	// Validate the offset before consuming the session, including its namespace.
 	offsets, err := streamClient.XRangeN(
 		r.ctx,
 		r.streamName,
@@ -411,6 +414,22 @@ func (r *redisStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset
 
 	if len(offsets) == 0 {
 		return nil, errors.New("offset not found in stream")
+	}
+	if RawClusterMessage(offsets[0].Values).Nsp() != r.Nsp().Name() {
+		return nil, errors.New("offset belongs to another namespace")
+	}
+
+	// Use MULTI GET DEL for compatibility with Redis versions before 6.2.
+	sessionKey := r.sessionKey(pid)
+	pipeline := r.redisClient.Client().TxPipeline()
+	sessionCmd := pipeline.Get(r.ctx, sessionKey)
+	pipeline.Del(r.ctx, sessionKey)
+	if _, err = pipeline.Exec(r.ctx); err != nil && !errors.Is(err, rds.Nil) {
+		return nil, fmt.Errorf("failed to retrieve session: %w", err)
+	}
+	rawSession := sessionCmd.Val()
+	if rawSession == "" {
+		return nil, errors.New("session not found")
 	}
 
 	// Decode the session data

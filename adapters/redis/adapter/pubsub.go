@@ -104,11 +104,10 @@ func newRedisPubSubRoutes() redisPubSubRoutes {
 // A Socket.IO server therefore keeps a constant number of connections even
 // when it creates many namespaces.
 type redisPubSub struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	client  rds.UniversalClient
-	pubSub  *rds.PubSub
-	onError func(error)
+	ctx    context.Context
+	cancel context.CancelFunc
+	client rds.UniversalClient
+	pubSub *rds.PubSub
 
 	mu       sync.RWMutex
 	channels redisPubSubRoutes
@@ -116,6 +115,7 @@ type redisPubSub struct {
 	closed   bool
 	wake     chan struct{}
 	barriers chan chan struct{}
+	errors   chan error
 	close    sync.Once
 }
 
@@ -125,13 +125,16 @@ func newRedisPubSub(parent context.Context, client rds.UniversalClient, onError 
 		ctx:      ctx,
 		cancel:   cancel,
 		client:   client,
-		onError:  onError,
 		channels: newRedisPubSubRoutes(),
 		patterns: newRedisPubSubRoutes(),
 		wake:     make(chan struct{}, 1),
 		barriers: make(chan chan struct{}),
+		errors:   make(chan error, 1),
 	}
 	p.pubSub = client.Subscribe(ctx)
+	if onError != nil {
+		go p.emitErrors(onError)
+	}
 	go p.receive(p.pubSub)
 	go p.run()
 	return p
@@ -450,8 +453,23 @@ func (p *redisPubSub) dispatch(routes *redisPubSubRoutes, key, channel string, p
 }
 
 func (p *redisPubSub) report(err error) {
-	if err != nil && p.ctx.Err() == nil && !errors.Is(err, rds.ErrClosed) && p.onError != nil {
-		p.onError(err)
+	if err == nil || p.ctx.Err() != nil || errors.Is(err, rds.ErrClosed) {
+		return
+	}
+	select {
+	case p.errors <- err:
+	default:
+	}
+}
+
+func (p *redisPubSub) emitErrors(handler func(error)) {
+	for {
+		select {
+		case err := <-p.errors:
+			handler(err)
+		case <-p.ctx.Done():
+			return
+		}
 	}
 }
 

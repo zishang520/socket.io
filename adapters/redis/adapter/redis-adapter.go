@@ -202,11 +202,19 @@ func (r *redisAdapter) Construct(nsp socket.Namespace) {
 	r.responseChannel = prefix + "-response#" + r.Nsp().Name() + "#"
 	r.specificResponseChannel = r.responseChannel + string(r.uid) + "#"
 
+	// A connection error handler may call Close before acquisition returns.
+	r.queueMu.Lock()
 	r.pubSub = acquireRedisPubSub(r.server, r.redisClient)
 	r.broadcastSubscription = r.pubSub.newSubscription(r.onMessage)
 	r.requestSubscription = r.pubSub.newSubscription(r.onRequest)
+	r.queueMu.Unlock()
 	r.broadcastSubscription.PSubscribe(r.channel + "*")
 	r.requestSubscription.Subscribe(r.requestChannel, r.responseChannel, r.specificResponseChannel)
+	context.AfterFunc(r.ctx, r.Close)
+	if r.ctx.Err() != nil {
+		r.Close()
+		return
+	}
 	if err := r.pubSub.flush(r.ctx); err != nil && r.ctx.Err() == nil {
 		r.redisClient.Emit("error", err)
 	}
