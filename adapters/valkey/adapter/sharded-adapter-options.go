@@ -34,7 +34,8 @@ type (
 	}
 )
 
-// DefaultShardedValkeyAdapterOptions returns a new ShardedValkeyAdapterOptions with default values.
+// DefaultShardedValkeyAdapterOptions returns empty options.
+// The adapter applies defaults during Construct.
 func DefaultShardedValkeyAdapterOptions() *ShardedValkeyAdapterOptions {
 	return &ShardedValkeyAdapterOptions{}
 }

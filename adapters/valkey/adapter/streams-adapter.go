@@ -38,9 +38,9 @@ var (
 )
 
 const (
-	// restoreSessionMaxXRangeCalls limits adapter-issued XRANGE calls while collecting missed packets.
-	restoreSessionMaxXRangeCalls = 100
-	restoreSessionPageSize       = 1000
+	// restoreSessionMinXRangeCalls bounds recovery even when stream retention is small.
+	restoreSessionMinXRangeCalls int64 = 100
+	restoreSessionPageSize       int64 = 1000
 )
 
 // isEphemeral determines whether a message should be sent via PUB/SUB instead of Streams.
@@ -76,9 +76,10 @@ type valkeyStreamsAdapter struct {
 	pubSubs      []*valkey.ValkeyPubSub
 	streamPoller *valkeyStreamsPoller
 
-	ctx       context.Context
-	cancel    context.CancelFunc
-	closeOnce sync.Once
+	ctx        context.Context
+	cancel     context.CancelFunc
+	resourceMu sync.Mutex
+	closeOnce  sync.Once
 }
 
 // MakeValkeyStreamsAdapter creates a new uninitialized valkeyStreamsAdapter.
@@ -144,6 +145,8 @@ func (r *valkeyStreamsAdapter) Construct(nsp socket.Namespace) {
 	r.publicChannel = r.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
 	privateChannel := r.publicChannel + string(r.Uid()) + "#"
 
+	// Subscription error callbacks may close the adapter before acquisition returns.
+	r.resourceMu.Lock()
 	if r.opts.UseShardedPubSub() {
 		// Public and private channels normally belong to different hash slots, so
 		// they require independent sharded subscriptions with valkey-go.
@@ -161,8 +164,10 @@ func (r *valkeyStreamsAdapter) Construct(nsp socket.Namespace) {
 	}
 	poller, err := acquireValkeyStreamsPoller(r)
 	r.streamPoller = poller
+	r.resourceMu.Unlock()
+	context.AfterFunc(r.ctx, r.Close)
 	if r.ctx.Err() != nil {
-		releaseValkeyStreamsPoller(poller, r)
+		r.Close()
 		return
 	}
 	if err != nil {
@@ -251,6 +256,8 @@ func (r *valkeyStreamsAdapter) Close() {
 		if r.cancel != nil {
 			r.cancel()
 		}
+		r.resourceMu.Lock()
+		defer r.resourceMu.Unlock()
 		for _, pubSub := range r.pubSubs {
 			_ = pubSub.Close()
 		}
@@ -291,7 +298,7 @@ func (r *valkeyStreamsAdapter) PersistSession(session *socket.SessionToPersist) 
 		return
 	}
 
-	sessionKey := r.opts.SessionKeyPrefix() + string(session.Pid)
+	sessionKey := r.sessionKey(session.Pid)
 	data, err := utils.MsgPack().Encode(session)
 	if err != nil {
 		r.valkeyClient.Emit("error", fmt.Errorf("valkey streams: failed to encode session: %w", err))
@@ -308,6 +315,11 @@ func (r *valkeyStreamsAdapter) PersistSession(session *socket.SessionToPersist) 
 	}
 }
 
+// sessionKey binds recovery credentials to their namespace without delimiter collisions.
+func (r *valkeyStreamsAdapter) sessionKey(pid socket.PrivateSessionId) string {
+	return r.opts.SessionKeyPrefix() + base64.RawURLEncoding.EncodeToString([]byte(r.Nsp().Name())) + "#" + string(pid)
+}
+
 func (r *valkeyStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offset string) (*socket.Session, error) {
 	valkeyStreamsLog.Debug("restoring session %s from offset %s", pid, offset)
 	if err := r.ctx.Err(); err != nil {
@@ -317,21 +329,24 @@ func (r *valkeyStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offse
 		return nil, errors.New("invalid offset format")
 	}
 
-	sessionKey := r.opts.SessionKeyPrefix() + string(pid)
-	rawSession, err := r.valkeyClient.GetDel(r.ctx, sessionKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve session: %w", err)
-	}
-	if rawSession == "" {
-		return nil, errors.New("session not found")
-	}
-
+	// Validate the offset and its namespace before atomically claiming the session.
 	offsets, err := r.valkeyClient.XRangeN(r.ctx, r.streamName, offset, offset, 1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify offset: %w", err)
 	}
 	if len(offsets) == 0 {
 		return nil, errors.New("offset not found in stream")
+	}
+	if RawClusterMessage(offsets[0].FieldValues).Nsp() != r.Nsp().Name() {
+		return nil, errors.New("offset belongs to another namespace")
+	}
+
+	rawSession, err := r.valkeyClient.GetDel(r.ctx, r.sessionKey(pid))
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve session: %w", err)
+	}
+	if rawSession == "" {
+		return nil, errors.New("session not found")
 	}
 
 	rawSessionBytes, err := base64.StdEncoding.DecodeString(rawSession)
@@ -360,7 +375,14 @@ func (r *valkeyStreamsAdapter) RestoreSession(pid socket.PrivateSessionId, offse
 func (r *valkeyStreamsAdapter) collectMissedPackets(session *socket.Session, offset string) error {
 	broadcastType := strconv.Itoa(int(adapter.BROADCAST))
 
-	for range restoreSessionMaxXRangeCalls {
+	// Allow one page beyond MAXLEN for approximate trimming, plus an empty tail read.
+	maxLen := r.opts.MaxLen()
+	pages := maxLen / restoreSessionPageSize
+	if maxLen%restoreSessionPageSize != 0 {
+		pages++
+	}
+	maxCalls := max(restoreSessionMinXRangeCalls, pages+2)
+	for range maxCalls {
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}

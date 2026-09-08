@@ -83,13 +83,20 @@ func (s *shardedValkeyAdapter) Construct(nsp socket.Namespace) {
 	s.channel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
 	responseChannel := s.channel + string(s.Uid()) + "#"
 
+	if s.isDynamicMode() {
+		s.setupDynamicSubscriptions()
+	}
+	// A subscription error handler may close the adapter before Subscribe returns.
+	s.dynamicMu.Lock()
 	s.channelPubSub = s.valkeyClient.SSubscribe(s.ctx, s.channel)
 	s.responsePubSub = s.valkeyClient.SSubscribe(s.ctx, responseChannel)
+	s.dynamicMu.Unlock()
 	go s.receiveMessages(s.channelPubSub)
 	go s.receiveMessages(s.responsePubSub)
 
-	if s.isDynamicMode() {
-		s.setupDynamicSubscriptions()
+	context.AfterFunc(s.ctx, s.Close)
+	if s.ctx.Err() != nil {
+		s.Close()
 	}
 }
 

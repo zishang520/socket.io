@@ -299,7 +299,7 @@ func TestRedisResponse_JSON(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request"}`; got != want {
+		if got, want := string(data), `{"requestId":"request","data":null,"packet":null}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})
@@ -365,7 +365,7 @@ func TestRedisResponse_JSON(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","data":{"type":"Buffer","data":[1,2]}}`; got != want {
+		if got, want := string(data), `{"requestId":"request","data":{"type":"Buffer","data":[1,2]},"packet":null}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})
@@ -484,12 +484,12 @@ func TestRedisResponseJSONAckFields(t *testing.T) {
 		response RedisResponse
 		want     string
 	}{
-		{"server null", RedisResponse{Type: SERVER_SIDE_EMIT}, `{"type":6,"requestId":"request","data":null}`},
-		{"broadcast null", RedisResponse{Type: BROADCAST_ACK}, `{"type":9,"requestId":"request","packet":null}`},
-		{"server buffer", RedisResponse{Type: SERVER_SIDE_EMIT, Data: []byte{1, 2}}, `{"type":6,"requestId":"request","data":{"type":"Buffer","data":[1,2]}}`},
-		{"broadcast buffer", RedisResponse{Type: BROADCAST_ACK, Packet: []byte{1, 2}}, `{"type":9,"requestId":"request","packet":{"type":"Buffer","data":[1,2]}}`},
-		{"client count", RedisResponse{Type: BROADCAST_CLIENT_COUNT, ClientCount: new(uint64(0))}, `{"type":8,"requestId":"request","clientCount":0}`},
-		{"legacy response", RedisResponse{}, `{"requestId":"request"}`},
+		{"server null", RedisResponse{Type: SERVER_SIDE_EMIT}, `{"type":6,"requestId":"request","data":null,"packet":null}`},
+		{"broadcast null", RedisResponse{Type: BROADCAST_ACK}, `{"type":9,"requestId":"request","data":null,"packet":null}`},
+		{"server buffer", RedisResponse{Type: SERVER_SIDE_EMIT, Data: []byte{1, 2}}, `{"type":6,"requestId":"request","data":{"type":"Buffer","data":[1,2]},"packet":null}`},
+		{"broadcast buffer", RedisResponse{Type: BROADCAST_ACK, Packet: []byte{1, 2}}, `{"type":9,"requestId":"request","data":null,"packet":{"type":"Buffer","data":[1,2]}}`},
+		{"client count", RedisResponse{Type: BROADCAST_CLIENT_COUNT, ClientCount: new(uint64(0))}, `{"type":8,"requestId":"request","data":null,"clientCount":0,"packet":null}`},
+		{"legacy response", RedisResponse{}, `{"requestId":"request","data":null,"packet":null}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			test.response.RequestId = "request"

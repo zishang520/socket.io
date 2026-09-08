@@ -183,7 +183,7 @@ func TestValkeyStreamsPersistSessionTTLValidation(t *testing.T) {
 		streamAdapter, server, _ := newValkeyStreamsPersistenceAdapter(t, duration)
 		streamAdapter.PersistSession(&socket.SessionToPersist{Pid: "pid"})
 
-		ttl := server.TTL(DefaultSessionKeyPrefix + "pid")
+		ttl := server.TTL(DefaultSessionKeyPrefix + "L3Rlc3Q#pid")
 		if ttl <= 0 || ttl > time.Duration(duration)*time.Millisecond {
 			t.Fatalf("session TTL = %v", ttl)
 		}
@@ -209,7 +209,7 @@ func TestValkeyStreamsPersistSessionTTLValidation(t *testing.T) {
 			})
 
 			streamAdapter.PersistSession(&socket.SessionToPersist{Pid: "pid"})
-			if server.Exists(DefaultSessionKeyPrefix + "pid") {
+			if server.Exists(DefaultSessionKeyPrefix + "L3Rlc3Q#pid") {
 				t.Fatal("session with invalid recovery duration was persisted")
 			}
 			select {
@@ -236,7 +236,7 @@ func storeValkeySession(
 	}
 	if err := client.Set(
 		context.Background(),
-		DefaultSessionKeyPrefix+string(session.Pid),
+		DefaultSessionKeyPrefix+"L3Rlc3Q#"+string(session.Pid),
 		base64.StdEncoding.EncodeToString(payload),
 		time.Minute,
 	); err != nil {
@@ -333,7 +333,7 @@ func TestValkeyStreamsRestoreSessionRejectsMissingSessionData(t *testing.T) {
 	}
 	if err = client.Set(
 		context.Background(),
-		DefaultSessionKeyPrefix+"pid",
+		DefaultSessionKeyPrefix+"L3Rlc3Q#pid",
 		base64.StdEncoding.EncodeToString(payload),
 		time.Minute,
 	); err != nil {

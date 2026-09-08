@@ -44,9 +44,9 @@ type (
 		RequestId   string        `json:"requestId" msgpack:"requestId"`
 		Rooms       []socket.Room `json:"rooms,omitzero" msgpack:"rooms,omitempty"`
 		Sockets     any           `json:"sockets,omitempty" msgpack:"sockets,omitempty"`
-		Data        any           `json:"data,omitzero" msgpack:"data,omitempty"`
+		Data        any           `json:"data" msgpack:"data"`
 		ClientCount *uint64       `json:"clientCount,omitzero" msgpack:"clientCount,omitempty"`
-		Packet      any           `json:"packet,omitzero" msgpack:"packet"`
+		Packet      any           `json:"packet" msgpack:"packet"`
 	}
 
 	// RawClusterMessage is the flat field-value shape stored in Valkey Streams.

@@ -159,18 +159,6 @@ func (r *RedisResponse) MarshalJSON() ([]byte, error) {
 	if payload.Packet != nil {
 		payload.Packet = normalizeJSONData(payload.Packet)
 	}
-	switch payload.Type {
-	case SERVER_SIDE_EMIT:
-		return json.Marshal(struct {
-			redisResponse
-			Data any `json:"data"`
-		}{payload, payload.Data})
-	case BROADCAST_ACK:
-		return json.Marshal(struct {
-			redisResponse
-			Packet any `json:"packet"`
-		}{payload, payload.Packet})
-	}
 	return json.Marshal(payload)
 }
 

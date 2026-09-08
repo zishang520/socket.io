@@ -175,6 +175,11 @@ func (r *valkeyAdapter) Construct(nsp socket.Namespace) {
 	r.requestSubscription = r.pubSub.newSubscription(r.onRequest)
 	r.broadcastSubscription.PSubscribe(r.channel + "*")
 	r.requestSubscription.Subscribe(r.requestChannel, r.responseChannel, r.specificResponseChannel)
+	context.AfterFunc(r.ctx, r.Close)
+	if r.ctx.Err() != nil {
+		r.Close()
+		return
+	}
 	if err := r.pubSub.flush(r.ctx); err != nil && r.ctx.Err() == nil {
 		r.valkeyClient.Emit("error", err)
 	}

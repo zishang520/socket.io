@@ -1236,7 +1236,7 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","sockets":[]}`; got != want {
+		if got, want := string(data), `{"requestId":"request","sockets":[],"data":null,"packet":null}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})
@@ -1246,7 +1246,7 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","sockets":[]}`; got != want {
+		if got, want := string(data), `{"requestId":"request","sockets":[],"data":null,"packet":null}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})
@@ -1256,7 +1256,7 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","clientCount":0}`; got != want {
+		if got, want := string(data), `{"requestId":"request","data":null,"clientCount":0,"packet":null}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})
@@ -1266,7 +1266,7 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","rooms":[]}`; got != want {
+		if got, want := string(data), `{"requestId":"request","rooms":[],"data":null,"packet":null}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})
@@ -1276,7 +1276,7 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request"}`; got != want {
+		if got, want := string(data), `{"requestId":"request","data":null,"packet":null}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})
@@ -1286,7 +1286,7 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","data":{"type":"Buffer","data":[1,2]}}`; got != want {
+		if got, want := string(data), `{"requestId":"request","data":{"type":"Buffer","data":[1,2]},"packet":null}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})
@@ -1302,7 +1302,7 @@ func TestClassicResponsePreservesRequiredValues(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","sockets":[{"id":"socket","handshake":null,"rooms":[],"data":null}]}`; got != want {
+		if got, want := string(data), `{"requestId":"request","sockets":[{"id":"socket","handshake":null,"rooms":[],"data":null}],"data":null,"packet":null}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
 	})

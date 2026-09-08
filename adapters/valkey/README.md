@@ -86,6 +86,10 @@ requirement; it is part of the caller's configuration contract. The second
 client must route subscriptions and subscriber-count commands to the intended
 Pub/Sub topology.
 
+Canceling the wrapper's context closes its classic, sharded, and Streams adapters
+and releases their shared subscriptions and pollers. The caller remains
+responsible for closing the underlying `vk.Client` instances.
+
 Use one `ValkeyClient` wrapper and one underlying `Sub()` client per Socket.IO
 server, and share that wrapper across the server's namespace adapters. A write
 client may be shared by passing it to multiple `NewValkeyClientWithSub` calls,
@@ -220,6 +224,20 @@ When using the Valkey Streams adapter or emitter:
 | `DynamicPrivateSubscriptionMode` | A separate channel for every room |
 
 ## Cross-language compatibility
+
+Streams recovery sessions use
+`SessionKeyPrefix + base64url(namespace, without padding) + "#" + pid`, matching
+the Go Redis adapter. For example, the default root-namespace key is
+`sio:session:Lw#<pid>`. The offset must exist in the target namespace before the
+session is atomically claimed.
+
+Sessions stored under the old Go or Node.js global `SessionKeyPrefix + pid`
+format are not restored; those clients establish a new connection and run the
+normal namespace middleware. Cross-language recovery requires all participating
+servers to use the namespace-scoped key format and enforce namespace binding.
+Older Node.js recovery endpoints that read `SessionKeyPrefix + pid` with a
+client-supplied PID must be patched or have recovery disabled; changing the keys
+written by Go does not protect those endpoints.
 
 Classic and sharded messages follow the Node.js Redis adapter wire protocol.
 Streams entries follow the Node.js Redis Streams adapter and emitter wire

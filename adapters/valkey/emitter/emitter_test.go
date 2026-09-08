@@ -204,16 +204,8 @@ func TestEmitterRoutingAndOperatorType(t *testing.T) {
 }
 
 func TestShardedEmitterUsesCommonCodecAndDynamicRouting(t *testing.T) {
-	_, address := newEmitterTestClient(t)
-	baseClient, err := vk.NewClient(vk.ClientOption{
-		InitAddress:  []string{address},
-		DisableCache: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(baseClient.Close)
-	recorder := &recordingClient{Client: baseClient}
+	client, _ := newEmitterTestClient(t)
+	recorder := &recordingClient{Client: client.Client()}
 	valkeyClient, err := valkey.NewValkeyClient(context.Background(), recorder)
 	if err != nil {
 		t.Fatal(err)
