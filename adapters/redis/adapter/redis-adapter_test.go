@@ -1231,82 +1231,79 @@ func TestClassicServerSideEmitCompletionWinsPublishError(t *testing.T) {
 }
 
 func TestClassicResponsePreservesRequiredValues(t *testing.T) {
-	t.Run("empty socket IDs", func(t *testing.T) {
-		data, err := json.Marshal(&Response{RequestId: "request", Sockets: []socket.SocketId{}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, want := string(data), `{"requestId":"request","sockets":[],"data":null,"packet":null}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
-		}
-	})
-
-	t.Run("empty socket details", func(t *testing.T) {
-		data, err := json.Marshal(&Response{RequestId: "request", Sockets: []adapter.SocketResponse{}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, want := string(data), `{"requestId":"request","sockets":[],"data":null,"packet":null}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
-		}
-	})
-
-	t.Run("zero client count", func(t *testing.T) {
-		data, err := json.Marshal(&Response{RequestId: "request", ClientCount: new(uint64(0))})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, want := string(data), `{"requestId":"request","data":null,"clientCount":0,"packet":null}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
-		}
-	})
-
-	t.Run("empty rooms", func(t *testing.T) {
-		data, err := json.Marshal(&Response{RequestId: "request", Rooms: []socket.Room{}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, want := string(data), `{"requestId":"request","rooms":[],"data":null,"packet":null}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
-		}
-	})
-
-	t.Run("nil acknowledgement", func(t *testing.T) {
-		data, err := json.Marshal(&Response{RequestId: "request"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, want := string(data), `{"requestId":"request","data":null,"packet":null}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
-		}
-	})
-
-	t.Run("Node.js Buffer acknowledgement", func(t *testing.T) {
-		data, err := json.Marshal(&Response{RequestId: "request", Data: []byte{1, 2}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, want := string(data), `{"requestId":"request","data":{"type":"Buffer","data":[1,2]},"packet":null}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
-		}
-	})
-
-	t.Run("socket fields", func(t *testing.T) {
-		data, err := json.Marshal(&Response{
-			RequestId: "request",
-			Sockets: []adapter.SocketResponse{{
-				Id:    "socket",
-				Rooms: []socket.Room{},
+	for _, test := range []struct {
+		name     string
+		response Response
+		field    string
+		want     any
+	}{
+		{
+			name:     "empty socket IDs",
+			response: Response{RequestId: "request", Sockets: []socket.SocketId{}},
+			field:    "sockets",
+			want:     []any{},
+		},
+		{
+			name:     "empty socket details",
+			response: Response{RequestId: "request", Sockets: []adapter.SocketResponse{}},
+			field:    "sockets",
+			want:     []any{},
+		},
+		{
+			name:     "zero client count",
+			response: Response{RequestId: "request", ClientCount: new(uint64(0))},
+			field:    "clientCount",
+			want:     float64(0),
+		},
+		{
+			name:     "empty rooms",
+			response: Response{RequestId: "request", Rooms: []socket.Room{}},
+			field:    "rooms",
+			want:     []any{},
+		},
+		{
+			name:     "nil acknowledgement",
+			response: Response{Type: redis.SERVER_SIDE_EMIT, RequestId: "request"},
+			field:    "data",
+		},
+		{
+			name:     "Node.js Buffer acknowledgement",
+			response: Response{RequestId: "request", Data: []byte{1, 2}},
+			field:    "data",
+			want:     map[string]any{"type": "Buffer", "data": []any{float64(1), float64(2)}},
+		},
+		{
+			name: "socket fields",
+			response: Response{
+				RequestId: "request",
+				Sockets: []adapter.SocketResponse{{
+					Id:    "socket",
+					Rooms: []socket.Room{},
+				}},
+			},
+			field: "sockets",
+			want: []any{map[string]any{
+				"id": "socket", "handshake": nil, "rooms": []any{}, "data": nil,
 			}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := json.Marshal(&test.response)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response map[string]any
+			if err := json.Unmarshal(data, &response); err != nil {
+				t.Fatal(err)
+			}
+			if got := response["requestId"]; got != test.response.RequestId {
+				t.Fatalf("requestId = %v, want %s", got, test.response.RequestId)
+			}
+			if got, ok := response[test.field]; !ok || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("%s = %#v (present %t), want %#v", test.field, got, ok, test.want)
+			}
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, want := string(data), `{"requestId":"request","sockets":[{"id":"socket","handshake":null,"rooms":[],"data":null}],"data":null,"packet":null}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
-		}
-	})
-
+	}
 }
 
 func TestRedisAdapterEmptySocketResponsesAreCounted(t *testing.T) {

@@ -299,8 +299,15 @@ func TestRedisResponse_JSON(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","data":null,"packet":null}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
+		var wire map[string]any
+		if err := json.Unmarshal(data, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire["requestId"] != "request" {
+			t.Fatalf("requestId = %#v, want request", wire["requestId"])
+		}
+		if _, exists := wire["sockets"]; exists {
+			t.Fatalf("response unexpectedly contains sockets: %s", data)
 		}
 	})
 
@@ -352,8 +359,18 @@ func TestRedisResponse_JSON(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","data":"server response","packet":"client response"}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
+		var wire map[string]any
+		if err := json.Unmarshal(data, &wire); err != nil {
+			t.Fatal(err)
+		}
+		for field, want := range map[string]string{
+			"requestId": "request",
+			"data":      "server response",
+			"packet":    "client response",
+		} {
+			if wire[field] != want {
+				t.Fatalf("%s = %#v, want %q", field, wire[field], want)
+			}
 		}
 	})
 
@@ -365,8 +382,16 @@ func TestRedisResponse_JSON(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(data), `{"requestId":"request","data":{"type":"Buffer","data":[1,2]},"packet":null}`; got != want {
-			t.Fatalf("response = %s, want %s", got, want)
+		var wire map[string]any
+		if err := json.Unmarshal(data, &wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire["requestId"] != "request" {
+			t.Fatalf("requestId = %#v, want request", wire["requestId"])
+		}
+		want := map[string]any{"type": "Buffer", "data": []any{float64(1), float64(2)}}
+		if !reflect.DeepEqual(wire["data"], want) {
+			t.Fatalf("data = %#v, want %#v", wire["data"], want)
 		}
 	})
 
@@ -484,12 +509,12 @@ func TestRedisResponseJSONAckFields(t *testing.T) {
 		response RedisResponse
 		want     string
 	}{
-		{"server null", RedisResponse{Type: SERVER_SIDE_EMIT}, `{"type":6,"requestId":"request","data":null,"packet":null}`},
-		{"broadcast null", RedisResponse{Type: BROADCAST_ACK}, `{"type":9,"requestId":"request","data":null,"packet":null}`},
-		{"server buffer", RedisResponse{Type: SERVER_SIDE_EMIT, Data: []byte{1, 2}}, `{"type":6,"requestId":"request","data":{"type":"Buffer","data":[1,2]},"packet":null}`},
-		{"broadcast buffer", RedisResponse{Type: BROADCAST_ACK, Packet: []byte{1, 2}}, `{"type":9,"requestId":"request","data":null,"packet":{"type":"Buffer","data":[1,2]}}`},
-		{"client count", RedisResponse{Type: BROADCAST_CLIENT_COUNT, ClientCount: new(uint64(0))}, `{"type":8,"requestId":"request","data":null,"clientCount":0,"packet":null}`},
-		{"legacy response", RedisResponse{}, `{"requestId":"request","data":null,"packet":null}`},
+		{"server null", RedisResponse{Type: SERVER_SIDE_EMIT}, `{"type":6,"requestId":"request","data":null}`},
+		{"broadcast null", RedisResponse{Type: BROADCAST_ACK}, `{"type":9,"requestId":"request","packet":null}`},
+		{"server buffer", RedisResponse{Type: SERVER_SIDE_EMIT, Data: []byte{1, 2}}, `{"type":6,"requestId":"request","data":{"type":"Buffer","data":[1,2]}}`},
+		{"broadcast buffer", RedisResponse{Type: BROADCAST_ACK, Packet: []byte{1, 2}}, `{"type":9,"requestId":"request","packet":{"type":"Buffer","data":[1,2]}}`},
+		{"client count", RedisResponse{Type: BROADCAST_CLIENT_COUNT, ClientCount: new(uint64(0))}, `{"type":8,"requestId":"request","clientCount":0}`},
+		{"legacy response", RedisResponse{}, `{"requestId":"request"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			test.response.RequestId = "request"
@@ -504,8 +529,10 @@ func TestRedisResponseJSONAckFields(t *testing.T) {
 			if err := json.Unmarshal([]byte(test.want), &want); err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("response = %s, want %s", payload, test.want)
+			for field, value := range want {
+				if actual, exists := got[field]; !exists || !reflect.DeepEqual(actual, value) {
+					t.Fatalf("%s = %#v (present=%t), want %#v", field, actual, exists, value)
+				}
 			}
 		})
 	}

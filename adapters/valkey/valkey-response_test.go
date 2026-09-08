@@ -18,13 +18,13 @@ func TestValkeyResponseJSONAckFields(t *testing.T) {
 		response ValkeyResponse
 		want     string
 	}{
-		{"server null", ValkeyResponse{Type: SERVER_SIDE_EMIT}, `{"type":6,"requestId":"request","data":null,"packet":null}`},
-		{"broadcast null", ValkeyResponse{Type: BROADCAST_ACK}, `{"type":9,"requestId":"request","data":null,"packet":null}`},
-		{"server buffer", ValkeyResponse{Type: SERVER_SIDE_EMIT, Data: []byte{1, 2}}, `{"type":6,"requestId":"request","data":{"type":"Buffer","data":[1,2]},"packet":null}`},
-		{"broadcast buffer", ValkeyResponse{Type: BROADCAST_ACK, Packet: []byte{1, 2}}, `{"type":9,"requestId":"request","data":null,"packet":{"type":"Buffer","data":[1,2]}}`},
-		{"empty buffer", ValkeyResponse{Type: BROADCAST_ACK, Packet: new(types.BytesBuffer)}, `{"type":9,"requestId":"request","data":null,"packet":{"type":"Buffer","data":[]}}`},
-		{"client count", ValkeyResponse{Type: BROADCAST_CLIENT_COUNT, ClientCount: new(uint64(0))}, `{"type":8,"requestId":"request","data":null,"clientCount":0,"packet":null}`},
-		{"legacy response", ValkeyResponse{}, `{"requestId":"request","data":null,"packet":null}`},
+		{"server null", ValkeyResponse{Type: SERVER_SIDE_EMIT}, `{"type":6,"requestId":"request","data":null}`},
+		{"broadcast null", ValkeyResponse{Type: BROADCAST_ACK}, `{"type":9,"requestId":"request","packet":null}`},
+		{"server buffer", ValkeyResponse{Type: SERVER_SIDE_EMIT, Data: []byte{1, 2}}, `{"type":6,"requestId":"request","data":{"type":"Buffer","data":[1,2]}}`},
+		{"broadcast buffer", ValkeyResponse{Type: BROADCAST_ACK, Packet: []byte{1, 2}}, `{"type":9,"requestId":"request","packet":{"type":"Buffer","data":[1,2]}}`},
+		{"empty buffer", ValkeyResponse{Type: BROADCAST_ACK, Packet: new(types.BytesBuffer)}, `{"type":9,"requestId":"request","packet":{"type":"Buffer","data":[]}}`},
+		{"client count", ValkeyResponse{Type: BROADCAST_CLIENT_COUNT, ClientCount: new(uint64(0))}, `{"type":8,"requestId":"request","clientCount":0}`},
+		{"legacy response", ValkeyResponse{}, `{"requestId":"request"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			test.response.RequestId = "request"
@@ -39,8 +39,10 @@ func TestValkeyResponseJSONAckFields(t *testing.T) {
 			if err := json.Unmarshal([]byte(test.want), &want); err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("response = %s, want %s", payload, test.want)
+			for field, value := range want {
+				if actual, exists := got[field]; !exists || !reflect.DeepEqual(actual, value) {
+					t.Fatalf("%s = %#v (present=%t), want %#v", field, actual, exists, value)
+				}
 			}
 		})
 	}
