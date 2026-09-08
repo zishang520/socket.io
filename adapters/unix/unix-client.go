@@ -60,15 +60,6 @@ func (p *peerConn) setConn(conn net.Conn) {
 	p.connMu.Unlock()
 }
 
-func (p *peerConn) discardConn(conn net.Conn) {
-	p.connMu.Lock()
-	if p.conn == conn {
-		p.conn = nil
-	}
-	p.connMu.Unlock()
-	_ = conn.Close()
-}
-
 func (p *peerConn) close() {
 	p.connMu.Lock()
 	conn := p.conn
@@ -363,26 +354,23 @@ func (c *UnixClient) sendLocked(targetPath string, payload []byte, pc *peerConn)
 		}
 		pc.setConn(conn)
 		if err := c.checkPeer(targetPath, pc); err != nil {
-			pc.discardConn(conn)
+			pc.close()
 			return err
 		}
 	}
 
-	reusable, err := c.writeMessage(conn, payload)
+	err := c.writeMessage(conn, payload)
 	if err == nil {
-		if !reusable {
-			pc.discardConn(conn)
-		}
 		return nil
 	}
 	if !pooled || errors.Is(err, os.ErrDeadlineExceeded) {
-		pc.discardConn(conn)
+		pc.close()
 		c.removePeer(targetPath, pc)
 		return fmt.Errorf("failed to send to Unix socket %q: %w", targetPath, err)
 	}
 
 	// Only a stale pooled connection gets one reconnect attempt.
-	pc.discardConn(conn)
+	pc.close()
 	if peerErr := c.checkPeer(targetPath, pc); peerErr != nil {
 		c.removePeer(targetPath, pc)
 		return peerErr
@@ -395,31 +383,24 @@ func (c *UnixClient) sendLocked(targetPath string, payload []byte, pc *peerConn)
 	}
 	pc.setConn(conn)
 	if peerErr := c.checkPeer(targetPath, pc); peerErr != nil {
-		pc.discardConn(conn)
+		pc.close()
 		return peerErr
 	}
-	reusable, err = c.writeMessage(conn, payload)
+	err = c.writeMessage(conn, payload)
 	if err != nil {
-		pc.discardConn(conn)
+		pc.close()
 		c.removePeer(targetPath, pc)
 		return fmt.Errorf("failed to send to Unix socket %q: %w", targetPath, err)
-	}
-	if !reusable {
-		pc.discardConn(conn)
 	}
 	return nil
 }
 
-// writeMessage bounds a complete frame write. A false reusable result with no
-// error means the frame was delivered but the deadline could not be cleared.
-func (c *UnixClient) writeMessage(conn net.Conn, payload []byte) (reusable bool, err error) {
+// writeMessage bounds each complete frame write with a fresh deadline.
+func (c *UnixClient) writeMessage(conn net.Conn, payload []byte) error {
 	if err := conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
-		return false, err
+		return err
 	}
-	if err := writeUnixMessage(conn, payload); err != nil {
-		return false, err
-	}
-	return conn.SetWriteDeadline(time.Time{}) == nil, nil
+	return writeUnixMessage(conn, payload)
 }
 
 func (c *UnixClient) dialPeer(targetPath string) (net.Conn, error) {

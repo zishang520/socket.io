@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -372,6 +373,145 @@ func TestUnixClientCloseInterruptsWrite(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Send() remained blocked after Close")
+	}
+}
+
+func TestUnixClientReconnectsStalePooledConnection(t *testing.T) {
+	basePath := filepath.Join(newTestUnixDirectory(t), "socket.io")
+	listenerPath := basePath + ".receiver"
+	receiver := newTestUnixClient(t, context.Background(), basePath)
+	if err := receiver.Listen(listenerPath); err != nil {
+		t.Fatal(err)
+	}
+	sender := newTestUnixClient(t, context.Background(), basePath)
+	if err := sender.Send(listenerPath, []byte("initial")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTestMessage(t, receiver); string(got) != "initial" {
+		t.Fatalf("initial payload = %q", got)
+	}
+
+	sender.mu.Lock()
+	peer := sender.peers[listenerPath]
+	sender.mu.Unlock()
+	stale := peer.connection()
+	// Leave the closed connection in the pool so Send must recover from it.
+	if err := stale.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := bytes.Repeat([]byte("after-reconnect"), 8<<10)
+	if err := sender.Send(listenerPath, payload); err != nil {
+		t.Fatalf("Send() over a stale pooled connection: %v", err)
+	}
+	if got := readTestMessage(t, receiver); !bytes.Equal(got, payload) {
+		t.Fatalf("reconnected payload = %d bytes, want %d", len(got), len(payload))
+	}
+	reconnected := peer.connection()
+	if reconnected == nil || reconnected == stale {
+		t.Fatal("Send() did not replace the stale connection")
+	}
+	if err := reconnected.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sender.Send(listenerPath, []byte("reused")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTestMessage(t, receiver); string(got) != "reused" {
+		t.Fatalf("payload after reconnect = %q", got)
+	}
+	if peer.connection() != reconnected {
+		t.Fatal("Send() reconnected again instead of reusing the healthy connection")
+	}
+}
+
+func TestUnixClientReturnsFailedReconnect(t *testing.T) {
+	basePath := filepath.Join(newTestUnixDirectory(t), "socket.io")
+	targetPath := basePath + ".missing"
+	sender := newTestUnixClient(t, context.Background(), basePath)
+	stale, remote := net.Pipe()
+	if err := remote.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sender.mu.Lock()
+	sender.peers[targetPath] = &peerConn{conn: stale}
+	sender.mu.Unlock()
+
+	done := make(chan error, 1)
+	go func() { done <- sender.Send(targetPath, []byte("retry")) }()
+	select {
+	case err := <-done:
+		var dialErr *net.OpError
+		if !errors.As(err, &dialErr) || dialErr.Op != "dial" {
+			t.Fatalf("Send() error = %v, want the reconnect dial error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Send() did not return after the reconnect failed")
+	}
+	sender.mu.Lock()
+	_, retained := sender.peers[targetPath]
+	sender.mu.Unlock()
+	if retained {
+		t.Fatal("Send() retained the failed peer")
+	}
+}
+
+func TestUnixClientConcurrentSendPreservesFrames(t *testing.T) {
+	sender := newTestUnixClient(t, context.Background(), filepath.Join(newTestUnixDirectory(t), "socket.io"))
+	local, remote := net.Pipe()
+	t.Cleanup(func() { _ = remote.Close() })
+	const targetPath = "concurrent-peer"
+	sender.mu.Lock()
+	sender.peers[targetPath] = &peerConn{conn: local}
+	sender.mu.Unlock()
+	if err := remote.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	const callers = 32
+	payloads := make([][]byte, callers)
+	start := make(chan struct{})
+	done := make(chan error, callers)
+	for i := range callers {
+		payloads[i] = bytes.Repeat([]byte{byte(i + 1)}, (64<<10)+i)
+		go func() {
+			<-start
+			done <- sender.Send(targetPath, payloads[i])
+		}()
+	}
+	close(start)
+
+	seen := make([]bool, callers)
+	for range callers {
+		payload, err := readUnixMessage(remote)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := int(payload[0]) - 1
+		if id < 0 || id >= callers || !bytes.Equal(payload, payloads[id]) {
+			t.Fatalf("received an interleaved or unknown frame (%d bytes)", len(payload))
+		}
+		if seen[id] {
+			t.Fatalf("received payload %d more than once", id)
+		}
+		seen[id] = true
+	}
+	for range callers {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("concurrent Send() failed: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("concurrent Send() did not return")
+		}
+	}
+	if err := sender.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readUnixMessage(remote); !errors.Is(err, io.EOF) {
+		t.Fatalf("read after all frames = %v, want EOF", err)
 	}
 }
 
