@@ -2,7 +2,7 @@ package utils
 
 import (
 	"fmt"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
@@ -31,8 +31,9 @@ var (
 const length = int64(64)
 
 type Yeast struct {
-	seed atomic.Int64
-	prev atomic.Value
+	mu   sync.Mutex
+	seed int64
+	prev string
 }
 
 func NewYeast() *Yeast {
@@ -73,16 +74,21 @@ func (y *Yeast) Decode(str string) (int64, error) {
 }
 
 func (y *Yeast) Yeast() string {
+	// The timestamp and seed must advance together, including across milliseconds.
+	y.mu.Lock()
+	defer y.mu.Unlock()
+
 	now := y.Encode(time.Now().UnixMilli())
 
-	prev, _ := y.prev.Load().(string)
-	if now != prev {
-		y.seed.Store(0)
-		y.prev.Store(now)
+	if now != y.prev {
+		y.seed = 0
+		y.prev = now
 		return now
 	}
 
-	return now + "." + y.Encode(y.seed.Add(1)-1)
+	id := now + "." + y.Encode(y.seed)
+	y.seed++
+	return id
 }
 
 var DefaultYeast = NewYeast()

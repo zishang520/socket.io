@@ -30,84 +30,112 @@ func (b nodeBufferJSON) MarshalJSON() ([]byte, error) {
 
 // MarshalJSON preserves the JSON.stringify(Buffer) shape used by Node.js.
 func (s SocketResponse) MarshalJSON() ([]byte, error) {
-	return json.Marshal(socketResponse(marshalSocketResponse(s, true)))
+	response, err := marshalSocketResponse(s, true)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(socketResponse(response))
 }
 
-func marshalSocketResponse(response SocketResponse, jsonFormat bool) SocketResponse {
-	if data, changed, _ := marshalData(response.Data, jsonFormat); changed {
+func marshalSocketResponse(response SocketResponse, jsonFormat bool) (SocketResponse, error) {
+	data, changed, _, err := marshalData(response.Data, jsonFormat)
+	if err != nil {
+		return response, err
+	}
+	if changed {
 		response.Data = data
 	}
 	if handshake := response.Handshake; handshake != nil && handshake.Auth != nil {
-		auth, changed, _ := marshalData(handshake.Auth, jsonFormat)
+		auth, changed, _, err := marshalData(handshake.Auth, jsonFormat)
+		if err != nil {
+			return response, err
+		}
 		if changed {
 			response.Handshake = new(*handshake)
 			response.Handshake.Auth = auth.(map[string]any)
 		}
 	}
 	response.Rooms = utils.NonNilSlice(response.Rooms)
-	return response
+	return response, nil
 }
 
 // MarshalAdapterData converts internal cluster data to the Node.js wire shape
 // and reports whether the message must use the attachment table. Reader values
 // are normalized so remote and local delivery observe the same data.
-func MarshalAdapterData(data any) (any, bool) {
+func MarshalAdapterData(data any) (any, bool, error) {
 	switch value := data.(type) {
 	case *adapter.BroadcastMessage:
 		packet := value.Packet
 		var binary bool
 		if packet != nil {
-			packet.Data, _, binary = marshalData(packet.Data, false)
+			prepared, _, hasBinary, err := marshalData(packet.Data, false)
+			if err != nil {
+				return nil, false, err
+			}
+			packet.Data, binary = prepared, hasBinary
 		}
 		return &PacketData[*parser.Packet]{
 			Packet:    packet,
 			Opts:      adapter.NormalizeOptions(value.Opts),
 			RequestId: value.RequestId,
-		}, binary
+		}, binary, nil
 	case *adapter.SocketsJoinLeaveMessage:
 		return &EventData{
 			Opts:  adapter.NormalizeOptions(value.Opts),
 			Rooms: new(utils.NonNilSlice(value.Rooms)),
-		}, false
+		}, false, nil
 	case *adapter.DisconnectSocketsMessage:
 		return &EventData{
 			Opts:  adapter.NormalizeOptions(value.Opts),
 			Close: new(value.Close),
-		}, false
+		}, false, nil
 	case *adapter.FetchSocketsMessage:
 		return &EventData{
 			Opts:      adapter.NormalizeOptions(value.Opts),
 			RequestId: value.RequestId,
-		}, false
+		}, false, nil
 	case *adapter.FetchSocketsResponse:
+		sockets, err := encodeSocketResponses(value.Sockets)
+		if err != nil {
+			return nil, false, err
+		}
 		return &EventData{
 			RequestId: value.RequestId,
-			Sockets:   new(encodeSocketResponses(value.Sockets)),
-		}, false
+			Sockets:   new(sockets),
+		}, false, nil
 	case *adapter.ServerSideEmitMessage:
-		packet, _, binary := marshalData(value.Packet, false)
+		packet, _, binary, err := marshalData(value.Packet, false)
+		if err != nil {
+			return nil, false, err
+		}
 		value.Packet = packet.([]any)
 		return &PacketData[[]any]{
 			RequestId: value.RequestId,
 			Packet:    utils.NonNilSlice(value.Packet),
-		}, binary
+		}, binary, nil
 	case *adapter.ServerSideEmitResponse:
 		payload := *value
-		packet, _, binary := marshalData(value.Packet, false)
+		packet, _, binary, err := marshalData(value.Packet, false)
+		if err != nil {
+			return nil, false, err
+		}
 		payload.Packet = packet
-		return &payload, binary
+		return &payload, binary, nil
 	case *adapter.BroadcastClientCount:
 		return &EventData{
 			RequestId:   value.RequestId,
 			ClientCount: new(value.ClientCount),
-		}, false
+		}, false, nil
 	case *adapter.BroadcastAck:
 		payload := *value
-		packet, _, binary := marshalData(value.Packet, false)
+		packet, _, binary, err := marshalData(value.Packet, false)
+		if err != nil {
+			return nil, false, err
+		}
 		payload.Packet = packet
-		return &payload, binary
+		return &payload, binary, nil
 	default:
-		return data, false
+		return data, false, nil
 	}
 }
 
@@ -151,13 +179,16 @@ func UnmarshalAdapterData(messageType adapter.MessageType, data any) any {
 	}
 }
 
-func marshalData(data any, jsonFormat bool) (any, bool, bool) {
+func marshalData(data any, jsonFormat bool) (any, bool, bool, error) {
 	switch value := data.(type) {
 	case []any:
 		var result []any
 		var binary bool
 		for i, item := range value {
-			encoded, changed, hasBinary := marshalData(item, jsonFormat)
+			encoded, changed, hasBinary, err := marshalData(item, jsonFormat)
+			if err != nil {
+				return nil, false, false, err
+			}
 			binary = binary || hasBinary
 			if !changed {
 				continue
@@ -168,14 +199,17 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 			result[i] = encoded
 		}
 		if result != nil {
-			return result, true, binary
+			return result, true, binary, nil
 		}
-		return data, false, binary
+		return data, false, binary, nil
 	case map[string]any:
 		var result map[string]any
 		var binary bool
 		for key, item := range value {
-			encoded, changed, hasBinary := marshalData(item, jsonFormat)
+			encoded, changed, hasBinary, err := marshalData(item, jsonFormat)
+			if err != nil {
+				return nil, false, false, err
+			}
 			binary = binary || hasBinary
 			if !changed {
 				continue
@@ -186,15 +220,18 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 			result[key] = encoded
 		}
 		if result != nil {
-			return result, true, binary
+			return result, true, binary, nil
 		}
-		return data, false, binary
+		return data, false, binary, nil
 	}
-	prepared, changed, binary := adapter.PrepareClusterData(data)
+	prepared, changed, binary, err := adapter.PrepareClusterData(data)
+	if err != nil {
+		return nil, false, false, err
+	}
 	if jsonFormat && binary {
-		return nodeBufferJSON(prepared.([]byte)), true, true
+		return nodeBufferJSON(prepared.([]byte)), true, true, nil
 	}
-	return prepared, changed, binary
+	return prepared, changed, binary, nil
 }
 
 func unmarshalEventData(messageType adapter.MessageType, data *EventData) any {
@@ -232,12 +269,16 @@ func unmarshalEventData(messageType adapter.MessageType, data *EventData) any {
 	}
 }
 
-func encodeSocketResponses(sockets []adapter.SocketResponse) []SocketResponse {
+func encodeSocketResponses(sockets []adapter.SocketResponse) ([]SocketResponse, error) {
 	responses := make([]SocketResponse, len(sockets))
 	for i, details := range sockets {
-		responses[i] = marshalSocketResponse(SocketResponse(details), false)
+		var err error
+		responses[i], err = marshalSocketResponse(SocketResponse(details), false)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return responses
+	return responses, nil
 }
 
 func decodeSocketResponses(sockets []SocketResponse) []adapter.SocketResponse {

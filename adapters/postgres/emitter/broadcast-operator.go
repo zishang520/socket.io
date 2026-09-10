@@ -166,7 +166,10 @@ func (b *BroadcastOperator) publish(message *adapter.ClusterMessage) error {
 	wireMessage := *message
 	wireMessage.Uid = adapter.EMITTER_UID
 	wireMessage.Nsp = b.broadcastOptions.Nsp
-	wireData, binary := postgres.MarshalAdapterData(message.Data)
+	wireData, binary, err := postgres.MarshalAdapterData(message.Data)
+	if err != nil {
+		return err
+	}
 	wireMessage.Data = wireData
 
 	// Check binary data first — binary always goes to attachment table

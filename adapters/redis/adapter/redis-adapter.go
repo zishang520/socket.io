@@ -437,10 +437,15 @@ func (r *redisAdapter) handleBroadcastRequest(request *Request) {
 		},
 		func(args []any, _ error) {
 			redisLog.Debug("received acknowledgement with value %v", args)
+			packet, err := redis.NormalizeData(slices.TryGet(args, 0))
+			if err != nil {
+				redisLog.Debug("Error preparing BROADCAST_ACK response: %s", err)
+				return
+			}
 			response, err := r.parser.Encode(&Response{
 				Type:      redis.BROADCAST_ACK,
 				RequestId: request.RequestId,
-				Packet:    redis.NormalizeData(slices.TryGet(args, 0)),
+				Packet:    packet,
 			})
 			if err != nil {
 				redisLog.Debug("Error marshaling BROADCAST_ACK response for RequestId %s: %s", request.RequestId, err.Error())

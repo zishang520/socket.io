@@ -315,6 +315,10 @@ func (c *clusterAdapter) Broadcast(packet *parser.Packet, opts *socket.Broadcast
 	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
 
 	if !onlyLocal {
+		if _, err := prepareClusterPacket(packet); err != nil {
+			c.Emit("error", err)
+			return
+		}
 		offset, err := c.PublishAndReturnOffset(&ClusterMessage{
 			Type: BROADCAST,
 			Data: &BroadcastMessage{
@@ -353,6 +357,11 @@ func (c *clusterAdapter) addOffsetIfNecessary(packet *parser.Packet, opts *socke
 func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.BroadcastOptions, clientCountCallback func(uint64), ack socket.Ack) {
 	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
 	if !onlyLocal {
+		if _, err := prepareClusterPacket(packet); err != nil {
+			ack(nil, err)
+			clientCountCallback(0)
+			return
+		}
 		requestId := RandomId()
 
 		c.ackRequests.Store(requestId, ClusterAckRequest{

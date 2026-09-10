@@ -21,7 +21,11 @@ var decoderRegistry = func() *bson.Registry {
 // MarshalAdapterData encodes message data with the exact field names and value
 // shapes used by the Node.js MongoDB adapter.
 func MarshalAdapterData(data any) (bson.RawValue, error) {
-	data, _ = adapter.EncodeClusterMessageData(data, false)
+	var err error
+	data, _, err = adapter.EncodeClusterMessageData(data, false)
+	if err != nil {
+		return bson.RawValue{}, err
+	}
 	switch value := data.(type) {
 	case *adapter.BroadcastMessage:
 		data = &PacketData[*SocketPacket]{
@@ -72,7 +76,10 @@ func MarshalAdapterData(data any) (bson.RawValue, error) {
 	case *SessionDocument:
 		session := *value
 		session.Rooms = utils.NonNilSlice(session.Rooms)
-		session.Data, _, _ = adapter.PrepareClusterData(session.Data)
+		session.Data, _, _, err = adapter.PrepareClusterData(session.Data)
+		if err != nil {
+			return bson.RawValue{}, err
+		}
 		data = &session
 	}
 

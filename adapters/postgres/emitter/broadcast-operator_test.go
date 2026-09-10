@@ -77,7 +77,11 @@ func TestBroadcastOperatorUsesAttachmentAtPayloadThreshold(t *testing.T) {
 	wireMessage := *message
 	wireMessage.Uid = adapter.EMITTER_UID
 	wireMessage.Nsp = "/"
-	wireMessage.Data, _ = postgres.MarshalAdapterData(message.Data)
+	var prepareErr error
+	wireMessage.Data, _, prepareErr = postgres.MarshalAdapterData(message.Data)
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	payload, err := json.Marshal(&wireMessage)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +109,10 @@ func TestBroadcastOperator_SocketsJoin_Marshal(t *testing.T) {
 			Rooms: []socket.Room{"target-room"},
 		},
 	}
-	wireData, binary := postgres.MarshalAdapterData(msg.Data)
+	wireData, binary, prepareErr := postgres.MarshalAdapterData(msg.Data)
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	if binary {
 		t.Fatal("SOCKETS_JOIN must not be marked as binary")
 	}

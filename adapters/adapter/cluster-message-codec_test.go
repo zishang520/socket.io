@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -390,5 +391,88 @@ func TestClusterMessageJSONRequiredValues(t *testing.T) {
 	}
 	if packet := string(ack.Data["packet"]); packet != "null" {
 		t.Fatalf("packet = %s, want explicit null", packet)
+	}
+}
+
+type failingClusterReader struct {
+	err    error
+	closed bool
+}
+
+func (r *failingClusterReader) Read(p []byte) (int, error) { return copy(p, "partial"), r.err }
+func (r *failingClusterReader) Close() error               { r.closed = true; return nil }
+
+func TestClusterCodecRejectsReaderErrors(t *testing.T) {
+	for name, encode := range map[string]func(*ClusterMessage) ([]byte, error){"auto": EncodeClusterMessage, "msgpack": EncodeClusterMessageMsgpack} {
+		for _, kind := range []string{"broadcast", "emit", "ack", "socket-data", "auth"} {
+			t.Run(name+"/"+kind, func(t *testing.T) {
+				cause := errors.New("read failed")
+				reader := &failingClusterReader{err: cause}
+				nested := map[string]any{"reader": reader}
+				m := &ClusterMessage{}
+				switch kind {
+				case "broadcast":
+					m.Type = BROADCAST
+					m.Data = &BroadcastMessage{Packet: &parser.Packet{Type: parser.EVENT, Data: []any{"event", nested}}, Opts: EncodeOptions(nil)}
+				case "emit":
+					m.Type = SERVER_SIDE_EMIT
+					m.Data = &ServerSideEmitMessage{Packet: []any{"event", nested}}
+				case "ack":
+					m.Type = BROADCAST_ACK
+					m.Data = &BroadcastAck{Packet: nested}
+				case "socket-data":
+					m.Type = FETCH_SOCKETS_RESPONSE
+					m.Data = &FetchSocketsResponse{Sockets: []SocketResponse{{Data: nested}}}
+				case "auth":
+					m.Type = FETCH_SOCKETS_RESPONSE
+					m.Data = &FetchSocketsResponse{Sockets: []SocketResponse{{Handshake: &socket.Handshake{Auth: nested}}}}
+				}
+				data, err := encode(m)
+				if !errors.Is(err, cause) || data != nil {
+					t.Fatalf("encoded=%x err=%v", data, err)
+				}
+				if !reader.closed {
+					t.Fatal("failed reader was not closed")
+				}
+			})
+		}
+	}
+}
+
+func TestClusterBroadcastReadFailureDoesNotDeliver(t *testing.T) {
+	for _, withAck := range []bool{false, true} {
+		t.Run(map[bool]string{false: "broadcast", true: "ack"}[withAck], func(t *testing.T) {
+			nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+			c := NewClusterAdapter(nsp).(*clusterAdapter)
+			defer c.Close()
+			local := &ackAdapter{Adapter: c.Adapter}
+			c.Adapter = local
+			cause := errors.New("read failed")
+			reader := &failingClusterReader{err: cause}
+			var got error
+			var calls int
+			if err := c.On("error", func(args ...any) { got = args[0].(error); calls++ }); err != nil {
+				t.Fatal(err)
+			}
+			p := &parser.Packet{Type: parser.EVENT, Data: []any{"event", reader}}
+			if withAck {
+				c.BroadcastWithAck(p, nil, func(n uint64) {
+					if n != 0 {
+						t.Error("nonzero clients")
+					}
+				}, func(_ []any, err error) { got = err; calls++ })
+			} else {
+				c.Broadcast(p, nil)
+			}
+			if !errors.Is(got, cause) || calls != 1 {
+				t.Fatalf("calls=%d error=%v", calls, got)
+			}
+			if local.broadcasts.Load() != 0 || local.broadcastsWithAck.Load() != 0 {
+				t.Fatal("failed payload was delivered locally")
+			}
+			if c.ackRequests.Len() != 0 {
+				t.Fatal("failed payload left an ACK request")
+			}
+		})
 	}
 }

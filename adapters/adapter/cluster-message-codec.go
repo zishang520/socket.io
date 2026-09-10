@@ -3,10 +3,7 @@ package adapter
 import (
 	"encoding/json"
 	"errors"
-	"io"
-	"maps"
 	"slices"
-	"strings"
 
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
@@ -18,7 +15,10 @@ import (
 // EncodeClusterMessage uses JSON for plaintext messages and MessagePack for
 // messages containing binary values.
 func EncodeClusterMessage(message *ClusterMessage) ([]byte, error) {
-	wireMessage, binary := prepareClusterMessage(message)
+	wireMessage, binary, err := prepareClusterMessage(message)
+	if err != nil {
+		return nil, err
+	}
 	if binary {
 		return msgpack.Marshal(wireMessage)
 	}
@@ -27,7 +27,10 @@ func EncodeClusterMessage(message *ClusterMessage) ([]byte, error) {
 
 // EncodeClusterMessageMsgpack encodes a cluster message as MessagePack.
 func EncodeClusterMessageMsgpack(message *ClusterMessage) ([]byte, error) {
-	wireMessage, _ := prepareClusterMessage(message)
+	wireMessage, _, err := prepareClusterMessage(message)
+	if err != nil {
+		return nil, err
+	}
 	return msgpack.Marshal(wireMessage)
 }
 
@@ -84,68 +87,85 @@ func snapshotClusterMessage(message *ClusterMessage) (*ClusterMessage, error) {
 	return DecodeClusterMessage(payload)
 }
 
-func prepareClusterMessage(message *ClusterMessage) (ClusterMessage, bool) {
+func prepareClusterMessage(message *ClusterMessage) (ClusterMessage, bool, error) {
 	wireMessage := *message
 	var binary bool
-	wireMessage.Data, binary = EncodeClusterMessageData(message.Data, false)
-	return wireMessage, binary
+	var err error
+	wireMessage.Data, binary, err = EncodeClusterMessageData(message.Data, false)
+	return wireMessage, binary, err
 }
 
 // EncodeClusterMessageData prepares typed cluster message data for a wire
 // encoder. When onlyPlaintext is true, binary traversal is intentionally
 // skipped for transports that cannot carry MessagePack payloads.
-func EncodeClusterMessageData(data any, onlyPlaintext bool) (any, bool) {
+func EncodeClusterMessageData(data any, onlyPlaintext bool) (any, bool, error) {
 	if onlyPlaintext {
-		return preparePlaintextClusterData(data), false
+		return preparePlaintextClusterData(data), false, nil
 	}
 
 	switch value := data.(type) {
 	case *BroadcastMessage:
-		packet, binary := prepareClusterPacket(value.Packet)
+		binary, err := prepareClusterPacket(value.Packet)
+		if err != nil {
+			return nil, false, err
+		}
 		opts := clusterWireOptions(value.Opts)
 		if opts == value.Opts {
-			return value, binary
+			return value, binary, nil
 		}
 		payload := *value
-		payload.Packet, payload.Opts = packet, opts
-		return &payload, binary
+		payload.Opts = opts
+		return &payload, binary, nil
 	case *SocketsJoinLeaveMessage:
 		payload := *value
 		payload.Opts = clusterWireOptions(value.Opts)
 		payload.Rooms = utils.NonNilSlice(value.Rooms)
-		return &payload, false
+		return &payload, false, nil
 	case *DisconnectSocketsMessage:
 		payload := *value
 		payload.Opts = clusterWireOptions(value.Opts)
-		return &payload, false
+		return &payload, false, nil
 	case *FetchSocketsMessage:
 		payload := *value
 		payload.Opts = clusterWireOptions(value.Opts)
-		return &payload, false
+		return &payload, false, nil
 	case *FetchSocketsResponse:
 		payload := *value
 		var binary bool
-		payload.Sockets, binary = prepareClusterSocketResponses(value.Sockets)
-		return &payload, binary
+		var err error
+		payload.Sockets, binary, err = prepareClusterSocketResponses(value.Sockets)
+		if err != nil {
+			return nil, false, err
+		}
+		return &payload, binary, nil
 	case *ServerSideEmitMessage:
 		payload := *value
-		packet, _, binary := PrepareClusterData(value.Packet)
+		packet, _, binary, err := PrepareClusterData(value.Packet)
+		if err != nil {
+			return nil, false, err
+		}
 		payload.Packet = utils.NonNilSlice(packet.([]any))
-		return &payload, binary
+		return &payload, binary, nil
 	case *ServerSideEmitResponse:
 		payload := *value
-		packet, _, binary := PrepareClusterData(value.Packet)
+		packet, _, binary, err := PrepareClusterData(value.Packet)
+		if err != nil {
+			return nil, false, err
+		}
 		payload.Packet = packet
-		return &payload, binary
+		return &payload, binary, nil
 	case *BroadcastClientCount:
-		return value, false
+		return value, false, nil
 	case *BroadcastAck:
 		payload := *value
-		packet, _, binary := PrepareClusterData(value.Packet)
+		packet, _, binary, err := PrepareClusterData(value.Packet)
+		if err != nil {
+			return nil, false, err
+		}
 		payload.Packet = packet
-		return &payload, binary
+		return &payload, binary, nil
 	default:
-		return data, false
+		return data, false, nil
 	}
 }
 
@@ -257,18 +277,24 @@ func preparePlaintextClusterData(data any) any {
 	}
 }
 
-func prepareClusterSocketResponses(sockets []SocketResponse) ([]SocketResponse, bool) {
+func prepareClusterSocketResponses(sockets []SocketResponse) ([]SocketResponse, bool, error) {
 	var normalized []SocketResponse
 	var binary bool
 	for i := range sockets {
 		details := sockets[i]
-		data, changed, hasBinary := PrepareClusterData(details.Data)
+		data, changed, hasBinary, err := PrepareClusterData(details.Data)
+		if err != nil {
+			return nil, false, err
+		}
 		binary = binary || hasBinary
 		if changed {
 			details.Data = data
 		}
 		if handshake := details.Handshake; handshake != nil && handshake.Auth != nil {
-			auth, authChanged, authBinary := PrepareClusterData(handshake.Auth)
+			auth, authChanged, authBinary, err := PrepareClusterData(handshake.Auth)
+			if err != nil {
+				return nil, false, err
+			}
 			binary = binary || authBinary
 			if authChanged {
 				details.Handshake = new(*handshake)
@@ -290,7 +316,7 @@ func prepareClusterSocketResponses(sockets []SocketResponse) ([]SocketResponse, 
 	if normalized == nil {
 		normalized = sockets
 	}
-	return utils.NonNilSlice(normalized), binary
+	return utils.NonNilSlice(normalized), binary, nil
 }
 
 func plaintextClusterSocketResponses(sockets []SocketResponse) []SocketResponse {
@@ -310,98 +336,24 @@ func plaintextClusterSocketResponses(sockets []SocketResponse) []SocketResponse 
 	return utils.NonNilSlice(sockets)
 }
 
-func prepareClusterPacket(packet *parser.Packet) (*parser.Packet, bool) {
+func prepareClusterPacket(packet *parser.Packet) (bool, error) {
 	if packet == nil {
-		return nil, false
+		return false, nil
 	}
-	data, changed, binary := PrepareClusterData(packet.Data)
+	data, changed, binary, err := PrepareClusterData(packet.Data)
+	if err != nil {
+		return false, err
+	}
 	if changed {
 		// Readers are consumed while being materialized. Keep the native value on
 		// the original packet so a subsequent local broadcast sees the same data.
 		packet.Data = data
 	}
-	return packet, binary
+	return binary, nil
 }
 
-// PrepareClusterData materializes Socket.IO buffers and readers as native
-// strings or byte slices for a wire encoder. It visits []any and map[string]any
-// values, consuming and closing binary readers as the Socket.IO parser does.
-// It returns the prepared value, whether the value was replaced, and whether
-// it contains binary data.
-func PrepareClusterData(data any) (any, bool, bool) {
-	switch value := data.(type) {
-	case nil:
-		return nil, false, false
-	case *strings.Reader:
-		if value == nil {
-			return nil, true, false
-		}
-		var payload strings.Builder
-		payload.Grow(value.Len())
-		_, _ = value.WriteTo(&payload)
-		return payload.String(), true, false
-	case *types.StringBuffer:
-		if value == nil || value.Buffer == nil {
-			return nil, true, false
-		}
-		return value.String(), true, false
-	case []byte:
-		return utils.NonNilSlice(value), value == nil, true
-	case *types.BytesBuffer:
-		if value == nil {
-			return nil, true, false
-		}
-		var payload []byte
-		if value.Buffer != nil {
-			payload = value.Bytes()
-		}
-		return utils.NonNilSlice(payload), true, true
-	case io.Reader:
-		if utils.IsNil(data) {
-			return data, false, false
-		}
-		payload, _ := io.ReadAll(value)
-		if closer, ok := data.(io.Closer); ok {
-			_ = closer.Close()
-		}
-		return utils.NonNilSlice(payload), true, true
-	case []any:
-		var result []any
-		var binary bool
-		for i, item := range value {
-			encoded, changed, hasBinary := PrepareClusterData(item)
-			binary = binary || hasBinary
-			if !changed {
-				continue
-			}
-			if result == nil {
-				result = slices.Clone(value)
-			}
-			result[i] = encoded
-		}
-		if result != nil {
-			return result, true, binary
-		}
-		return data, false, binary
-	case map[string]any:
-		var result map[string]any
-		var binary bool
-		for key, item := range value {
-			encoded, changed, hasBinary := PrepareClusterData(item)
-			binary = binary || hasBinary
-			if !changed {
-				continue
-			}
-			if result == nil {
-				result = maps.Clone(value)
-			}
-			result[key] = encoded
-		}
-		if result != nil {
-			return result, true, binary
-		}
-		return data, false, binary
-	default:
-		return data, false, false
-	}
+// PrepareClusterData materializes supported text and binary readers for cluster encoding.
+// It returns the value, whether it changed, whether it contains binary, and any read error.
+func PrepareClusterData(data any) (any, bool, bool, error) {
+	return types.MaterializeData(data)
 }

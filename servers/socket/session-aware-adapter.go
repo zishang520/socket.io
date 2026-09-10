@@ -140,6 +140,12 @@ func (s *sessionAwareAdapter) Broadcast(packet *parser.Packet, opts *BroadcastOp
 	withoutAcknowledgement := packet.Id == nil
 	notVolatile := opts == nil || opts.Flags == nil || !opts.Flags.Volatile
 	if isEventPacket && withoutAcknowledgement && notVolatile {
+		data, _, _, err := types.MaterializeData(packet.Data)
+		if err != nil {
+			s.Emit("error", err)
+			return
+		}
+		packet.Data = data
 		id := utils.YeastDate()
 		// the offset is stored at the end of the data array, so the client knows the ID of the last packet it has
 		// processed (and the format is backward-compatible)
@@ -156,9 +162,12 @@ func (s *sessionAwareAdapter) Broadcast(packet *parser.Packet, opts *BroadcastOp
 }
 
 func shouldIncludePacket(sessionRooms []Room, opts *BroadcastOptions) bool {
-	included := opts.Rooms.Len() == 0
+	if opts == nil {
+		return true
+	}
+	included := opts.Rooms == nil || opts.Rooms.Len() == 0
 	for _, room := range sessionRooms {
-		if opts.Except.Has(room) {
+		if opts.Except != nil && opts.Except.Has(room) {
 			return false
 		}
 		if !included && opts.Rooms.Has(room) {

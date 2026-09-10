@@ -444,7 +444,7 @@ func TestStreamMessageOnlyPlaintextServerSideEmitWire(t *testing.T) {
 
 func TestNormalizeDataClosesReader(t *testing.T) {
 	reader := &closeReader{Reader: strings.NewReader("value")}
-	if got := NormalizeData(reader); !reflect.DeepEqual(got, []byte("value")) {
+	if got, err := NormalizeData(reader); err != nil || !reflect.DeepEqual(got, []byte("value")) {
 		t.Fatalf("normalized reader = %#v", got)
 	}
 	if !reader.closed {
@@ -454,10 +454,10 @@ func TestNormalizeDataClosesReader(t *testing.T) {
 
 func TestNormalizeEmptyBytesBuffer(t *testing.T) {
 	buffer := new(types.BytesBuffer)
-	if got := NormalizeData(buffer); !reflect.DeepEqual(got, []byte{}) {
+	if got, err := NormalizeData(buffer); err != nil || !reflect.DeepEqual(got, []byte{}) {
 		t.Fatalf("normalized buffer = %#v, want empty bytes", got)
 	}
-	if got := normalizeJSONData(buffer); !reflect.DeepEqual(got, nodeBufferJSON{}) {
+	if got, err := normalizeJSONData(buffer); err != nil || !reflect.DeepEqual(got, nodeBufferJSON{}) {
 		t.Fatalf("normalized JSON buffer = %#v, want empty Buffer", got)
 	}
 }

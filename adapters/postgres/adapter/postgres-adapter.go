@@ -123,7 +123,10 @@ func (a *postgresAdapter) DoPublish(message *ClusterMessage) (offset adapter.Off
 	}
 
 	wireMessage := *message
-	wireData, binary := postgres.MarshalAdapterData(message.Data)
+	wireData, binary, err := postgres.MarshalAdapterData(message.Data)
+	if err != nil {
+		return "", err
+	}
 	wireMessage.Data = wireData
 
 	// Binary data always goes to attachment table (Node.js never sends binary via NOTIFY)

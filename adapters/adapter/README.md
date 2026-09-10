@@ -60,8 +60,8 @@ The package provides several adapter implementations:
 
 ```golang
 type Adapter interface {
-    Broadcast([]Room, *BroadcastOptions, ...any)
-    BroadcastWithAck([]Room, *BroadcastOptions, ...any) <-chan []any
+    Broadcast(*parser.Packet, *socket.BroadcastOptions)
+    BroadcastWithAck(*parser.Packet, *socket.BroadcastOptions, func(uint64), socket.Ack)
     // ... other methods
 }
 ```
@@ -81,8 +81,8 @@ type ClusterAdapter interface {
 ```golang
 type SessionAwareAdapter interface {
     Adapter
-    SaveSession(id string, session any)
-    GetSession(id string) any
+    PersistSession(*socket.SessionToPersist)
+    RestoreSession(socket.PrivateSessionId, string) (*socket.Session, error)
     // Session management methods
 }
 ```
@@ -92,11 +92,16 @@ type SessionAwareAdapter interface {
 ### ClusterAdapterOptions
 
 ```golang
-type ClusterAdapterOptions struct {
-    HeartbeatInterval time.Duration
-    HeartbeatTimeout  time.Duration
-}
+opts := adapter.DefaultClusterAdapterOptions()
+opts.SetHeartbeatInterval(5 * time.Second)
+opts.SetHeartbeatTimeout(10_000) // milliseconds
+// Pass opts to your concrete cluster adapter builder.
 ```
+
+Reader preparation can fail. `PrepareClusterData` returns `(any, bool, bool, error)`
+(value, changed, contains binary, error), and `EncodeClusterMessageData` returns
+`(any, bool, error)`. Callers must handle the error before encoding or publishing;
+a failed read may already have consumed and closed the reader.
 
 ## Testing
 

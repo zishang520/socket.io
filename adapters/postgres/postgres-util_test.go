@@ -24,12 +24,15 @@ func (*failingBinaryReader) MarshalBinary() ([]byte, error) {
 
 func TestAdapterDataOptionsWireFormat(t *testing.T) {
 	timeout := float64(750)
-	wireData, _ := MarshalAdapterData(&adapter.BroadcastMessage{
+	wireData, _, prepareErr := MarshalAdapterData(&adapter.BroadcastMessage{
 		Packet: &parser.Packet{Type: parser.EVENT},
 		Opts: &adapter.PacketOptions{
 			Flags: &socket.BroadcastFlags{Timeout: &timeout},
 		},
 	})
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	wire := wireData.(*PacketData[*parser.Packet])
 
 	if wire.Opts.Rooms == nil || wire.Opts.Except == nil {
@@ -247,7 +250,10 @@ func TestUnmarshalAdapterDataRequiresFetchSockets(t *testing.T) {
 }
 
 func TestAdapterDataRequiredWireFields(t *testing.T) {
-	wire, _ := MarshalAdapterData(&adapter.DisconnectSocketsMessage{Close: false})
+	wire, _, prepareErr := MarshalAdapterData(&adapter.DisconnectSocketsMessage{Close: false})
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	payload, err := json.Marshal(wire)
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)
@@ -259,7 +265,10 @@ func TestAdapterDataRequiredWireFields(t *testing.T) {
 		}
 	}
 
-	trueWire, _ := MarshalAdapterData(&adapter.DisconnectSocketsMessage{Close: true})
+	trueWire, _, prepareErr := MarshalAdapterData(&adapter.DisconnectSocketsMessage{Close: true})
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	if close := trueWire.(*EventData).Close; close == nil || !*close {
 		t.Fatalf("close = %v, want true", close)
 	}
@@ -286,7 +295,10 @@ func TestAdapterDataScalarResponses(t *testing.T) {
 				{"broadcast acknowledgement/null", &adapter.BroadcastAck{RequestId: "request", Packet: nil}, nil},
 			} {
 				t.Run(test.name, func(t *testing.T) {
-					wireData, _ := MarshalAdapterData(test.data)
+					wireData, _, prepareErr := MarshalAdapterData(test.data)
+					if prepareErr != nil {
+						t.Fatal(prepareErr)
+					}
 					payload, err := format.encode(wireData)
 					if err != nil {
 						t.Fatal(err)
@@ -373,7 +385,10 @@ func TestMarshalAdapterDataBinary(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, got := MarshalAdapterData(test.message.Data)
+			_, got, prepareErr := MarshalAdapterData(test.message.Data)
+			if prepareErr != nil {
+				t.Fatal(prepareErr)
+			}
 			if got != test.want {
 				t.Fatalf("binary = %t, want %t", got, test.want)
 			}
@@ -382,9 +397,12 @@ func TestMarshalAdapterDataBinary(t *testing.T) {
 }
 
 func TestAdapterDataMessagePackBytesBuffer(t *testing.T) {
-	wire, _ := MarshalAdapterData(&adapter.BroadcastMessage{
+	wire, _, prepareErr := MarshalAdapterData(&adapter.BroadcastMessage{
 		Packet: &parser.Packet{Data: []any{"event", types.NewBytesBuffer([]byte{1, 2, 3})}},
 	})
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	payload, err := utils.MsgPack().Encode(wire)
 	if err != nil {
 		t.Fatalf("MessagePack encode failed: %v", err)
@@ -408,7 +426,10 @@ func TestAdapterDataMessagePackReader(t *testing.T) {
 			Packet: &parser.Packet{Data: []any{"event", bytes.NewBuffer([]byte{1, 2, 3})}},
 		},
 	}
-	wire, binary := MarshalAdapterData(message.Data)
+	wire, binary, prepareErr := MarshalAdapterData(message.Data)
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	if !binary {
 		t.Fatal("reader must be detected as binary")
 	}
@@ -445,7 +466,10 @@ func TestFetchSocketsResponseBufferWireFormats(t *testing.T) {
 		}},
 	}
 
-	wireData, binary := MarshalAdapterData(response)
+	wireData, binary, prepareErr := MarshalAdapterData(response)
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	if binary {
 		t.Fatal("fetch sockets response must use the JSON path below the payload threshold")
 	}
@@ -490,9 +514,12 @@ func TestFetchSocketsResponseBufferWireFormats(t *testing.T) {
 }
 
 func TestMarshalAdapterDataZeroValueBytesBuffer(t *testing.T) {
-	wireData, binary := MarshalAdapterData(&adapter.BroadcastMessage{
+	wireData, binary, prepareErr := MarshalAdapterData(&adapter.BroadcastMessage{
 		Packet: &parser.Packet{Data: []any{"event", new(types.BytesBuffer)}},
 	})
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	if !binary {
 		t.Fatal("BytesBuffer must use the attachment table")
 	}
@@ -511,7 +538,10 @@ func TestAdapterDataFailingBinaryMarshalerReader(t *testing.T) {
 		},
 	}
 
-	wireData, binary := MarshalAdapterData(message)
+	wireData, binary, prepareErr := MarshalAdapterData(message)
+	if prepareErr != nil {
+		t.Fatal(prepareErr)
+	}
 	if !binary {
 		t.Fatal("reader must use the attachment table")
 	}
@@ -537,7 +567,10 @@ func TestAdapterDataTextReaders(t *testing.T) {
 			message := &adapter.BroadcastMessage{
 				Packet: &parser.Packet{Data: []any{"event", test.data, []byte{1}}},
 			}
-			wireData, binary := MarshalAdapterData(message)
+			wireData, binary, prepareErr := MarshalAdapterData(message)
+			if prepareErr != nil {
+				t.Fatal(prepareErr)
+			}
 			if !binary {
 				t.Fatal("the binary sibling must use the attachment table")
 			}

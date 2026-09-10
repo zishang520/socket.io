@@ -74,14 +74,21 @@ func requestOptions(messageType RequestType, opts *adapter.PacketOptions) *adapt
 	}
 }
 
-func prepareRequest(request *ValkeyRequest, jsonFormat bool) valkeyRequest {
+func prepareRequest(request *ValkeyRequest, jsonFormat bool) (valkeyRequest, error) {
 	payload := valkeyRequest(*request)
-	payload.Packet = marshalPacket(payload.Packet, jsonFormat)
+	var err error
+	payload.Packet, err = marshalPacket(payload.Packet, jsonFormat)
+	if err != nil {
+		return payload, err
+	}
 	if payload.Opts != nil {
 		payload.Opts = requestOptions(payload.Type, payload.Opts)
 	}
 	if payload.Data != nil {
-		data, _, _ := marshalData(payload.Data, jsonFormat)
+		data, _, _, err := marshalData(payload.Data, jsonFormat)
+		if err != nil {
+			return payload, err
+		}
 		payload.Data = data.([]any)
 	}
 
@@ -95,7 +102,7 @@ func prepareRequest(request *ValkeyRequest, jsonFormat bool) valkeyRequest {
 	case SERVER_SIDE_EMIT:
 		payload.Data = utils.NonNilSlice(payload.Data)
 	}
-	return payload
+	return payload, nil
 }
 
 func (r *ValkeyRequest) set(payload *valkeyRequest) error {
@@ -111,7 +118,11 @@ func (r *ValkeyRequest) MarshalJSON() ([]byte, error) {
 	if r == nil {
 		return json.Marshal(nil)
 	}
-	return json.Marshal(prepareRequest(r, true))
+	payload, err := prepareRequest(r, true)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(payload)
 }
 
 func (r *ValkeyRequest) UnmarshalJSON(data []byte) error {
@@ -129,7 +140,11 @@ func (r *ValkeyRequest) MarshalMsgpack() ([]byte, error) {
 	if r == nil {
 		return msgpack.Marshal(nil)
 	}
-	return msgpack.Marshal(prepareRequest(r, false))
+	payload, err := prepareRequest(r, false)
+	if err != nil {
+		return nil, err
+	}
+	return msgpack.Marshal(payload)
 }
 
 func (r *ValkeyRequest) UnmarshalMsgpack(data []byte) error {
@@ -150,14 +165,24 @@ func (r *ValkeyResponse) MarshalJSON() ([]byte, error) {
 	}
 
 	payload := valkeyResponse(*r)
+	var err error
 	if sockets, ok := payload.Sockets.([]adapter.SocketResponse); ok {
-		payload.Sockets = marshalJSONSocketResponses(sockets)
+		payload.Sockets, err = marshalJSONSocketResponses(sockets)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if payload.Data != nil {
-		payload.Data = normalizeJSONData(payload.Data)
+		payload.Data, err = normalizeJSONData(payload.Data)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if payload.Packet != nil {
-		payload.Packet = normalizeJSONData(payload.Packet)
+		payload.Packet, err = normalizeJSONData(payload.Packet)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return json.Marshal(payload)
 }
@@ -184,7 +209,10 @@ func (r *ValkeyPacket) MarshalJSON() ([]byte, error) {
 	if r == nil {
 		return json.Marshal(nil)
 	}
-	packet := marshalPacket(r.Packet, true)
+	packet, err := marshalPacket(r.Packet, true)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal([3]any{r.Uid, packet, wireOptions(r.Opts)})
 }
 
@@ -222,7 +250,10 @@ func (r *ValkeyPacket) UnmarshalJSON(data []byte) error {
 }
 
 func (r ValkeyPacket) MarshalMsgpack() ([]byte, error) {
-	packet := marshalPacket(r.Packet, false)
+	packet, err := marshalPacket(r.Packet, false)
+	if err != nil {
+		return nil, err
+	}
 	return msgpack.Marshal([3]any{r.Uid, packet, wireOptions(r.Opts)})
 }
 
@@ -234,7 +265,10 @@ func (r RawClusterMessage) Data() string { return r["data"] }
 // EncodeStreamMessage converts a cluster message to the flat Valkey Streams
 // field-value format used by the Node.js adapter and emitter.
 func EncodeStreamMessage(message *adapter.ClusterMessage, onlyPlaintext bool) (RawClusterMessage, error) {
-	wireData, binary := adapter.EncodeClusterMessageData(message.Data, onlyPlaintext)
+	wireData, binary, prepareErr := adapter.EncodeClusterMessageData(message.Data, onlyPlaintext)
+	if prepareErr != nil {
+		return nil, prepareErr
+	}
 	rawMessage := RawClusterMessage{
 		"uid":  string(message.Uid),
 		"nsp":  message.Nsp,
@@ -296,16 +330,22 @@ func DecodeStreamMessage(rawMessage RawClusterMessage) (*adapter.ClusterMessage,
 	return message, nil
 }
 
-func marshalJSONSocketResponses(sockets []adapter.SocketResponse) []adapter.SocketResponse {
+func marshalJSONSocketResponses(sockets []adapter.SocketResponse) ([]adapter.SocketResponse, error) {
 	var normalized []adapter.SocketResponse
 	for i := range sockets {
 		details := sockets[i]
-		data, changed, _ := marshalData(details.Data, true)
+		data, changed, _, err := marshalData(details.Data, true)
+		if err != nil {
+			return nil, err
+		}
 		if changed {
 			details.Data = data
 		}
 		if handshake := details.Handshake; handshake != nil && handshake.Auth != nil {
-			auth, authChanged, _ := marshalData(handshake.Auth, true)
+			auth, authChanged, _, err := marshalData(handshake.Auth, true)
+			if err != nil {
+				return nil, err
+			}
 			if authChanged {
 				details.Handshake = new(*handshake)
 				details.Handshake.Auth = auth.(map[string]any)
@@ -326,53 +366,62 @@ func marshalJSONSocketResponses(sockets []adapter.SocketResponse) []adapter.Sock
 	if normalized == nil {
 		normalized = sockets
 	}
-	return utils.NonNilSlice(normalized)
+	return utils.NonNilSlice(normalized), nil
 }
 
 // NormalizeData materializes supported readers while preserving slices and maps.
 // Compound cross-language payloads must use []any or map[string]any so nested binary values can be traversed.
-func NormalizeData(data any) any {
-	normalized, _, _ := marshalData(data, false)
-	return normalized
+func NormalizeData(data any) (any, error) {
+	normalized, _, _, err := marshalData(data, false)
+	return normalized, err
 }
 
 // normalizeJSONData converts binary values to the JSON.stringify(Buffer) shape.
 // Compound cross-language payloads must use []any or map[string]any so nested binary values can be traversed.
-func normalizeJSONData(data any) any {
-	normalized, _, _ := marshalData(data, true)
-	return normalized
+func normalizeJSONData(data any) (any, error) {
+	normalized, _, _, err := marshalData(data, true)
+	return normalized, err
 }
 
-func marshalPacket(packet *parser.Packet, jsonFormat bool) *parser.Packet {
+func marshalPacket(packet *parser.Packet, jsonFormat bool) (*parser.Packet, error) {
 	if packet == nil {
-		return nil
+		return nil, nil
 	}
-	data, changed, binary := marshalData(packet.Data, false)
+	data, changed, binary, err := marshalData(packet.Data, false)
+	if err != nil {
+		return nil, err
+	}
 	if changed {
 		// Readers are consumed while being materialized. Keep the native value on
 		// the original packet so a subsequent local broadcast sees the same data.
 		packet.Data = data
 	}
 	if !jsonFormat || !binary {
-		return packet
+		return packet, nil
 	}
 
-	data, changed, _ = marshalData(packet.Data, true)
+	data, changed, _, err = marshalData(packet.Data, true)
+	if err != nil {
+		return nil, err
+	}
 	if !changed {
-		return packet
+		return packet, nil
 	}
 	wirePacket := new(*packet)
 	wirePacket.Data = data
-	return wirePacket
+	return wirePacket, nil
 }
 
-func marshalData(data any, jsonFormat bool) (any, bool, bool) {
+func marshalData(data any, jsonFormat bool) (any, bool, bool, error) {
 	switch value := data.(type) {
 	case []any:
 		var result []any
 		var binary bool
 		for i, item := range value {
-			encoded, changed, hasBinary := marshalData(item, jsonFormat)
+			encoded, changed, hasBinary, err := marshalData(item, jsonFormat)
+			if err != nil {
+				return nil, false, false, err
+			}
 			binary = binary || hasBinary
 			if !changed {
 				continue
@@ -383,14 +432,17 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 			result[i] = encoded
 		}
 		if result != nil {
-			return result, true, binary
+			return result, true, binary, nil
 		}
-		return data, false, binary
+		return data, false, binary, nil
 	case map[string]any:
 		var result map[string]any
 		var binary bool
 		for key, item := range value {
-			encoded, changed, hasBinary := marshalData(item, jsonFormat)
+			encoded, changed, hasBinary, err := marshalData(item, jsonFormat)
+			if err != nil {
+				return nil, false, false, err
+			}
 			binary = binary || hasBinary
 			if !changed {
 				continue
@@ -401,13 +453,16 @@ func marshalData(data any, jsonFormat bool) (any, bool, bool) {
 			result[key] = encoded
 		}
 		if result != nil {
-			return result, true, binary
+			return result, true, binary, nil
 		}
-		return data, false, binary
+		return data, false, binary, nil
 	}
-	prepared, changed, binary := adapter.PrepareClusterData(data)
+	prepared, changed, binary, err := adapter.PrepareClusterData(data)
+	if err != nil {
+		return nil, false, false, err
+	}
 	if jsonFormat && binary {
-		return nodeBufferJSON(prepared.([]byte)), true, true
+		return nodeBufferJSON(prepared.([]byte)), true, true, nil
 	}
-	return prepared, changed, binary
+	return prepared, changed, binary, nil
 }

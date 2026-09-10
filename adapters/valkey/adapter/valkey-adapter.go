@@ -387,10 +387,15 @@ func (r *valkeyAdapter) handleBroadcastRequest(request *Request) {
 		},
 		func(args []any, _ error) {
 			valkeyLog.Debug("received acknowledgement with value %v", args)
+			packet, err := valkey.NormalizeData(slices.TryGet(args, 0))
+			if err != nil {
+				valkeyLog.Debug("Error preparing BROADCAST_ACK response: %s", err)
+				return
+			}
 			response, err := r.parser.Encode(&Response{
 				Type:      valkey.BROADCAST_ACK,
 				RequestId: request.RequestId,
-				Packet:    valkey.NormalizeData(slices.TryGet(args, 0)),
+				Packet:    packet,
 			})
 			if err != nil {
 				valkeyLog.Debug("Error marshaling BROADCAST_ACK response for RequestId %s: %s", request.RequestId, err.Error())

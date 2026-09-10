@@ -1,6 +1,10 @@
 package socket
 
 import (
+	"bytes"
+	"errors"
+	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,4 +180,61 @@ func TestSessionAwareAdapterCustomCleanupInterval(t *testing.T) {
 	restored, _ := sa.RestoreSession("pid1", "")
 	// restored may be nil due to missing offset match, but the session lookup should not error
 	_ = restored
+}
+
+type failingSessionReader struct{ err error }
+
+func (r *failingSessionReader) Read(p []byte) (int, error) { return copy(p, "partial"), r.err }
+
+func TestSessionRecoveryMaterializesReaders(t *testing.T) {
+	for _, opts := range []*BroadcastOptions{nil, {}, {Rooms: types.NewSet[Room](), Except: types.NewSet[Room]()}} {
+		sa := newTestSessionAwareAdapter()
+		defer sa.Close()
+		first := &parser.Packet{Type: parser.EVENT, Data: []any{"first"}}
+		sa.Broadcast(first, opts)
+		offset := first.Data.([]any)[1].(string)
+		sa.PersistSession(&SessionToPersist{Pid: "pid", Rooms: types.NewSet[Room]("room")})
+		p := &parser.Packet{Type: parser.EVENT, Data: []any{"event", map[string]any{"text": strings.NewReader("??????"), "binary": bytes.NewBufferString("payload")}}}
+		sa.Broadcast(p, opts)
+		for range 2 {
+			restored, err := sa.RestoreSession("pid", offset)
+			if err != nil || restored == nil || len(restored.MissedPackets) != 1 {
+				t.Fatalf("restore=%#v err=%v", restored, err)
+			}
+			replay := &parser.Packet{Type: parser.EVENT, Data: restored.MissedPackets[0]}
+			encoded, err := parser.NewEncoder().Encode(replay)
+			if err != nil || len(encoded) != 2 {
+				t.Fatalf("encoded=%v err=%v", encoded, err)
+			}
+			if got := string(encoded[1].(*types.BytesBuffer).Bytes()); got != "payload" {
+				t.Fatalf("binary=%q", got)
+			}
+			if !strings.Contains(encoded[0].(*types.StringBuffer).String(), "??????") {
+				t.Fatal("text reader lost")
+			}
+		}
+	}
+}
+
+func TestSessionRecoveryDoesNotPersistReadFailure(t *testing.T) {
+	sa := newTestSessionAwareAdapter()
+	defer sa.Close()
+	first := &parser.Packet{Type: parser.EVENT, Data: []any{"first"}}
+	sa.Broadcast(first, nil)
+	offset := first.Data.([]any)[1].(string)
+	sa.PersistSession(&SessionToPersist{Pid: "pid", Rooms: types.NewSet[Room]()})
+	cause := errors.New("read failed")
+	var got error
+	var calls int
+	if err := sa.On("error", func(args ...any) { got = args[0].(error); calls++ }); err != nil {
+		t.Fatal(err)
+	}
+	sa.Broadcast(&parser.Packet{Type: parser.EVENT, Data: []any{"event", &failingSessionReader{cause}}}, nil)
+	if !errors.Is(got, cause) || calls != 1 {
+		t.Fatalf("error=%v calls=%d", got, calls)
+	}
+	restored, err := sa.RestoreSession("pid", offset)
+	if err != nil || restored == nil || len(restored.MissedPackets) != 0 {
+		t.Fatalf("restore=%#v err=%v", restored, err)
+	}
 }

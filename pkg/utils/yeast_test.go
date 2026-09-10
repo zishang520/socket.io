@@ -1,7 +1,9 @@
 package utils
 
 import (
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -75,4 +77,50 @@ func TestYeast(t *testing.T) {
 	if id1 == id3 || id2 == id3 {
 		t.Errorf("Yeast() generated a duplicate ID: %s", id3)
 	}
+}
+
+func TestYeastConcurrentUniqueness(t *testing.T) {
+	const workers, perWorker = 16, 4096
+	y := NewYeast()
+	ids := make([][]string, workers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for worker := range workers {
+		wg.Go(func() {
+			batch := make([]string, perWorker)
+			<-start
+			for i := range batch {
+				batch[i] = y.Yeast()
+			}
+			ids[worker] = batch
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	seen := make(map[string]struct{}, workers*perWorker)
+	for _, batch := range ids {
+		for _, id := range batch {
+			if _, exists := seen[id]; exists {
+				t.Fatalf("duplicate ID from concurrent calls: %q", id)
+			}
+			seen[id] = struct{}{}
+		}
+	}
+}
+
+func TestYeastSequence(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		y := NewYeast()
+		prefix := y.Encode(time.Now().UnixMilli())
+		for _, want := range []string{prefix, prefix + ".0", prefix + ".1"} {
+			if got := y.Yeast(); got != want {
+				t.Fatalf("Yeast() = %q, want %q", got, want)
+			}
+		}
+		time.Sleep(time.Millisecond)
+		if got, want := y.Yeast(), y.Encode(time.Now().UnixMilli()); got != want {
+			t.Fatalf("Yeast() after millisecond change = %q, want %q", got, want)
+		}
+	})
 }
