@@ -89,7 +89,7 @@ func BenchmarkAdapterEncodeEvent(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		if encoded := adapter._encode(packet, packetOpts); len(encoded) != 1 {
+		if encoded, err := adapter._encode(packet, packetOpts); err != nil || len(encoded) != 1 {
 			b.Fatalf("encoded packets = %d, want 1", len(encoded))
 		}
 	}

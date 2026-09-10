@@ -16,7 +16,10 @@ func TestEncode(t *testing.T) {
 		Type: EVENT,
 		Data: map[string]any{"key": "value"},
 	}
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Errorf("Expected 1 buffer, got %d", len(buffers))
 	}
@@ -33,7 +36,10 @@ func TestEncode(t *testing.T) {
 		Data:        []byte{1, 2, 3},
 	}
 	*packet.Attachments = 1
-	buffers = e.Encode(packet)
+	buffers, err = e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 2 {
 		t.Errorf("Expected 2 buffers, got %d", len(buffers))
 	}
@@ -57,7 +63,10 @@ func TestEncodeAck(t *testing.T) {
 		Type: ACK,
 		Data: map[string]any{"key": "value"},
 	}
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffer, got %d", len(buffers))
 	}
@@ -80,7 +89,10 @@ func TestEncodeEventBinary(t *testing.T) {
 		Nsp:         "data",
 	}
 	*packet.Attachments = 2
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 3 {
 		t.Fatalf("Expected 3 buffers, got %d", len(buffers))
 	}
@@ -104,7 +116,10 @@ func TestEncodeEventString(t *testing.T) {
 		Type: EVENT,
 		Data: data,
 	}
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffers, got %d", len(buffers))
 	}
@@ -130,7 +145,10 @@ func TestEncodeEventId(t *testing.T) {
 		Id:   new(uint64),
 	}
 	*packet.Id = 6
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffers, got %d", len(buffers))
 	}
@@ -155,7 +173,10 @@ func TestEncodeEventNamespace(t *testing.T) {
 		Data: data,
 		Nsp:  "/",
 	}
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffers, got %d", len(buffers))
 	}
@@ -174,7 +195,10 @@ func TestEncodeEventNamespace(t *testing.T) {
 		Data: data,
 		Nsp:  "/test",
 	}
-	buffers = e.Encode(packet)
+	buffers, err = e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffers, got %d", len(buffers))
 	}
@@ -200,7 +224,10 @@ func TestEncodeAckBinary(t *testing.T) {
 		Data:        data,
 	}
 	*packet.Attachments = 1
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 2 {
 		t.Fatalf("Expected 2 buffers, got %d", len(buffers))
 	}
@@ -222,7 +249,10 @@ func TestEncodeEmptyPacket(t *testing.T) {
 	packet := &Packet{
 		Type: EVENT,
 	}
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffer, got %d", len(buffers))
 	}
@@ -240,7 +270,10 @@ func TestEncodeEmptyBinaryPacket(t *testing.T) {
 	packet := &Packet{
 		Type: BINARY_EVENT,
 	}
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffer, got %d", len(buffers))
 	}
@@ -251,41 +284,12 @@ func TestEncodeEmptyBinaryPacket(t *testing.T) {
 	}
 }
 
-func TestEncodeInvalidData(t *testing.T) {
-	e := NewEncoder()
-
-	// Test encoding with invalid data
-	packet := &Packet{
-		Type: EVENT,
-		Data: map[string]any{"key": func() {}}, // Invalid data
-	}
-	buffers := e.Encode(packet)
-	if len(buffers) != 1 {
-		t.Fatalf("Expected 1 buffer, got %d", len(buffers))
-	}
-
-	expected := []byte(`2`) // Expected to still produce a valid result despite invalid data
-	if !bytes.Equal(buffers[0].(*types.StringBuffer).Bytes(), expected) {
-		t.Errorf("Unexpected encoding result. Got %v, expected %v", buffers[0].(*types.StringBuffer).Bytes(), expected)
-	}
-}
-
 func TestEncodeErrorHandling(t *testing.T) {
-	e := NewEncoder()
-
-	// Test error handling with an invalid type in data
-	packet := &Packet{
-		Type: EVENT,
-		Data: map[string]any{"key": make(chan int)}, // Invalid data type
-	}
-	buffers := e.Encode(packet)
-	if len(buffers) != 1 {
-		t.Fatalf("Expected 1 buffer, got %d", len(buffers))
-	}
-
-	expected := []byte("2") // Expected to still produce a valid result despite the invalid type
-	if !bytes.Equal(buffers[0].(*types.StringBuffer).Bytes(), expected) {
-		t.Errorf("Unexpected encoding result. Got %v, expected %v", buffers[0].(*types.StringBuffer).Bytes(), expected)
+	for _, data := range []any{[]any{"x", make(chan int)}, []any{"x", []byte{1}, make(chan int)}} {
+		buffers, err := NewEncoder().Encode(&Packet{Type: EVENT, Data: data})
+		if err == nil || buffers != nil {
+			t.Fatalf("expected encoding failure without partial buffers: %v, %v", buffers, err)
+		}
 	}
 }
 
@@ -322,7 +326,10 @@ func TestEncodeConnectPacket(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			buffers := e.Encode(tt.packet)
+			buffers, err := e.Encode(tt.packet)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if len(buffers) != 1 {
 				t.Fatalf("Expected 1 buffer, got %d", len(buffers))
 			}
@@ -357,7 +364,10 @@ func TestEncodeDisconnectPacket(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			buffers := e.Encode(tt.packet)
+			buffers, err := e.Encode(tt.packet)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if len(buffers) != 1 {
 				t.Fatalf("Expected 1 buffer, got %d", len(buffers))
 			}
@@ -392,7 +402,10 @@ func TestEncodeConnectErrorPacket(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			buffers := e.Encode(tt.packet)
+			buffers, err := e.Encode(tt.packet)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if len(buffers) != 1 {
 				t.Fatalf("Expected 1 buffer, got %d", len(buffers))
 			}
@@ -414,7 +427,11 @@ func TestEncodeBinaryAckPacket(t *testing.T) {
 		Data: []any{[]byte{0x01, 0x02, 0x03}},
 	}
 
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 2 {
 		t.Fatalf("Expected 2 buffers, got %d", len(buffers))
 	}
@@ -443,7 +460,11 @@ func TestEncodeNestedBinaryData(t *testing.T) {
 		},
 	}
 
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 3 {
 		t.Fatalf("Expected 3 buffers (header + 2 binaries), got %d", len(buffers))
 	}
@@ -480,7 +501,11 @@ func TestEncodeWithStringsReader(t *testing.T) {
 		Data: []any{"event", strings.NewReader("string data")},
 	}
 
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffer (strings.Reader is not binary), got %d", len(buffers))
 	}
@@ -495,7 +520,11 @@ func TestEncodeWithIOReader(t *testing.T) {
 		Data: []any{"upload", bytes.NewReader([]byte{0x01, 0x02, 0x03})},
 	}
 
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 2 {
 		t.Fatalf("Expected 2 buffers (io.Reader is binary), got %d", len(buffers))
 	}
@@ -511,7 +540,11 @@ func TestEncodeBinaryEventExplicit(t *testing.T) {
 		Nsp:         "/chat",
 	}
 
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffer, got %d", len(buffers))
 	}
@@ -533,7 +566,11 @@ func TestEncodePacketWithAllFields(t *testing.T) {
 		Data: []any{"message", "hello"},
 	}
 
-	buffers := e.Encode(packet)
+	buffers, err := e.Encode(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffer, got %d", len(buffers))
 	}

@@ -163,7 +163,15 @@ func (c *Client) _packet(packet *parser.Packet, opts *WriteOptions) {
 		opts = &WriteOptions{}
 	}
 
-	c.WriteToEngine(c.encoder.Encode(packet), opts)
+	encoded, err := c.encoder.Encode(packet)
+	if err != nil {
+		if owner, ok := c.nsps.Load(packet.Nsp); ok {
+			owner.failAck(packet, err)
+			owner._onerror(err)
+		}
+		return
+	}
+	c.WriteToEngine(encoded, opts)
 }
 
 // WriteToEngine writes encoded packets to the Engine.IO transport.

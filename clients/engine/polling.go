@@ -134,9 +134,13 @@ func (p *polling) _onPacket(data *packet.Packet) {
 // OnData decodes the payload and handles each packet in the payload.
 func (p *polling) OnData(data types.BufferInterface) {
 	clientPollingLog.Debug("polling got data %#v", data)
-	packets, _ := parser.Parserv4().DecodePayload(data)
+	packets, err := parser.Parserv4().DecodePayload(data)
 	for _, data := range packets {
 		p._onPacket(data)
+	}
+	if err != nil {
+		p.OnError("parser error", err, nil)
+		return
 	}
 	if readyState := p.ReadyState(); TransportStateClosed != readyState {
 		p._polling.Store(false)
@@ -175,7 +179,11 @@ func (p *polling) Write(packets []*packet.Packet) {
 
 // write performs the actual packet writing operation asynchronously.
 func (p *polling) write(packets []*packet.Packet) {
-	data, _ := parser.Parserv4().EncodePayload(packets)
+	data, err := parser.Parserv4().EncodePayload(packets)
+	if err != nil {
+		p.OnError("polling encode error", err, nil)
+		return
+	}
 	p.doWrite(data, func() {
 		p.SetWritable(true)
 		p.Emit("drain")

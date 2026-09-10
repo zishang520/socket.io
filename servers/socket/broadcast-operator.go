@@ -205,7 +205,13 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		expectedClientCount.Add(clientCount)
 		actualServerCount.Add(1)
 		checkCompleteness()
-	}, func(clientResponse []any, _ error) {
+	}, func(clientResponse []any, err error) {
+		if err != nil {
+			timedOut.Store(true)
+			utils.ClearTimeout(timer)
+			ackOnce.Do(func() { ack(nil, err) })
+			return
+		}
 		// each client sends an acknowledgement
 		responses.Push(slices.TryGet(clientResponse, 0))
 		checkCompleteness()

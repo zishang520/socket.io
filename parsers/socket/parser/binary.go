@@ -3,6 +3,8 @@ package parser
 import (
 	"errors"
 	"io"
+	"math"
+	"strings"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
@@ -15,75 +17,72 @@ type Placeholder struct {
 	Num         int64 `json:"num" msgpack:"num"`
 }
 
-// DeconstructPacket extracts all binary data from a packet and replaces
-// them with numbered placeholders. Returns the modified packet and a slice
-// of buffers containing the extracted binary data.
-func DeconstructPacket(packet *Packet) (*Packet, []types.BufferInterface) {
+// DeconstructPacket extracts binary data and replaces it with placeholders.
+// It changes packet only on success. Reader data is consumed and cannot be rolled back.
+func DeconstructPacket(packet *Packet) (*Packet, []types.BufferInterface, error) {
 	var buffers []types.BufferInterface
-	packet.Data = deconstructData(packet.Data, &buffers)
+	data, err := prepareData(packet.Data, &buffers)
+	if err != nil {
+		return nil, nil, err
+	}
+	packet.Data = data
 	packet.Attachments = new(uint64(len(buffers)))
-	return packet, buffers
+	return packet, buffers, nil
 }
 
-// deconstructData recursively traverses the data structure and replaces
-// binary data with placeholders while collecting the binary data into buffers.
-func deconstructData(data any, buffers *[]types.BufferInterface) any {
-	if data == nil {
-		return nil
-	}
-
-	if IsBinary(data) {
-		return extractBinaryData(data, buffers)
-	}
-
-	switch typedData := data.(type) {
+// prepareData copies containers, converts text readers, and optionally extracts binary.
+// A nil buffers pointer leaves binary values alone for non-EVENT/ACK packets.
+func prepareData(data any, buffers *[]types.BufferInterface) (any, error) {
+	switch value := data.(type) {
+	case *strings.Reader:
+		return types.NewStringBufferReader(value)
+	case *types.StringBuffer:
+		return value, nil
 	case []any:
-		return deconstructSlice(typedData, buffers)
+		if value == nil {
+			return value, nil
+		}
+		result := make([]any, len(value))
+		for i, item := range value {
+			converted, err := prepareData(item, buffers)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = converted
+		}
+		return result, nil
 	case map[string]any:
-		return deconstructMap(typedData, buffers)
-	default:
-		return data
+		if value == nil {
+			return value, nil
+		}
+		result := make(map[string]any, len(value))
+		for key, item := range value {
+			converted, err := prepareData(item, buffers)
+			if err != nil {
+				return nil, err
+			}
+			result[key] = converted
+		}
+		return result, nil
 	}
-}
-
-// extractBinaryData extracts binary data, stores it in buffers, and returns a placeholder.
-func extractBinaryData(data any, buffers *[]types.BufferInterface) *Placeholder {
-	placeholder := &Placeholder{
-		Placeholder: true,
-		Num:         int64(len(*buffers)),
+	if buffers == nil || !IsBinary(data) {
+		return data, nil
 	}
-
 	buffer := types.NewBytesBuffer(nil)
-	switch typedData := data.(type) {
+	switch value := data.(type) {
 	case io.Reader:
-		if closer, ok := data.(io.Closer); ok {
+		if closer, ok := value.(io.Closer); ok {
 			defer func() { _ = closer.Close() }()
 		}
-		_, _ = buffer.ReadFrom(typedData)
+		if _, err := buffer.ReadFrom(value); err != nil {
+			return nil, err
+		}
 	case []byte:
-		_, _ = buffer.Write(typedData)
+		_, _ = buffer.Write(value)
 	}
-
+	placeholder := &Placeholder{Placeholder: true, Num: int64(len(*buffers))}
 	*buffers = append(*buffers, buffer)
-	return placeholder
-}
-
-// deconstructSlice processes a slice, deconstructing any binary data within.
-func deconstructSlice(data []any, buffers *[]types.BufferInterface) []any {
-	result := make([]any, 0, len(data))
-	for _, item := range data {
-		result = append(result, deconstructData(item, buffers))
-	}
-	return result
-}
-
-// deconstructMap processes a map, deconstructing any binary data within.
-func deconstructMap(data map[string]any, buffers *[]types.BufferInterface) map[string]any {
-	result := make(map[string]any, len(data))
-	for key, value := range data {
-		result[key] = deconstructData(value, buffers)
-	}
-	return result
+	return placeholder, nil
 }
 
 // ErrIllegalAttachments is returned when a placeholder references an invalid buffer index.
@@ -105,55 +104,49 @@ func ReconstructPacket(packet *Packet, buffers []types.BufferInterface) (*Packet
 // reconstructData recursively traverses the data structure and replaces
 // placeholders with their corresponding binary data from the buffers.
 func reconstructData(data any, buffers []types.BufferInterface) (any, error) {
-	switch typedData := data.(type) {
-	case nil:
-		return nil, nil
+	switch value := data.(type) {
+	case *Placeholder:
+		if value == nil || !value.Placeholder {
+			return value, nil
+		}
+		if value.Num < 0 || value.Num >= int64(len(buffers)) {
+			return nil, ErrIllegalAttachments
+		}
+		return buffers[value.Num], nil
 	case []any:
-		return reconstructSlice(typedData, buffers)
+		if value == nil {
+			return value, nil
+		}
+		result := make([]any, len(value))
+		for i, item := range value {
+			reconstructed, err := reconstructData(item, buffers)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = reconstructed
+		}
+		return result, nil
 	case map[string]any:
-		return reconstructMap(typedData, buffers)
+		if value == nil {
+			return value, nil
+		}
+		if value["_placeholder"] == true {
+			num, ok := value["num"].(float64)
+			if !ok || num < 0 || num >= float64(len(buffers)) || math.Trunc(num) != num {
+				return nil, ErrIllegalAttachments
+			}
+			return buffers[int(num)], nil
+		}
+		result := make(map[string]any, len(value))
+		for key, item := range value {
+			reconstructed, err := reconstructData(item, buffers)
+			if err != nil {
+				return nil, err
+			}
+			result[key] = reconstructed
+		}
+		return result, nil
 	default:
 		return data, nil
 	}
-}
-
-// reconstructSlice processes a slice, reconstructing any placeholders within.
-func reconstructSlice(data []any, buffers []types.BufferInterface) ([]any, error) {
-	result := make([]any, 0, len(data))
-	for _, item := range data {
-		reconstructed, err := reconstructData(item, buffers)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, reconstructed)
-	}
-	return result, nil
-}
-
-// reconstructMap processes a map, reconstructing any placeholders within.
-// If the map itself is a placeholder, it returns the corresponding buffer.
-func reconstructMap(data map[string]any, buffers []types.BufferInterface) (any, error) {
-	// Check if this map is a placeholder
-	if placeholderFlag, ok := data["_placeholder"].(bool); ok && placeholderFlag {
-		if num, ok := data["num"].(float64); ok && num >= 0 {
-			index := int64(num)
-			if num == float64(index) {
-				if index >= int64(len(buffers)) {
-					return nil, ErrIllegalAttachments
-				}
-				return buffers[index], nil
-			}
-		}
-	}
-
-	// Not a placeholder, reconstruct nested data
-	result := make(map[string]any, len(data))
-	for key, value := range data {
-		reconstructed, err := reconstructData(value, buffers)
-		if err != nil {
-			return nil, err
-		}
-		result[key] = reconstructed
-	}
-	return result, nil
 }

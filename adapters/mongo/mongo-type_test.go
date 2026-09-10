@@ -106,7 +106,10 @@ func TestMarshalAdapterDataPreservesBroadcastBuffersForLocalEncoding(t *testing.
 
 			// Mongo publication precedes local delivery, which must still see the
 			// reader's contents after BSON serialization has consumed the reader.
-			buffers := parser.NewEncoder().Encode(packet)
+			buffers, err := parser.NewEncoder().Encode(packet)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if tt.binary {
 				if len(buffers) != 2 || !bytes.Equal(buffers[1].Bytes(), []byte("payload")) {
 					t.Fatalf("local binary buffers = %v, want payload attachment", buffers)

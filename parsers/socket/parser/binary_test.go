@@ -26,7 +26,10 @@ func TestDeconstructPacket(t *testing.T) {
 	}
 
 	// Call the DeconstructPacket function
-	deconstructedPacket, buffers := DeconstructPacket(packet)
+	deconstructedPacket, buffers, err := DeconstructPacket(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Check if the attachments count matches the buffers length
 	if *deconstructedPacket.Attachments != uint64(len(buffers)) {
@@ -120,7 +123,11 @@ func TestDeconstructPacketNoBinary(t *testing.T) {
 		Data: []any{"event", "hello", 123, true},
 	}
 
-	deconstructed, buffers := DeconstructPacket(packet)
+	deconstructed, buffers, err := DeconstructPacket(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(buffers) != 0 {
 		t.Errorf("Expected 0 buffers for non-binary data, got %d", len(buffers))
@@ -137,7 +144,11 @@ func TestDeconstructPacketNilData(t *testing.T) {
 		Data: nil,
 	}
 
-	deconstructed, buffers := DeconstructPacket(packet)
+	deconstructed, buffers, err := DeconstructPacket(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(buffers) != 0 {
 		t.Errorf("Expected 0 buffers for nil data, got %d", len(buffers))
@@ -159,7 +170,11 @@ func TestDeconstructPacketSliceOfBytes(t *testing.T) {
 		},
 	}
 
-	deconstructed, buffers := DeconstructPacket(packet)
+	deconstructed, buffers, err := DeconstructPacket(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(buffers) != 3 {
 		t.Fatalf("Expected 3 buffers, got %d", len(buffers))
@@ -195,12 +210,8 @@ func TestReconstructPacketInvalidIndex(t *testing.T) {
 	}
 
 	_, err := ReconstructPacket(packet, buffers)
-	// The function returns an error for invalid attachments
 	if err == nil {
-		t.Log("ReconstructPacket handled invalid index gracefully")
-	} else {
-		// Error is expected for illegal attachments
-		t.Logf("Got expected error: %v", err)
+		t.Fatal("accepted illegal attachment index")
 	}
 }
 
@@ -242,7 +253,11 @@ func TestDeconstructPacketDeepNested(t *testing.T) {
 		},
 	}
 
-	deconstructed, buffers := DeconstructPacket(packet)
+	deconstructed, buffers, err := DeconstructPacket(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(buffers) != 1 {
 		t.Fatalf("Expected 1 buffer, got %d", len(buffers))
@@ -333,7 +348,11 @@ func TestDeconstructWithSliceInMap(t *testing.T) {
 		},
 	}
 
-	deconstructed, buffers := DeconstructPacket(packet)
+	deconstructed, buffers, err := DeconstructPacket(packet)
+
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(buffers) != 2 {
 		t.Fatalf("Expected 2 buffers, got %d", len(buffers))

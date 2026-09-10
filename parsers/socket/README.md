@@ -19,7 +19,7 @@ This is the Go parser for the Socket.IO protocol, responsible for encoding and d
 - Encoding and decoding of packets
 - Binary data support
 - Event-based decoding
-- Extensible and thread-safe implementation
+- Extensible parser interfaces with ordered, stateful decoding
 
 ## Installation
 
@@ -33,74 +33,47 @@ go get github.com/zishang520/socket.io/parsers/socket/v3
 
 ### Encoding and Decoding a Packet
 
+Use EVENT or ACK for application packets. The encoder detects binary values and produces the header followed by its attachments.
+
 ```go
 package main
 
 import (
-    "github.com/zishang520/socket.io/v3/pkg/utils"
+    "fmt"
     "github.com/zishang520/socket.io/parsers/socket/v3/parser"
 )
 
 func main() {
     encoder := parser.NewEncoder()
-    id := uint64(13)
     packet := &parser.Packet{
         Type: parser.EVENT,
-        Data: []string{"test-packet"},
-        Id:   &id,
+        Nsp: "/",
+        Data: []any{"upload", []byte{1, 2, 3}, "text"},
     }
-    encodedPackets := encoder.Encode(packet)
-    utils.Log().Default("Encoded: %v", encodedPackets)
-
-    for _, encodedPacket := range encodedPackets {
-        decoder := parser.NewDecoder()
-        decoder.On("decoded", func(decodedPackets ...any) {
-            utils.Log().Default("Decoded: %v", decodedPackets[0])
-            // decodedPackets[0].Type == parser.EVENT
-            // decodedPackets[0].Data == []string{"test-packet"}
-            // decodedPackets[0].Id == 13
-        })
-
-        decoder.Add(encodedPacket)
+    buffers, err := encoder.Encode(packet)
+    if err != nil {
+        panic(err)
     }
-}
-```
 
-### Encoding and Decoding a Packet with Binary Data
-
-```go
-package main
-
-import (
-    "github.com/zishang520/socket.io/v3/pkg/utils"
-    "github.com/zishang520/socket.io/parsers/socket/v3/parser"
-)
-
-func main() {
-    encoder := parser.NewEncoder()
-    attachments := uint64(0)
-    packet := &parser.Packet{
-        Type:        parser.BINARY_EVENT,
-        Data:        []any{"test-packet", []byte{1, 2, 3, 4, 5}},
-        Id:          utils.Ptr(uint64(13)),
-        Attachments: &attachments,
+    decoder := parser.NewDecoder()
+    defer decoder.Destroy()
+    if err := decoder.On("decoded", func(args ...any) {
+        decoded := args[0].(*parser.Packet)
+        fmt.Println(decoded.Type, decoded.Data) // EVENT, with the reconstructed binary buffer
+    }); err != nil {
+        panic(err)
     }
-    encodedPackets := encoder.Encode(packet)
-    utils.Log().Default("Encoded: %v", encodedPackets)
-
-    for _, encodedPacket := range encodedPackets {
-        decoder := parser.NewDecoder()
-        decoder.On("decoded", func(decodedPackets ...any) {
-            utils.Log().Default("Decoded: %v", decodedPackets[0])
-            // decodedPackets[0].Type == parser.BINARY_EVENT
-            // decodedPackets[0].Data == []any{"test-packet", []byte{1, 2, 3, 4, 5}}
-            // decodedPackets[0].Id == 13
-        })
-
-        decoder.Add(encodedPacket)
+    for _, buffer := range buffers {
+        if err := decoder.Add(buffer); err != nil {
+            panic(err)
+        }
     }
 }
 ```
+
+For a text-only event, use `[]any{"message", "hello"}` as Data. Keep one decoder for the entire packet stream and feed buffers in order; do not call Add concurrently.
+
+Encoding leaves the input Packet and containers unchanged. Reader values are consumed, and binary readers implementing io.Closer are closed. Encoding failure returns nil buffers and an error, so callers must not send a partial packet.
 
 ## API Reference
 
@@ -119,9 +92,11 @@ type Packet struct {
 
 ```go
 type Encoder interface {
-    Encode(packet *Packet) []types.BufferInterface
+    Encode(packet *Packet) ([]types.BufferInterface, error)
 }
 ```
+
+`DeconstructPacket(packet)` returns `(*Packet, []types.BufferInterface, error)` and changes the packet only on success. `ReconstructPacket` accepts both its typed placeholders and placeholders decoded from JSON.
 
 ### Decoder Interface
 

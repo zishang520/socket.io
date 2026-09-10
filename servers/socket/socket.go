@@ -373,14 +373,24 @@ func (s *Socket) registerAckCallback(id uint64, ack Ack, timeout *float64) {
 		return
 	}
 	timer := utils.SetTimeout(func() {
+		if _, ok := s.acks.LoadAndDelete(id); !ok {
+			return
+		}
 		socketLog.Debug("event with ack id %d has timed out after %g ms", id, *timeout)
-		s.acks.Delete(id)
 		ack(nil, errors.New("operation has timed out"))
 	}, utils.NormalizeTimerMilliseconds(*timeout))
-	s.acks.Store(id, func(args []any, _ error) {
+	s.acks.Store(id, func(args []any, err error) {
 		utils.ClearTimeout(timer)
-		ack(args, nil)
+		ack(args, err)
 	})
+}
+
+func (s *Socket) failAck(packet *parser.Packet, err error) {
+	if packet.Id != nil && (packet.Type == parser.EVENT || packet.Type == parser.BINARY_EVENT) {
+		if ack, ok := s.acks.LoadAndDelete(*packet.Id); ok {
+			ack(nil, err)
+		}
+	}
 }
 
 // To targets a room when broadcasting. Returns a new BroadcastOperator for chaining.
@@ -557,12 +567,11 @@ func (s *Socket) ack(id uint64) Ack {
 // Called upon ack packet.
 func (s *Socket) onack(packet *parser.Packet) {
 	if packet.Id != nil {
-		if ack, ok := s.acks.Load(*packet.Id); ok {
+		if ack, ok := s.acks.LoadAndDelete(*packet.Id); ok {
 			if log.DEBUG.Load() {
 				socketLog.Debug("calling ack %d with %v", *packet.Id, packet.Data)
 			}
 			ack(utils.TryCast[[]any](packet.Data), nil)
-			s.acks.Delete(*packet.Id)
 		} else {
 			socketLog.Debug("bad ack %d", *packet.Id)
 		}
@@ -756,7 +765,7 @@ func (s *Socket) dispatch(event []any) {
 				return
 			}
 			if s.Connected() {
-				s.EmitUntyped(slices.TryGetAny[string](event, 0), slices.Slice(event, 1)...)
+				s.EmitUntyped(parser.EventName(slices.TryGet(event, 0)), slices.Slice(event, 1)...)
 			} else {
 				socketLog.Debug("ignore packet received after disconnection")
 			}

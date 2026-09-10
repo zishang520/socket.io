@@ -229,7 +229,7 @@ func (p *polling) OnData(data types.BufferInterface) {
 		pollingLog.Debug(`received "%s"`, data)
 	}
 
-	packets, _ := p.Parser().DecodePayload(data)
+	packets, err := p.Parser().DecodePayload(data)
 	for _, packetData := range packets {
 		if packet.CLOSE == packetData.Type {
 			pollingLog.Debug("got xhr close packet")
@@ -238,6 +238,9 @@ func (p *polling) OnData(data types.BufferInterface) {
 		}
 
 		p.OnPacket(packetData)
+	}
+	if err != nil {
+		p.OnError("parser error", err)
 	}
 }
 
@@ -261,9 +264,18 @@ func (p *polling) OnClose() {
 // Writes a packet payload.
 func (p *polling) Send(packets []*packet.Packet) {
 	p.SetWritable(false)
-	p.writeQueue.Enqueue(func() { p.send(packets) })
+	p.writeQueue.Enqueue(func() {
+		if err := p.send(packets); err != nil {
+			if ctx := p.req.Load(); ctx != nil {
+				ctx.Cleanup()
+				_ = ctx.SetStatusCode(http.StatusInternalServerError)
+				_, _ = ctx.Write(nil)
+			}
+			p.OnError("polling encode error", err)
+		}
+	})
 }
-func (p *polling) send(packets []*packet.Packet) {
+func (p *polling) send(packets []*packet.Packet) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -285,13 +297,12 @@ func (p *polling) send(packets []*packet.Packet) {
 	}
 	option := &packet.Options{Compress: new(compress)}
 
-	if p.Protocol() == 3 {
-		data, _ := p.Parser().EncodePayload(packets, p.SupportsBinary())
-		p.write(data, option)
-	} else {
-		data, _ := p.Parser().EncodePayload(packets)
-		p.write(data, option)
+	data, err := p.Parser().EncodePayload(packets, p.SupportsBinary())
+	if err != nil {
+		return err
 	}
+	p.write(data, option)
+	return nil
 }
 
 // Writes data as response to poll request.

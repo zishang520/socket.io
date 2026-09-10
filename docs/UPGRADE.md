@@ -1346,6 +1346,40 @@ var errPkt = parser.ERROR_PACKET
 </details>
 
 <details>
+<summary>Socket.IO Client: Retry Queue Sends Packets</summary>
+
+When `Retries` is enabled, queued events now reach the transport instead of being queued again. Each event retains its `Timeout` and `Compress` modifiers across retries. A successful ACK advances the queue; exhausting the retry limit completes the ACK callback with an error. `Retries(1)` allows the initial attempt plus one retry.
+
+Reader payloads, including readers nested in `[]any` and `map[string]any`, are consumed once when the event is queued, even before connection. Text readers become strings and binary readers become `[]byte`, so retries send the same content. Binary readers implementing `io.Closer` are closed after reading. A read failure emits `error` and completes the event's ACK callback, if present, without queueing or retrying the event.
+
+</details>
+
+<details>
+<summary>Socket.IO Parser: Encoding Errors Are Returned</summary>
+
+**Likelihood Of Impact: High for direct encoder users and custom parser implementations**
+
+`Encoder.Encode` now returns `([]types.BufferInterface, error)`. `DeconstructPacket` now returns `(*Packet, []types.BufferInterface, error)`. Update custom encoders and check the error before sending any buffers. JSON encoding failures, oversized JSON payloads, and binary reader failures no longer produce partial packets. Reader consumption cannot be rolled back.
+
+```go
+encoded, err := encoder.Encode(pkt)
+if err != nil {
+    return err
+}
+// Send encoded only after successful encoding.
+```
+
+Local Socket.IO encoding failures complete the affected event ACK with an error and cancel its timeout. Errors are reported to the originating Socket through `error`; a client CONNECT encoding failure instead triggers that Socket's `connect_error`. These local failures do not emit a Manager connection error or notify unrelated namespaces. Local broadcasts also report an adapter `error`, after target Socket ACK cleanup. `Emit` retains its existing return contract. Buffered client sends allow error callbacks to emit again.
+
+Engine.IO v3 binary text frames and explicit UTF-8 decoding reject malformed UTF-8 and replace surrogate code points with U+FFFD, matching the Node v3 parser. Empty text payloads are rejected; `0:` remains a valid empty payload. Streaming byte-string decoding preserves multibyte characters across reader boundaries.
+
+Engine.IO polling now reports reader encoding failures instead of sending an unintended GET, reporting a successful drain, or leaving a response pending. The server ends the current poll with HTTP 500 before reporting the error. Client payload-size calculation also propagates reader failures and discards the consumed batch instead of sending partial data; readers materialized during this calculation are closed after reading. Error callbacks run after the relevant locks are released. These failures follow the existing transport error and connection cleanup paths.
+
+Decoded binary packets now have type EVENT or ACK and can be encoded again. Decoder.Destroy clears incomplete reconstruction state. Malformed JSON suffixes, explicit CONNECT/DISCONNECT null payloads, zero-attachment headers, invalid placeholder indices, and incomplete Engine.IO frames are rejected.
+
+</details>
+
+<details>
 <summary>Socket Packet Encoder: Encode() No Longer Mutates Input</summary>
 
 **Likelihood Of Impact: Low**
@@ -1356,13 +1390,16 @@ The `Encode()` method in the Socket.IO packet encoder now creates a copy of the 
 // Before - Encode() modified the input packet's Type field
 import "github.com/zishang520/socket.io/parsers/socket/v3/parser"
 
-pkt := &packet.Packet{Type: parser.EVENT, Data: binaryData}
+pkt := &parser.Packet{Type: parser.EVENT, Data: binaryData}
 encoded := encoder.Encode(pkt)
 // pkt.Type would now be BINARY_EVENT (mutated!)
 
 // After - Input packet is not modified
-pkt := &packet.Packet{Type: parser.EVENT, Data: binaryData}
-encoded := encoder.Encode(pkt)
+pkt := &parser.Packet{Type: parser.EVENT, Data: binaryData}
+encoded, err := encoder.Encode(pkt)
+if err != nil {
+    return err
+}
 // pkt.Type remains EVENT (not mutated)
 ```
 

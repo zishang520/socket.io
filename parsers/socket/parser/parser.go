@@ -10,7 +10,8 @@ type Encoder interface {
 	// Encode converts a packet into a sequence of buffers.
 	// For non-binary packets, returns a single string buffer.
 	// For binary packets, returns the header buffer followed by binary data buffers.
-	Encode(*Packet) []types.BufferInterface
+	// On failure, returns nil buffers and an error; no partial packet may be sent.
+	Encode(*Packet) ([]types.BufferInterface, error)
 }
 
 // Decoder defines the interface for Socket.IO packet decoding.
@@ -19,10 +20,12 @@ type Decoder interface {
 	types.EventEmitter
 
 	// Add processes incoming data (string or binary).
+	// Calls must follow wire order; concurrent Add calls are not supported.
 	// Emits "decoded" event when a complete packet is available.
 	Add(any) error
 
-	// Destroy releases resources and stops any ongoing operations.
+	// Destroy discards an incomplete packet and allows the decoder to be reused.
+	// Stop delivery of the old connection before reusing the decoder.
 	Destroy()
 }
 

@@ -66,14 +66,20 @@ type decoder struct {
 // An optional DecoderOptions can be provided to configure the decoder.
 func NewDecoder(opts ...DecoderOptionsInterface) Decoder {
 	options := DefaultDecoderOptions()
-	options.SetMaxAttachments(DefaultMaxAttachments)
-	options.SetMaxNamespaceLength(DefaultMaxNamespaceLength)
-	options.SetMaxPacketIDLength(DefaultMaxPacketIDLength)
 
 	if len(opts) > 0 && opts[0] != nil {
 		options.Assign(opts[0])
 	}
 
+	if options.MaxAttachments() == 0 {
+		options.SetMaxAttachments(DefaultMaxAttachments)
+	}
+	if options.MaxNamespaceLength() <= 0 {
+		options.SetMaxNamespaceLength(DefaultMaxNamespaceLength)
+	}
+	if options.MaxPacketIDLength() <= 0 {
+		options.SetMaxPacketIDLength(DefaultMaxPacketIDLength)
+	}
 	return &decoder{
 		EventEmitter: types.NewEventEmitter(),
 		opts:         options,
@@ -125,9 +131,7 @@ func (d *decoder) handleBinaryData(data any) error {
 	buffer := types.NewBytesBuffer(nil)
 	switch typedData := data.(type) {
 	case []byte:
-		if _, err := buffer.Write(typedData); err != nil {
-			return err
-		}
+		_, _ = buffer.Write(typedData)
 	case io.Reader:
 		_, readErr := buffer.ReadFrom(typedData)
 		if closer, ok := data.(io.Closer); ok {
@@ -163,11 +167,12 @@ func (d *decoder) decodeAsString(buffer types.BufferInterface) error {
 	}
 
 	if packet.Type == BINARY_EVENT || packet.Type == BINARY_ACK {
-		d.reconstructor.Store(newBinaryReconstructor(packet))
-		// If no attachments expected, emit immediately
-		if packet.Attachments != nil && *packet.Attachments == 0 {
-			d.Emit("decoded", packet)
+		if packet.Type == BINARY_EVENT {
+			packet.Type = EVENT
+		} else {
+			packet.Type = ACK
 		}
+		d.reconstructor.Store(newBinaryReconstructor(packet))
 	} else {
 		// Non-binary packet, emit immediately
 		d.Emit("decoded", packet)
@@ -252,6 +257,9 @@ func (d *decoder) parseAttachments(buffer types.BufferInterface, packet *Packet)
 		return ErrIllegalAttachments
 	}
 
+	if attachmentCount == 0 {
+		return ErrIllegalAttachments
+	}
 	if attachmentCount > d.opts.MaxAttachments() {
 		return ErrTooManyAttachments
 	}
@@ -309,15 +317,12 @@ func (d *decoder) parsePacketID(buffer types.BufferInterface, packet *Packet) er
 	}
 
 	maxLength := d.opts.MaxPacketIDLength()
-	if maxLength <= 0 {
-		return ErrIllegalID
-	}
 
 	data := buffer.Bytes()
 	idLength := 0
 	for idLength < len(data) && data[idLength] >= '0' && data[idLength] <= '9' {
 		idLength++
-		if idLength >= maxLength {
+		if idLength > maxLength {
 			buffer.Next(idLength)
 			return ErrIllegalID
 		}
@@ -340,33 +345,31 @@ func (d *decoder) parsePacketID(buffer types.BufferInterface, packet *Packet) er
 // parsePayload reads and validates the JSON payload.
 func (d *decoder) parsePayload(buffer types.BufferInterface, packet *Packet) error {
 	if buffer.Len() == 0 {
-		return d.validatePayload(packet.Type, nil)
+		if !isPayloadValid(packet.Type, nil) {
+			return ErrInvalidPayload
+		}
+		return nil
 	}
 
 	var payload any
-	if err := json.NewDecoder(buffer).Decode(&payload); err != nil {
+	if err := json.Unmarshal(buffer.Next(buffer.Len()), &payload); err != nil {
 		return ErrInvalidPayload
 	}
 
-	if err := d.validatePayload(packet.Type, payload); err != nil {
-		return err
+	if payload == nil {
+		return ErrInvalidPayload
+	}
+	if !isPayloadValid(packet.Type, payload) {
+		return ErrInvalidPayload
 	}
 
 	packet.Data = payload
 	return nil
 }
 
-// validatePayload checks if the payload is valid for the given packet type.
-func (d *decoder) validatePayload(packetType PacketType, payload any) error {
-	if !isPayloadValid(packetType, payload) {
-		return ErrInvalidPayload
-	}
-	return nil
-}
-
 // Destroy releases the decoder's resources and stops any ongoing reconstruction.
 func (d *decoder) Destroy() {
-	if reconstructor := d.reconstructor.Load(); reconstructor != nil {
+	if reconstructor := d.reconstructor.Swap(nil); reconstructor != nil {
 		reconstructor.finishedReconstruction()
 	}
 }
@@ -377,36 +380,25 @@ func (d *decoder) Destroy() {
 func isPayloadValid(packetType PacketType, payload any) bool {
 	switch packetType {
 	case CONNECT:
-		return payload == nil || isMap(payload)
+		_, ok := payload.(map[string]any)
+		return payload == nil || ok
 	case DISCONNECT:
 		return payload == nil
 	case CONNECT_ERROR:
-		return isMap(payload) || isString(payload)
+		switch payload.(type) {
+		case map[string]any, string:
+			return true
+		default:
+			return false
+		}
 	case EVENT, BINARY_EVENT:
 		return isValidEventPayload(payload)
 	case ACK, BINARY_ACK:
-		return isSlice(payload)
+		_, ok := payload.([]any)
+		return ok
 	default:
 		return false
 	}
-}
-
-// isMap checks if the payload is a map[string]any.
-func isMap(payload any) bool {
-	_, ok := payload.(map[string]any)
-	return ok
-}
-
-// isString checks if the payload is a string.
-func isString(payload any) bool {
-	_, ok := payload.(string)
-	return ok
-}
-
-// isSlice checks if the payload is a slice.
-func isSlice(payload any) bool {
-	_, ok := payload.([]any)
-	return ok
 }
 
 // isValidEventPayload validates that an event payload has a valid event name.

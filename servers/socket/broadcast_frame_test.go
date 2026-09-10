@@ -98,10 +98,13 @@ func TestBroadcastFrameDoesNotCacheErrors(t *testing.T) {
 func TestAdapterEncodeUsesBroadcastScopedFrame(t *testing.T) {
 	adapter := newTestAdapter().(*adapter)
 	packetOpts := &WriteOptions{}
-	encoded := adapter._encode(&parser.Packet{
+	encoded, err := adapter._encode(&parser.Packet{
 		Type: parser.EVENT,
 		Data: []any{"event", "payload"},
 	}, packetOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(encoded) != 1 {
 		t.Fatalf("expected single encoded packet, got %d", len(encoded))

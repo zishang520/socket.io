@@ -305,7 +305,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 	flags := s.flags.Swap(&Flags{})
 
 	if s._opts.Retries() > 0 && !flags.FromQueue && !flags.Volatile {
-		s._addToQueue(data)
+		s._addToQueue(data, *flags)
 		return nil
 	}
 
@@ -368,7 +368,9 @@ func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack, timeout *time.D
 	}
 
 	timer := utils.SetTimeout(func() {
-		s.acks.Delete(id)
+		if _, ok := s.acks.LoadAndDelete(id); !ok {
+			return
+		}
 		s.sendBuffer.Remove(func(p *Packet) bool {
 			if p.Id != nil && *p.Id == id {
 				socketLog.Debug("removing packet with ack id %d from the buffer", id)
@@ -408,16 +410,27 @@ func (s *Socket) EmitWithAck(ev string, args ...any) func(socket.Ack) {
 // _addToQueue adds the packet to the queue.
 //
 // args: The packet arguments.
-func (s *Socket) _addToQueue(args []any) {
+func (s *Socket) _addToQueue(args []any, flags Flags) {
 	args_len := len(args)
 	ack, withAck := args[args_len-1].(socket.Ack)
 	if withAck {
 		args = args[:args_len-1]
 	}
 
+	data, err := prepareRetryData(args)
+	if err != nil {
+		if ack != nil {
+			ack(nil, err)
+		}
+		s.EventEmitter.Emit("error", err)
+		return
+	}
+	args = data.([]any)
+
+	flags.FromQueue = true
 	packet := &QueuedPacket{
 		Id:    s._queueSeq.Add(1) - 1,
-		Flags: s.flags.Load(),
+		Flags: &flags,
 	}
 
 	args = append(args, func(responseArgs []any, err error) {
@@ -480,7 +493,18 @@ func (s *Socket) _drainQueue(force bool) {
 // packet: The packet to send.
 func (s *Socket) packet(packet *Packet) {
 	packet.Nsp = s.nsp
-	s.io._packet(packet)
+	if err := s.io._packet(packet); err != nil {
+		if packet.Id != nil && (packet.Type == parser.EVENT || packet.Type == parser.BINARY_EVENT) {
+			if ack, ok := s.acks.LoadAndDelete(*packet.Id); ok {
+				ack(nil, err)
+			}
+		}
+		if packet.Type == parser.CONNECT {
+			s.onerror(err)
+		} else {
+			s.EventEmitter.Emit("error", err)
+		}
+	}
 }
 
 // onopen is called upon engine `open`.
@@ -500,12 +524,11 @@ func (s *Socket) _sendConnectPacket(data map[string]any) {
 		data["pid"] = _pid
 		data["offset"] = s._lastOffset.Load()
 	}
-	s.packet(&Packet{
-		Packet: &parser.Packet{
-			Type: parser.CONNECT,
-			Data: data,
-		},
-	})
+	packet := &parser.Packet{Type: parser.CONNECT}
+	if data != nil {
+		packet.Data = data
+	}
+	s.packet(&Packet{Packet: packet})
 }
 
 // onerror is called upon engine or manager `error`.
@@ -612,7 +635,7 @@ func (s *Socket) emitEvent(args []any) {
 	for _, listener := range s._anyListeners.All() {
 		listener(args...)
 	}
-	s.EventEmitter.Emit(types.EventName(slices.TryGetAny[string](args, 0)), slices.Slice(args, 1)...)
+	s.EventEmitter.Emit(types.EventName(parser.EventName(slices.TryGet(args, 0))), slices.Slice(args, 1)...)
 	if _pid := s._pid.Load(); _pid != "" {
 		if args_len := len(args); args_len > 0 {
 			if lastOffset, ok := args[args_len-1].(string); ok {
@@ -650,12 +673,11 @@ func (s *Socket) onack(packet *parser.Packet) {
 		socketLog.Debug("bad ack nil")
 		return
 	}
-	ack, ok := s.acks.Load(*packet.Id)
+	ack, ok := s.acks.LoadAndDelete(*packet.Id)
 	if !ok {
 		socketLog.Debug("bad ack %d", *packet.Id)
 		return
 	}
-	s.acks.Delete(*packet.Id)
 	socketLog.Debug("calling ack %d with %v", *packet.Id, packet.Data)
 	ack(utils.TryCast[[]any](packet.Data), nil)
 }
@@ -684,13 +706,10 @@ func (s *Socket) emitBuffered() {
 		return values[:0]
 	})
 
-	s.sendBuffer.DoWrite(func(packets []*Packet) []*Packet {
-		for _, packet := range packets {
-			s.notifyOutgoingListeners(packet)
-			s.packet(packet)
-		}
-		return packets[:0]
-	})
+	for _, packet := range s.sendBuffer.AllAndClear() {
+		s.notifyOutgoingListeners(packet)
+		s.packet(packet)
+	}
 }
 
 // ondisconnect is called upon server disconnect.

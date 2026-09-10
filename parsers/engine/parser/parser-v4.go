@@ -45,9 +45,7 @@ func (*parserv4) EncodePacket(pkt *packet.Packet, supportsBinary bool, _ ...bool
 	switch data := pkt.Data.(type) {
 	case *types.StringBuffer, *strings.Reader:
 		encoded := types.NewStringBuffer(nil)
-		if err := encoded.WriteByte(typeByte); err != nil {
-			return nil, err
-		}
+		_ = encoded.WriteByte(typeByte)
 		if _, err := io.Copy(encoded, data); err != nil {
 			return nil, err
 		}
@@ -62,9 +60,7 @@ func (*parserv4) EncodePacket(pkt *packet.Packet, supportsBinary bool, _ ...bool
 		}
 
 		encoded := types.NewStringBuffer(nil)
-		if err := encoded.WriteByte('b'); err != nil {
-			return nil, err
-		}
+		_ = encoded.WriteByte('b')
 		encoder := base64.NewEncoder(base64.StdEncoding, encoded)
 		if _, err := io.Copy(encoder, data); err != nil {
 			_ = encoder.Close()
@@ -92,7 +88,7 @@ func (p *parserv4) DecodePacket(data types.BufferInterface, _ ...bool) (*packet.
 	}
 
 	// Handle binary buffer - always a MESSAGE packet in v4
-	return p.decodeBinaryPacket(data)
+	return &packet.Packet{Type: packet.MESSAGE, Data: data}, nil
 }
 
 // decodeStringPacket decodes a text-based packet.
@@ -125,12 +121,6 @@ func (p *parserv4) decodeBase64Packet(sb *types.StringBuffer) (*packet.Packet, e
 	return &packet.Packet{Type: packet.MESSAGE, Data: decode}, nil
 }
 
-// decodeBinaryPacket decodes a raw binary packet.
-// Binary packets are always MESSAGE type in v4.
-func (p *parserv4) decodeBinaryPacket(data types.BufferInterface) (*packet.Packet, error) {
-	return &packet.Packet{Type: packet.MESSAGE, Data: data}, nil
-}
-
 // EncodePayload encodes multiple packets into a single payload for Engine.IO v4.
 // Packets are separated by SEPARATOR (0x1E).
 // The supportsBinary parameter is ignored in v4 (kept for interface compatibility).
@@ -149,14 +139,10 @@ func (p *parserv4) EncodePayload(packets []*packet.Packet, _ ...bool) (types.Buf
 
 		// Add separator before non-first packets
 		if i > 0 {
-			if err := enPayload.WriteByte(SEPARATOR); err != nil {
-				return nil, err
-			}
+			_ = enPayload.WriteByte(SEPARATOR)
 		}
 
-		if _, err := enPayload.Write(buf.Bytes()); err != nil {
-			return nil, err
-		}
+		_, _ = enPayload.Write(buf.Bytes())
 	}
 
 	return enPayload, nil
@@ -165,35 +151,25 @@ func (p *parserv4) EncodePayload(packets []*packet.Packet, _ ...bool) (types.Buf
 // DecodePayload decodes a payload buffer into multiple packets.
 // Packets are separated by SEPARATOR (0x1E).
 func (p *parserv4) DecodePayload(data types.BufferInterface) ([]*packet.Packet, error) {
+	if data == nil {
+		return nil, ErrDataNil
+	}
 	packets := make([]*packet.Packet, 0, 4)
-
-	for data.Len() > 0 {
-		scanBytes, err := data.ReadBytes(SEPARATOR)
+	for {
+		segment, err := data.ReadBytes(SEPARATOR)
 		if err != nil && err != io.EOF {
 			return packets, err
 		}
-
-		if len(scanBytes) > 0 && scanBytes[len(scanBytes)-1] == SEPARATOR {
-			scanBytes = scanBytes[:len(scanBytes)-1]
+		if err == nil {
+			segment = segment[:len(segment)-1]
 		}
-
-		if len(scanBytes) == 0 {
-			if err == io.EOF {
-				break
-			}
-			continue
-		}
-
-		pkt, decodeErr := p.DecodePacket(types.NewStringBuffer(scanBytes))
+		pkt, decodeErr := p.DecodePacket(types.NewStringBuffer(segment))
 		if decodeErr != nil {
 			return packets, decodeErr
 		}
 		packets = append(packets, pkt)
-
 		if err == io.EOF {
-			break
+			return packets, nil
 		}
 	}
-
-	return packets, nil
 }

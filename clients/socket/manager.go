@@ -428,15 +428,20 @@ func (m *Manager) _destroy(_ *Socket) {
 	}
 }
 
-// Writes a packet.
-func (m *Manager) _packet(packet *Packet) {
+// Writes a packet and returns any encoding error to the sending Socket.
+func (m *Manager) _packet(packet *Packet) error {
 	managerLog.Debug("writing packet %#v", packet)
 
 	if socket := m.Engine(); socket != nil {
-		for _, encodedPacket := range m.encoder.Encode(packet.Packet) {
+		encoded, err := m.encoder.Encode(packet.Packet)
+		if err != nil {
+			return err
+		}
+		for _, encodedPacket := range encoded {
 			socket.Write(encodedPacket.Clone(), packet.Options, nil)
 		}
 	}
+	return nil
 }
 
 // Clean up transport subscriptions and packet buffer.

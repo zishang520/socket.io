@@ -117,38 +117,6 @@ func TestParserv3(t *testing.T) {
 		}
 	})
 
-	t.Run("encodeOneBinaryPacket", func(t *testing.T) {
-		data, err := p.encodeOneBinaryPacket(&packet.Packet{
-			Type:    packet.OPEN,
-			Data:    bytes.NewBuffer([]byte("ABC")),
-			Options: nil,
-		})
-
-		if err != nil {
-			t.Fatal("Error with EncodePacket:", err)
-		}
-		check := []byte{0x01, 0x04, 0xFF, 0x00, 65, 66, 67}
-		if b := data.Bytes(); !bytes.Equal(b, check) {
-			t.Fatalf(`encodeOneBinaryPacket value not as expected: %v, want match for %v`, b, check)
-		}
-	})
-
-	t.Run("encodeOneBinaryPacket/String", func(t *testing.T) {
-		data, err := p.encodeOneBinaryPacket(&packet.Packet{
-			Type:    packet.OPEN,
-			Data:    strings.NewReader("test测试中文和表情字符❤️🧡💛🧓🏾💟"),
-			Options: nil,
-		})
-
-		if err != nil {
-			t.Fatal("Error with EncodePacket:", err)
-		}
-		check := []byte{0x00, 0x05, 0x08, 0xFF, 48, 116, 101, 115, 116, 195, 131, 194, 166, 195, 130, 194, 181, 195, 130, 194, 139, 195, 131, 194, 168, 195, 130, 194, 175, 195, 130, 194, 149, 195, 131, 194, 164, 195, 130, 194, 184, 195, 130, 194, 173, 195, 131, 194, 166, 195, 130, 194, 150, 195, 130, 194, 135, 195, 131, 194, 165, 195, 130, 194, 146, 195, 130, 194, 140, 195, 131, 194, 168, 195, 130, 194, 161, 195, 130, 194, 168, 195, 131, 194, 166, 195, 130, 194, 131, 195, 130, 194, 133, 195, 131, 194, 165, 195, 130, 194, 173, 195, 130, 194, 151, 195, 131, 194, 167, 195, 130, 194, 172, 195, 130, 194, 166, 195, 131, 194, 162, 195, 130, 194, 157, 195, 130, 194, 164, 195, 131, 194, 175, 195, 130, 194, 184, 195, 130, 194, 143, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 167, 195, 130, 194, 161, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 146, 195, 130, 194, 155, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 167, 195, 130, 194, 147, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 143, 195, 130, 194, 190, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 146, 195, 130, 194, 159}
-		if b := data.Bytes(); !bytes.Equal(b, check) {
-			t.Fatalf(`encodeOneBinaryPacket value not as expected: %v, want match for %v`, b, check)
-		}
-	})
-
 	t.Run("DecodePacket/Byte/Base64", func(t *testing.T) {
 		pack, err := p.DecodePacket(types.NewStringBufferString("b1QUJD"))
 
@@ -375,7 +343,7 @@ func TestParserv3(t *testing.T) {
 		if err != nil {
 			t.Fatal("Error with EncodePayload:", err)
 		}
-		check := []byte{1, 4, 255, 0, 65, 66, 67, 0, 5, 8, 255, 49, 116, 101, 115, 116, 195, 131, 194, 166, 195, 130, 194, 181, 195, 130, 194, 139, 195, 131, 194, 168, 195, 130, 194, 175, 195, 130, 194, 149, 195, 131, 194, 164, 195, 130, 194, 184, 195, 130, 194, 173, 195, 131, 194, 166, 195, 130, 194, 150, 195, 130, 194, 135, 195, 131, 194, 165, 195, 130, 194, 146, 195, 130, 194, 140, 195, 131, 194, 168, 195, 130, 194, 161, 195, 130, 194, 168, 195, 131, 194, 166, 195, 130, 194, 131, 195, 130, 194, 133, 195, 131, 194, 165, 195, 130, 194, 173, 195, 130, 194, 151, 195, 131, 194, 167, 195, 130, 194, 172, 195, 130, 194, 166, 195, 131, 194, 162, 195, 130, 194, 157, 195, 130, 194, 164, 195, 131, 194, 175, 195, 130, 194, 184, 195, 130, 194, 143, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 167, 195, 130, 194, 161, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 146, 195, 130, 194, 155, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 167, 195, 130, 194, 147, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 143, 195, 130, 194, 190, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 146, 195, 130, 194, 159}
+		check := append([]byte{1, 4, 255, 0, 65, 66, 67, 0, 5, 8, 255}, []byte("1test测试中文和表情字符❤️🧡💛🧓🏾💟")...)
 
 		if b := data.Bytes(); !bytes.Equal(b, check) {
 			t.Fatalf(`DecodePacket *Packet.Data value not as expected: %v, want match for %v`, b, check)
@@ -447,7 +415,7 @@ func TestParserv3(t *testing.T) {
 	})
 
 	t.Run("DecodePayload", func(t *testing.T) {
-		packs, _ := p.DecodePayload(types.NewBytesBuffer([]byte{1, 4, 255, 0, 65, 66, 67, 0, 5, 8, 255, 49, 116, 101, 115, 116, 195, 131, 194, 166, 195, 130, 194, 181, 195, 130, 194, 139, 195, 131, 194, 168, 195, 130, 194, 175, 195, 130, 194, 149, 195, 131, 194, 164, 195, 130, 194, 184, 195, 130, 194, 173, 195, 131, 194, 166, 195, 130, 194, 150, 195, 130, 194, 135, 195, 131, 194, 165, 195, 130, 194, 146, 195, 130, 194, 140, 195, 131, 194, 168, 195, 130, 194, 161, 195, 130, 194, 168, 195, 131, 194, 166, 195, 130, 194, 131, 195, 130, 194, 133, 195, 131, 194, 165, 195, 130, 194, 173, 195, 130, 194, 151, 195, 131, 194, 167, 195, 130, 194, 172, 195, 130, 194, 166, 195, 131, 194, 162, 195, 130, 194, 157, 195, 130, 194, 164, 195, 131, 194, 175, 195, 130, 194, 184, 195, 130, 194, 143, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 167, 195, 130, 194, 161, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 146, 195, 130, 194, 155, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 167, 195, 130, 194, 147, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 143, 195, 130, 194, 190, 195, 131, 194, 176, 195, 130, 194, 159, 195, 130, 194, 146, 195, 130, 194, 159}))
+		packs, _ := p.DecodePayload(types.NewBytesBuffer(append([]byte{1, 4, 255, 0, 65, 66, 67, 0, 5, 8, 255}, []byte("1test测试中文和表情字符❤️🧡💛🧓🏾💟")...)))
 
 		if l := len(packs); l != 2 {
 			t.Fatalf(`*len(packs) = %d, want match for %d`, l, 2)
@@ -970,8 +938,9 @@ func TestParserv3EdgeCases(t *testing.T) {
 		if err != nil {
 			t.Fatal("Error with EncodePayload:", err)
 		}
-		// v3 parser returns non-empty buffer due to length prefix format
-		t.Logf("v3 EncodePayload for empty packets returned buffer of length %d", data.Len())
+		if data.String() != "0:" {
+			t.Fatalf("empty payload = %q, want 0:", data.String())
+		}
 	})
 
 	t.Run("EncodePayload/NilPackets", func(t *testing.T) {
@@ -980,15 +949,16 @@ func TestParserv3EdgeCases(t *testing.T) {
 		if err != nil {
 			t.Fatal("Error with EncodePayload:", err)
 		}
-		// v3 parser returns non-empty buffer due to length prefix format
-		t.Logf("v3 EncodePayload for nil packets returned buffer of length %d", data.Len())
+		if data.String() != "0:" {
+			t.Fatalf("empty payload = %q, want 0:", data.String())
+		}
 	})
 
 	t.Run("DecodePayload/EmptyBuffer", func(t *testing.T) {
 		packs, err := p.DecodePayload(types.NewStringBufferString(""))
 
-		if err != nil {
-			t.Fatal("DecodePayload should not error for empty buffer")
+		if err == nil {
+			t.Fatal("DecodePayload should reject an empty text payload")
 		}
 		if len(packs) != 0 {
 			t.Errorf("Expected 0 packets, got %d", len(packs))
@@ -1114,8 +1084,8 @@ func TestParserv4EdgeCases(t *testing.T) {
 	t.Run("DecodePayload/EmptyBuffer", func(t *testing.T) {
 		packs, err := p.DecodePayload(types.NewStringBufferString(""))
 
-		if err != nil {
-			t.Fatal("DecodePayload should not error for empty buffer")
+		if err == nil {
+			t.Fatal("DecodePayload should reject an empty payload")
 		}
 		if len(packs) != 0 {
 			t.Errorf("Expected 0 packets, got %d", len(packs))
@@ -1218,8 +1188,8 @@ func TestDecodePayloadMultipleErrors(t *testing.T) {
 
 	// Malformed length prefix
 	packs, err := p.DecodePayload(types.NewStringBufferString("abc:0invalid"))
-	if err == nil && len(packs) > 0 {
-		t.Log("Parser handled malformed length gracefully")
+	if err == nil || len(packs) > 0 {
+		t.Fatal("accepted malformed length")
 	}
 }
 

@@ -29,7 +29,10 @@ func BenchmarkEncodeEvent(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		benchmarkBuffersSink = encoder.Encode(packet)
+		benchmarkBuffersSink, benchmarkErrorSink = encoder.Encode(packet)
+		if benchmarkErrorSink != nil {
+			b.Fatal(benchmarkErrorSink)
+		}
 	}
 }
 
@@ -45,7 +48,10 @@ func BenchmarkEncodeBinaryEvent(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		benchmarkBuffersSink = encoder.Encode(packet)
+		benchmarkBuffersSink, benchmarkErrorSink = encoder.Encode(packet)
+		if benchmarkErrorSink != nil {
+			b.Fatal(benchmarkErrorSink)
+		}
 	}
 }
 

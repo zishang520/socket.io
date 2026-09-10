@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func TestUtf16Len(t *testing.T) {
@@ -199,5 +200,16 @@ func TestNewUtf8DecoderEmptyRead(t *testing.T) {
 	n, err := dec.Read(p)
 	if n != 0 || err != nil {
 		t.Errorf("Read(empty buf) = %d, %v; want 0, nil", n, err)
+	}
+}
+
+func TestUtf8DecoderSplitRune(t *testing.T) {
+	want := strings.Repeat("aé字符❤️🧡", 100)
+	encoded := Utf8encodeString(want)
+	for _, r := range []io.Reader{strings.NewReader(encoded), iotest.OneByteReader(strings.NewReader(encoded))} {
+		got, err := io.ReadAll(NewUtf8Decoder(r))
+		if err != nil || string(got) != want {
+			t.Fatalf("decoded %d bytes, want %d; err=%v", len(got), len(want), err)
+		}
 	}
 }

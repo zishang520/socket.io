@@ -2,10 +2,8 @@ package parser
 
 import (
 	"encoding/json"
-	"maps"
-	"slices"
+	"errors"
 	"strconv"
-	"strings"
 
 	"github.com/zishang520/socket.io/v3/pkg/log"
 	"github.com/zishang520/socket.io/v3/pkg/types"
@@ -22,30 +20,42 @@ func NewEncoder() Encoder {
 // Encode encodes a Socket.IO packet into a sequence of buffers.
 // For non-binary packets, it returns a single string buffer.
 // For binary packets, it returns the encoded packet header followed by binary buffers.
-func (e *encoder) Encode(packet *Packet) []types.BufferInterface {
+func (e *encoder) Encode(packet *Packet) ([]types.BufferInterface, error) {
 	if log.DEBUG.Load() {
 		parserLog.Debug("encoding packet %v", packet)
 	}
-
-	// Check if the packet contains binary data and upgrade packet type if needed
+	prepared := *packet
+	var buffers []types.BufferInterface
+	var attachments *[]types.BufferInterface
 	if packet.Type == EVENT || packet.Type == ACK {
-		if HasBinary(packet.Data) {
-			data := new(*packet)
-			if data.Type == EVENT {
-				data.Type = BINARY_EVENT
-			} else {
-				data.Type = BINARY_ACK
-			}
-			return e.encodeAsBinary(data)
-		}
+		attachments = &buffers
 	}
-
-	return []types.BufferInterface{e.encodeAsString(packet)}
+	data, err := prepareData(packet.Data, attachments)
+	if err != nil {
+		return nil, err
+	}
+	prepared.Data = data
+	if len(buffers) > 0 {
+		if packet.Type == EVENT {
+			prepared.Type = BINARY_EVENT
+		} else {
+			prepared.Type = BINARY_ACK
+		}
+		prepared.Attachments = new(uint64(len(buffers)))
+	}
+	header, err := e.encodeAsString(prepared)
+	if err != nil {
+		return nil, err
+	}
+	return append([]types.BufferInterface{header}, buffers...), nil
 }
+
+// ErrPayloadTooLarge indicates that the encoded JSON exceeds the local payload limit.
+var ErrPayloadTooLarge = errors.New("encoded payload exceeds maximum size")
 
 // encodeAsString encodes a packet as a string buffer.
 // The format is: <type>[<attachments>-][/<namespace>,][<id>][<data>]
-func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
+func (e *encoder) encodeAsString(packet Packet) (types.BufferInterface, error) {
 	// Start with packet type
 	buffer := types.NewStringBuffer([]byte{byte(packet.Type) + '0'})
 
@@ -72,51 +82,18 @@ func (e *encoder) encodeAsString(packet *Packet) types.BufferInterface {
 
 	// Add JSON-encoded data
 	if packet.Data != nil {
-		processedData := preprocessData(packet.Data)
-		if jsonBytes, err := json.Marshal(processedData); err == nil {
-			if len(jsonBytes) <= types.MaxPayloadSize {
-				_, _ = buffer.Write(jsonBytes)
-			}
+		jsonBytes, err := json.Marshal(packet.Data)
+		if err != nil {
+			return nil, err
 		}
+		if len(jsonBytes) > types.MaxPayloadSize {
+			return nil, ErrPayloadTooLarge
+		}
+		_, _ = buffer.Write(jsonBytes)
 	}
 
 	if log.DEBUG.Load() {
 		parserLog.Debug("encoded %v as %v", packet, buffer)
 	}
-	return buffer
-}
-
-// encodeAsBinary encodes a packet that contains binary data.
-// It deconstructs the packet to extract binary data, then encodes the packet header
-// followed by all binary buffers.
-func (e *encoder) encodeAsBinary(packet *Packet) []types.BufferInterface {
-	deconstructedPacket, buffers := DeconstructPacket(packet)
-	header := e.encodeAsString(deconstructedPacket)
-	return append([]types.BufferInterface{header}, buffers...)
-}
-
-// preprocessData recursively converts strings.Reader values before JSON encoding.
-func preprocessData(data any) any {
-	switch typedData := data.(type) {
-	case nil:
-		return nil
-	case *strings.Reader:
-		// Convert strings.Reader to StringBuffer for proper handling
-		buffer, _ := types.NewStringBufferReader(typedData)
-		return buffer
-	case []any:
-		result := slices.Clone(typedData)
-		for i := range result {
-			result[i] = preprocessData(result[i])
-		}
-		return result
-	case map[string]any:
-		result := maps.Clone(typedData)
-		for key, value := range result {
-			result[key] = preprocessData(value)
-		}
-		return result
-	default:
-		return data
-	}
+	return buffer, nil
 }

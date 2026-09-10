@@ -122,7 +122,7 @@ func TestDestroy(t *testing.T) {
 	d := NewDecoder().(*decoder)
 	d.reconstructor.Store(newBinaryReconstructor(&Packet{}))
 	d.Destroy()
-	if d.reconstructor.Load().packet.Load() != nil {
+	if d.reconstructor.Load() != nil {
 		t.Error("Destroy() did not clear the reconstructor")
 	}
 }
@@ -442,8 +442,8 @@ func TestBinaryPacketReconstruction(t *testing.T) {
 		t.Fatal("Packet should be emitted after binary data")
 	}
 
-	if decodedPacket.Type != BINARY_EVENT {
-		t.Errorf("Expected BINARY_EVENT type, got %v", decodedPacket.Type)
+	if decodedPacket.Type != EVENT {
+		t.Errorf("Expected EVENT type, got %v", decodedPacket.Type)
 	}
 
 	data, ok := decodedPacket.Data.([]any)
@@ -501,25 +501,10 @@ func TestMultipleBinaryAttachments(t *testing.T) {
 
 // TestZeroAttachments tests BINARY_EVENT with 0 attachments
 func TestZeroAttachments(t *testing.T) {
-	d := NewDecoder().(*decoder)
-
-	var decodedPacket *Packet
-	_ = d.On("decoded", func(args ...any) {
-		if len(args) > 0 {
-			if p, ok := args[0].(*Packet); ok {
-				decodedPacket = p
-			}
-		}
-	})
-
-	// BINARY_EVENT with 0 attachments should emit immediately
-	err := d.Add(`50-["event","data"]`)
-	if err != nil {
-		t.Fatalf("Add error: %v", err)
-	}
-
-	if decodedPacket == nil {
-		t.Fatal("Packet with 0 attachments should be emitted immediately")
+	d := NewDecoder()
+	_ = d.On("decoded", func(...any) { t.Error("emitted malformed packet") })
+	if err := d.Add(`50-["event","data"]`); err == nil {
+		t.Fatal("accepted zero attachments")
 	}
 }
 

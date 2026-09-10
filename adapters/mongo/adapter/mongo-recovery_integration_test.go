@@ -179,7 +179,10 @@ func TestMongoRecoveryReplaysRecoverablePacketsWithOffsets(t *testing.T) {
 	if !reflect.DeepEqual(restored.MissedPackets, want) {
 		t.Fatalf("missed packets = %#v, want %#v", restored.MissedPackets, want)
 	}
-	encoded := parser.NewEncoder().Encode(&parser.Packet{Type: parser.EVENT, Data: restored.MissedPackets[1]})
+	encoded, err := parser.NewEncoder().Encode(&parser.Packet{Type: parser.EVENT, Data: restored.MissedPackets[1]})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(encoded) != 2 || !bytes.Equal(encoded[1].Bytes(), binaryData) {
 		t.Fatalf("restored binary packet did not produce a binary attachment: %#v", encoded)
 	}

@@ -159,7 +159,15 @@ func (a *adapter) Broadcast(packet *parser.Packet, opts *BroadcastOptions) {
 	packetOpts.Compress = flags.Compress
 
 	packet.Nsp = a.nsp.Name()
-	encodedPackets := a._encode(packet, packetOpts)
+	encodedPackets, err := a._encode(packet, packetOpts)
+	if err != nil {
+		a.apply(opts, func(socket *Socket) {
+			socket.failAck(packet, err)
+			socket._onerror(err)
+		})
+		a.Emit("error", err)
+		return
+	}
 	a.apply(opts, func(socket *Socket) {
 		if notifyOutgoingListeners := socket.NotifyOutgoingListeners(); notifyOutgoingListeners != nil {
 			notifyOutgoingListeners(packet)
@@ -183,7 +191,12 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 	packet.Nsp = a.nsp.Name()
 	// we can use the same id for each packet, since the _ids counter is common (no duplicate)
 	packet.Id = new(a.nsp.Ids())
-	encodedPackets := a._encode(packet, packetOpts)
+	encodedPackets, err := a._encode(packet, packetOpts)
+	if err != nil {
+		ack(nil, err)
+		clientCountCallback(0)
+		return
+	}
 	var clientCount uint64
 	a.apply(opts, func(socket *Socket) {
 		// track the total number of acknowledgements that are expected
@@ -198,8 +211,11 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 	clientCountCallback(clientCount)
 }
 
-func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []types.BufferInterface {
-	encodedPackets := a.encoder.Encode(packet)
+func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) ([]types.BufferInterface, error) {
+	encodedPackets, err := a.encoder.Encode(packet)
+	if err != nil {
+		return nil, err
+	}
 
 	if len(encodedPackets) == 1 {
 		if p, ok := encodedPackets[0].(*types.StringBuffer); ok {
@@ -213,7 +229,7 @@ func (a *adapter) _encode(packet *parser.Packet, packetOpts *WriteOptions) []typ
 		}
 	}
 
-	return encodedPackets
+	return encodedPackets, nil
 }
 
 // Sockets returns a set of socket IDs matching the given rooms.

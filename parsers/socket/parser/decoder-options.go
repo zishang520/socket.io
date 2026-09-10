@@ -24,11 +24,11 @@ type (
 		maxAttachments types.Optional[uint64]
 
 		// MaxNamespaceLength is the maximum allowed length of a namespace name.
-		// Defaults to DefaultMaxNamespaceLength (512) if not set or set to 0.
+		// Defaults to DefaultMaxNamespaceLength (512) if not set or non-positive.
 		maxNamespaceLength types.Optional[int]
 
 		// MaxPacketIDLength is the maximum allowed length of a packet ID string.
-		// Defaults to DefaultMaxPacketIDLength (20) if not set or set to 0.
+		// Defaults to DefaultMaxPacketIDLength (20) if not set or non-positive.
 		maxPacketIDLength types.Optional[int]
 	}
 )

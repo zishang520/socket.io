@@ -2,7 +2,6 @@ package parser
 
 import (
 	"sync"
-	"sync/atomic"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
@@ -16,17 +15,13 @@ const Protocol = 5
 type binaryReconstructor struct {
 	mu      sync.Mutex
 	buffers []types.BufferInterface
-	packet  atomic.Pointer[Packet]
+	packet  *Packet
 }
 
 // newBinaryReconstructor creates a new binaryReconstructor for the given packet.
 // The packet should have its Attachments field set to the expected number of buffers.
 func newBinaryReconstructor(packet *Packet) *binaryReconstructor {
-	br := &binaryReconstructor{
-		buffers: make([]types.BufferInterface, 0),
-	}
-	br.packet.Store(packet)
-	return br
+	return &binaryReconstructor{packet: packet}
 }
 
 // takeBinaryData adds a binary buffer to the reconstruction.
@@ -36,12 +31,12 @@ func (br *binaryReconstructor) takeBinaryData(data types.BufferInterface) (*Pack
 	br.mu.Lock()
 	defer br.mu.Unlock()
 
-	br.buffers = append(br.buffers, data)
-
-	packet := br.packet.Load()
+	packet := br.packet
 	if packet == nil || packet.Attachments == nil {
 		return nil, nil
 	}
+
+	br.buffers = append(br.buffers, data)
 
 	// Check if all expected buffers have been received
 	if uint64(len(br.buffers)) == *packet.Attachments {
@@ -56,7 +51,7 @@ func (br *binaryReconstructor) takeBinaryData(data types.BufferInterface) (*Pack
 // reset clears the reconstruction state.
 func (br *binaryReconstructor) reset() {
 	br.buffers = nil
-	br.packet.Store(nil)
+	br.packet = nil
 }
 
 // finishedReconstruction signals that reconstruction is complete or canceled.
