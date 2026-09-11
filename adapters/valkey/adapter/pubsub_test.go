@@ -297,11 +297,14 @@ func TestClassicValkeyPubSubRestoresSubscriptions(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Reuse an immutable probe across reconnect retries without returning its
+	// command storage to valkey-go's pool while an old writer may still use it.
+	patternCount := client.Client().B().PubsubNumpat().Build().Pin()
 	deadline := time.Now().Add(5 * time.Second)
 	restored := false
 	for time.Now().Before(deadline) {
 		counts, countErr := client.PubSubNumSub(t.Context(), "recover:exact")
-		patterns, patternErr := client.Client().Do(t.Context(), client.Client().B().PubsubNumpat().Build()).AsInt64()
+		patterns, patternErr := client.Client().Do(t.Context(), patternCount).AsInt64()
 		if countErr == nil && patternErr == nil && counts["recover:exact"] == 1 && patterns == 1 {
 			restored = true
 			break

@@ -450,8 +450,10 @@ func (c *ValkeyClient) SPublish(ctx context.Context, channel string, message []b
 func (c *ValkeyClient) PubSubNumSub(ctx context.Context, channels ...string) (map[string]int64, error) {
 	counts := make(map[string]int64, len(channels))
 	for _, node := range c.Sub().Nodes() {
+		// valkey-go v1.0.76 may finish a retry before the old pipe's writer
+		// exits. Pin prevents pool reuse; GC reclaims storage after readers release it.
 		response, err := node.Do(ctx,
-			node.B().PubsubNumsub().Channel(channels...).Build(),
+			node.B().PubsubNumsub().Channel(channels...).Build().Pin(),
 		).AsIntMap()
 		if err != nil {
 			return nil, err
@@ -467,7 +469,7 @@ func (c *ValkeyClient) PubSubNumSub(ctx context.Context, channels ...string) (ma
 func (c *ValkeyClient) PubSubShardNumSub(ctx context.Context, channels ...string) (map[string]int64, error) {
 	sub := c.Sub()
 	resp, err := sub.Do(ctx,
-		sub.B().PubsubShardnumsub().Channel(channels...).Build(),
+		sub.B().PubsubShardnumsub().Channel(channels...).Build().Pin(),
 	).AsIntMap()
 	if err != nil {
 		return nil, err
