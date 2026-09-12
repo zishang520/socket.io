@@ -198,7 +198,11 @@ type oneTimeListener struct {
 
 func (l *oneTimeListener) execute(vals ...any) {
 	l.fired.Do(func() {
-		defer l.emitter.RemoveListener(l.evt, l.fn)
+		// Remove the listener before invoking it, matching Node.js
+		// EventEmitter's "once": a listener that emits its own event from
+		// inside its body must not re-enter the (already firing) one-time
+		// listener, which would deadlock on the sync.Once below.
+		l.emitter.RemoveListener(l.evt, l.fn)
 		l.fn(vals...)
 	})
 }
