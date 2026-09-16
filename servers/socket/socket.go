@@ -119,6 +119,8 @@ type (
 		//		fmt.Println(socket.Connected()) // true
 		//	})
 		connected atomic.Bool
+		// Claim cleanup before callbacks while preserving Connected during disconnecting.
+		closing atomic.Bool
 
 		// The session ID, which must not be shared (unlike [id]).
 		pid PrivateSessionId
@@ -601,7 +603,7 @@ func (s *Socket) _onerror(err any) {
 // Param: reason
 // Param: description
 func (s *Socket) _onclose(args ...any) {
-	if !s.Connected() {
+	if !s.Connected() || !s.closing.CompareAndSwap(false, true) {
 		return
 	}
 	if log.DEBUG.Load() {
