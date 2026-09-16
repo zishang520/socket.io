@@ -273,9 +273,15 @@ func (w *websocket) write(data types.BufferInterface, compress bool) {
 // Transport.Close() returns early and DoClose never fires. Without
 // this override the per-socket queue.loop goroutine waits on its
 // sync.Cond forever, leaking once per ungraceful disconnect.
+//
+// The hijacked websocket connection is closed here as well, so an
+// ungraceful disconnect (where DoClose never runs) still releases the
+// underlying connection instead of leaking it. socket.Close is
+// idempotent, so closing again on the DoClose path is harmless.
 func (w *websocket) OnClose() {
 	w.writeQueue.TryClose()
 	w.Transport.OnClose()
+	_ = w.socket.Close()
 }
 
 // Closes the transport.
