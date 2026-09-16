@@ -122,8 +122,8 @@ func (s *server) HandleUpgrade(ctx *types.HttpContext) {
 			ReadBufferSize:    DefaultWSReadBufferSize,
 			WriteBufferSize:   DefaultWSWriteBufferSize,
 			EnableCompression: s.Opts().PerMessageDeflate() != nil,
-			Error: func(w http.ResponseWriter, r *http.Request, status int, reason error) {
-				http.Error(w, reason.Error(), status)
+			Error: func(_ http.ResponseWriter, _ *http.Request, _ int, reason error) {
+				// response is written by emitAbortRequest below
 				wsc.Emit("error", reason)
 			},
 		}
