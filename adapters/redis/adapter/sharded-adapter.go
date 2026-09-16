@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	rds "github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
@@ -40,39 +42,42 @@ func (sb *ShardedRedisAdapterBuilder) New(nsp socket.Namespace) socket.Adapter {
 	return NewShardedRedisAdapter(nsp, sb.Redis, sb.Opts)
 }
 
-// nodePubSubEntry represents a pooled Pub/Sub connection to a single Redis Cluster master node.
-//
-// All dynamic channels whose slots map to the same master share one TCP connection.
-// mu protects pubSub initialization and refCount updates, preventing duplicate
-// SSubscribe calls when multiple goroutines race to subscribe the first channel
-// for a given master (double-checked locking pattern).
+// nodePubSubEntry is one pooled Pub/Sub connection and the set of dynamic
+// channels currently subscribed on it. Entries are owned exclusively by the
+// subscription manager goroutine, so no locking is needed.
 type nodePubSubEntry struct {
-	mu       sync.Mutex
 	pubSub   *rds.PubSub
-	refCount atomic.Int64 // number of active dynamic channels on this connection
+	channels map[string]struct{}
 }
 
 type shardedRedisAdapter struct {
 	adapter.ClusterAdapter
 
-	// pubSubClients holds the two static Pub/Sub connections: one for the main
-	// broadcast channel and one for the per-server response channel.
-	pubSubClients *types.Map[string, *rds.PubSub]
-
-	// nodePubSubs holds one nodePubSubEntry per Redis Cluster master node,
-	// keyed by node address. Channels whose slots land on the same master
-	// share a single TCP connection instead of opening one per channel.
-	nodePubSubs *types.Map[string, *nodePubSubEntry]
-	// chanToAddr maps each subscribed dynamic channel to its master node address,
-	// enabling O(1) lookup in unsubscribeNode.
-	chanToAddr *types.Map[string, string]
-
-	// ncDynamicPubSubs holds dynamic channel subscriptions for non-ClusterClient
-	// backends (standalone Redis, Redis Ring). Each channel gets its own Pub/Sub.
-	ncDynamicPubSubs *types.Map[string, *rds.PubSub]
-	// ncDynamicMutexes provides per-channel mutual exclusion for non-cluster
-	// subscribe/unsubscribe pairs to prevent duplicate connections.
-	ncDynamicMutexes *types.Map[string, *sync.Mutex]
+	// desiredChannels is the level-triggered desired subscription state. It
+	// always contains the two static channels (main broadcast and per-server
+	// response); in dynamic mode create-room adds a room channel and
+	// delete-room removes it. The subscription manager goroutine reconciles
+	// the actual Redis subscriptions to this set, so a delete-room that races
+	// an in-flight subscribe can never leak a subscription, and failed
+	// subscribes are retried until the channel is subscribed or no longer
+	// desired.
+	desiredChannels *types.Map[string, bool]
+	// reconcileWake nudges the subscription manager after a desired-state change.
+	reconcileWake chan struct{}
+	// deadPubSubs carries Pub/Sub connections whose receive loop terminated
+	// unexpectedly — e.g. go-redis closed the node client after the node
+	// disappeared from the cluster topology. The manager forgets their
+	// channels so the next reconcile pass re-subscribes them on a live
+	// connection; without this, a node that comes back under the same address
+	// would never be re-subscribed (no placement change to detect).
+	deadPubSubs chan *rds.PubSub
+	// topologyStale is set when a MOVED/ASK error is observed on a Pub/Sub
+	// connection, asking the manager's next pass to re-resolve channel
+	// placement immediately instead of waiting for the periodic tick.
+	topologyStale atomic.Bool
+	// managerWg tracks the subscription manager goroutine so Close can wait
+	// for every Pub/Sub connection to be released.
+	managerWg sync.WaitGroup
 
 	redisClient     *redis.RedisClient
 	opts            *ShardedRedisAdapterOptions
@@ -87,13 +92,9 @@ type shardedRedisAdapter struct {
 // Call Construct to complete initialization.
 func MakeShardedRedisAdapter() ShardedRedisAdapter {
 	c := &shardedRedisAdapter{
-		ClusterAdapter:   adapter.MakeClusterAdapter(),
-		opts:             DefaultShardedRedisAdapterOptions(),
-		pubSubClients:    &types.Map[string, *rds.PubSub]{},
-		nodePubSubs:      &types.Map[string, *nodePubSubEntry]{},
-		chanToAddr:       &types.Map[string, string]{},
-		ncDynamicPubSubs: &types.Map[string, *rds.PubSub]{},
-		ncDynamicMutexes: &types.Map[string, *sync.Mutex]{},
+		ClusterAdapter:  adapter.MakeClusterAdapter(),
+		opts:            DefaultShardedRedisAdapterOptions(),
+		desiredChannels: &types.Map[string, bool]{},
 	}
 	c.Prototype(c)
 	return c
@@ -122,8 +123,9 @@ func (s *shardedRedisAdapter) SetOpts(opts any) {
 }
 
 // Construct initializes the adapter for the given namespace.
-// It applies defaults, builds channel names, subscribes to static channels,
-// registers dynamic subscription handlers, and starts message-receiving goroutines.
+// It applies defaults, builds channel names, records the static channels as
+// desired subscriptions, registers dynamic subscription handlers, and starts
+// the subscription manager goroutine that owns all Pub/Sub connections.
 func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	s.ClusterAdapter.Construct(nsp)
 
@@ -139,30 +141,41 @@ func (s *shardedRedisAdapter) Construct(nsp socket.Namespace) {
 	s.channel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#"
 	s.responseChannel = s.opts.ChannelPrefix() + "#" + nsp.Name() + "#" + string(s.Uid()) + "#"
 
-	// Subscribe to static channels using SubClient for read/write separation.
-	channelPubSub := s.redisClient.Sub().SSubscribe(s.ctx, s.channel)
-	responsePubSub := s.redisClient.Sub().SSubscribe(s.ctx, s.responseChannel)
+	s.reconcileWake = make(chan struct{}, 1)
+	s.deadPubSubs = make(chan *rds.PubSub, 64)
 
-	s.pubSubClients.Store(s.channel, channelPubSub)
-	s.pubSubClients.Store(s.responseChannel, responsePubSub)
+	// Every subscription — the two static channels and any dynamic room
+	// channels — is level-triggered desired state reconciled by the
+	// subscription manager. Placement is re-resolved periodically, which is
+	// what lets subscriptions survive Redis Cluster failovers and slot
+	// migrations.
+	s.desiredChannels.Store(s.channel, true)
+	s.desiredChannels.Store(s.responseChannel, true)
 
 	if s.isDynamicMode() {
 		s.setupDynamicSubscriptions()
 	}
 
-	go s.receiveMessages(channelPubSub)
-	go s.receiveMessages(responsePubSub)
+	s.managerWg.Add(1)
+	go s.subscriptionManagerLoop()
 }
 
-// setupDynamicSubscriptions registers create-room and delete-room event handlers
-// that subscribe/unsubscribe per-room channels on demand.
+// setupDynamicSubscriptions registers create-room and delete-room event handlers.
+//
+// The handlers only record the desired state and nudge the manager: the actual
+// SSUBSCRIBE/SUNSUBSCRIBE round-trips happen on the manager goroutine, so Join
+// and Leave never block on Redis I/O (subscriptions are established
+// asynchronously, typically within a millisecond).
 func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
 	_ = s.On("create-room", func(rooms ...any) {
 		room := slices.TryGetAny[socket.Room](rooms, 0)
 		if !s.shouldUseASeparateNamespace(room) {
 			return
 		}
-		s.subscribeNode(s.dynamicChannel(room))
+		if channel := s.dynamicChannel(room); channel != s.channel && channel != s.responseChannel {
+			s.desiredChannels.Store(channel, true)
+			s.nudgeSubscriptionManager()
+		}
 	})
 
 	_ = s.On("delete-room", func(rooms ...any) {
@@ -170,165 +183,272 @@ func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
 		if !s.shouldUseASeparateNamespace(room) {
 			return
 		}
-		s.unsubscribeNode(s.dynamicChannel(room))
+		// Never drop the static channels, even for a room whose name collides
+		// with them (e.g. a room named after this server's uid).
+		if channel := s.dynamicChannel(room); channel != s.channel && channel != s.responseChannel {
+			s.desiredChannels.Delete(channel)
+			s.nudgeSubscriptionManager()
+		}
 	})
 }
 
-// subscribeNode subscribes to a dynamic channel, pooling connections by master node.
-//
-// For ClusterClient backends, all channels that hash to the same master share one
-// TCP connection. The first subscriber for a given master opens an SSubscribe
-// connection; subsequent subscribers reuse it by issuing additional SSUBSCRIBE
-// commands on the same Pub/Sub object (double-checked locking via nodePubSubEntry.mu).
-//
-// For non-ClusterClient backends, each channel gets its own Pub/Sub, guarded by
-// a per-channel mutex stored in ncDynamicMutexes.
-func (s *shardedRedisAdapter) subscribeNode(channel string) {
-	clusterClient, isCluster := s.redisClient.Sub().(*rds.ClusterClient)
-	if !isCluster {
-		// Non-cluster path: ensure exactly one SSubscribe per channel.
-		mu, _ := s.ncDynamicMutexes.LoadOrStore(channel, &sync.Mutex{})
-		mu.Lock()
-		defer mu.Unlock()
-
-		if _, exists := s.ncDynamicPubSubs.Load(channel); exists {
-			return // idempotency guard
-		}
-		pubSub := s.redisClient.Sub().SSubscribe(s.ctx, channel)
-		s.ncDynamicPubSubs.Store(channel, pubSub)
-		go s.receiveMessages(pubSub)
-		return
+// nudgeSubscriptionManager wakes the subscription manager without blocking.
+func (s *shardedRedisAdapter) nudgeSubscriptionManager() {
+	select {
+	case s.reconcileWake <- struct{}{}:
+	default:
 	}
-
-	nodeClient, err := clusterClient.MasterForKey(s.ctx, channel)
-	if err != nil {
-		s.redisClient.Emit("error", fmt.Errorf("subscribeNode: MasterForKey(%q): %w", channel, err))
-		return
-	}
-	addr := nodeClient.Options().Addr
-
-	// Early idempotency check without acquiring the entry lock.
-	if _, alreadyTracked := s.chanToAddr.Load(channel); alreadyTracked {
-		return
-	}
-
-	// LoadOrStore atomically claims the entry for this master node.
-	// The first caller creates it; all concurrent callers receive the same entry.
-	entry, _ := s.nodePubSubs.LoadOrStore(addr, &nodePubSubEntry{})
-
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-
-	// Double-check: another goroutine may have finished subscribing between the
-	// chanToAddr check above and acquiring entry.mu.
-	if entry.pubSub == nil {
-		// First goroutine for this master: open one new TCP connection.
-		entry.pubSub = nodeClient.SSubscribe(s.ctx, channel)
-		go s.receiveMessages(entry.pubSub)
-	} else {
-		// Subsequent goroutines reuse the existing connection by sending an
-		// additional SSUBSCRIBE command on the open socket.
-		if err := entry.pubSub.SSubscribe(s.ctx, channel); err != nil {
-			s.redisClient.Emit("error", fmt.Errorf("subscribeNode: SSubscribe(%q): %w", channel, err))
-			return
-		}
-	}
-
-	entry.refCount.Add(1)
-	s.chanToAddr.Store(channel, addr)
 }
 
-// unsubscribeNode removes a dynamic channel subscription.
-// When the reference count for a master node reaches zero, its shared Pub/Sub
-// connection is closed and the pool entry is deleted.
-func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
-	if _, isCluster := s.redisClient.Sub().(*rds.ClusterClient); !isCluster {
-		// Non-cluster path: unsubscribe under the per-channel mutex.
-		if mu, exists := s.ncDynamicMutexes.Load(channel); exists {
-			mu.Lock()
-			if pubSub, ok := s.ncDynamicPubSubs.LoadAndDelete(channel); ok {
-				if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
-					s.redisClient.Emit("error", err)
-				}
-				if err := pubSub.Close(); err != nil {
+// sSubscriber is the subset of a Redis client needed to open a new sharded
+// subscription connection.
+type sSubscriber interface {
+	SSubscribe(ctx context.Context, channels ...string) *rds.PubSub
+}
+
+// resolveNode maps a channel to its connection pool key and the client used
+// to open new subscriptions for it:
+//
+//   - Redis Cluster: the key is the address of the master that owns the
+//     channel's slot, so all dynamic channels on one master share a single
+//     TCP connection. The placement is re-evaluated on every periodic
+//     reconcile, which is what lets subscriptions follow failovers and slot
+//     migrations.
+//   - Standalone / Sentinel (*rds.Client): a single shared connection carries
+//     every dynamic channel — there are no slot constraints.
+//   - Anything else (e.g. rds.Ring): one connection per channel, because
+//     channel-to-shard routing is internal to the client.
+//
+// The two static channels always get a dedicated connection so that request/
+// response handling is not serialized behind dynamic room traffic.
+func (s *shardedRedisAdapter) resolveNode(channel string) (string, sSubscriber, error) {
+	static := ""
+	if channel == s.channel || channel == s.responseChannel {
+		static = "#static#" + channel
+	}
+
+	switch client := s.redisClient.Sub().(type) {
+	case *rds.ClusterClient:
+		nodeClient, err := client.MasterForKey(s.ctx, channel)
+		if err != nil {
+			return "", nil, err
+		}
+		return nodeClient.Options().Addr + static, nodeClient, nil
+	case *rds.Client:
+		return static, client, nil
+	default:
+		return "#" + channel, client, nil
+	}
+}
+
+// subscriptionManagerLoop owns every Pub/Sub connection of this adapter. It
+// reconciles the actual Redis subscriptions with desiredChannels whenever
+// nudged, and on a periodic tick (or after a MOVED error flagged the topology
+// as stale) additionally re-resolves channel placement so that subscriptions
+// survive Redis Cluster failovers and slot migrations.
+//
+// Single-goroutine ownership of the connection pool removes the
+// subscribe/unsubscribe races that a shared pool would need locks for.
+func (s *shardedRedisAdapter) subscriptionManagerLoop() {
+	defer s.managerWg.Done()
+
+	entries := map[string]*nodePubSubEntry{} // pool key -> shared connection
+	actual := map[string]string{}            // channel -> pool key
+
+	ticker := time.NewTicker(DefaultSubscriptionReconcileInterval)
+	defer ticker.Stop()
+
+	// Initial pass: subscribe what is already desired — at minimum the two
+	// static channels stored by Construct.
+	s.reconcileSubscriptions(entries, actual, false)
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			for _, entry := range entries {
+				if err := entry.pubSub.Close(); err != nil {
 					s.redisClient.Emit("error", err)
 				}
 			}
-			mu.Unlock()
-			s.ncDynamicMutexes.Delete(channel)
+			return
+		case <-s.reconcileWake:
+			s.reconcileSubscriptions(entries, actual, s.topologyStale.Swap(false))
+		case <-ticker.C:
+			s.reconcileSubscriptions(entries, actual, true)
 		}
+	}
+}
+
+// reconcileSubscriptions brings the actual subscriptions in line with the
+// desired set. With refreshTopology it also re-resolves the placement of every
+// subscribed channel against the current cluster topology: a channel whose
+// master changed (failover, slot migration) is dropped from its old connection
+// and re-subscribed on the node that now owns it.
+func (s *shardedRedisAdapter) reconcileSubscriptions(entries map[string]*nodePubSubEntry, actual map[string]string, refreshTopology bool) {
+	// Forget connections that died underneath us so their channels are
+	// re-subscribed below on a fresh connection. Closing is a no-op for
+	// connections that are already closed (node client garbage-collected);
+	// for CROSSSLOT casualties it tears down the broken connection.
+	for drained := false; !drained; {
+		select {
+		case dead := <-s.deadPubSubs:
+			for key, entry := range entries {
+				if entry.pubSub != dead {
+					continue
+				}
+				_ = entry.pubSub.Close()
+				for channel := range entry.channels {
+					delete(actual, channel)
+				}
+				delete(entries, key)
+			}
+		default:
+			drained = true
+		}
+	}
+
+	// Drop subscriptions that are no longer desired.
+	for channel, key := range actual {
+		if _, ok := s.desiredChannels.Load(channel); !ok {
+			s.dropSubscription(entries, actual, channel, key, false)
+		}
+	}
+
+	if refreshTopology && len(actual) > 0 {
+		if clusterClient, ok := s.redisClient.Sub().(*rds.ClusterClient); ok {
+			// Force a topology refresh: subscribers may never issue regular
+			// commands, so nothing else would invalidate a stale slot map.
+			clusterClient.ReloadState(s.ctx)
+			for channel, key := range actual {
+				newKey, _, err := s.resolveNode(channel)
+				if err != nil || newKey == key {
+					continue
+				}
+				// The old node already dropped this subscription when the
+				// slot moved (or the node is gone entirely), so skip the
+				// SUNSUBSCRIBE round-trip — against a failed-over node it
+				// would block on a redial.
+				s.dropSubscription(entries, actual, channel, key, true)
+			}
+
+			// Re-assert every remaining subscription, one SSUBSCRIBE per
+			// channel. This is the authoritative self-heal for server-side
+			// subscription loss that produces no client-side signal (e.g. a
+			// rejected batch resubscribe): re-subscribing an already-active
+			// channel is a no-op for the server, and a channel whose slot
+			// moved surfaces as a MOVED error handled by the receive loop.
+			for channel, key := range actual {
+				if entry, ok := entries[key]; ok {
+					if err := entry.pubSub.SSubscribe(s.ctx, channel); err != nil {
+						s.redisClient.Emit("error", fmt.Errorf("reconcile: SSubscribe(%q): %w", channel, err))
+					}
+				}
+			}
+		}
+	}
+
+	// Subscribe desired channels that are missing. Failures leave the channel
+	// out of `actual`, so it is retried on the next nudge or tick; failedKeys
+	// stops one unreachable node from stalling the pass on every one of its
+	// channels.
+	failedKeys := map[string]bool{}
+	s.desiredChannels.Range(func(channel string, _ bool) bool {
+		if _, ok := actual[channel]; !ok {
+			s.addSubscription(entries, actual, failedKeys, channel)
+		}
+		return true
+	})
+}
+
+// addSubscription subscribes a channel on its node's shared connection,
+// opening the connection if it is the first channel for that node.
+func (s *shardedRedisAdapter) addSubscription(entries map[string]*nodePubSubEntry, actual map[string]string, failedKeys map[string]bool, channel string) {
+	key, client, err := s.resolveNode(channel)
+	if err != nil {
+		s.redisClient.Emit("error", fmt.Errorf("addSubscription: resolveNode(%q): %w", channel, err))
+		return
+	}
+	if failedKeys[key] {
 		return
 	}
 
-	addr, ok := s.chanToAddr.LoadAndDelete(channel)
+	entry, ok := entries[key]
+	if !ok {
+		entry = &nodePubSubEntry{
+			pubSub:   client.SSubscribe(s.ctx, channel),
+			channels: map[string]struct{}{},
+		}
+		entries[key] = entry
+		go s.receiveMessages(entry.pubSub)
+	} else if err := entry.pubSub.SSubscribe(s.ctx, channel); err != nil {
+		failedKeys[key] = true
+		s.redisClient.Emit("error", fmt.Errorf("addSubscription: SSubscribe(%q): %w", channel, err))
+		return
+	}
+
+	entry.channels[channel] = struct{}{}
+	actual[channel] = key
+}
+
+// dropSubscription unsubscribes a channel and closes its node's shared
+// connection when no channels remain on it. With serverSideGone the
+// SUNSUBSCRIBE round-trip is skipped: the server already removed the
+// subscription (slot migration or node failure).
+func (s *shardedRedisAdapter) dropSubscription(entries map[string]*nodePubSubEntry, actual map[string]string, channel string, key string, serverSideGone bool) {
+	delete(actual, channel)
+
+	entry, ok := entries[key]
 	if !ok {
 		return
 	}
+	delete(entry.channels, channel)
 
-	entry, exists := s.nodePubSubs.Load(addr)
-	if !exists {
+	if len(entry.channels) == 0 {
+		// Closing the connection unsubscribes everything server-side, so no
+		// SUNSUBSCRIBE round-trip (which could block redialing a dead node)
+		// is needed.
+		if err := entry.pubSub.Close(); err != nil {
+			s.redisClient.Emit("error", err)
+		}
+		delete(entries, key)
 		return
 	}
 
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-
-	if entry.pubSub != nil {
+	if !serverSideGone {
 		if err := entry.pubSub.SUnsubscribe(s.ctx, channel); err != nil {
 			s.redisClient.Emit("error", err)
 		}
 	}
-
-	// Close and remove the pool entry when no channels remain on this connection.
-	if entry.refCount.Add(-1) <= 0 {
-		if entry.pubSub != nil {
-			if err := entry.pubSub.Close(); err != nil {
-				s.redisClient.Emit("error", err)
-			}
-		}
-		s.nodePubSubs.Delete(addr)
-	}
 }
 
-// Close unsubscribes from all channels and shuts down every Pub/Sub connection.
+// Close shuts down the subscription manager and every Pub/Sub connection it
+// owns; closing the connections implicitly unsubscribes all channels.
 func (s *shardedRedisAdapter) Close() {
-	defer s.cancel()
-
-	s.pubSubClients.Range(func(channel string, pubSub *rds.PubSub) bool {
-		if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
-			s.redisClient.Emit("error", err)
-		}
-		if err := pubSub.Close(); err != nil {
-			s.redisClient.Emit("error", err)
-		}
-		return true
-	})
-
-	s.nodePubSubs.Range(func(addr string, entry *nodePubSubEntry) bool {
-		entry.mu.Lock()
-		if entry.pubSub != nil {
-			if err := entry.pubSub.Close(); err != nil {
-				s.redisClient.Emit("error", err)
-			}
-		}
-		entry.mu.Unlock()
-		return true
-	})
-
-	s.nodePubSubs.Clear()
-	s.chanToAddr.Clear()
-
-	s.ncDynamicPubSubs.Range(func(_ string, pubSub *rds.PubSub) bool {
-		if err := pubSub.Close(); err != nil {
-			s.redisClient.Emit("error", err)
-		}
-		return true
-	})
-
-	s.ncDynamicPubSubs.Clear()
-	s.ncDynamicMutexes.Clear()
+	// Cancel before any connection is closed: a receive loop woken by its
+	// connection closing then observes the canceled context and exits quietly.
+	s.cancel()
+	s.managerWg.Wait()
+	s.desiredChannels.Clear()
 
 	s.ClusterAdapter.Close()
+}
+
+// isMovedError reports whether err is a Redis Cluster MOVED/ASK redirection,
+// which surfaces on a Pub/Sub connection when a subscribed shard channel's
+// slot was migrated to another node.
+func isMovedError(err error) bool {
+	msg := err.Error()
+	return strings.HasPrefix(msg, "MOVED ") || strings.HasPrefix(msg, "ASK ")
+}
+
+// isCrossSlotError reports whether err is a Redis Cluster CROSSSLOT rejection.
+// go-redis re-subscribes all of a connection's channels in a single SSUBSCRIBE
+// command after a reconnect; on a pooled connection holding channels from
+// several slots that batch is rejected wholesale, leaving every subscription
+// on the connection dead server-side. The receive loop treats it as a dead
+// connection so the manager rebuilds the subscriptions one channel at a time.
+func isCrossSlotError(err error) bool {
+	return strings.HasPrefix(err.Error(), "CROSSSLOT ")
 }
 
 // receiveMessages continuously reads messages from a Pub/Sub connection and
@@ -338,10 +458,55 @@ func (s *shardedRedisAdapter) receiveMessages(pubSub *rds.PubSub) {
 	for {
 		msg, err := pubSub.ReceiveMessage(s.ctx)
 		if err != nil {
-			if s.ctx.Err() != nil || errors.Is(err, rds.ErrClosed) {
+			if s.ctx.Err() != nil {
 				return
 			}
-			s.redisClient.Emit("error", err)
+			if errors.Is(err, rds.ErrClosed) {
+				// Closed outside adapter shutdown: either the manager dropped
+				// this connection deliberately (it no longer tracks it), or
+				// go-redis closed the node client underneath us — report it
+				// so the manager re-subscribes the channels elsewhere.
+				select {
+				case s.deadPubSubs <- pubSub:
+					s.nudgeSubscriptionManager()
+				case <-s.ctx.Done():
+				}
+				return
+			}
+			switch {
+			case errors.Is(err, net.ErrClosed):
+				// A read on a connection that was closed underneath us
+				// (PubSub.Close or an internal go-redis reconnect) is not
+				// actionable and must not end the loop: the next
+				// ReceiveMessage call either returns rds.ErrClosed or
+				// proceeds on a fresh connection.
+			case isCrossSlotError(err):
+				// go-redis batch-resubscribed this connection's channels
+				// after a reconnect and the cluster rejected the multi-slot
+				// batch, so every subscription on it is dead server-side.
+				// Hand the connection to the manager to close and rebuild.
+				select {
+				case s.deadPubSubs <- pubSub:
+					s.nudgeSubscriptionManager()
+				case <-s.ctx.Done():
+				}
+				return
+			case isMovedError(err):
+				// A shard channel on this connection was migrated to another
+				// node; have the manager re-resolve placement now instead of
+				// waiting for the next periodic tick.
+				s.topologyStale.Store(true)
+				s.nudgeSubscriptionManager()
+			default:
+				s.redisClient.Emit("error", err)
+			}
+			// Pause briefly so a hard-down node (instant dial failures)
+			// cannot spin this loop into an error storm.
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
 			continue
 		}
 		s.onRawMessage([]byte(msg.Payload), msg.Channel)
@@ -537,7 +702,7 @@ func (s *shardedRedisAdapter) decodeData(messageType adapter.MessageType, rawDat
 // ServerCount returns the number of servers currently subscribed to this adapter's
 // main channel, as reported by Redis PUBSUBSHARDNUMSUB.
 func (s *shardedRedisAdapter) ServerCount() int64 {
-	result, err := s.redisClient.Client.PubSubShardNumSub(s.ctx, s.channel).Result()
+	result, err := s.pubSubShardNumSub(s.channel)
 	if err != nil {
 		s.redisClient.Emit("error", err)
 		return 0
@@ -547,6 +712,25 @@ func (s *shardedRedisAdapter) ServerCount() int64 {
 		return count
 	}
 	return 0
+}
+
+// pubSubShardNumSub runs PUBSUB SHARDNUMSUB for the given channel.
+//
+// Sharded Pub/Sub subscriber counts are tracked only by the shard that owns
+// the channel's slot, while go-redis routes key-less commands such as PUBSUB
+// to a random cluster node — so on cluster backends the command must be sent
+// to the owning master explicitly, otherwise it usually reports 0.
+func (s *shardedRedisAdapter) pubSubShardNumSub(channel string) (map[string]int64, error) {
+	for _, c := range []rds.UniversalClient{s.redisClient.Sub(), s.redisClient.Client} {
+		if clusterClient, ok := c.(*rds.ClusterClient); ok {
+			nodeClient, err := clusterClient.MasterForKey(s.ctx, channel)
+			if err != nil {
+				return nil, fmt.Errorf("pubSubShardNumSub: MasterForKey(%q): %w", channel, err)
+			}
+			return nodeClient.PubSubShardNumSub(s.ctx, channel).Result()
+		}
+	}
+	return s.redisClient.Client.PubSubShardNumSub(s.ctx, channel).Result()
 }
 
 // isDynamicMode reports whether the adapter is configured for dynamic channel subscriptions.

@@ -3,6 +3,8 @@
 package adapter
 
 import (
+	"time"
+
 	"github.com/zishang520/socket.io/adapters/redis/v3"
 	"github.com/zishang520/socket.io/v3/pkg/types"
 )
@@ -14,6 +16,15 @@ const (
 
 // DefaultShardedSubscriptionMode is the default subscription mode for the sharded adapter.
 var DefaultShardedSubscriptionMode = redis.DynamicSubscriptionMode
+
+// DefaultSubscriptionReconcileInterval is how often the sharded adapter
+// re-checks its channel subscriptions against the desired state and, on Redis
+// Cluster backends, against the current cluster topology. The periodic pass
+// retries failed subscriptions and moves subscriptions whose slot was
+// migrated or whose master failed over — it bounds the message-loss window
+// after a topology change. Lowering it shortens that window at the cost of
+// one CLUSTER SLOTS refresh per interval per namespace.
+var DefaultSubscriptionReconcileInterval = 5 * time.Second
 
 type (
 	// ShardedRedisAdapterOptionsInterface defines the interface for configuring ShardedRedisAdapterOptions.
