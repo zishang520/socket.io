@@ -10,12 +10,12 @@ import (
 // BenchmarkQueue_Enqueue_SingleProducer measures the throughput of Enqueue
 // from a single producer goroutine.
 func BenchmarkQueue_Enqueue_SingleProducer(b *testing.B) {
-	q := New() // Ensure buffer can hold all tasks to avoid blocking the test runner
+	q := New()
 	defer q.Close()
 
-	var counter uint64
+	var counter atomic.Uint64
 	task := func() {
-		atomic.AddUint64(&counter, 1)
+		counter.Add(1)
 	}
 
 	b.ResetTimer()
@@ -67,6 +67,31 @@ func BenchmarkQueue_Concurrent_Producers(b *testing.B) {
 	q.TryClose()
 }
 
+// BenchmarkQueue_IdleRestart measures the cost of scheduling isolated tasks
+// after the previous worker has exited.
+func BenchmarkQueue_IdleRestart(b *testing.B) {
+	q := New()
+	defer q.Close()
+
+	done := make(chan struct{}, 1)
+	task := func() { done <- struct{}{} }
+
+	b.ResetTimer()
+	for range b.N {
+		q.Enqueue(task)
+		<-done
+		for {
+			q.mu.Lock()
+			running := q.running
+			q.mu.Unlock()
+			if !running {
+				break
+			}
+			runtime.Gosched()
+		}
+	}
+}
+
 // TestQueue_Stress tests the queue under high concurrent load to ensure
 // no tasks are lost and race conditions don't occur.
 func TestQueue_Stress(t *testing.T) {
@@ -76,12 +101,12 @@ func TestQueue_Stress(t *testing.T) {
 	tasksPerProducer := 10000
 	totalTasks := numProducers * tasksPerProducer
 
-	var processedCount uint64
+	var processedCount atomic.Uint64
 	var wg sync.WaitGroup
 	wg.Add(totalTasks)
 
 	task := func() {
-		atomic.AddUint64(&processedCount, 1)
+		processedCount.Add(1)
 		wg.Done()
 	}
 
@@ -97,7 +122,7 @@ func TestQueue_Stress(t *testing.T) {
 	wg.Wait() // Wait for all tasks to be processed
 	q.Close()
 
-	if finalCount := atomic.LoadUint64(&processedCount); finalCount != uint64(totalTasks) {
+	if finalCount := processedCount.Load(); finalCount != uint64(totalTasks) {
 		t.Errorf("expected %d tasks to be processed, got %d", totalTasks, finalCount)
 	}
 }
