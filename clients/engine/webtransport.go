@@ -34,7 +34,7 @@ type webTransport struct {
 	Transport
 
 	// dialer is the WebTransport dialer used to establish connections
-	dialer *wt.Dialer
+	dialer *wt.Transport
 
 	// session is the WebTransport connection instance
 	session *types.WebTransportConn
@@ -84,7 +84,7 @@ func (w *webTransport) Construct(socket Socket, opts SocketOptionsInterface) {
 
 	w.writeQueue = queue.New()
 
-	w.dialer = &wt.Dialer{
+	w.dialer = &wt.Transport{
 		TLSClientConfig: w.Opts().TLSClientConfig(),
 		QUICConfig:      w.Opts().QUICConfig(),
 	}
