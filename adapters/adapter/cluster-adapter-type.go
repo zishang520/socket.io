@@ -68,6 +68,7 @@ type (
 	}
 
 	// ClusterRequest represents a cluster request.
+	// It must not be copied after first use.
 	ClusterRequest struct {
 		Type      MessageType
 		Resolve   func(*types.Slice[any])
@@ -75,6 +76,10 @@ type (
 		Expected  int64
 		Current   *atomic.Int64
 		Responses *types.Slice[any]
+
+		// Sockets tracks responding server IDs, not client socket IDs.
+		// Update it inside Responses.DoWrite together with result collection.
+		Sockets types.Set[ServerId]
 	}
 
 	ClusterResponse = ClusterMessage
@@ -114,10 +119,18 @@ type (
 	}
 
 	// ClusterAckRequest represents a cluster acknowledgment request.
+	// It must not be copied after first use.
 	ClusterAckRequest struct {
 		ClientCountCallback func(uint64)
 		Ack                 socket.Ack
+
+		// Sockets tracks servers that reported their client count, not client ACKs.
+		Sockets types.Set[ServerId]
 	}
+
+	// PublishFunc sends a prepared message. It owns encoded data and routing
+	// values, and must not retain the caller's mutable ClusterMessage.
+	PublishFunc func() (Offset, error)
 
 	// ClusterAdapter is an interface for a cluster-ready adapter.
 	// Any implementation must provide methods for publishing messages and responses across the cluster.
@@ -134,12 +147,19 @@ type (
 		Publish(*ClusterMessage)
 		// PublishAndReturnOffset sends a message and returns its offset.
 		PublishAndReturnOffset(*ClusterMessage) (Offset, error)
-		// DoPublish performs the actual publish operation and returns the offset.
-		DoPublish(*ClusterMessage) (Offset, error)
+		// PublishAndClose queues a final message after accepted messages and responses,
+		// then closes publishing. It returns without waiting for delivery.
+		// This is a publishing-layer operation used by lifecycle implementations;
+		// applications should call the outer adapter's Close for its lifecycle cleanup.
+		PublishAndClose(*ClusterMessage)
+		// PreparePublish encodes and selects a destination without publishing.
+		// The returned function is executed by the publisher queue.
+		PreparePublish(*ClusterMessage) (PublishFunc, error)
 		// PublishResponse sends a response to a specific server.
 		PublishResponse(ServerId, *ClusterResponse)
-		// DoPublishResponse performs the actual publish response operation.
-		DoPublishResponse(ServerId, *ClusterResponse) error
+		// PreparePublishResponse prepares a response for the independent response queue.
+		// The returned function's offset is ignored.
+		PreparePublishResponse(ServerId, *ClusterResponse) (PublishFunc, error)
 	}
 )
 

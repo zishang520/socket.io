@@ -25,7 +25,7 @@ var errClusterPublishPanicked = errors.New("cluster publish panicked")
 // ClusterAdapterBuilder is a builder for creating ClusterAdapter instances.
 //
 // A cluster-ready adapter. Any extending interface must:
-//   - implement ClusterAdapter.DoPublish and ClusterAdapter.DoPublishResponse
+//   - implement ClusterAdapter.PreparePublish and ClusterAdapter.PreparePublishResponse
 //   - call ClusterAdapter.OnMessage and ClusterAdapter.OnResponse
 type (
 	ClusterAdapterBuilder struct{}
@@ -38,7 +38,7 @@ type (
 		uid ServerId
 
 		requests    types.Map[string, *ClusterRequest]
-		ackRequests types.Map[string, ClusterAckRequest]
+		ackRequests types.Map[string, *ClusterAckRequest]
 		queueMu     sync.Mutex
 		publisher   *queue.Queue
 		responses   *queue.Queue
@@ -214,20 +214,21 @@ func (c *clusterAdapter) OnMessage(message *ClusterMessage, offset Offset) {
 			return
 		}
 
-		called := &sync.Once{}
+		called := new(atomic.Bool)
 		callback := func(arg []any, _ error) {
-			// only one argument is expected, ensure Exactly-Once semantics
-			called.Do(func() {
-				if log.DEBUG.Load() {
-					adapterLog.Debug("[%s] calling acknowledgement with %v", c.uid, arg)
-				}
-				c.PublishResponse(message.Uid, &ClusterResponse{
-					Type: SERVER_SIDE_EMIT_RESPONSE,
-					Data: &ServerSideEmitResponse{
-						RequestId: *data.RequestId,
-						Packet:    slices.TryGet(arg, 0),
-					},
-				})
+			// Claim before encoding: a user marshaler may invoke this ACK again.
+			if !called.CompareAndSwap(false, true) {
+				return
+			}
+			if log.DEBUG.Load() {
+				adapterLog.Debug("[%s] calling acknowledgement with %v", c.uid, arg)
+			}
+			c.PublishResponse(message.Uid, &ClusterResponse{
+				Type: SERVER_SIDE_EMIT_RESPONSE,
+				Data: &ServerSideEmitResponse{
+					RequestId: *data.RequestId,
+					Packet:    slices.TryGet(arg, 0),
+				},
 			})
 		}
 
@@ -251,7 +252,9 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 				adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
 			}
 			if ackRequest, ok := c.ackRequests.Load(data.RequestId); ok {
-				ackRequest.ClientCountCallback(data.ClientCount)
+				if ackRequest.Sockets.Add(response.Uid) {
+					ackRequest.ClientCountCallback(data.ClientCount)
+				}
 			}
 		} else {
 			adapterLog.Debug("[%s] invalid data for BROADCAST_CLIENT_COUNT message", c.uid)
@@ -279,14 +282,7 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 			adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
 		}
 
-		if request, ok := c.requests.Load(data.RequestId); ok {
-			request.Responses.Push(SocketResponsesToDetailsAny(data.Sockets)...)
-
-			if request.Current.Add(1) == request.Expected &&
-				finishClusterRequest(&c.requests, data.RequestId, request, request.Timeout) {
-				request.Resolve(request.Responses)
-			}
-		}
+		c.collectResponse(data.RequestId, response.Uid, SocketResponsesToDetailsAny(data.Sockets)...)
 
 	case SERVER_SIDE_EMIT_RESPONSE:
 		data, ok := response.Data.(*ServerSideEmitResponse)
@@ -298,16 +294,33 @@ func (c *clusterAdapter) OnResponse(response *ClusterResponse) {
 			adapterLog.Debug("[%s] received response %d to request %s", c.uid, response.Type, data.RequestId)
 		}
 
-		if request, ok := c.requests.Load(data.RequestId); ok {
-			request.Responses.Push(data.Packet)
-
-			if request.Current.Add(1) == request.Expected &&
-				finishClusterRequest(&c.requests, data.RequestId, request, request.Timeout) {
-				request.Resolve(request.Responses)
-			}
-		}
+		c.collectResponse(data.RequestId, response.Uid, data.Packet)
 	default:
 		adapterLog.Debug("[%s] unknown response type: %d", c.uid, response.Type)
+	}
+}
+
+func (c *clusterAdapter) collectResponse(requestId string, uid ServerId, values ...any) {
+	request, ok := c.requests.Load(requestId)
+	if !ok {
+		return
+	}
+	var complete bool
+	request.Responses.DoWrite(func(responses []any) []any {
+		if current, ok := c.requests.Load(requestId); !ok || current != request {
+			return responses
+		}
+		if !request.Sockets.Add(uid) {
+			return responses
+		}
+		responses = append(responses, values...)
+		if request.Current.Add(1) == request.Expected {
+			complete = finishClusterRequest(&c.requests, requestId, request, request.Timeout)
+		}
+		return responses
+	})
+	if complete {
+		request.Resolve(request.Responses)
 	}
 }
 
@@ -364,10 +377,21 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 		}
 		requestId := RandomId()
 
-		c.ackRequests.Store(requestId, ClusterAckRequest{
+		c.ackRequests.Store(requestId, &ClusterAckRequest{
 			ClientCountCallback: clientCountCallback,
 			Ack:                 ack,
 		})
+
+		var timeout time.Duration
+		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
+			timeout = utils.NormalizeTimerMilliseconds(*opts.Flags.Timeout)
+		}
+
+		// This layer cannot count all client ACKs, so expire the request by timeout.
+		// Start before Publish: synchronous user encoding may block.
+		utils.SetTimeout(func() {
+			c.ackRequests.Delete(requestId)
+		}, timeout)
 
 		c.Proto().(ClusterAdapter).Publish(&ClusterMessage{
 			Type: BROADCAST,
@@ -377,17 +401,6 @@ func (c *clusterAdapter) BroadcastWithAck(packet *parser.Packet, opts *socket.Br
 				Opts:      EncodeOptions(opts),
 			},
 		})
-
-		var timeout time.Duration
-		if opts != nil && opts.Flags != nil && opts.Flags.Timeout != nil {
-			timeout = utils.NormalizeTimerMilliseconds(*opts.Flags.Timeout)
-		}
-
-		// we have no way to know at this level whether the server has received an acknowledgement from each client, so we
-		// will simply clean up the ackRequests map after the given delay
-		utils.SetTimeout(func() {
-			c.ackRequests.Delete(requestId)
-		}, timeout)
 	}
 
 	c.Adapter.BroadcastWithAck(packet, opts, clientCountCallback, ack)
@@ -448,6 +461,10 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 				callback(nil, err)
 				return
 			}
+			if opts != nil && opts.Flags != nil && opts.Flags.Local {
+				callback(localSockets, nil)
+				return
+			}
 			count, err := c.Proto().ServerCount()
 			if err != nil {
 				callback(nil, err)
@@ -455,7 +472,7 @@ func (c *clusterAdapter) FetchSockets(opts *socket.BroadcastOptions) func(func([
 			}
 			expectedResponseCount := count - 1
 
-			if (opts != nil && opts.Flags != nil && opts.Flags.Local) || expectedResponseCount <= 0 {
+			if expectedResponseCount <= 0 {
 				callback(localSockets, nil)
 				return
 			}
@@ -569,16 +586,18 @@ func (c *clusterAdapter) ServerSideEmit(packet []any) error {
 }
 
 func (c *clusterAdapter) Publish(message *ClusterMessage) {
+	if c.publisher.IsShuttingDown() {
+		return
+	}
 	message.Uid = c.uid
 	message.Nsp = c.Nsp().Name()
-	published, err := snapshotClusterMessage(message)
+	publish, err := c.Proto().(ClusterAdapter).PreparePublish(message)
 	if err != nil {
 		adapterLog.Debug(`[%s] error while publishing message: %s`, c.uid, err.Error())
 		return
 	}
-	publish := c.Proto().(ClusterAdapter).DoPublish
 	if err := c.enqueue(c.publisher, func() {
-		_, err := publish(published)
+		_, err := publish()
 		if err != nil {
 			adapterLog.Debug(`[%s] error while publishing message: %s`, c.uid, err.Error())
 		}
@@ -588,22 +607,28 @@ func (c *clusterAdapter) Publish(message *ClusterMessage) {
 }
 
 func (c *clusterAdapter) PublishAndReturnOffset(message *ClusterMessage) (Offset, error) {
+	if c.publisher.IsShuttingDown() {
+		return "", ErrAdapterClosed
+	}
 	message.Uid = c.uid
 	message.Nsp = c.Nsp().Name()
-	publish := c.Proto().(ClusterAdapter).DoPublish
-	var (
+	publish, prepareErr := c.Proto().(ClusterAdapter).PreparePublish(message)
+	if prepareErr != nil {
+		return "", prepareErr
+	}
+	result := struct {
 		offset Offset
-		err    = errClusterPublishPanicked
-	)
+		err    error
+	}{err: errClusterPublishPanicked}
 	done := make(chan struct{})
 	if enqueueErr := c.enqueue(c.publisher, func() {
 		defer close(done)
-		offset, err = publish(message)
+		result.offset, result.err = publish()
 	}); enqueueErr != nil {
 		return "", enqueueErr
 	}
 	<-done
-	return offset, err
+	return result.offset, result.err
 }
 
 func (c *clusterAdapter) enqueue(tasks *queue.Queue, task func()) error {
@@ -616,9 +641,8 @@ func (c *clusterAdapter) enqueue(tasks *queue.Queue, task func()) error {
 	return nil
 }
 
-// Send a message to the other members of the cluster.
-func (c *clusterAdapter) DoPublish(message *ClusterMessage) (Offset, error) {
-	return "", errors.New("DoPublish() is not supported on parent ClusterAdapter")
+func (c *clusterAdapter) PreparePublish(*ClusterMessage) (PublishFunc, error) {
+	return nil, errors.New("PreparePublish() is not supported on parent ClusterAdapter")
 }
 
 func (c *clusterAdapter) Close() {
@@ -633,22 +657,30 @@ func (c *clusterAdapter) Close() {
 	c.Adapter.Close()
 }
 
-func (c *clusterAdapter) closeWithMessage(message *ClusterMessage) {
+func (c *clusterAdapter) PublishAndClose(message *ClusterMessage) {
+	if c.publisher.IsShuttingDown() {
+		return
+	}
+	message.Uid = c.uid
+	message.Nsp = c.Nsp().Name()
+	// Preparation may invoke user encoders; never run it under queueMu.
+	publish, prepareErr := c.Proto().(ClusterAdapter).PreparePublish(message)
 	c.queueMu.Lock()
 	if c.publisher.IsShuttingDown() {
 		c.queueMu.Unlock()
 		return
 	}
 
-	message.Uid = c.uid
-	message.Nsp = c.Nsp().Name()
 	responsesDone := make(chan struct{})
-	publish := c.Proto().(ClusterAdapter).DoPublish
 	c.responses.Enqueue(func() { close(responsesDone) })
 	c.publisher.Enqueue(func() {
 		defer c.Adapter.Close()
 		<-responsesDone
-		if _, err := publish(message); err != nil {
+		err := prepareErr
+		if err == nil {
+			_, err = publish()
+		}
+		if err != nil {
 			adapterLog.Debug(`[%s] error while publishing message: %s`, c.uid, err.Error())
 		}
 	})
@@ -658,17 +690,18 @@ func (c *clusterAdapter) closeWithMessage(message *ClusterMessage) {
 }
 
 func (c *clusterAdapter) PublishResponse(requesterUid ServerId, response *ClusterResponse) {
+	if c.responses.IsShuttingDown() {
+		return
+	}
 	response.Uid = c.uid
 	response.Nsp = c.Nsp().Name()
-	published, err := snapshotClusterMessage(response)
+	publish, err := c.Proto().(ClusterAdapter).PreparePublishResponse(requesterUid, response)
 	if err != nil {
 		adapterLog.Debug(`[%s] error while publishing response: %s`, c.uid, err.Error())
 		return
 	}
-	publish := c.Proto().(ClusterAdapter).DoPublishResponse
-
 	if err = c.enqueue(c.responses, func() {
-		if publishErr := publish(requesterUid, published); publishErr != nil {
+		if _, publishErr := publish(); publishErr != nil {
 			adapterLog.Debug(`[%s] error while publishing response: %s`, c.uid, publishErr.Error())
 		}
 	}); err != nil {
@@ -676,7 +709,6 @@ func (c *clusterAdapter) PublishResponse(requesterUid ServerId, response *Cluste
 	}
 }
 
-// Send a response to the given member of the cluster.
-func (c *clusterAdapter) DoPublishResponse(requesterUid ServerId, response *ClusterResponse) error {
-	return errors.New("DoPublishResponse() is not supported on parent ClusterAdapter")
+func (c *clusterAdapter) PreparePublishResponse(ServerId, *ClusterResponse) (PublishFunc, error) {
+	return nil, errors.New("PreparePublishResponse() is not supported on parent ClusterAdapter")
 }

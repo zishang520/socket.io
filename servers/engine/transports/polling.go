@@ -112,7 +112,7 @@ func (p *polling) OnRequest(ctx *types.HttpContext) {
 
 // The client sends a request awaiting for us to send data.
 func (p *polling) onPollRequest(ctx *types.HttpContext) {
-	if p.req.Load() != nil {
+	if !p.req.CompareAndSwap(nil, ctx) {
 		pollingLog.Debug("request overlap")
 		// assert: p.res, '.req should be (un)set together'
 		p.OnError("overlap from client", nil)
@@ -121,23 +121,37 @@ func (p *polling) onPollRequest(ctx *types.HttpContext) {
 		return
 	}
 
-	p.req.Store(ctx)
-
 	pollingLog.Debug("setting request")
 
-	onClose := types.EventListener(func(...any) {
-		p.SetWritable(false)
-		p.OnError("poll connection closed prematurely", nil)
+	onClose := types.EventListener(func(args ...any) {
+		// Successful response completion is released by the write callback.
+		if len(args) > 0 && args[0] == nil {
+			return
+		}
+		if p.req.CompareAndSwap(ctx, nil) {
+			p.SetWritable(false)
+			p.Discard()
+			p.OnError("poll connection closed prematurely", nil)
+		}
 	})
-
-	ctx.Cleanup = func() {
-		ctx.RemoveListener("close", onClose)
-		p.req.Store(nil)
-	}
 
 	_ = ctx.Once("close", onClose)
 
 	p.SetWritable(true)
+	// An upgrade may discard this transport while the GET is being registered.
+	if p.Discarded() {
+		p.req.CompareAndSwap(ctx, nil)
+		p.SetWritable(false)
+		_ = ctx.SetStatusCode(http.StatusBadRequest)
+		_, _ = ctx.Write(nil)
+		return
+	}
+	// Cancellation can win before the close listener has been registered.
+	if ctx.IsDone() {
+		p.SetWritable(false)
+		onClose()
+		return
+	}
 	p.Emit("ready")
 
 	// if we're still writable but had a pending close, trigger an empty send
@@ -266,8 +280,7 @@ func (p *polling) Send(packets []*packet.Packet) {
 	p.SetWritable(false)
 	p.writeQueue.Enqueue(func() {
 		if err := p.send(packets); err != nil {
-			if ctx := p.req.Load(); ctx != nil {
-				ctx.Cleanup()
+			if ctx := p.req.Swap(nil); ctx != nil {
 				_ = ctx.SetStatusCode(http.StatusInternalServerError)
 				_, _ = ctx.Write(nil)
 			}
@@ -316,6 +329,7 @@ func (p *polling) write(data types.BufferInterface, options *packet.Options) {
 		return
 	}
 	p.Proto().(Polling).DoWrite(ctx, data, options, func(err error) {
+		p.req.CompareAndSwap(ctx, nil)
 		if err != nil {
 			p.OnError("polling write error", err)
 			return
@@ -338,7 +352,8 @@ func (p *polling) DoWrite(ctx *types.HttpContext, data types.BufferInterface, op
 	})
 
 	respond := func(data types.BufferInterface, length string) {
-		ctx.Cleanup()
+		// Retire the poll before the client can receive the body and issue its next GET.
+		p.req.CompareAndSwap(ctx, nil)
 		defer callback(nil)
 
 		headers.Set("Content-Length", length)
@@ -365,7 +380,6 @@ func (p *polling) DoWrite(ctx *types.HttpContext, data types.BufferInterface, op
 
 	buf, err := p.compress(data, encoding)
 	if err != nil {
-		ctx.Cleanup()
 		defer callback(err)
 
 		_ = ctx.SetStatusCode(http.StatusInternalServerError)
@@ -437,8 +451,6 @@ func (p *polling) compress(data types.BufferInterface, encoding string) (types.B
 // Closes the transport.
 func (p *polling) DoClose(fn types.Callable) {
 	pollingLog.Debug("closing")
-	p.writeQueue.TryClose()
-
 	if dataCtx := p.dataCtx.Load(); dataCtx != nil && !dataCtx.IsDone() {
 		pollingLog.Debug("aborting ongoing data request")
 		dataCtx.ResponseHeaders().Set("Connection", "close")

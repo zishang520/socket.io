@@ -88,7 +88,13 @@ func (s *server) HandleRequest(ctx *types.HttpContext) {
 		if sid := ctx.Query().Peek("sid"); sid != "" {
 			serverLog.Debug("setting new request for existing client")
 			if socket, ok := s.Clients().Load(sid); ok {
-				socket.Transport().OnRequest(ctx)
+				// An upgrade can replace or discard the transport after Verify.
+				transport := socket.Transport()
+				if transport.Discarded() || transport.Name() != ctx.Query().Peek("transport") {
+					abortRequest(ctx, BAD_REQUEST, map[string]any{"name": "TRANSPORT_MISMATCH"})
+					return
+				}
+				transport.OnRequest(ctx)
 			} else {
 				abortRequest(ctx, UNKNOWN_SID, map[string]any{"sid": sid})
 			}

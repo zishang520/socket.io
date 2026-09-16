@@ -104,85 +104,61 @@ func (a *postgresAdapter) Construct(nsp socket.Namespace) {
 	a.channel = a.opts.ChannelPrefix() + "#" + nsp.Name()
 }
 
-// DoPublish publishes a cluster message to other nodes via PostgreSQL pg_notify.
-// If the message contains binary data, or the JSON payload exceeds the configured threshold,
-// the full message is msgpack-encoded and stored in the attachment table. Only a reference
-// header is sent via NOTIFY. This matches the Node.js adapter protocol exactly.
-// Returns an empty offset since PostgreSQL NOTIFY does not support ordered offsets.
-func (a *postgresAdapter) DoPublish(message *ClusterMessage) (offset adapter.Offset, err error) {
-	ctx, cancel := context.WithTimeout(a.postgresClient.Context(), postgres.DefaultOperationTimeout)
-	defer cancel()
-	defer func() {
+// PreparePublish selects NOTIFY or an attachment and encodes before queueing.
+// Database timeouts start when the returned function actually executes.
+func (a *postgresAdapter) PreparePublish(message *ClusterMessage) (_ adapter.PublishFunc, err error) {
+	reportError := func(err error) {
 		if err != nil && a.postgresClient.Context().Err() == nil {
 			go a.onError(err)
 		}
-	}()
-
-	if log.DEBUG.Load() {
-		postgresLog.Debug("publishing message of type %d", message.Type)
 	}
-
+	defer func() { reportError(err) }()
 	wireMessage := *message
 	wireData, binary, err := postgres.MarshalAdapterData(message.Data)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	wireMessage.Data = wireData
-
-	// Binary data always goes to attachment table (Node.js never sends binary via NOTIFY)
-	if binary {
-		return "", a.publishWithAttachment(ctx, &wireMessage)
+	var payload []byte
+	if !binary {
+		payload, err = json.Marshal(&wireMessage)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode message: %w", err)
+		}
 	}
-
-	payload, err := json.Marshal(&wireMessage)
-	if err != nil {
-		return "", fmt.Errorf("failed to encode message: %w", err)
+	attachment := binary || len(payload) >= a.opts.PayloadThreshold()
+	if attachment {
+		payload, err = utils.MsgPack().Encode(&wireMessage)
+		if err != nil {
+			return nil, fmt.Errorf("failed to msgpack-encode message: %w", err)
+		}
 	}
-
-	// If JSON payload exceeds threshold, use attachment table
-	if len(payload) >= a.opts.PayloadThreshold() {
-		return "", a.publishWithAttachment(ctx, &wireMessage)
-	}
-
-	return "", a.postgresClient.Notify(ctx, a.channel, string(payload))
+	channel, table := a.channel, a.opts.TableName()
+	uid, messageType := message.Uid, message.Type
+	return func() (_ adapter.Offset, err error) {
+		ctx, cancel := context.WithTimeout(a.postgresClient.Context(), postgres.DefaultOperationTimeout)
+		defer cancel()
+		defer func() { reportError(err) }()
+		if !attachment {
+			return "", a.postgresClient.Notify(ctx, channel, string(payload))
+		}
+		id, err := a.postgresClient.InsertAttachment(ctx, table, payload)
+		if err != nil {
+			return "", err
+		}
+		notification, err := json.Marshal(&NotificationMessage{
+			Uid: uid, Type: messageType, AttachmentId: strconv.FormatInt(id, 10),
+		})
+		if err != nil {
+			return "", err
+		}
+		return "", a.postgresClient.Notify(ctx, channel, string(notification))
+	}, nil
 }
 
-// DoPublishResponse publishes a response message to the cluster.
-// This is used for request-response patterns between nodes.
-func (a *postgresAdapter) DoPublishResponse(_ adapter.ServerId, response *ClusterResponse) error {
-	_, err := a.DoPublish(response)
-	return err
-}
-
-// publishWithAttachment msgpack-encodes the full ClusterMessage, stores it in the
-// attachment table, and sends a lightweight NOTIFY header with the attachment ID.
-// This matches the Node.js adapter protocol: attachments are always msgpack-encoded.
-func (a *postgresAdapter) publishWithAttachment(ctx context.Context, message *ClusterMessage) error {
-	payload, err := utils.MsgPack().Encode(message)
-	if err != nil {
-		return fmt.Errorf("failed to msgpack-encode message: %w", err)
-	}
-
-	id, err := a.postgresClient.InsertAttachment(
-		ctx,
-		a.opts.TableName(),
-		payload,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to insert attachment: %w", err)
-	}
-
-	// Send notification header with uid, type, and attachmentId (matches Node.js format)
-	notification, err := json.Marshal(&NotificationMessage{
-		Uid:          message.Uid,
-		Type:         message.Type,
-		AttachmentId: strconv.FormatInt(id, 10),
-	})
-	if err != nil {
-		return err
-	}
-
-	return a.postgresClient.Notify(ctx, a.channel, string(notification))
+// PreparePublishResponse uses the same NOTIFY/attachment encoding for responses.
+func (a *postgresAdapter) PreparePublishResponse(_ adapter.ServerId, response *ClusterResponse) (adapter.PublishFunc, error) {
+	return a.PreparePublish(response)
 }
 
 // OnNotification processes a raw notification payload received from PostgreSQL LISTEN/NOTIFY.

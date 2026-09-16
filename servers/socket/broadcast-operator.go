@@ -3,7 +3,6 @@ package socket
 import (
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -138,29 +137,32 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 
 	packet.Data = data[:data_len-1]
 
-	var timedOut atomic.Bool
+	var packetId atomic.Pointer[uint64]
 	responses := types.NewSlice[any]()
-	var ackOnce sync.Once
-
-	timer := utils.SetTimeout(func() {
-		timedOut.Store(true)
-
-		broadcast_log.Debug("operation has timed out")
-
-		if packetId := packet.Id; packetId != nil {
+	var ackDone atomic.Bool
+	clearAcks := func() {
+		if id := packetId.Load(); id != nil {
 			b.adapter.Nsp().Sockets().Range(func(_ SocketId, socket *Socket) bool {
-				socket.Acks().Delete(*packetId)
+				socket.Acks().Delete(*id)
 				return true
 			})
 		}
+	}
 
-		ackOnce.Do(func() {
-			if b.flags.ExpectSingleResponse {
-				ack(nil, errors.New("operation has timed out"))
-			} else {
-				ack(responses.All(), errors.New("operation has timed out"))
-			}
-		})
+	timer := utils.SetTimeout(func() {
+		if !ackDone.CompareAndSwap(false, true) {
+			return
+		}
+
+		broadcast_log.Debug("operation has timed out")
+
+		clearAcks()
+
+		if b.flags.ExpectSingleResponse {
+			ack(nil, errors.New("operation has timed out"))
+		} else {
+			ack(responses.All(), errors.New("operation has timed out"))
+		}
 	}, utils.NormalizeTimerMilliseconds(*b.flags.Timeout))
 
 	var expectedServerCount atomic.Int64
@@ -183,16 +185,16 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 			// ServerCount not yet known, skip check
 			return
 		}
-		if !timedOut.Load() && expected == actualServerCount.Load() && uint64(responses.Len()) == expectedClientCount.Load() {
+		if !ackDone.Load() && expected == actualServerCount.Load() && uint64(responses.Len()) == expectedClientCount.Load() {
 			utils.ClearTimeout(timer)
-			ackOnce.Do(func() {
+			if ackDone.CompareAndSwap(false, true) {
 				if b.flags.ExpectSingleResponse {
 					data, _ := responses.Get(0)
 					ack([]any{data}, nil)
 				} else {
 					ack(responses.All(), nil)
 				}
-			})
+			}
 		}
 	}
 
@@ -207,19 +209,30 @@ func (b *BroadcastOperator) Emit(ev string, args ...any) error {
 		checkCompleteness()
 	}, func(clientResponse []any, err error) {
 		if err != nil {
-			timedOut.Store(true)
-			utils.ClearTimeout(timer)
-			ackOnce.Do(func() { ack(nil, err) })
+			if ackDone.CompareAndSwap(false, true) {
+				utils.ClearTimeout(timer)
+				ack(nil, err)
+			}
 			return
 		}
 		// each client sends an acknowledgement
 		responses.Push(slices.TryGet(clientResponse, 0))
 		checkCompleteness()
 	})
-	serverCount, err := b.adapter.ServerCount()
-	if err != nil {
-		broadcast_log.Debug("error while getting server count: %s", err.Error())
-		return nil
+	// BroadcastWithAck owns ID assignment and registration until it returns.
+	packetId.Store(packet.Id)
+	// The expected server count is still unset, so completion here means failure.
+	if ackDone.Load() {
+		clearAcks()
+	}
+	serverCount := int64(1)
+	if !b.flags.Local {
+		var err error
+		serverCount, err = b.adapter.ServerCount()
+		if err != nil {
+			broadcast_log.Debug("error while getting server count: %s", err.Error())
+			return nil
+		}
 	}
 	expectedServerCount.Store(serverCount)
 	checkCompleteness()

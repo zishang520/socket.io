@@ -176,14 +176,16 @@ func (s *shardedValkeyAdapter) receiveMessages(pubSub *valkey.ValkeyPubSub) {
 	}
 }
 
-func (s *shardedValkeyAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
+func (s *shardedValkeyAdapter) PreparePublish(message *adapter.ClusterMessage) (adapter.PublishFunc, error) {
 	channel := s.computeChannel(message)
 	valkeyLog.Debug("publishing message of type %v to %s", message.Type, channel)
 	payload, err := adapter.EncodeClusterMessage(message)
 	if err != nil {
-		return "", fmt.Errorf("failed to encode message: %w", err)
+		return nil, fmt.Errorf("failed to encode message: %w", err)
 	}
-	return "", s.valkeyClient.SPublish(s.valkeyClient.Context(), channel, payload)
+	return func() (adapter.Offset, error) {
+		return "", s.valkeyClient.SPublish(s.valkeyClient.Context(), channel, payload)
+	}, nil
 }
 
 func (s *shardedValkeyAdapter) computeChannel(message *adapter.ClusterMessage) string {
@@ -205,12 +207,15 @@ func (s *shardedValkeyAdapter) dynamicChannel(room socket.Room) string {
 	return s.channel + string(room) + "#"
 }
 
-func (s *shardedValkeyAdapter) DoPublishResponse(requester adapter.ServerId, response *adapter.ClusterResponse) error {
+func (s *shardedValkeyAdapter) PreparePublishResponse(requester adapter.ServerId, response *adapter.ClusterResponse) (adapter.PublishFunc, error) {
+	channel := s.channel + string(requester) + "#"
 	payload, err := adapter.EncodeClusterMessage(response)
 	if err != nil {
-		return fmt.Errorf("failed to encode response: %w", err)
+		return nil, fmt.Errorf("failed to encode response: %w", err)
 	}
-	return s.valkeyClient.SPublish(s.valkeyClient.Context(), s.channel+string(requester)+"#", payload)
+	return func() (adapter.Offset, error) {
+		return "", s.valkeyClient.SPublish(s.valkeyClient.Context(), channel, payload)
+	}, nil
 }
 
 func (s *shardedValkeyAdapter) onRawMessage(raw []byte) {

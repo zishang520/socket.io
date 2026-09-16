@@ -33,7 +33,7 @@ type ackAdapter struct {
 }
 
 type fetchSocketsErrorAdapter struct {
-	socket.Adapter
+	ClusterAdapter
 	err   error
 	calls atomic.Int64
 }
@@ -125,10 +125,12 @@ func (a *ackLifecycleAdapter) BroadcastWithAck(packet *parser.Packet, opts *sock
 	a.Adapter.BroadcastWithAck(packet, opts, clientCount, ack)
 }
 
-func (a *blockingPublishAdapter) DoPublish(message *ClusterMessage) (Offset, error) {
-	a.started <- message
-	<-a.release
-	return "", nil
+func (a *blockingPublishAdapter) PreparePublish(message *ClusterMessage) (PublishFunc, error) {
+	return prepareTestPublish(message, EncodeClusterMessage, func(message *ClusterMessage) (Offset, error) {
+		a.started <- message
+		<-a.release
+		return "", nil
+	})
 }
 
 func (r *countedCloseReader) Read(data []byte) (int, error) {
@@ -315,7 +317,7 @@ func TestClusterAdapterReturnsServerCountErrors(t *testing.T) {
 func TestClusterFetchSocketsReturnsLocalError(t *testing.T) {
 	localErr := errors.New("local fetch failed")
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
-	local := &fetchSocketsErrorAdapter{Adapter: socket.NewAdapter(nsp), err: localErr}
+	local := &fetchSocketsErrorAdapter{ClusterAdapter: NewClusterAdapter(nsp), err: localErr}
 	cluster := MakeClusterAdapter().(*clusterAdapter)
 	cluster.Adapter = local
 	transport := &prototypeClusterAdapter{ClusterAdapter: cluster, count: 2}
@@ -362,8 +364,8 @@ func TestHeartbeatFetchSocketsReturnsLocalError(t *testing.T) {
 	cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
 	defer cluster.Close()
 
-	local := &fetchSocketsErrorAdapter{Adapter: socket.NewAdapter(nsp), err: localErr}
-	cluster.ClusterAdapter.(*clusterAdapter).Adapter = local
+	local := &fetchSocketsErrorAdapter{ClusterAdapter: cluster.ClusterAdapter, err: localErr}
+	cluster.ClusterAdapter = local
 	transport := &testClusterAdapter{ClusterAdapter: cluster}
 	cluster.Prototype(transport)
 	cluster.nodesMap.Store("remote", time.Now().UnixMilli())
@@ -576,24 +578,47 @@ type testClusterAdapter struct {
 	published  atomic.Int64
 	response   atomic.Pointer[ClusterResponse]
 	publishErr error
+	encode     func(*ClusterMessage) ([]byte, error)
 	onPublish  func(*ClusterMessage)
 	onResponse func(*ClusterResponse)
 }
 
-func (a *testClusterAdapter) DoPublish(message *ClusterMessage) (Offset, error) {
-	a.published.Add(1)
-	if a.onPublish != nil {
-		a.onPublish(message)
+func prepareTestPublish(message *ClusterMessage, encode func(*ClusterMessage) ([]byte, error), send func(*ClusterMessage) (Offset, error)) (PublishFunc, error) {
+	payload, err := encode(message)
+	if err != nil {
+		return nil, err
 	}
-	return "", a.publishErr
+	return func() (Offset, error) {
+		decoded, err := DecodeClusterMessage(payload)
+		if err != nil {
+			return "", err
+		}
+		return send(decoded)
+	}, nil
 }
 
-func (a *testClusterAdapter) DoPublishResponse(_ ServerId, response *ClusterResponse) error {
-	a.response.Store(response)
-	if a.onResponse != nil {
-		a.onResponse(response)
+func (a *testClusterAdapter) PreparePublish(message *ClusterMessage) (PublishFunc, error) {
+	encode := a.encode
+	if encode == nil {
+		encode = EncodeClusterMessage
 	}
-	return nil
+	return prepareTestPublish(message, encode, func(message *ClusterMessage) (Offset, error) {
+		a.published.Add(1)
+		if a.onPublish != nil {
+			a.onPublish(message)
+		}
+		return "", a.publishErr
+	})
+}
+
+func (a *testClusterAdapter) PreparePublishResponse(_ ServerId, response *ClusterResponse) (PublishFunc, error) {
+	return prepareTestPublish(response, EncodeClusterMessage, func(response *ClusterResponse) (Offset, error) {
+		a.response.Store(response)
+		if a.onResponse != nil {
+			a.onResponse(response)
+		}
+		return "", nil
+	})
 }
 
 func newClusterPublishTestAdapter(t *testing.T, publishErr error) (*clusterAdapter, *testClusterAdapter) {
@@ -848,7 +873,7 @@ func TestClusterPublishResponseBypassesBlockedPublishAndCloseIsFinal(t *testing.
 	}
 
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
-	cluster := MakeClusterAdapter().(*clusterAdapter)
+	cluster := MakeClusterAdapter()
 	release := make(chan struct{})
 	responseStarted := make(chan struct{})
 	releaseResponse := make(chan struct{})
@@ -927,13 +952,13 @@ func TestClusterPublishResponseBypassesBlockedPublishAndCloseIsFinal(t *testing.
 	queuedResponse.Type = SERVER_SIDE_EMIT_RESPONSE
 	mutablePacket["values"].([]any)[0] = "after"
 
-	cluster.closeWithMessage(&ClusterMessage{Type: ADAPTER_CLOSE})
+	cluster.PublishAndClose(&ClusterMessage{Type: ADAPTER_CLOSE})
 	cluster.PublishResponse("requester", &ClusterResponse{
 		Type: SERVER_SIDE_EMIT_RESPONSE,
 		Data: &ServerSideEmitResponse{RequestId: "request"},
 	})
 	if _, err := cluster.PublishAndReturnOffset(&ClusterMessage{Type: HEARTBEAT}); !errors.Is(err, ErrAdapterClosed) {
-		t.Fatalf("PublishAndReturnOffset() error after closeWithMessage = %v", err)
+		t.Fatalf("PublishAndReturnOffset() error after Close = %v", err)
 	}
 	select {
 	case event := <-published:
@@ -1318,7 +1343,7 @@ func TestClusterBroadcastAckWrapsPacketValue(t *testing.T) {
 	for _, packet := range []any{"response", []any{"response"}, nil} {
 		cluster := MakeClusterAdapter().(*clusterAdapter)
 		var response []any
-		cluster.ackRequests.Store("request", ClusterAckRequest{
+		cluster.ackRequests.Store("request", &ClusterAckRequest{
 			Ack: func(args []any, _ error) {
 				response = args
 			},
@@ -1357,7 +1382,7 @@ func TestFetchSocketsTimeout(t *testing.T) {
 					Adapter:     socket.NewAdapter(nsp),
 					serverCount: 2,
 				}
-				cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
+				cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster, encode: EncodeClusterMessageMsgpack})
 				cluster.Construct(nsp)
 
 				result := make(chan error, 1)
@@ -1414,7 +1439,7 @@ func TestHeartbeatFetchSocketsTimeout(t *testing.T) {
 				nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
 				cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
 				defer cluster.Close()
-				cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
+				cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster, encode: EncodeClusterMessageMsgpack})
 				cluster.nodesMap.Store("remote", time.Now().UnixMilli())
 
 				result := make(chan error, 1)

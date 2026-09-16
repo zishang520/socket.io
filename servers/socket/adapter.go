@@ -2,9 +2,11 @@ package socket
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/zishang520/socket.io/parsers/socket/v3/parser"
 	"github.com/zishang520/socket.io/v3/pkg/types"
+	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // AdapterBuilder is a builder for creating Adapter instances.
@@ -190,7 +192,8 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 
 	packet.Nsp = a.nsp.Name()
 	// we can use the same id for each packet, since the _ids counter is common (no duplicate)
-	packet.Id = new(a.nsp.Ids())
+	id := a.nsp.Ids()
+	packet.Id = new(id)
 	encodedPackets, err := a._encode(packet, packetOpts)
 	if err != nil {
 		ack(nil, err)
@@ -198,11 +201,26 @@ func (a *adapter) BroadcastWithAck(packet *parser.Packet, opts *BroadcastOptions
 		return
 	}
 	var clientCount uint64
+	var expired atomic.Bool
 	a.apply(opts, func(socket *Socket) {
+		if clientCount == 0 && flags.Timeout != nil {
+			// One timer owns this node's registrations, including remote broadcasts.
+			utils.SetTimeout(func() {
+				expired.Store(true)
+				a.nsp.Sockets().Range(func(_ SocketId, client *Socket) bool {
+					client.Acks().Delete(id)
+					return true
+				})
+			}, utils.NormalizeTimerMilliseconds(*flags.Timeout))
+		}
 		// track the total number of acknowledgements that are expected
 		clientCount++
 		// call the ack callback for each client response
-		socket.Acks().Store(*packet.Id, ack)
+		socket.Acks().Store(id, ack)
+		// Earlier outgoing hooks/writes may have blocked until after expiry.
+		if expired.Load() {
+			socket.Acks().Delete(id)
+		}
 		if notifyOutgoingListeners := socket.NotifyOutgoingListeners(); notifyOutgoingListeners != nil {
 			notifyOutgoingListeners(packet)
 		}

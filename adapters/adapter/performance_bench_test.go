@@ -53,6 +53,20 @@ func BenchmarkHeartbeatPublish(b *testing.B) {
 	}
 }
 
+func BenchmarkClusterPublishAndReturnOffset(b *testing.B) {
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/bench")
+	cluster := NewClusterAdapter(nsp)
+	cluster.Prototype(&testClusterAdapter{ClusterAdapter: cluster})
+	b.Cleanup(cluster.Close)
+	message := &ClusterMessage{Type: HEARTBEAT}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := cluster.PublishAndReturnOffset(message); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkClusterAdapterIgnoreSelf(b *testing.B) {
 	adapter := MakeClusterAdapter().(*clusterAdapter)
 	adapter.uid = "node"
@@ -61,5 +75,31 @@ func BenchmarkClusterAdapterIgnoreSelf(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		adapter.OnMessage(message, "")
+	}
+}
+
+func BenchmarkClusterMessageEncoding(b *testing.B) {
+	opts := &PacketOptions{Rooms: []socket.Room{"room"}, Except: []socket.Room{}, Flags: &socket.BroadcastFlags{}}
+	for _, test := range []struct {
+		name string
+		kind MessageType
+		data any
+	}{
+		{"native", SERVER_SIDE_EMIT_RESPONSE, &ServerSideEmitResponse{RequestId: "request", Packet: map[string]any{"count": int64(9007199254740993), "values": []any{"hello", true}}}},
+		{"custom codec", SERVER_SIDE_EMIT_RESPONSE, &ServerSideEmitResponse{RequestId: "request", Packet: &snapshotTaggedValue{Value: "hello"}}},
+		{"server emit", SERVER_SIDE_EMIT, &ServerSideEmitMessage{Packet: []any{"event", "hello"}}},
+		{"broadcast ack", BROADCAST_ACK, &BroadcastAck{RequestId: "request", Packet: "hello"}},
+		{"join", SOCKETS_JOIN, &SocketsJoinLeaveMessage{Opts: opts, Rooms: []socket.Room{"target"}}},
+		{"fetch", FETCH_SOCKETS, &FetchSocketsMessage{Opts: opts, RequestId: "request"}},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			message := &ClusterMessage{Type: test.kind, Data: test.data}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := EncodeClusterMessage(message); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

@@ -116,7 +116,8 @@ func (p *polling) _poll() {
 	clientPollingLog.Debug("polling")
 	p._polling.Store(true)
 	p.Emit("poll")
-	p.writeQueue.Enqueue(func() { p.doPoll() })
+	// A pending long poll must not block POSTs on the serial write queue.
+	go p.doPoll()
 }
 
 // _onPacket handles incoming packets and updates the transport state accordingly.

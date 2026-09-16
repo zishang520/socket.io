@@ -75,14 +75,14 @@ type Map[TKey comparable, TValue any] struct {
 	// map, the dirty map will be promoted to the read map (in the unamended
 	// state) and the next store to the map will make a new dirty copy.
 	misses int
-
-	length atomic.Int64 // Provides an O(1) tracker for map length
 }
 
 // readOnly is an immutable struct stored atomically in the Map.read field.
 type readOnly[TKey comparable, TValue any] struct {
 	m       map[TKey]*entry[TValue]
 	amended bool // true if the dirty map contains some key not in m.
+	// Views share a counter until Clear starts a new generation.
+	length *atomic.Int64
 }
 
 // An entry is a slot in the map corresponding to a particular key.
@@ -106,12 +106,14 @@ type entry[TValue any] struct {
 	// p != expunged. If p == expunged, an entry's associated value can be updated
 	// only after first setting m.dirty[key] = e so that lookups using the dirty
 	// map find the entry.
-	p        atomic.Pointer[TValue]
-	expunged *TValue
+	p atomic.Pointer[TValue]
+	// The marker lives inside this non-zero-sized entry, so its address cannot
+	// alias a stored zero-sized value (as new(TValue) can).
+	expunged TValue
 }
 
 func newEntry[TValue any](i TValue) *entry[TValue] {
-	e := &entry[TValue]{expunged: new(TValue)}
+	e := new(entry[TValue])
 	e.p.Store(new(i))
 	return e
 }
@@ -153,7 +155,7 @@ func (m *Map[TKey, TValue]) Load(key TKey) (value TValue, ok bool) {
 
 func (e *entry[TValue]) load() (value TValue, ok bool) {
 	p := e.p.Load()
-	if p == nil || p == e.expunged {
+	if p == nil || p == &e.expunged {
 		return value, false
 	}
 	return *p, true
@@ -183,7 +185,6 @@ func (m *Map[TKey, TValue]) Clear() {
 	clear(m.dirty)
 	// Don't immediately promote the newly-cleared dirty map on the next operation.
 	m.misses = 0
-	m.length.Store(0)
 }
 
 // tryCompareAndSwap compare the entry with the given old value and swaps
@@ -194,7 +195,7 @@ func (m *Map[TKey, TValue]) Clear() {
 // the entry unchanged.
 func (e *entry[TValue]) tryCompareAndSwap(old, new TValue) bool {
 	p := e.p.Load()
-	if p == nil || p == e.expunged || any(*p) != any(old) {
+	if p == nil || p == &e.expunged || any(*p) != any(old) {
 		return false
 	}
 
@@ -207,7 +208,7 @@ func (e *entry[TValue]) tryCompareAndSwap(old, new TValue) bool {
 			return true
 		}
 		p = e.p.Load()
-		if p == nil || p == e.expunged || any(*p) != any(old) {
+		if p == nil || p == &e.expunged || any(*p) != any(old) {
 			return false
 		}
 	}
@@ -218,7 +219,7 @@ func (e *entry[TValue]) tryCompareAndSwap(old, new TValue) bool {
 // If the entry was previously expunged, it must be added to the dirty map
 // before m.mu is unlocked.
 func (e *entry[TValue]) unexpungeLocked() (wasExpunged bool) {
-	return e.p.CompareAndSwap(e.expunged, nil)
+	return e.p.CompareAndSwap(&e.expunged, nil)
 }
 
 // swapLocked unconditionally swaps a value into the entry.
@@ -239,7 +240,7 @@ func (m *Map[TKey, TValue]) LoadOrStore(key TKey, value TValue) (actual TValue, 
 		actual, loaded, stored = e.tryLoadOrStore(value)
 		if stored {
 			if !loaded {
-				m.length.Add(1)
+				read.length.Add(1)
 			}
 			return actual, loaded
 		}
@@ -260,7 +261,10 @@ func (m *Map[TKey, TValue]) LoadOrStore(key TKey, value TValue) (actual TValue, 
 			// We're adding the first new key to the dirty map.
 			// Make sure it is allocated and mark the read-only map as incomplete.
 			m.dirtyLocked()
-			m.read.Store(&readOnly[TKey, TValue]{m: read.m, amended: true})
+			if read.length == nil {
+				read.length = new(atomic.Int64)
+			}
+			m.read.Store(&readOnly[TKey, TValue]{m: read.m, amended: true, length: read.length})
 		}
 		m.dirty[key] = newEntry(value)
 		actual, loaded = value, false
@@ -268,7 +272,7 @@ func (m *Map[TKey, TValue]) LoadOrStore(key TKey, value TValue) (actual TValue, 
 	m.mu.Unlock()
 
 	if !loaded {
-		m.length.Add(1)
+		read.length.Add(1)
 	}
 	return actual, loaded
 }
@@ -280,7 +284,7 @@ func (m *Map[TKey, TValue]) LoadOrStore(key TKey, value TValue) (actual TValue, 
 // returns with ok==false.
 func (e *entry[TValue]) tryLoadOrStore(i TValue) (actual TValue, loaded, ok bool) {
 	p := e.p.Load()
-	if p == e.expunged {
+	if p == &e.expunged {
 		return actual, false, false
 	}
 	if p != nil {
@@ -296,7 +300,7 @@ func (e *entry[TValue]) tryLoadOrStore(i TValue) (actual TValue, loaded, ok bool
 			return i, false, true
 		}
 		p = e.p.Load()
-		if p == e.expunged {
+		if p == &e.expunged {
 			return actual, false, false
 		}
 		if p != nil {
@@ -327,7 +331,7 @@ func (m *Map[TKey, TValue]) LoadAndDelete(key TKey) (value TValue, loaded bool) 
 	if ok {
 		value, ok = e.delete()
 		if ok {
-			m.length.Add(-1)
+			read.length.Add(-1)
 		}
 		return value, ok
 	}
@@ -342,7 +346,7 @@ func (m *Map[TKey, TValue]) Delete(key TKey) {
 func (e *entry[TValue]) delete() (value TValue, ok bool) {
 	for {
 		p := e.p.Load()
-		if p == nil || p == e.expunged {
+		if p == nil || p == &e.expunged {
 			return value, false
 		}
 		if e.p.CompareAndSwap(p, nil) {
@@ -358,7 +362,7 @@ func (e *entry[TValue]) delete() (value TValue, ok bool) {
 func (e *entry[TValue]) trySwap(i *TValue) (*TValue, bool) {
 	for {
 		p := e.p.Load()
-		if p == e.expunged {
+		if p == &e.expunged {
 			return nil, false
 		}
 		if e.p.CompareAndSwap(p, i) {
@@ -374,7 +378,7 @@ func (m *Map[TKey, TValue]) Swap(key TKey, value TValue) (previous TValue, loade
 	if e, ok := read.m[key]; ok {
 		if v, ok := e.trySwap(&value); ok {
 			if v == nil {
-				m.length.Add(1)
+				read.length.Add(1)
 				return previous, false
 			}
 			return *v, true
@@ -403,14 +407,17 @@ func (m *Map[TKey, TValue]) Swap(key TKey, value TValue) (previous TValue, loade
 			// We're adding the first new key to the dirty map.
 			// Make sure it is allocated and mark the read-only map as incomplete.
 			m.dirtyLocked()
-			m.read.Store(&readOnly[TKey, TValue]{m: read.m, amended: true})
+			if read.length == nil {
+				read.length = new(atomic.Int64)
+			}
+			m.read.Store(&readOnly[TKey, TValue]{m: read.m, amended: true, length: read.length})
 		}
 		m.dirty[key] = newEntry(value)
 	}
 	m.mu.Unlock()
 
 	if !loaded {
-		m.length.Add(1)
+		read.length.Add(1)
 	}
 
 	return previous, loaded
@@ -473,11 +480,11 @@ func (m *Map[TKey, TValue]) CompareAndDelete(key TKey, old TValue) (deleted bool
 	}
 	for ok {
 		p := e.p.Load()
-		if p == nil || p == e.expunged || any(*p) != any(old) {
+		if p == nil || p == &e.expunged || any(*p) != any(old) {
 			return false
 		}
 		if e.p.CompareAndSwap(p, nil) {
-			m.length.Add(-1)
+			read.length.Add(-1)
 			return true
 		}
 	}
@@ -509,7 +516,7 @@ func (m *Map[TKey, TValue]) Range(f func(key TKey, value TValue) bool) {
 		m.mu.Lock()
 		read = m.loadReadOnly()
 		if read.amended {
-			read = readOnly[TKey, TValue]{m: m.dirty}
+			read = readOnly[TKey, TValue]{m: m.dirty, length: read.length}
 			m.read.Store(new(read))
 			m.dirty = nil
 			m.misses = 0
@@ -528,8 +535,14 @@ func (m *Map[TKey, TValue]) Range(f func(key TKey, value TValue) bool) {
 	}
 }
 
+// Len returns the entry count in O(1). During concurrent mutations it is an
+// estimate; completed operations from before Clear cannot affect the new count.
 func (m *Map[TKey, TValue]) Len() (n int) {
-	return int(m.length.Load())
+	counter := m.loadReadOnly().length
+	if counter == nil {
+		return 0
+	}
+	return max(0, int(counter.Load()))
 }
 
 func (m *Map[TKey, TValue]) Keys() (keys []TKey) {
@@ -559,7 +572,7 @@ func (m *Map[TKey, TValue]) missLocked() {
 	if m.misses < len(m.dirty) {
 		return
 	}
-	m.read.Store(&readOnly[TKey, TValue]{m: m.dirty})
+	m.read.Store(&readOnly[TKey, TValue]{m: m.dirty, length: m.loadReadOnly().length})
 	m.dirty = nil
 	m.misses = 0
 }
@@ -581,10 +594,10 @@ func (m *Map[TKey, TValue]) dirtyLocked() {
 func (e *entry[TValue]) tryExpungeLocked() (isExpunged bool) {
 	p := e.p.Load()
 	for p == nil {
-		if e.p.CompareAndSwap(nil, e.expunged) {
+		if e.p.CompareAndSwap(nil, &e.expunged) {
 			return true
 		}
 		p = e.p.Load()
 	}
-	return p == e.expunged
+	return p == &e.expunged
 }

@@ -26,7 +26,6 @@ func newHeartbeatPublishTestAdapter(t *testing.T, publishErr error) *clusterAdap
 	t.Helper()
 	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
 	cluster := MakeClusterAdapterWithHeartbeat().(*clusterAdapterWithHeartbeat)
-	cluster.ClusterAdapter.(*clusterAdapter).Adapter = socket.NewAdapter(nsp)
 	transport := &testClusterAdapter{ClusterAdapter: cluster, publishErr: publishErr}
 	cluster.Prototype(transport)
 	cluster.Construct(nsp)
@@ -146,8 +145,9 @@ func TestHeartbeatFetchSocketsReturnsPublishError(t *testing.T) {
 }
 
 func TestHeartbeatDoesNotTrackEmptyUid(t *testing.T) {
-	cluster := MakeClusterAdapterWithHeartbeat().(*clusterAdapterWithHeartbeat)
-	cluster.ClusterAdapter.(*clusterAdapter).uid = "self"
+	nsp := socket.NewNamespace(socket.NewServer(nil, nil), "/test")
+	cluster := NewClusterAdapterWithHeartbeat(nsp, nil).(*clusterAdapterWithHeartbeat)
+	defer cluster.Close()
 
 	cluster.OnMessage(&ClusterMessage{
 		Type: HEARTBEAT,
@@ -323,7 +323,11 @@ func TestHeartbeatResponseAndRemoveNodeCallOnce(t *testing.T) {
 	if cluster.customRequests.Len() != 0 {
 		t.Fatal("completed request was not removed")
 	}
-	for _, response := range request.Responses.All() {
+	responses := request.Responses.All()
+	if len(responses) > 1 {
+		t.Fatalf("responses = %#v, want at most one response from node", responses)
+	}
+	for _, response := range responses {
 		if response != "response" {
 			t.Fatalf("response = %#v, want response", response)
 		}

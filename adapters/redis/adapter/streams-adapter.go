@@ -226,51 +226,46 @@ func (r *redisStreamsAdapter) onPubSubMessage(payload []byte, _ string) {
 	r.OnMessage(message, "")
 }
 
-// DoPublish publishes a cluster message.
-// Ephemeral messages (fetchSockets, serverSideEmit, broadcastWithAck) go via PUB/SUB.
-// Durable messages (broadcast, socketsJoin, etc.) go via Redis Streams.
-func (r *redisStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
-	publishCtx := r.redisClient.Context()
-	redisStreamsLog.Debug("publishing message: %+v", message)
-
+// PreparePublish selects PUB/SUB or Streams and encodes before queueing.
+func (r *redisStreamsAdapter) PreparePublish(message *adapter.ClusterMessage) (adapter.PublishFunc, error) {
 	if isEphemeral(message) {
-		// Ephemeral messages are sent via Redis PUB/SUB
 		payload, err := adapter.EncodeClusterMessageMsgpack(message)
 		if err != nil {
-			return "", fmt.Errorf("failed to encode ephemeral message: %w", err)
+			return nil, fmt.Errorf("failed to encode ephemeral message: %w", err)
 		}
-		if r.opts.UseShardedPubSub() {
-			return "", r.redisClient.Client().SPublish(publishCtx, r.publicChannel, payload).Err()
-		}
-		return "", r.redisClient.Client().Publish(publishCtx, r.publicChannel, payload).Err()
+		channel, sharded := r.publicChannel, r.opts.UseShardedPubSub()
+		return func() (adapter.Offset, error) {
+			if sharded {
+				return "", r.redisClient.Client().SPublish(r.redisClient.Context(), channel, payload).Err()
+			}
+			return "", r.redisClient.Client().Publish(r.redisClient.Context(), channel, payload).Err()
+		}, nil
 	}
-
-	// Durable messages are sent via Redis Streams
 	rawMessage, err := redis.EncodeStreamMessage(message, r.opts.OnlyPlaintext())
 	if err != nil {
-		return "", fmt.Errorf("failed to encode stream message: %w", err)
+		return nil, fmt.Errorf("failed to encode stream message: %w", err)
 	}
-	entryID, err := redis.XAddContext(publishCtx, r.redisClient, r.streamName, rawMessage, r.opts.MaxLen())
-
-	if err != nil {
-		return "", err
-	}
-
-	return adapter.Offset(entryID), nil
+	stream, maxLen := r.streamName, r.opts.MaxLen()
+	return func() (adapter.Offset, error) {
+		entryID, err := redis.XAddContext(r.redisClient.Context(), r.redisClient, stream, rawMessage, maxLen)
+		return adapter.Offset(entryID), err
+	}, nil
 }
 
-// DoPublishResponse publishes a response message via PUB/SUB to the requester's private channel.
-// This matches the Node.js implementation where responses are sent via PUB/SUB.
-func (r *redisStreamsAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) error {
-	responseChannel := r.opts.ChannelPrefix() + "#" + r.Nsp().Name() + "#" + string(requesterUid) + "#"
+// PreparePublishResponse encodes for the requester's private PUB/SUB channel.
+func (r *redisStreamsAdapter) PreparePublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) (adapter.PublishFunc, error) {
+	channel := r.opts.ChannelPrefix() + "#" + r.Nsp().Name() + "#" + string(requesterUid) + "#"
 	payload, err := adapter.EncodeClusterMessageMsgpack(response)
 	if err != nil {
-		return fmt.Errorf("failed to encode response: %w", err)
+		return nil, fmt.Errorf("failed to encode response: %w", err)
 	}
-	if r.opts.UseShardedPubSub() {
-		return r.redisClient.Client().SPublish(r.redisClient.Context(), responseChannel, payload).Err()
-	}
-	return r.redisClient.Client().Publish(r.redisClient.Context(), responseChannel, payload).Err()
+	sharded := r.opts.UseShardedPubSub()
+	return func() (adapter.Offset, error) {
+		if sharded {
+			return "", r.redisClient.Client().SPublish(r.redisClient.Context(), channel, payload).Err()
+		}
+		return "", r.redisClient.Client().Publish(r.redisClient.Context(), channel, payload).Err()
+	}, nil
 }
 
 // ServerCount returns the number of servers connected to the cluster,

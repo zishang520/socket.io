@@ -77,16 +77,6 @@ func DecodeClusterMessage(data []byte) (*ClusterMessage, error) {
 	return &message, nil
 }
 
-// snapshotClusterMessage freezes a message in its wire representation before
-// an asynchronous transport task can outlive the caller's mutable values.
-func snapshotClusterMessage(message *ClusterMessage) (*ClusterMessage, error) {
-	payload, err := EncodeClusterMessage(message)
-	if err != nil {
-		return nil, err
-	}
-	return DecodeClusterMessage(payload)
-}
-
 func prepareClusterMessage(message *ClusterMessage) (ClusterMessage, bool, error) {
 	wireMessage := *message
 	var binary bool
@@ -99,15 +89,15 @@ func prepareClusterMessage(message *ClusterMessage) (ClusterMessage, bool, error
 // encoder. When onlyPlaintext is true, binary traversal is intentionally
 // skipped for transports that cannot carry MessagePack payloads.
 func EncodeClusterMessageData(data any, onlyPlaintext bool) (any, bool, error) {
-	if onlyPlaintext {
-		return preparePlaintextClusterData(data), false, nil
-	}
-
 	switch value := data.(type) {
 	case *BroadcastMessage:
-		binary, err := prepareClusterPacket(value.Packet)
-		if err != nil {
-			return nil, false, err
+		var binary bool
+		if !onlyPlaintext {
+			var err error
+			binary, err = prepareClusterPacket(value.Packet)
+			if err != nil {
+				return nil, false, err
+			}
 		}
 		opts := clusterWireOptions(value.Opts)
 		if opts == value.Opts {
@@ -117,20 +107,36 @@ func EncodeClusterMessageData(data any, onlyPlaintext bool) (any, bool, error) {
 		payload.Opts = opts
 		return &payload, binary, nil
 	case *SocketsJoinLeaveMessage:
+		opts := clusterWireOptions(value.Opts)
+		if opts == value.Opts && value.Rooms != nil {
+			return value, false, nil
+		}
 		payload := *value
-		payload.Opts = clusterWireOptions(value.Opts)
+		payload.Opts = opts
 		payload.Rooms = utils.NonNilSlice(value.Rooms)
 		return &payload, false, nil
 	case *DisconnectSocketsMessage:
+		opts := clusterWireOptions(value.Opts)
+		if opts == value.Opts {
+			return value, false, nil
+		}
 		payload := *value
-		payload.Opts = clusterWireOptions(value.Opts)
+		payload.Opts = opts
 		return &payload, false, nil
 	case *FetchSocketsMessage:
+		opts := clusterWireOptions(value.Opts)
+		if opts == value.Opts {
+			return value, false, nil
+		}
 		payload := *value
-		payload.Opts = clusterWireOptions(value.Opts)
+		payload.Opts = opts
 		return &payload, false, nil
 	case *FetchSocketsResponse:
 		payload := *value
+		if onlyPlaintext {
+			payload.Sockets = plaintextClusterSocketResponses(value.Sockets)
+			return &payload, false, nil
+		}
 		var binary bool
 		var err error
 		payload.Sockets, binary, err = prepareClusterSocketResponses(value.Sockets)
@@ -139,29 +145,52 @@ func EncodeClusterMessageData(data any, onlyPlaintext bool) (any, bool, error) {
 		}
 		return &payload, binary, nil
 	case *ServerSideEmitMessage:
-		payload := *value
-		packet, _, binary, err := PrepareClusterData(value.Packet)
+		if value.Packet == nil {
+			payload := *value
+			payload.Packet = []any{}
+			return &payload, false, nil
+		}
+		if onlyPlaintext {
+			return value, false, nil
+		}
+		packet, changed, binary, err := PrepareClusterData(value.Packet)
 		if err != nil {
 			return nil, false, err
 		}
+		if !changed {
+			return value, binary, nil
+		}
+		payload := *value
 		payload.Packet = utils.NonNilSlice(packet.([]any))
 		return &payload, binary, nil
 	case *ServerSideEmitResponse:
-		payload := *value
-		packet, _, binary, err := PrepareClusterData(value.Packet)
+		if onlyPlaintext {
+			return value, false, nil
+		}
+		packet, changed, binary, err := PrepareClusterData(value.Packet)
 		if err != nil {
 			return nil, false, err
 		}
+		if !changed {
+			return value, binary, nil
+		}
+		payload := *value
 		payload.Packet = packet
 		return &payload, binary, nil
 	case *BroadcastClientCount:
 		return value, false, nil
 	case *BroadcastAck:
-		payload := *value
-		packet, _, binary, err := PrepareClusterData(value.Packet)
+		if onlyPlaintext {
+			return value, false, nil
+		}
+		packet, changed, binary, err := PrepareClusterData(value.Packet)
 		if err != nil {
 			return nil, false, err
 		}
+		if !changed {
+			return value, binary, nil
+		}
+		payload := *value
 		payload.Packet = packet
 		return &payload, binary, nil
 	default:
@@ -236,45 +265,6 @@ func clusterWireOptions(opts *PacketOptions) *PacketOptions {
 		options.Flags = new(socket.BroadcastFlags)
 	}
 	return options
-}
-
-func preparePlaintextClusterData(data any) any {
-	switch value := data.(type) {
-	case *BroadcastMessage:
-		opts := clusterWireOptions(value.Opts)
-		if opts == value.Opts {
-			return value
-		}
-		payload := *value
-		payload.Opts = opts
-		return &payload
-	case *SocketsJoinLeaveMessage:
-		payload := *value
-		payload.Opts = clusterWireOptions(value.Opts)
-		payload.Rooms = utils.NonNilSlice(value.Rooms)
-		return &payload
-	case *DisconnectSocketsMessage:
-		payload := *value
-		payload.Opts = clusterWireOptions(value.Opts)
-		return &payload
-	case *FetchSocketsMessage:
-		payload := *value
-		payload.Opts = clusterWireOptions(value.Opts)
-		return &payload
-	case *FetchSocketsResponse:
-		payload := *value
-		payload.Sockets = plaintextClusterSocketResponses(value.Sockets)
-		return &payload
-	case *ServerSideEmitMessage:
-		if value.Packet != nil {
-			return value
-		}
-		payload := *value
-		payload.Packet = []any{}
-		return &payload
-	default:
-		return data
-	}
 }
 
 func prepareClusterSocketResponses(sockets []SocketResponse) ([]SocketResponse, bool, error) {

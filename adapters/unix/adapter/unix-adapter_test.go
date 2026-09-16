@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"os"
@@ -13,6 +14,34 @@ import (
 	"github.com/zishang520/socket.io/adapters/unix/v3"
 	"github.com/zishang520/socket.io/servers/socket/v3"
 )
+
+func TestPreparedPublishFreezesUnixPayload(t *testing.T) {
+	path := newTestSocketPath(t)
+	sender := newTestUnixClient(t, path)
+	receiver := newTestUnixClient(t, path)
+	if err := receiver.Listen(path + ".peer"); err != nil {
+		t.Fatal(err)
+	}
+	current := NewUnixAdapter(newTestNamespace("/test"), sender, nil).(*unixAdapter)
+	t.Cleanup(current.Close)
+	value := []byte("before")
+	message := &adapter.ClusterMessage{Uid: "sender", Nsp: "/test", Type: adapter.SERVER_SIDE_EMIT_RESPONSE,
+		Data: &adapter.ServerSideEmitResponse{RequestId: "request", Packet: value}}
+	expected := encodeTestMessage(t, message)
+	publish, err := current.PreparePublishResponse("requester", message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy(value, "after!")
+	message.Nsp = "/changed"
+	if _, sendErr := publish(); sendErr != nil {
+		t.Fatal(sendErr)
+	}
+	payload, err := receiver.ReadMessage()
+	if err != nil || !bytes.Equal(payload, expected) {
+		t.Fatalf("prepared Unix frame changed: payload=%x err=%v", payload, err)
+	}
+}
 
 func newTestNamespace(name string) socket.Namespace {
 	return socket.NewNamespace(socket.NewServer(nil, nil), name)

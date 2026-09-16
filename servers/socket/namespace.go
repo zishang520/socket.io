@@ -455,19 +455,21 @@ func (n *namespace) ServerSideEmit(ev string, args ...any) error {
 	return n.Proto().Adapter().ServerSideEmit(utils.EventPayload(ev, args))
 }
 
-// Sends a message and expect an acknowledgement from the other Socket.IO servers of the cluster.
+// Sends a message and expects an acknowledgement from the other Socket.IO servers of the cluster.
 //
-//	myNamespace := io.Of("/my-namespace")
+//	myNamespace := io.Of("/my-namespace", nil)
 //
-//	myNamespace.Timeout(1000 * time.Millisecond).ServerSideEmitWithAck("some-event")(func(args []any, err error) {
+//	if err := myNamespace.ServerSideEmitWithAck("some-event")(func(args []any, err error) {
 //		if err == nil {
-//			fmt.Println(args) // one response per client
+//			fmt.Println(args) // one response per other server
 //		} else {
-//			// some servers did not acknowledge the event in the given delay
+//			fmt.Println("acknowledgement failed:", err)
 //		}
-//	})
+//	}); err != nil {
+//		fmt.Println("could not publish event:", err)
+//	}
 //
-// Return: a `func(socket.Ack)` that will be fulfilled when all servers have acknowledged the event
+// Returns a function that accepts an ACK callback and reports publication errors.
 func (n *namespace) ServerSideEmitWithAck(ev string, args ...any) func(Ack) error {
 	return func(ack Ack) error {
 		return n.ServerSideEmit(ev, slices.AppendCopy(args, ack)...)

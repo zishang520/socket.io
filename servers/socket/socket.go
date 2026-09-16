@@ -46,7 +46,7 @@ type (
 		// Indicates if the connection is established over TLS/HTTPS
 		Secure bool `json:"secure" msgpack:"secure"`
 
-		// Creation time as a Unix timestamp (seconds since epoch)
+		// Creation time as a Unix timestamp (milliseconds since epoch)
 		Issued int64 `json:"issued" msgpack:"issued"`
 
 		// Full request URL
@@ -544,23 +544,24 @@ func (s *Socket) onevent(packet *parser.Packet) {
 //
 // Param: id - packet id
 func (s *Socket) ack(id uint64) Ack {
-	sent := &sync.Once{}
+	var sent atomic.Bool
 	return func(args []any, _ error) {
-		// prevent double callbacks
-		sent.Do(func() {
-			if !s.Connected() {
-				socketLog.Debug("socket disconnected, skipping ack %d", id)
-				return
-			}
-			if log.DEBUG.Load() {
-				socketLog.Debug("sending ack %v", args)
-			}
-			s.packet(&parser.Packet{
-				Id:   &id,
-				Type: parser.ACK,
-				Data: args,
-			}, nil)
-		})
+		// Claim before encoding, which can reenter through an error listener.
+		if !sent.CompareAndSwap(false, true) {
+			return
+		}
+		if !s.Connected() {
+			socketLog.Debug("socket disconnected, skipping ack %d", id)
+			return
+		}
+		if log.DEBUG.Load() {
+			socketLog.Debug("sending ack %v", args)
+		}
+		s.packet(&parser.Packet{
+			Id:   &id,
+			Type: parser.ACK,
+			Data: args,
+		}, nil)
 	}
 }
 

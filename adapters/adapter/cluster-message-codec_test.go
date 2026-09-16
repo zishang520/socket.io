@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -43,6 +44,7 @@ func TestClusterMessageCodecSupportsEveryMessageType(t *testing.T) {
 		{"server-side emit", &ClusterMessage{Type: SERVER_SIDE_EMIT, Data: &ServerSideEmitMessage{
 			Packet: []any{"event", "value"},
 		}}},
+		{"empty server-side emit", &ClusterMessage{Type: SERVER_SIDE_EMIT, Data: &ServerSideEmitMessage{}}},
 		{"server-side emit response", &ClusterMessage{Type: SERVER_SIDE_EMIT_RESPONSE, Data: &ServerSideEmitResponse{
 			RequestId: "request",
 			Packet:    "value",
@@ -64,6 +66,15 @@ func TestClusterMessageCodecSupportsEveryMessageType(t *testing.T) {
 	}{
 		{"automatic", EncodeClusterMessage},
 		{"MessagePack", EncodeClusterMessageMsgpack},
+		{"plaintext JSON", func(message *ClusterMessage) ([]byte, error) {
+			wire := *message
+			data, _, err := EncodeClusterMessageData(message.Data, true)
+			if err != nil {
+				return nil, err
+			}
+			wire.Data = data
+			return json.Marshal(wire)
+		}},
 	}
 
 	for _, tt := range tests {
@@ -78,6 +89,12 @@ func TestClusterMessageCodecSupportsEveryMessageType(t *testing.T) {
 					}
 					if encoder.name == "automatic" && payload[0] != '{' {
 						t.Fatalf("plaintext message used MessagePack: %x", payload)
+					}
+					if encoder.name == "plaintext JSON" {
+						expected, encodeErr := EncodeClusterMessage(tt.message)
+						if encodeErr != nil || !bytes.Equal(payload, expected) {
+							t.Fatalf("plaintext/automatic JSON differ: %s / %s, %v", payload, expected, encodeErr)
+						}
 					}
 
 					decoded, err := DecodeClusterMessage(payload)

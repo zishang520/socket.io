@@ -11,6 +11,7 @@
   - [Updating Dependencies](#updating-dependencies)
   - [Import Path Updates](#import-path-updates)
   - [Breaking Changes](#breaking-changes)
+    - [Custom Cluster Transport Hooks](#custom-cluster-transport-hooks)
   - [Quick Start Example](#quick-start-example)
   - [Testing Your Upgrade](#testing-your-upgrade)
   - [Common Issues](#common-issues)
@@ -1037,11 +1038,62 @@ func example() {
 
 ### Adapter Payload Reader Normalization
 
-Adapter payload normalization now consistently reads generic `io.Reader`
-values. An additional `Bytes()` method no longer bypasses the reader path, so
-the common codec and the Redis, Valkey, and PostgreSQL adapters use the same
-best-effort behavior without adding error-return plumbing to their public APIs.
-The Redis and Valkey JSON-specific normalization helpers are now internal.
+Adapter payload normalization reads generic `io.Reader` values; an additional
+`Bytes()` method no longer bypasses the reader path. `PrepareClusterData` returns
+`(any, bool, bool, error)` (value, changed, contains binary, error), and
+`EncodeClusterMessageData` returns `(any, bool, error)`. Handle preparation errors
+before encoding or publishing. A failed read may already have consumed and closed
+the reader. The Redis and Valkey JSON-specific normalization helpers are internal.
+
+### Custom Cluster Transport Hooks
+
+Custom implementations of `adapter.ClusterAdapter` must replace `DoPublish` and
+`DoPublishResponse` with these extension methods:
+
+```go
+PreparePublish(*adapter.ClusterMessage) (adapter.PublishFunc, error)
+PreparePublishResponse(adapter.ServerId, *adapter.ClusterResponse) (adapter.PublishFunc, error)
+```
+
+`adapter.PublishFunc` is `func() (adapter.Offset, error)`. In each preparation
+method, select the destination and encode the message synchronously with the
+transport's codec. Return preparation errors immediately. Return a function that
+captures the encoded payload, routing values and backend resources, and performs
+the send. Do not retain mutable input messages, packets, options or application
+data in that function, and do not perform the send during preparation.
+
+The base adapter runs prepared sends on its publisher queue; responses use a
+separate queue and ignore the returned offset. `PublishAndReturnOffset` waits for
+the queued send. Create backend operation timeouts inside the returned function
+so queueing does not consume them. The heartbeat adapter sends its final close
+message after previously accepted work.
+
+`ClusterAdapter` also exposes `PublishAndClose(*ClusterMessage)`. It prepares the
+final message, atomically schedules it after accepted messages and responses,
+and closes publishing without waiting for delivery. Preparation failure must
+still close publishing. Embedding the base adapter provides this implementation;
+independent implementations must add the method. The caller chooses the message:
+heartbeat uses `ADAPTER_CLOSE`, while Mongo keeps its own protocol and its ordinary
+`Close()` does not send that notification.
+
+Treat `PublishAndClose` as a publishing-layer primitive within lifecycle code.
+Application shutdown should call the outer adapter's `Close()`, which also stops
+heartbeat timers and releases subscriptions or builder registrations. Calling an
+inherited `PublishAndClose` directly does not perform those outer lifecycle steps.
+
+Application methods such as `Broadcast`, `FetchSockets` and `ServerSideEmit` keep
+their signatures. Migrate custom transports with the base adapter: the old hooks
+have no compatibility fallback. See the [adapter transport guide](../adapters/adapter/README.md#custom-cluster-transports)
+and the [Unix implementation](../adapters/unix/adapter/unix-adapter.go) for an example.
+
+`ClusterRequest` and `ClusterAckRequest` expose a zero-value-ready
+`Sockets types.Set[ServerId]` field for response tracking. Despite its name, it
+holds responding server IDs, not client socket IDs. The adapter manages this
+bookkeeping while the request is active. Both types contain a synchronized set
+and must not be copied after first use; keep active requests as pointers. Use
+named fields when constructing them. Existing named initializers remain valid;
+positional initializers must account for the added field, including those using
+the Redis/Valkey `AckRequest` aliases.
 
 ### Socket Handshake Access Patterns
 

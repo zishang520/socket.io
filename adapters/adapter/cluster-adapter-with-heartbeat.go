@@ -108,20 +108,14 @@ func (a *clusterAdapterWithHeartbeat) scheduleHeartbeat() {
 
 func (a *clusterAdapterWithHeartbeat) Close() {
 	a.publishMu.Lock()
-	defer a.publishMu.Unlock()
 	if a.closed.Swap(true) {
+		a.publishMu.Unlock()
 		return
 	}
 	utils.ClearTimeout(a.heartbeatTimer.Swap(nil))
 	utils.ClearInterval(a.cleanupTimer.Swap(nil))
-	if closer, ok := a.ClusterAdapter.(interface {
-		closeWithMessage(*ClusterMessage)
-	}); ok {
-		closer.closeWithMessage(&ClusterMessage{Type: ADAPTER_CLOSE})
-	} else {
-		a.ClusterAdapter.Publish(&ClusterMessage{Type: ADAPTER_CLOSE})
-		a.ClusterAdapter.Close()
-	}
+	a.publishMu.Unlock()
+	a.PublishAndClose(&ClusterMessage{Type: ADAPTER_CLOSE})
 }
 
 func (a *clusterAdapterWithHeartbeat) OnMessage(message *ClusterMessage, offset Offset) {
@@ -185,15 +179,20 @@ func (a *clusterAdapterWithHeartbeat) registerRequest(requestId string, request 
 			onTimeout()
 		}
 	}, timeout))
-	for _, uid := range request.MissingUids.Keys() {
-		if _, ok := a.nodesMap.Load(uid); !ok {
-			request.MissingUids.Delete(uid)
+	var complete bool
+	request.Responses.DoWrite(func(responses []any) []any {
+		for _, uid := range request.MissingUids.Keys() {
+			if _, ok := a.nodesMap.Load(uid); !ok {
+				request.MissingUids.Delete(uid)
+			}
 		}
-	}
-	if request.MissingUids.Len() == 0 {
-		if finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
-			request.Resolve(request.Responses)
+		if request.MissingUids.Len() == 0 {
+			complete = finishClusterRequest(&a.customRequests, requestId, request, request.Timeout)
 		}
+		return responses
+	})
+	if complete {
+		request.Resolve(request.Responses)
 	}
 	stored, ok := a.customRequests.Load(requestId)
 	pending := ok && stored == request
@@ -205,11 +204,13 @@ func (a *clusterAdapterWithHeartbeat) registerRequest(requestId string, request 
 
 func (a *clusterAdapterWithHeartbeat) Publish(message *ClusterMessage) {
 	a.publishMu.Lock()
-	defer a.publishMu.Unlock()
 	if a.closed.Load() {
+		a.publishMu.Unlock()
 		return
 	}
 	a.scheduleHeartbeat()
+	a.publishMu.Unlock()
+	// Preparation can call user readers or marshalers, which may reenter Close.
 	a.ClusterAdapter.Publish(message)
 }
 
@@ -349,15 +350,7 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 		if log.DEBUG.Load() {
 			adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
 		}
-		if request, ok := a.customRequests.Load(data.RequestId); ok {
-			request.Responses.Push(SocketResponsesToDetailsAny(data.Sockets)...)
-
-			request.MissingUids.Delete(response.Uid)
-			if request.MissingUids.Len() == 0 &&
-				finishClusterRequest(&a.customRequests, data.RequestId, request, request.Timeout) {
-				request.Resolve(request.Responses)
-			}
-		}
+		a.updateRequest(data.RequestId, response.Uid, SocketResponsesToDetailsAny(data.Sockets)...)
 
 	case SERVER_SIDE_EMIT_RESPONSE:
 		data, ok := response.Data.(*ServerSideEmitResponse)
@@ -368,18 +361,35 @@ func (a *clusterAdapterWithHeartbeat) OnResponse(response *ClusterResponse) {
 		if log.DEBUG.Load() {
 			adapterLog.Debug("[%s] received response %d to request %s", a.Uid(), response.Type, data.RequestId)
 		}
-		if request, ok := a.customRequests.Load(data.RequestId); ok {
-			request.Responses.Push(data.Packet)
-
-			request.MissingUids.Delete(response.Uid)
-			if request.MissingUids.Len() == 0 &&
-				finishClusterRequest(&a.customRequests, data.RequestId, request, request.Timeout) {
-				request.Resolve(request.Responses)
-			}
-		}
+		a.updateRequest(data.RequestId, response.Uid, data.Packet)
 
 	default:
 		a.ClusterAdapter.OnResponse(response)
+	}
+}
+
+// A departed node removes an expectation without adding any response values.
+func (a *clusterAdapterWithHeartbeat) updateRequest(requestId string, uid ServerId, values ...any) {
+	request, ok := a.customRequests.Load(requestId)
+	if !ok {
+		return
+	}
+	var complete bool
+	request.Responses.DoWrite(func(responses []any) []any {
+		if current, ok := a.customRequests.Load(requestId); !ok || current != request {
+			return responses
+		}
+		if !request.MissingUids.Delete(uid) {
+			return responses
+		}
+		responses = append(responses, values...)
+		if request.MissingUids.Len() == 0 {
+			complete = finishClusterRequest(&a.customRequests, requestId, request, request.Timeout)
+		}
+		return responses
+	})
+	if complete {
+		request.Resolve(request.Responses)
 	}
 }
 
@@ -392,12 +402,8 @@ func (a *clusterAdapterWithHeartbeat) removeNode(uid ServerId, expectedLastSeen 
 		a.nodesMap.Delete(uid)
 	}
 
-	a.customRequests.Range(func(requestId string, request *CustomClusterRequest) bool {
-		request.MissingUids.Delete(uid)
-		if request.MissingUids.Len() == 0 &&
-			finishClusterRequest(&a.customRequests, requestId, request, request.Timeout) {
-			request.Resolve(request.Responses)
-		}
+	a.customRequests.Range(func(requestId string, _ *CustomClusterRequest) bool {
+		a.updateRequest(requestId, uid)
 		return true
 	})
 }

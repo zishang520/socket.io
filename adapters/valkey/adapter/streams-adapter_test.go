@@ -107,7 +107,7 @@ func TestValkeyStreamsServerCountWithIndependentClients(t *testing.T) {
 	}
 }
 
-func TestValkeyStreamsDoPublishUsesCommonCodec(t *testing.T) {
+func TestValkeyStreamsPublishUsesCommonCodec(t *testing.T) {
 	server := miniredis.RunT(t)
 	rawClient := newValkeyRawClient(t, server.Addr())
 	client := newStreamsValkeyClient(t, rawClient, nil)
@@ -118,7 +118,7 @@ func TestValkeyStreamsDoPublishUsesCommonCodec(t *testing.T) {
 	).(*valkeyStreamsAdapter)
 	t.Cleanup(streamAdapter.Close)
 
-	offset, err := streamAdapter.DoPublish(&adapter.ClusterMessage{
+	offset, err := streamAdapter.PublishAndReturnOffset(&adapter.ClusterMessage{
 		Uid:  "remote",
 		Nsp:  "/publish",
 		Type: adapter.BROADCAST,

@@ -198,42 +198,46 @@ func (r *valkeyStreamsAdapter) onPubSubMessage(payload []byte) {
 	r.OnMessage(message, "")
 }
 
-func (r *valkeyStreamsAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
-	publishCtx := r.valkeyClient.Context()
-	valkeyStreamsLog.Debug("publishing message: %+v", message)
-
+// PreparePublish selects PUB/SUB or Streams and encodes before queueing.
+func (r *valkeyStreamsAdapter) PreparePublish(message *adapter.ClusterMessage) (adapter.PublishFunc, error) {
 	if isEphemeral(message) {
 		payload, err := adapter.EncodeClusterMessageMsgpack(message)
 		if err != nil {
-			return "", fmt.Errorf("failed to encode ephemeral message: %w", err)
+			return nil, fmt.Errorf("failed to encode ephemeral message: %w", err)
 		}
-		if r.opts.UseShardedPubSub() {
-			return "", r.valkeyClient.SPublish(publishCtx, r.publicChannel, payload)
-		}
-		return "", r.valkeyClient.Publish(publishCtx, r.publicChannel, payload)
+		channel, sharded := r.publicChannel, r.opts.UseShardedPubSub()
+		return func() (adapter.Offset, error) {
+			if sharded {
+				return "", r.valkeyClient.SPublish(r.valkeyClient.Context(), channel, payload)
+			}
+			return "", r.valkeyClient.Publish(r.valkeyClient.Context(), channel, payload)
+		}, nil
 	}
-
 	rawMessage, err := valkey.EncodeStreamMessage(message, r.opts.OnlyPlaintext())
 	if err != nil {
-		return "", fmt.Errorf("failed to encode stream message: %w", err)
+		return nil, fmt.Errorf("failed to encode stream message: %w", err)
 	}
-	entryID, err := r.valkeyClient.XAdd(publishCtx, r.streamName, rawMessage, r.opts.MaxLen())
-	if err != nil {
-		return "", err
-	}
-	return adapter.Offset(entryID), nil
+	stream, maxLen := r.streamName, r.opts.MaxLen()
+	return func() (adapter.Offset, error) {
+		entryID, err := r.valkeyClient.XAdd(r.valkeyClient.Context(), stream, rawMessage, maxLen)
+		return adapter.Offset(entryID), err
+	}, nil
 }
 
-func (r *valkeyStreamsAdapter) DoPublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) error {
-	responseChannel := r.opts.ChannelPrefix() + "#" + r.Nsp().Name() + "#" + string(requesterUid) + "#"
+// PreparePublishResponse encodes for the requester's private PUB/SUB channel.
+func (r *valkeyStreamsAdapter) PreparePublishResponse(requesterUid adapter.ServerId, response *adapter.ClusterResponse) (adapter.PublishFunc, error) {
+	channel := r.opts.ChannelPrefix() + "#" + r.Nsp().Name() + "#" + string(requesterUid) + "#"
 	payload, err := adapter.EncodeClusterMessageMsgpack(response)
 	if err != nil {
-		return fmt.Errorf("failed to encode response: %w", err)
+		return nil, fmt.Errorf("failed to encode response: %w", err)
 	}
-	if r.opts.UseShardedPubSub() {
-		return r.valkeyClient.SPublish(r.valkeyClient.Context(), responseChannel, payload)
-	}
-	return r.valkeyClient.Publish(r.valkeyClient.Context(), responseChannel, payload)
+	sharded := r.opts.UseShardedPubSub()
+	return func() (adapter.Offset, error) {
+		if sharded {
+			return "", r.valkeyClient.SPublish(r.valkeyClient.Context(), channel, payload)
+		}
+		return "", r.valkeyClient.Publish(r.valkeyClient.Context(), channel, payload)
+	}, nil
 }
 
 func (r *valkeyStreamsAdapter) ServerCount() (int64, error) {

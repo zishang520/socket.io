@@ -48,19 +48,20 @@ func (a *unixAdapter) SetUnix(client *unix.UnixClient) {
 	a.unixClient = client
 }
 
-// DoPublish publishes a cluster message to all peer Unix listeners.
-func (a *unixAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
+// PreparePublish encodes a message before it enters the publisher queue.
+func (a *unixAdapter) PreparePublish(message *adapter.ClusterMessage) (adapter.PublishFunc, error) {
 	payload, err := adapter.EncodeClusterMessage(message)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return "", a.unixClient.Broadcast(payload)
+	return func() (adapter.Offset, error) {
+		return "", a.unixClient.Broadcast(payload)
+	}, nil
 }
 
-// DoPublishResponse publishes a response over the shared broadcast transport.
-func (a *unixAdapter) DoPublishResponse(_ adapter.ServerId, response *adapter.ClusterResponse) error {
-	_, err := a.DoPublish(response)
-	return err
+// PreparePublishResponse uses the same broadcast transport for responses.
+func (a *unixAdapter) PreparePublishResponse(_ adapter.ServerId, response *adapter.ClusterResponse) (adapter.PublishFunc, error) {
+	return a.PreparePublish(response)
 }
 
 // Cleanup registers the builder cleanup invoked when the adapter closes.

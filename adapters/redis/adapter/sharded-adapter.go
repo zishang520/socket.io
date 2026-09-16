@@ -141,14 +141,16 @@ func (s *shardedRedisAdapter) Close() {
 	})
 }
 
-func (s *shardedRedisAdapter) DoPublish(message *adapter.ClusterMessage) (adapter.Offset, error) {
+func (s *shardedRedisAdapter) PreparePublish(message *adapter.ClusterMessage) (adapter.PublishFunc, error) {
 	channel := s.computeChannel(message)
 	redisLog.Debug("publishing message of type %v to %s", message.Type, channel)
 	payload, err := adapter.EncodeClusterMessage(message)
 	if err != nil {
-		return "", fmt.Errorf("failed to encode message: %w", err)
+		return nil, fmt.Errorf("failed to encode message: %w", err)
 	}
-	return "", s.redisClient.Client().SPublish(s.redisClient.Context(), channel, payload).Err()
+	return func() (adapter.Offset, error) {
+		return "", s.redisClient.Client().SPublish(s.redisClient.Context(), channel, payload).Err()
+	}, nil
 }
 
 func (s *shardedRedisAdapter) computeChannel(message *adapter.ClusterMessage) string {
@@ -170,12 +172,15 @@ func (s *shardedRedisAdapter) dynamicChannel(room socket.Room) string {
 	return s.channel + string(room) + "#"
 }
 
-func (s *shardedRedisAdapter) DoPublishResponse(requester adapter.ServerId, response *adapter.ClusterResponse) error {
+func (s *shardedRedisAdapter) PreparePublishResponse(requester adapter.ServerId, response *adapter.ClusterResponse) (adapter.PublishFunc, error) {
+	channel := s.channel + string(requester) + "#"
 	payload, err := adapter.EncodeClusterMessage(response)
 	if err != nil {
-		return fmt.Errorf("failed to encode response: %w", err)
+		return nil, fmt.Errorf("failed to encode response: %w", err)
 	}
-	return s.redisClient.Client().SPublish(s.redisClient.Context(), s.channel+string(requester)+"#", payload).Err()
+	return func() (adapter.Offset, error) {
+		return "", s.redisClient.Client().SPublish(s.redisClient.Context(), channel, payload).Err()
+	}, nil
 }
 
 func (s *shardedRedisAdapter) onRawMessage(raw []byte, _ string) {

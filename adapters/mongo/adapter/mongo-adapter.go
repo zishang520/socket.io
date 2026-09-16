@@ -172,13 +172,13 @@ func (a *mongoAdapter) Publish(message *ClusterMessage) {
 }
 
 func (a *mongoAdapter) publishAsync(tasks *queue.Queue, message *ClusterMessage) {
-	document, err := a.prepareDocument(message)
+	publish, err := a.PreparePublish(message)
 	if err != nil {
 		a.onPublishError(err)
 		return
 	}
 	if err := a.enqueue(tasks, func() {
-		_, err := a.insertDocument(document)
+		_, err := publish()
 		if err != nil {
 			// Error handlers may publish synchronously on this adapter.
 			go a.onPublishError(err)
@@ -189,29 +189,60 @@ func (a *mongoAdapter) publishAsync(tasks *queue.Queue, message *ClusterMessage)
 }
 
 func (a *mongoAdapter) PublishAndReturnOffset(message *ClusterMessage) (adapter.Offset, error) {
-	return a.publish(a.publisher, message)
-}
-
-func (a *mongoAdapter) DoPublish(message *ClusterMessage) (adapter.Offset, error) {
-	return a.publish(a.publisher, message)
-}
-
-func (a *mongoAdapter) publish(tasks *queue.Queue, document *ClusterMessage) (adapter.Offset, error) {
-	event, err := a.prepareDocument(document)
+	publish, err := a.PreparePublish(message)
 	if err != nil {
 		return "", err
 	}
-	var offset adapter.Offset
-	err = errPublishPanicked
+	result := struct {
+		offset adapter.Offset
+		err    error
+	}{err: errPublishPanicked}
 	done := make(chan struct{})
-	if enqueueErr := a.enqueue(tasks, func() {
+	if enqueueErr := a.enqueue(a.publisher, func() {
 		defer close(done)
-		offset, err = a.insertDocument(event)
+		result.offset, result.err = publish()
 	}); enqueueErr != nil {
 		return "", enqueueErr
 	}
 	<-done
-	return offset, err
+	return result.offset, result.err
+}
+
+func (a *mongoAdapter) PreparePublish(message *ClusterMessage) (adapter.PublishFunc, error) {
+	document, err := a.prepareDocument(message)
+	if err != nil {
+		return nil, err
+	}
+	return func() (adapter.Offset, error) {
+		return a.insertDocument(document)
+	}, nil
+}
+
+func (a *mongoAdapter) PublishAndClose(message *ClusterMessage) {
+	publish, prepareErr := a.PreparePublish(message)
+	a.queueMu.Lock()
+	if !a.isClosed.CompareAndSwap(false, true) {
+		a.queueMu.Unlock()
+		return
+	}
+
+	responsesDone := make(chan struct{})
+	a.responses.Enqueue(func() { close(responsesDone) })
+	a.publisher.Enqueue(func() {
+		defer a.cleanup()
+		<-responsesDone
+		err := prepareErr
+		if err == nil {
+			_, err = publish()
+		}
+		if err != nil {
+			go a.onPublishError(err)
+		}
+	})
+	a.publisher.TryClose()
+	a.responses.TryClose()
+	a.queueMu.Unlock()
+	utils.ClearTimeout(a.heartbeatTimer.Swap(nil))
 }
 
 func (a *mongoAdapter) enqueue(tasks *queue.Queue, task func()) error {
@@ -268,9 +299,8 @@ func (a *mongoAdapter) PublishResponse(_ adapter.ServerId, response *ClusterResp
 
 // MongoDB responses share the same collection, so requesterUid is carried by
 // the request ID rather than a transport-specific channel.
-func (a *mongoAdapter) DoPublishResponse(_ adapter.ServerId, response *ClusterResponse) error {
-	_, err := a.publish(a.responses, response)
-	return err
+func (a *mongoAdapter) PreparePublishResponse(_ adapter.ServerId, response *ClusterResponse) (adapter.PublishFunc, error) {
+	return a.PreparePublish(response)
 }
 
 // OnEvent decodes a Change Stream document and routes it through OnMessage.
@@ -510,7 +540,7 @@ func (a *mongoAdapter) ServerCount() (int64, error) {
 func (a *mongoAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOptions) {
 	onlyLocal := opts != nil && opts.Flags != nil && opts.Flags.Local
 	if !onlyLocal {
-		offset, err := a.publish(a.publisher, &ClusterMessage{
+		offset, err := a.PublishAndReturnOffset(&ClusterMessage{
 			Type: mongo.BROADCAST,
 			Data: &BroadcastMessage{
 				Packet: packet,
@@ -926,6 +956,10 @@ func (a *mongoAdapter) Close() {
 	a.responses.TryClose()
 	a.queueMu.Unlock()
 	utils.ClearTimeout(a.heartbeatTimer.Swap(nil))
+	a.cleanup()
+}
+
+func (a *mongoAdapter) cleanup() {
 	if callback := a.cleanupFunc.Swap(nil); callback != nil {
 		(*callback)()
 	}

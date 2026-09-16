@@ -103,6 +103,47 @@ Reader preparation can fail. `PrepareClusterData` returns `(any, bool, bool, err
 `(any, bool, error)`. Callers must handle the error before encoding or publishing;
 a failed read may already have consumed and closed the reader.
 
+## Custom cluster transports
+
+Implement `PreparePublish(*ClusterMessage) (PublishFunc, error)` and
+`PreparePublishResponse(ServerId, *ClusterResponse) (PublishFunc, error)`.
+These replace the former `DoPublish` and `DoPublishResponse` extension methods.
+Application methods such as `Broadcast`, `FetchSockets` and `ServerSideEmit`
+keep their existing signatures.
+
+Preparation runs synchronously: select the destination and encode with the
+transport's actual codec, then return a `PublishFunc` (`func() (Offset, error)`).
+The returned function performs network or database I/O and owns the encoded
+payload and routing values. It must not capture the mutable input message,
+packet, options or application data. Preparation must not send the message.
+
+The base adapter executes the function on its publisher queue. Responses use a
+separate queue and ignore the returned offset. `PublishAndReturnOffset` waits on
+the publisher queue; all accepted work precedes the final heartbeat close
+message. Create operation timeouts inside the returned function, so waiting in
+the queue does not consume the network timeout.
+
+The heartbeat adapter embeds `ClusterAdapter` and owns the decision to send an
+`ADAPTER_CLOSE` notification. It calls `PublishAndClose(message)` to prepare that
+message, queue it after accepted messages and responses, and stop further
+publishing. This method returns without waiting for delivery. The base adapter's
+plain `Close()` stops publishing without choosing a protocol notification.
+
+`PublishAndClose` is a publishing-layer operation for lifecycle implementations,
+not a substitute for closing the outer adapter. Applications should call the
+outer adapter's `Close()` so heartbeat timers, subscriptions and builder cleanup
+are handled by their owners. For example, calling inherited `PublishAndClose`
+directly on a heartbeat adapter does not stop its timers.
+
+Adapters embedding the base implementation inherit `PublishAndClose`. Independent
+implementations of `ClusterAdapter` must provide it with the same queue ordering
+and stop publishing even if preparation fails. `MakeClusterAdapter()` remains a
+single, parameterless constructor; no type assertion is needed by heartbeat shutdown.
+
+There is no fallback to the old transport hooks or a generic deep-copy codec.
+See the Unix adapter for a JSON/MessagePack example, Redis/Valkey Streams for
+destination-specific encoding, and PostgreSQL for NOTIFY/attachment selection.
+
 ## Testing
 
 Run the test suite with:

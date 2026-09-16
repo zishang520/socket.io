@@ -533,7 +533,7 @@ func TestShardedAdapterSeparatesSubscriptionAndPublishClients(t *testing.T) {
 		return len(recorder.activePeers(current.channel)) == 1 && len(recorder.activePeers(shardedResponseChannel(current))) == 1
 	})
 
-	if _, err := current.DoPublish(&adapter.ClusterMessage{
+	if _, err := current.PublishAndReturnOffset(&adapter.ClusterMessage{
 		Uid:  current.Uid(),
 		Nsp:  nsp.Name(),
 		Type: adapter.SERVER_SIDE_EMIT,
