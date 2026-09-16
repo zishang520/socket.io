@@ -639,9 +639,8 @@ func (r *redisAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastOp
 			channel := r.channel
 			// Optimize channel routing for single-room broadcasts
 			if opts.Rooms != nil && opts.Rooms.Len() == 1 {
-				for _, room := range opts.Rooms.Keys() {
-					channel += string(room) + "#"
-					break
+				if rooms := opts.Rooms.Keys(); len(rooms) > 0 {
+					channel += string(rooms[0]) + "#"
 				}
 			}
 			redisLog.Debug("publishing message to channel %s", channel)

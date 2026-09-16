@@ -505,9 +505,9 @@ func (s *socket) sendPacket(
 		}
 
 		if opts.Compress == nil || *opts.Compress {
-			opts.Compress = utils.Ptr(true)
+			opts.Compress = new(true)
 		} else {
-			opts.Compress = utils.Ptr(false)
+			opts.Compress = new(false)
 		}
 
 		packet := &packet.Packet{

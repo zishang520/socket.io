@@ -358,7 +358,7 @@ func (s *Socket) Emit(ev string, args ...any) error {
 func (s *Socket) _registerAckCallback(id uint64, ack socket.Ack, timeout *time.Duration) {
 	if timeout == nil {
 		if s._opts.GetRawAckTimeout() != nil {
-			timeout = utils.Ptr(s._opts.AckTimeout())
+			timeout = new(s._opts.AckTimeout())
 		}
 	}
 

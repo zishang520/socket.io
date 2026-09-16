@@ -265,14 +265,14 @@ func TestConcurrentEmitRemoveListener(t *testing.T) {
 func TestConcurrentEmit(t *testing.T) {
 	emitter := NewEventEmitter()
 	var (
-		counter int32
+		counter atomic.Int32
 		wg      sync.WaitGroup
 	)
 
 	const numListeners = 50
 	for range numListeners {
 		_ = emitter.On("inc", func(...any) {
-			atomic.AddInt32(&counter, 1)
+			counter.Add(1)
 		})
 	}
 
@@ -287,7 +287,7 @@ func TestConcurrentEmit(t *testing.T) {
 	wg.Wait()
 
 	expected := int32(numListeners * numEmits)
-	if actual := atomic.LoadInt32(&counter); actual != expected {
+	if actual := counter.Load(); actual != expected {
 		t.Fatalf("Expected counter %d, got %d", expected, actual)
 	}
 }

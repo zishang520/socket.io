@@ -281,7 +281,7 @@ func (p *polling) send(packets []*packet.Packet) {
 			break
 		}
 	}
-	option := &packet.Options{Compress: utils.Ptr(compress)}
+	option := &packet.Options{Compress: new(compress)}
 
 	if p.Protocol() == 3 {
 		data, _ := p.Parser().EncodePayload(packets, p.SupportsBinary())

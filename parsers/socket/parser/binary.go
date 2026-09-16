@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/zishang520/socket.io/v3/pkg/types"
-	"github.com/zishang520/socket.io/v3/pkg/utils"
 )
 
 // Placeholder represents a placeholder for binary data in JSON serialization.
@@ -23,7 +22,7 @@ type Placeholder struct {
 func DeconstructPacket(packet *Packet) (*Packet, []types.BufferInterface) {
 	var buffers []types.BufferInterface
 	packet.Data = deconstructData(packet.Data, &buffers)
-	packet.Attachments = utils.Ptr(uint64(len(buffers)))
+	packet.Attachments = new(uint64(len(buffers)))
 	return packet, buffers
 }
 

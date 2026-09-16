@@ -574,9 +574,8 @@ func (r *valkeyAdapter) Broadcast(packet *parser.Packet, opts *socket.BroadcastO
 		if err == nil {
 			channel := r.channel
 			if opts.Rooms != nil && opts.Rooms.Len() == 1 {
-				for _, room := range opts.Rooms.Keys() {
-					channel += string(room) + "#"
-					break
+				if rooms := opts.Rooms.Keys(); len(rooms) > 0 {
+					channel += string(rooms[0]) + "#"
 				}
 			}
 			valkeyLog.Debug("publishing message to channel %s", channel)
