@@ -198,7 +198,8 @@ type oneTimeListener struct {
 
 func (l *oneTimeListener) execute(vals ...any) {
 	l.fired.Do(func() {
-		defer l.emitter.RemoveListener(l.evt, l.fn)
+		// Remove before invoking so reentrant Emit cannot enter this sync.Once.
+		l.emitter.RemoveListener(l.evt, l.fn)
 		l.fn(vals...)
 	})
 }
