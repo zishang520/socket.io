@@ -59,6 +59,8 @@ type Socket struct {
 
 	// connected indicates whether the socket is currently connected to the server.
 	connected atomic.Bool
+	// closeStarted gives one caller ownership of each connection's close lifecycle.
+	closeStarted atomic.Bool
 
 	// recovered indicates if the connection state was recovered after reconnection.
 	recovered atomic.Bool
@@ -545,6 +547,13 @@ func (s *Socket) onerror(errs ...any) {
 // reason: The reason for the close.
 // description: The error description.
 func (s *Socket) onclose(reason string, description error) {
+	if !s.closeStarted.CompareAndSwap(false, true) {
+		return
+	}
+	s.finishClose(reason, description)
+}
+
+func (s *Socket) finishClose(reason string, description error) {
 	socketLog.Debug("close (%s)", reason)
 	s.connected.Store(false)
 	s.id.Store("")
@@ -554,7 +563,7 @@ func (s *Socket) onclose(reason string, description error) {
 
 // _clearAcks clears the acknowledgement handlers upon disconnection, since the client will never receive an acknowledgement from the server.
 func (s *Socket) _clearAcks() {
-	s.acks.Range(func(id uint64, ack socket.Ack) bool {
+	s.acks.Range(func(id uint64, _ socket.Ack) bool {
 		isBuffered := false
 		s.sendBuffer.FindIndex(func(packet *Packet) bool {
 			if packet.Id != nil && *packet.Id == id {
@@ -563,8 +572,9 @@ func (s *Socket) _clearAcks() {
 			return isBuffered
 		})
 		if !isBuffered {
-			s.acks.Delete(id)
-			ack(nil, errors.New("socket has been disconnected"))
+			if ack, ok := s.acks.LoadAndDelete(id); ok {
+				ack(nil, errors.New("socket has been disconnected"))
+			}
 		}
 		return true
 	})
@@ -691,6 +701,7 @@ func (s *Socket) onconnect(id string, pid string) {
 	s.id.Store(id)
 	s.recovered.Store(pid != "" && s._pid.Load() == pid)
 	s._pid.Store(pid) // defined only if connection state recovery is enabled
+	s.closeStarted.Store(false)
 	s.connected.Store(true)
 	s.emitBuffered()
 	s._drainQueue(true)
@@ -750,11 +761,14 @@ func (s *Socket) destroy() {
 //	socket.Disconnect()
 func (s *Socket) Disconnect() *Socket {
 	if s.connected.Load() {
+		if !s.closeStarted.CompareAndSwap(false, true) {
+			return s
+		}
 		socketLog.Debug("performing disconnect (%s)", s.nsp)
 		s.packet(&Packet{Packet: &parser.Packet{Type: parser.DISCONNECT}})
 
 		// fire events
-		defer s.onclose("io client disconnect", nil)
+		defer s.finishClose("io client disconnect", nil)
 	}
 
 	// remove socket from pool

@@ -105,9 +105,17 @@ func (s *HttpServer) Close(fn func(error)) (err error) {
 
 func (s *HttpServer) Listen(addr string, fn Callable) *http.Server {
 	server := s.httpServer(addr, s)
-	// Idempotent repeated calls
+	// Bind before notifying listeners or callers that the server is ready.
+	listenAddr := addr
+	if listenAddr == "" {
+		listenAddr = ":http"
+	}
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		panic(err)
+	}
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			panic(err)
 		}
 	}()

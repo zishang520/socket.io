@@ -647,21 +647,27 @@ func (s *socketWithoutUpgrade) Close() SocketWithoutUpgrade {
 		_ = s.Once("upgradeError", cleanupAndClose)
 	}
 
-	if readyState := s.ReadyState(); SocketStateOpening == readyState || SocketStateOpen == readyState {
-		s.readyState.Store(SocketStateClosing)
-		if s.writeBuffer.Len() > 0 {
-			_ = s.Once("drain", func(...any) {
-				if s.Upgrading() {
-					waitForUpgrade()
-				} else {
-					close()
-				}
-			})
-		} else if s.Upgrading() {
-			waitForUpgrade()
-		} else {
-			close()
+	for {
+		state := s.ReadyState()
+		if state != SocketStateOpening && state != SocketStateOpen {
+			return s
 		}
+		if s.readyState.CompareAndSwap(state, SocketStateClosing) {
+			break
+		}
+	}
+	if s.writeBuffer.Len() > 0 {
+		_ = s.Once("drain", func(...any) {
+			if s.Upgrading() {
+				waitForUpgrade()
+			} else {
+				close()
+			}
+		})
+	} else if s.Upgrading() {
+		waitForUpgrade()
+	} else {
+		close()
 	}
 
 	return s
@@ -687,44 +693,48 @@ func (s *socketWithoutUpgrade) _onError(err error) {
 // _onClose handles the connection closure process.
 // It performs cleanup operations and notifies listeners of the closure.
 func (s *socketWithoutUpgrade) _onClose(reason string, description error) {
-	if readyState := s.ReadyState(); SocketStateOpening == readyState || SocketStateOpen == readyState || SocketStateClosing == readyState {
-		clientSocketLog.Debug(`socket close with reason: "%s"`, reason)
-
-		// clear timers
-		utils.ClearTimeout(s._pingTimeoutTimer.Load())
-
-		if transport := s.Transport(); transport != nil {
-			// stop event from firing again for transport
-			transport.RemoveAllListeners("close")
-
-			// ensure transport won't stay open
-			transport.Close()
-
-			// ignore further transport communication
-			transport.Clear()
+	for {
+		state := s.ReadyState()
+		if state != SocketStateOpening && state != SocketStateOpen && state != SocketStateClosing {
+			return
 		}
-
-		if s._beforeunloadEventListener != nil {
-			events.RemoveListener(EventBeforeUnload, s._beforeunloadEventListener)
+		if s.readyState.CompareAndSwap(state, SocketStateClosed) {
+			break
 		}
-
-		if s._offlineEventListener != nil {
-			events.RemoveListener(EventOffline, s._offlineEventListener)
-		}
-
-		// set ready state
-		s.readyState.Store(SocketStateClosed)
-
-		// clear session id
-		s.id.Store("")
-
-		// emit close event
-		s.Emit("close", reason, description)
-
-		// clean buffers after, so users can still
-		// grab the buffers on `close` event
-		s.writeBuffer.Clear()
-
-		s.taskQueue.TryClose()
 	}
+	clientSocketLog.Debug(`socket close with reason: "%s"`, reason)
+
+	// clear timers
+	utils.ClearTimeout(s._pingTimeoutTimer.Load())
+
+	if transport := s.Transport(); transport != nil {
+		// stop event from firing again for transport
+		transport.RemoveAllListeners("close")
+
+		// ensure transport won't stay open
+		transport.Close()
+
+		// ignore further transport communication
+		transport.Clear()
+	}
+
+	if s._beforeunloadEventListener != nil {
+		events.RemoveListener(EventBeforeUnload, s._beforeunloadEventListener)
+	}
+
+	if s._offlineEventListener != nil {
+		events.RemoveListener(EventOffline, s._offlineEventListener)
+	}
+
+	// clear session id
+	s.id.Store("")
+
+	// emit close event
+	s.Emit("close", reason, description)
+
+	// clean buffers after, so users can still
+	// grab the buffers on `close` event
+	s.writeBuffer.Clear()
+
+	s.taskQueue.TryClose()
 }

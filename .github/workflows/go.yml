@@ -55,7 +55,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.11.3
+          version: v2.13.1
           working-directory: ${{ matrix.module }}
           args: --timeout=5m --config=${{ github.workspace }}/.golangci.yml
 
