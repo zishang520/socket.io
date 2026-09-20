@@ -1,28 +1,14 @@
-# Set Go proxy (optional override)
-export GOPROXY ?= https://proxy.golang.org,direct
+# Reuse the root commands, restricted to this module.
+.DEFAULT_GOAL := help
+.PHONY: all help env deps get update build fmt vet lint clean test
+all: help
 
-.PHONY: all deps fmt lint clean test
+help:
+	@echo 'Usage: make [env | deps | get | update | build | fmt | vet | lint | clean | test]'
+	@echo 'Runs only parsers/engine; options: FIX=1, GOPROXY, TEST_TIMEOUT.'
 
-all:
-	@echo "Usage: make [deps | fmt | lint | clean | test]"
+env:
+	@go env
 
-deps:
-	@echo "[deps] Tidying Go module dependencies..."
-	go mod tidy
-
-fmt:
-	@echo "[fmt] Formatting Go code..."
-	go fmt ./...
-
-lint:
-	@echo "[lint] Running golangci-lint$(if $(FIX), with --fix)..."
-	golangci-lint run $(if $(FIX),--fix) ./...
-
-clean:
-	@echo "[clean] Cleaning build artifacts..."
-	go clean -v -r ./...
-
-test:
-	@echo "[test] Running Go tests with race and coverage checks..."
-	go clean -testcache
-	go test -race -cover -covermode=atomic ./...
+deps get update build fmt vet lint clean test:
+	@$(MAKE) --no-print-directory -C ../.. $@ MODULE=parsers/engine
