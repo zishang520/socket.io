@@ -49,6 +49,11 @@ var (
 	}
 )
 
+type pollingCompressionWriter interface {
+	io.WriteCloser
+	Reset(io.Writer)
+}
+
 const (
 	// DefaultPollingCloseTimeout is the default time to wait for pending writes before closing a polling transport.
 	DefaultPollingCloseTimeout = 30_000 * time.Millisecond
@@ -59,11 +64,13 @@ type polling struct {
 
 	closeTimeout time.Duration
 
-	req     atomic.Pointer[types.HttpContext]
+	// Keep request ownership and writable/discard transitions together. This
+	// lock is never held while emitting events or writing an HTTP response.
+	reqMu   sync.Mutex
+	req     *types.HttpContext
 	dataCtx atomic.Pointer[types.HttpContext]
 
 	shouldClose atomic.Pointer[types.Callable]
-	mu          sync.Mutex
 	writeQueue  *queue.Queue
 }
 
@@ -97,6 +104,9 @@ func (p *polling) Name() string {
 
 // Overrides onRequest.
 func (p *polling) OnRequest(ctx *types.HttpContext) {
+	if ctx.IsDone() || ctx.Context().Err() != nil {
+		return
+	}
 	method := ctx.Method()
 
 	switch method {
@@ -112,32 +122,55 @@ func (p *polling) OnRequest(ctx *types.HttpContext) {
 
 // The client sends a request awaiting for us to send data.
 func (p *polling) onPollRequest(ctx *types.HttpContext) {
-	if p.req.Load() != nil {
-		pollingLog.Debug("request overlap")
-		// assert: p.res, '.req should be (un)set together'
-		p.OnError("overlap from client", nil)
+	onClose := types.EventListener(func(args ...any) {
+		// The writer or a successor request retires a successful response.
+		if len(args) > 0 && args[0] == nil {
+			return
+		}
+		p.abortPollRequest(ctx)
+	})
+
+	_ = ctx.Once("close", onClose)
+
+	// Subscribe before publishing the request so cancellation cannot be missed.
+	p.reqMu.Lock()
+	if ctx.IsDone() || ctx.Context().Err() != nil {
+		p.reqMu.Unlock()
+		ctx.RemoveListener("close", onClose)
+		return
+	}
+	if p.req != nil && p.req.ResponseCommitted() {
+		// The client can receive a response before DoWrite calls back.
+		// Cancellation alone does not commit a response.
+		p.SetWritable(false)
+		p.req = nil
+	}
+	discarded := p.Discarded()
+	if discarded || p.req != nil {
+		p.reqMu.Unlock()
+		ctx.RemoveListener("close", onClose)
+		if !discarded {
+			pollingLog.Debug("request overlap")
+			p.OnError("overlap from client", nil)
+		}
 		_ = ctx.SetStatusCode(http.StatusBadRequest)
 		_, _ = ctx.Write(nil)
 		return
 	}
-
-	p.req.Store(ctx)
+	p.req = ctx
+	p.SetWritable(true)
+	p.reqMu.Unlock()
 
 	pollingLog.Debug("setting request")
-
-	onClose := types.EventListener(func(...any) {
-		p.SetWritable(false)
-		p.OnError("poll connection closed prematurely", nil)
-	})
-
-	ctx.Cleanup = func() {
+	// Discard can race registration during an upgrade. Publish writable first
+	// so a later discard also sees the pending response when closing.
+	if p.Discarded() {
+		p.releasePollRequest(ctx)
 		ctx.RemoveListener("close", onClose)
-		p.req.Store(nil)
+		_ = ctx.SetStatusCode(http.StatusBadRequest)
+		_, _ = ctx.Write(nil)
+		return
 	}
-
-	_ = ctx.Once("close", onClose)
-
-	p.SetWritable(true)
 	p.Emit("ready")
 
 	// if we're still writable but had a pending close, trigger an empty send
@@ -149,6 +182,29 @@ func (p *polling) onPollRequest(ctx *types.HttpContext) {
 			},
 		})
 	}
+}
+
+func (p *polling) releasePollRequest(ctx *types.HttpContext) {
+	p.reqMu.Lock()
+	if p.req == ctx {
+		p.SetWritable(false)
+		p.req = nil
+	}
+	p.reqMu.Unlock()
+}
+
+func (p *polling) abortPollRequest(ctx *types.HttpContext) {
+	p.reqMu.Lock()
+	if p.req != ctx || ctx.ResponseCommitted() {
+		p.reqMu.Unlock()
+		return
+	}
+	// Reject a successor before releasing the canceled request's slot.
+	p.Discard()
+	p.SetWritable(false)
+	p.req = nil
+	p.reqMu.Unlock()
+	p.OnError("poll connection closed prematurely", nil)
 }
 
 // The client sends a request with data.
@@ -262,9 +318,6 @@ func (p *polling) Send(packets []*packet.Packet) {
 	p.writeQueue.Enqueue(func() { p.send(packets) })
 }
 func (p *polling) send(packets []*packet.Packet) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if shouldClose := p.shouldClose.Load(); shouldClose != nil {
 		pollingLog.Debug("appending close packet to payload")
 		packets = append(packets, &packet.Packet{
@@ -295,12 +348,19 @@ func (p *polling) send(packets []*packet.Packet) {
 // Writes data as response to poll request.
 func (p *polling) write(data types.BufferInterface, options *packet.Options) {
 	pollingLog.Debug(`writing %#v`, data)
-	ctx := p.req.Load()
+	p.reqMu.Lock()
+	ctx := p.req
+	p.reqMu.Unlock()
 	if ctx == nil {
 		p.OnError("polling write error", nil)
 		return
 	}
+	if ctx.IsDone() || ctx.Context().Err() != nil {
+		p.abortPollRequest(ctx)
+		return
+	}
 	p.Proto().(Polling).DoWrite(ctx, data, options, func(err error) {
+		p.releasePollRequest(ctx)
 		if err != nil {
 			p.OnError("polling write error", err)
 			return
@@ -322,99 +382,58 @@ func (p *polling) DoWrite(ctx *types.HttpContext, data types.BufferInterface, op
 		"Content-Type": {contentType},
 	})
 
-	respond := func(data types.BufferInterface, length string) {
-		ctx.Cleanup()
-		defer callback(nil)
-
-		headers.Set("Content-Length", length)
-		ctx.ResponseHeaders().With(p.headers(ctx, headers).All())
-		_ = ctx.SetStatusCode(http.StatusOK)
-		_, _ = io.Copy(ctx, data)
+	compression := p.HttpCompression()
+	if compression != nil &&
+		(options == nil || options.Compress == nil || *options.Compress) &&
+		data.Len() >= compression.Threshold {
+		encoding := utils.Contains(ctx.Headers().Peek("Accept-Encoding"), []string{"gzip", "deflate", "br", "zstd"})
+		if encoding != "" {
+			var err error
+			data, err = p.compress(data, encoding)
+			if err != nil {
+				defer callback(err)
+				_ = ctx.SetStatusCode(http.StatusInternalServerError)
+				_, _ = ctx.Write(nil)
+				return
+			}
+			headers.Set("Content-Encoding", encoding)
+		}
 	}
 
-	if p.HttpCompression() == nil || (options != nil && options.Compress != nil && !*options.Compress) {
-		respond(data, strconv.Itoa(data.Len()))
-		return
-	}
-
-	if data.Len() < p.HttpCompression().Threshold {
-		respond(data, strconv.Itoa(data.Len()))
-		return
-	}
-
-	encoding := utils.Contains(ctx.Headers().Peek("Accept-Encoding"), []string{"gzip", "deflate", "br", "zstd"})
-	if encoding == "" {
-		respond(data, strconv.Itoa(data.Len()))
-		return
-	}
-
-	buf, err := p.compress(data, encoding)
-	if err != nil {
-		ctx.Cleanup()
-		defer callback(err)
-
-		_ = ctx.SetStatusCode(http.StatusInternalServerError)
-		_, _ = ctx.Write(nil)
-		return
-	}
-
-	headers.Set("Content-Encoding", encoding)
-	respond(buf, strconv.Itoa(buf.Len()))
+	defer callback(nil)
+	headers.Set("Content-Length", strconv.Itoa(data.Len()))
+	ctx.ResponseHeaders().With(p.headers(ctx, headers).All())
+	_ = ctx.SetStatusCode(http.StatusOK)
+	_, _ = io.Copy(ctx, data)
 }
 
 // Compresses data.
 func (p *polling) compress(data types.BufferInterface, encoding string) (types.BufferInterface, error) {
 	pollingLog.Debug("compressing")
 	buf := types.NewBytesBuffer(nil)
+	var pool *sync.Pool
 	switch encoding {
 	case "gzip":
-		gz := gzipWriterPool.Get().(*gzip.Writer)
-		gz.Reset(buf)
-		_, err := io.Copy(gz, data)
-		closeErr := gz.Close()
-		gzipWriterPool.Put(gz)
-		if err != nil {
-			return nil, err
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
+		pool = &gzipWriterPool
 	case "deflate":
-		fl := flateWriterPool.Get().(*flate.Writer)
-		fl.Reset(buf)
-		_, err := io.Copy(fl, data)
-		closeErr := fl.Close()
-		flateWriterPool.Put(fl)
-		if err != nil {
-			return nil, err
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
+		pool = &flateWriterPool
 	case "br":
-		br := brotliWriterPool.Get().(*brotli.Writer)
-		br.Reset(buf)
-		_, err := io.Copy(br, data)
-		closeErr := br.Close()
-		brotliWriterPool.Put(br)
-		if err != nil {
-			return nil, err
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
+		pool = &brotliWriterPool
 	case "zstd":
-		zd := zstdWriterPool.Get().(*zstd.Encoder)
-		zd.Reset(buf)
-		_, err := io.Copy(zd, data)
-		closeErr := zd.Close()
-		zstdWriterPool.Put(zd)
-		if err != nil {
-			return nil, err
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
+		pool = &zstdWriterPool
+	default:
+		return buf, nil
+	}
+	writer := pool.Get().(pollingCompressionWriter)
+	writer.Reset(buf)
+	_, err := io.Copy(writer, data)
+	closeErr := writer.Close()
+	pool.Put(writer)
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 	return buf, nil
 }
@@ -422,7 +441,6 @@ func (p *polling) compress(data types.BufferInterface, encoding string) (types.B
 // Closes the transport.
 func (p *polling) DoClose(fn types.Callable) {
 	pollingLog.Debug("closing")
-	p.writeQueue.TryClose()
 
 	if dataCtx := p.dataCtx.Load(); dataCtx != nil && !dataCtx.IsDone() {
 		pollingLog.Debug("aborting ongoing data request")

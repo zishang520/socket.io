@@ -78,7 +78,11 @@ func (bs *baseServer) ClientsCount() uint64 {
 	return bs.clientsCount.Load()
 }
 
+// Middlewares returns the registered slice. Modifying its entries requires
+// external synchronization with registration and request snapshots.
 func (bs *baseServer) Middlewares() []Middleware {
+	bs.middlewareMu.RLock()
+	defer bs.middlewareMu.RUnlock()
 	return bs.middlewares
 }
 
@@ -249,23 +253,22 @@ func (bs *baseServer) ApplyMiddlewares(ctx *types.HttpContext, callback func(err
 		callback(nil)
 		return
 	}
-	var apply func(int)
-	apply = func(i int) {
-		serverLog.Debug("applying middleware n°%d", i+1)
-		middlewares[i](ctx, func(err error) {
-			if err != nil {
-				callback(err)
-				return
-			}
-			if i+1 < len(middlewares) {
-				apply(i + 1)
-			} else {
-				callback(nil)
-			}
-		})
-	}
+	runMiddlewares(ctx, middlewares, 0, callback)
+}
 
-	apply(0)
+func runMiddlewares(ctx *types.HttpContext, middlewares []Middleware, index int, callback func(error)) {
+	serverLog.Debug("applying middleware n°%d", index+1)
+	middlewares[index](ctx, func(err error) {
+		if err != nil {
+			callback(err)
+			return
+		}
+		if index+1 < len(middlewares) {
+			runMiddlewares(ctx, middlewares, index+1, callback)
+		} else {
+			callback(nil)
+		}
+	})
 }
 
 // Closes all clients.
@@ -309,57 +312,148 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 		return UNSUPPORTED_PROTOCOL_VERSION, nil
 	}
 
-	id := bs.GenerateId(ctx)
-	serverLog.Debug(`handshaking client "%s" (%s)`, id, transportName)
-
 	ctx.IdleTimeout = bs.opts.IdleTimeout()
-	transport, err := bs._proto_.CreateTransport(transportName, ctx)
-	if err != nil {
+	var transport transports.Transport
+	var socket Socket
+	if !withTransportInitialization(ctx, bs.opts.UpgradeTimeout(), func(aborted func() bool) bool {
+		id := bs._proto_.GenerateId(ctx)
+		if aborted() {
+			return false
+		}
 		serverLog.Debug(`handshaking client "%s" (%s)`, id, transportName)
-		bs.Emit("connection_error", &types.ErrorMessage{
-			CodeMessage: BAD_REQUEST,
-			Req:         ctx,
-			Context: map[string]any{
-				"name":  "TRANSPORT_HANDSHAKE_ERROR",
-				"error": err,
-			},
+
+		var err error
+		transport, err = bs._proto_.CreateTransport(transportName, ctx)
+		if err != nil {
+			serverLog.Debug(`error creating transport "%s": %v`, transportName, err)
+			bs.Emit("connection_error", &types.ErrorMessage{
+				CodeMessage: BAD_REQUEST,
+				Req:         ctx,
+				Context: map[string]any{
+					"name":  "TRANSPORT_HANDSHAKE_ERROR",
+					"error": err,
+				},
+			})
+			return false
+		}
+		if state := transport.ReadyState(); aborted() || state == "closing" || state == "closed" {
+			transport.Close()
+			return false
+		}
+
+		if transports.POLLING == transportName {
+			transport.SetMaxHttpBufferSize(bs.opts.MaxHttpBufferSize())
+			transport.SetHttpCompression(bs.opts.HttpCompression())
+		} else if transports.WEBSOCKET == transportName {
+			transport.SetPerMessageDeflate(bs.opts.PerMessageDeflate())
+		}
+
+		_ = transport.On("headers", func(args ...any) {
+			headers, req := slices.TryGetAny[*types.ParameterBag](args, 0), slices.TryGetAny[*types.HttpContext](args, 1)
+			if !ctx.Query().Has("sid") {
+				if cookie := bs.opts.Cookie(); cookie != nil {
+					headers.Set("Set-Cookie", cookie.String())
+				}
+				bs.Emit("initial_headers", headers, req)
+			}
+			bs.Emit("headers", headers, req)
 		})
+
+		transport.OnRequest(ctx)
+
+		socket = NewSocket(id, bs._proto_, transport, ctx, protocol)
+		if aborted() || socket.ReadyState() == "closed" {
+			return false
+		}
+
+		bs.clients.Store(id, socket)
+		bs.clientsCount.Add(1)
+
+		onClose := func(...any) {
+			if bs.clients.CompareAndDelete(id, socket) {
+				bs.clientsCount.Add(^uint64(0))
+			}
+		}
+		_ = socket.Once("close", onClose)
+		// Closing can race registration, including during the OPEN write. Check
+		// after subscribing so a close just before the subscription is not lost.
+		if aborted() || socket.ReadyState() == "closed" {
+			onClose()
+			return false
+		}
+
+		bs.Emit("connection", socket)
+		return true
+	}) {
+		if socket != nil {
+			socket.Close(true)
+		}
 		return BAD_REQUEST, nil
 	}
 
-	if transports.POLLING == transportName {
-		transport.SetMaxHttpBufferSize(bs.opts.MaxHttpBufferSize())
-		transport.SetHttpCompression(bs.opts.HttpCompression())
-	} else if transports.WEBSOCKET == transportName {
-		transport.SetPerMessageDeflate(bs.opts.PerMessageDeflate())
+	return nil, transport
+}
+
+// withTransportInitialization owns read permission and the completion callback.
+// Its timer and close listener are released before successful completion runs.
+func withTransportInitialization(ctx *types.HttpContext, timeout time.Duration, initialize func(aborted func() bool) bool) (initialized bool) {
+	defer func() {
+		if ready := ctx.TakeTransportReady(); initialized && ready != nil {
+			ready()
+		}
+	}()
+
+	var connection types.EventEmitter
+	var closeConnection func()
+	if conn := ctx.Websocket; conn != nil {
+		connection, closeConnection = conn, func() { _ = conn.Close() }
+	} else if conn := ctx.WebTransport; conn != nil {
+		connection, closeConnection = conn, func() { _ = conn.CloseWithError(0, "") }
+	} else {
+		return initialize(func() bool { return false })
 	}
 
-	_ = transport.On("headers", func(args ...any) {
-		headers, req := slices.TryGetAny[*types.ParameterBag](args, 0), slices.TryGetAny[*types.HttpContext](args, 1)
-		if !ctx.Query().Has("sid") {
-			if cookie := bs.opts.Cookie(); cookie != nil {
-				headers.Set("Set-Cookie", cookie.String())
-			}
-			bs.Emit("initial_headers", headers, req)
+	const pending, ready, canceled = 0, 1, 2
+	var state atomic.Uint32
+	permission := make(chan bool, 1)
+	ctx.SetTransportReadPermission(permission)
+	resolve := func(result uint32) bool {
+		if !state.CompareAndSwap(pending, result) {
+			return false
 		}
-		bs.Emit("headers", headers, req)
-	})
+		if result == ready {
+			permission <- true
+		}
+		// Release waiting readers before invoking any connection close callbacks.
+		close(permission)
+		return true
+	}
+	abort := func() {
+		if resolve(canceled) {
+			closeConnection()
+		}
+	}
+	defer abort()
+	onClose := func(...any) { resolve(canceled) }
+	_ = connection.Once("close", onClose)
+	defer connection.RemoveListener("close", onClose)
 
-	transport.OnRequest(ctx)
+	if timeout <= 0 {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	timer := time.AfterFunc(timeout, abort)
+	defer timer.Stop()
 
-	socket := NewSocket(id, bs, transport, ctx, protocol)
-
-	bs.clients.Store(id, socket)
-	bs.clientsCount.Add(1)
-
-	_ = socket.Once("close", func(...any) {
-		bs.clients.Delete(id)
-		bs.clientsCount.Add(^uint64(0))
-	})
-
-	bs.Emit("connection", socket)
-
-	return nil, transport
+	aborted := func() bool { return state.Load() == canceled }
+	if aborted() || !initialize(aborted) {
+		return false
+	}
+	// The budget may have elapsed before the timer callback gets to run.
+	if !time.Now().Before(deadline) {
+		return false
+	}
+	return resolve(ready)
 }
 
 // abstract

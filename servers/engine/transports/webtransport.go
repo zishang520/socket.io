@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
@@ -26,7 +25,6 @@ type webTransport struct {
 	idleTimeout time.Duration
 
 	session    *types.WebTransportConn
-	mu         sync.Mutex
 	writeQueue *queue.Queue
 }
 
@@ -61,11 +59,10 @@ func (w *webTransport) Construct(ctx *types.HttpContext) {
 		w.OnClose()
 	})
 
-	// This goroutine is invoked only once.
-	go w.message()
-
 	w.SetWritable(true)
 	w.SetPerMessageDeflate(nil)
+
+	StartReader(w, ctx.TransportReadPermission(), w.message)
 }
 
 // Transport name
@@ -139,6 +136,8 @@ func (w *webTransport) Send(packets []*packet.Packet) {
 	w.SetWritable(false)
 	w.writeQueue.Enqueue(func() { w.send(packets) })
 }
+
+// send runs exclusively on writeQueue, including its completion events.
 func (w *webTransport) send(packets []*packet.Packet) {
 	defer func() {
 		w.Emit("drain")
@@ -146,36 +145,24 @@ func (w *webTransport) send(packets []*packet.Packet) {
 		w.Emit("ready")
 	}()
 
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	for _, packet := range packets {
-		// always creates a new object since ws modifies it
-		compress := true
-		if packet.Options != nil {
-			if packet.Options.Compress != nil && !*packet.Options.Compress {
-				compress = false
+		if packet.Options != nil && w.PerMessageDeflate() == nil && packet.Options.WsPreEncodedFrame != nil {
+			mt := webtransport.BinaryMessage
+			if _, ok := packet.Options.WsPreEncodedFrame.(*types.StringBuffer); ok {
+				mt = webtransport.TextMessage
 			}
-
-			if w.PerMessageDeflate() == nil && packet.Options.WsPreEncodedFrame != nil {
-				mt := webtransport.BinaryMessage
-				if _, ok := packet.Options.WsPreEncodedFrame.(*types.StringBuffer); ok {
-					mt = webtransport.TextMessage
-				}
-				pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
-				if err != nil {
-					wtLog.Debug(`Send Error "%s"`, err.Error())
-					w._error(err)
-					return
-				}
-				if err := w.session.WritePreparedMessage(pm); err != nil {
-					wtLog.Debug(`Send Error "%s"`, err.Error())
-					w._error(err)
-					return
-				}
-				continue
-
+			pm, err := webtransport.NewPreparedMessage(mt, packet.Options.WsPreEncodedFrame.Bytes())
+			if err != nil {
+				wtLog.Debug(`Send Error "%s"`, err.Error())
+				w._error(err)
+				return
 			}
+			if err := w.session.WritePreparedMessage(pm); err != nil {
+				wtLog.Debug(`Send Error "%s"`, err.Error())
+				w._error(err)
+				return
+			}
+			continue
 		}
 
 		data, err := w.Parser().EncodePacket(packet, w.SupportsBinary())
@@ -184,19 +171,13 @@ func (w *webTransport) send(packets []*packet.Packet) {
 			w._error(err)
 			return
 		}
-		w.write(data, compress)
+		w.write(data)
 	}
 }
 
-func (w *webTransport) write(data types.BufferInterface, _ bool) {
-	// if w.PerMessageDeflate() != nil {
-	// 	if data.Len() < w.PerMessageDeflate().Threshold {
-	// 		compress = false
-	// 	}
-	// }
+func (w *webTransport) write(data types.BufferInterface) {
 	wtLog.Debug(`writing %s`, data)
 
-	// w.session.EnableWriteCompression(compress)
 	mt := webtransport.BinaryMessage
 	if _, ok := data.(*types.StringBuffer); ok {
 		mt = webtransport.TextMessage

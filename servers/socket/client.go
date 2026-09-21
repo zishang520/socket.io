@@ -25,6 +25,7 @@ type Client struct {
 	sockets        *types.Map[SocketId, *Socket]
 	nsps           *types.Map[string, *Socket]
 	connectTimeout atomic.Pointer[utils.Timer]
+	closed         atomic.Bool
 
 	mu sync.Mutex
 }
@@ -73,7 +74,6 @@ func (c *Client) setup() {
 	_ = c.decoder.On("decoded", c.ondecoded)
 	_ = c.conn.On("data", c.ondata)
 	_ = c.conn.On("error", c.onerror)
-	_ = c.conn.Once("close", c.onclose)
 
 	c.connectTimeout.Store(utils.SetTimeout(func() {
 		if c.nsps.Len() == 0 {
@@ -83,6 +83,15 @@ func (c *Client) setup() {
 			client_log.Debug("the client has already joined a namespace, nothing to do")
 		}
 	}, c.server._connectTimeout))
+	// Publish the timer before subscribing to close so teardown cannot miss a
+	// timer installed later. Initialization may already have timed out.
+	_ = c.conn.Once("close", c.onclose)
+	if c.closed.Load() {
+		// An immediate connect timeout can finish before its timer is stored.
+		c.destroy()
+	} else if c.conn.ReadyState() == "closed" {
+		c.onclose("transport close")
+	}
 }
 
 // connect connects a client to a namespace with optional auth parameters.
@@ -226,6 +235,9 @@ func (c *Client) onerror(args ...any) {
 
 // onclose is called upon transport close.
 func (c *Client) onclose(args ...any) {
+	if !c.closed.CompareAndSwap(false, true) {
+		return
+	}
 	client_log.Debug("client close with reason %v", args[0])
 
 	// ignore a potential subsequent `close` event

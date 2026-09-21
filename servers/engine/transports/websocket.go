@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"sync"
 	"time"
 
 	ws "github.com/gorilla/websocket"
@@ -24,7 +23,6 @@ type websocket struct {
 	idleTimeout time.Duration
 
 	socket     *types.WebSocketConn
-	mu         sync.Mutex
 	writeQueue *queue.Queue
 }
 
@@ -59,11 +57,10 @@ func (w *websocket) Construct(ctx *types.HttpContext) {
 		w.OnClose()
 	})
 
-	// This goroutine is invoked only once.
-	go w.message()
-
 	w.SetWritable(true)
 	w.SetPerMessageDeflate(nil)
+
+	StartReader(w, ctx.TransportReadPermission(), w.message)
 }
 
 // Transport name
@@ -145,15 +142,14 @@ func (w *websocket) Send(packets []*packet.Packet) {
 	w.SetWritable(false)
 	w.writeQueue.Enqueue(func() { w.send(packets) })
 }
+
+// send runs exclusively on writeQueue, including its completion events.
 func (w *websocket) send(packets []*packet.Packet) {
 	defer func() {
 		w.Emit("drain")
 		w.SetWritable(true)
 		w.Emit("ready")
 	}()
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	for _, packet := range packets {
 		// always creates a new object since ws modifies it

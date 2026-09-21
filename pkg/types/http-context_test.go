@@ -17,6 +17,7 @@ func TestHttpContext(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		ctx := NewHttpContext(rec, req)
+		t.Cleanup(ctx.Flush)
 
 		payload := []byte("hello")
 		n, err := ctx.Write(payload)
@@ -47,6 +48,7 @@ func TestHttpContext(t *testing.T) {
 	t.Run("QueryParsing", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test?foo=bar&foo=baz&x=1", nil)
 		ctx := NewHttpContext(httptest.NewRecorder(), req)
+		t.Cleanup(ctx.Flush)
 
 		expectedSingle := "baz"
 		if val := ctx.Query().Peek("foo"); val != expectedSingle {
@@ -63,9 +65,15 @@ func TestHttpContext(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		ctx := NewHttpContext(rec, req)
+		t.Cleanup(ctx.Flush)
 
 		cookies := []string{"a=1", "b=2"}
-		ctx.ResponseHeaders().Add("Set-Cookie", cookies[0])
+		rec.Header().Set("X-Keep", "original")
+		ctx.ResponseHeaders().Replace(map[string][]string{
+			"Set-Cookie": {cookies[0]},
+			"x-multi":    {"first", "second"},
+			"X-Keep":     nil,
+		})
 		ctx.ResponseHeaders().Add("Set-Cookie", cookies[1])
 
 		if _, err := ctx.Write([]byte("ok")); err != nil {
@@ -75,6 +83,12 @@ func TestHttpContext(t *testing.T) {
 		actualCookies := rec.Header()["Set-Cookie"]
 		if !reflect.DeepEqual(actualCookies, cookies) {
 			t.Fatalf("expected Set-Cookie headers %v, got %v", cookies, actualCookies)
+		}
+		if got := rec.Header().Values("X-Multi"); !reflect.DeepEqual(got, []string{"first", "second"}) {
+			t.Errorf("expected canonicalized headers in order, got %v", got)
+		}
+		if got := rec.Header().Get("X-Keep"); got != "original" {
+			t.Errorf("empty staged header replaced an existing value: %q", got)
 		}
 	})
 
@@ -87,7 +101,9 @@ func TestHttpContext(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		ctx := NewHttpContext(rec, req)
+		t.Cleanup(ctx.Flush)
 
+		ctx.Flush()
 		ctx.Flush()
 	})
 
@@ -100,6 +116,7 @@ func TestHttpContext(t *testing.T) {
 			Header: http.Header{"User-Agent": []string{"GoTest"}},
 		}
 		ctx := NewHttpContext(httptest.NewRecorder(), req)
+		t.Cleanup(ctx.Flush)
 
 		testCases := []struct {
 			name     string
@@ -133,6 +150,7 @@ func TestHttpContext(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		ctx := NewHttpContext(rec, req)
+		t.Cleanup(ctx.Flush)
 
 		var (
 			wg                   sync.WaitGroup
@@ -200,6 +218,7 @@ func TestHttpContext(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		ctx := NewHttpContext(rec, req)
+		t.Cleanup(ctx.Flush)
 
 		if err := ctx.SetStatusCode(99); !errors.Is(err, ErrInvalidStatusCode) {
 			t.Errorf("expected ErrInvalidStatusCode for 99, got %v", err)
