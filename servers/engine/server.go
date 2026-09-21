@@ -215,6 +215,10 @@ func (s *server) onWebSocket(ctx *types.HttpContext, wsc *types.WebSocketConn) {
 		} else {
 			transport.SetPerMessageDeflate(s.Opts().PerMessageDeflate())
 			client.MaybeUpgrade(transport)
+			// MaybeUpgrade has finished registering its "packet" listener on
+			// transport (see socket.go); safe to let the reader goroutine's
+			// buffered packets (if any) through now.
+			transport.ReleaseGate()
 		}
 	}
 }
@@ -354,6 +358,9 @@ func (s *server) OnWebTransportSession(ctx *types.HttpContext, wt *webtransport.
 		} else {
 			transport.SetPerMessageDeflate(s.Opts().PerMessageDeflate())
 			client.MaybeUpgrade(transport)
+			// See the matching comment in onWebSocket: safe to release once
+			// MaybeUpgrade has registered its "packet" listener.
+			transport.ReleaseGate()
 		}
 	}
 }
@@ -376,6 +383,13 @@ func (s *server) Attach(server *types.HttpServer, opts any) {
 
 // Captures upgrade requests for a http.Handler, Need to handle server shutdown disconnecting client connections.
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Mark the request context as having come through this entry point so
+	// transport.Construct (servers/engine/transports/transport.go) knows to
+	// gate inbound packet delivery until the caller finishes registering its
+	// "packet" listeners and calls Transport.ReleaseGate. See
+	// transports.WithHandshakeOrigin for the known limitation around
+	// WebTransport integrations that build their own context.
+	r = r.WithContext(transports.WithHandshakeOrigin(r.Context()))
 	if !websocket.IsWebSocketUpgrade(r) {
 		serverLog.Debug(`intercepting request for path "%s"`, utils.CleanPath(r.URL.Path))
 		s.HandleRequest(types.NewHttpContext(w, r))

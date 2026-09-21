@@ -93,6 +93,11 @@ type (
 		//
 		// Called with parsed out a packets from the data stream.
 		OnPacket(*packet.Packet)
+		// Reopens the packet-delivery gate (see transport.go), flushing any
+		// packets buffered while the gate was closed. Idempotent: safe to
+		// call more than once. A no-op for transports whose Construct never
+		// closed the gate (i.e. ctx carried no WithHandshakeOrigin marker).
+		ReleaseGate()
 		// Protected
 		//
 		// Called with the encoded packet data.

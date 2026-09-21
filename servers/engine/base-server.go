@@ -359,6 +359,14 @@ func (bs *baseServer) Handshake(transportName string, ctx *types.HttpContext) (*
 
 	bs.Emit("connection", socket)
 
+	// bs.Emit("connection", socket) has run NewSocket's setup synchronously
+	// (see socket.go), which registers transport's "packet" listener, and
+	// the socket.io layer's Client construction (server.go onconnection),
+	// which registers its own "data" listener downstream of that. Both
+	// listener registrations are done, so it is now safe to flush anything
+	// the reader goroutine buffered while the gate was closed.
+	transport.ReleaseGate()
+
 	return nil, transport
 }
 

@@ -2,6 +2,7 @@
 package transports
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/zishang520/socket.io/parsers/engine/v3/packet"
@@ -37,6 +38,25 @@ type transport struct {
 
 	// Whether the transport is currently ready to send packets.
 	_writable atomic.Bool
+
+	// gateMu guards gateOpen and gateBuf together. OnPacket's gate check +
+	// buffer append and ReleaseGate's flush + open transition MUST execute
+	// under this single lock as one critical section: if the two operations
+	// were allowed to interleave (e.g. gateOpen flipped and observed by a
+	// concurrent OnPacket call before the buffered packets are flushed), a
+	// packet appended in that narrow window would never be flushed again,
+	// reproducing the exact silent-drop defect this gate exists to close.
+	gateMu sync.Mutex
+	// gateOpen is only ever written while gateMu is held. It is an
+	// atomic.Bool (rather than a plain bool) so ReleaseGate can use
+	// CompareAndSwap to make repeated calls idempotent without a second
+	// flag; correctness of the gate/buffer interaction still comes from
+	// gateMu, not from the atomicity of this field on its own.
+	gateOpen atomic.Bool
+	// gateBuf holds packets received while the gate is closed, in arrival
+	// (FIFO) order, so ReleaseGate can replay them in the order they were
+	// actually received.
+	gateBuf []*packet.Packet
 }
 
 func MakeTransport() Transport {
@@ -44,6 +64,12 @@ func MakeTransport() Transport {
 		EventEmitter: types.NewEventEmitter(),
 	}
 	t._readyState.Store("open")
+	// Default to open (today's behavior) so that any caller which somehow
+	// invokes OnPacket before Construct runs does not silently swallow
+	// packets. Construct is the only place that ever closes the gate, and it
+	// always closes it before the reader goroutine that would call OnPacket
+	// is started (see websocket.go / webtransport.go Construct).
+	t.gateOpen.Store(true)
 
 	t.Prototype(t)
 
@@ -146,6 +172,17 @@ func (t *transport) Construct(ctx *types.HttpContext) {
 
 	t.protocol = t.parser.Protocol()
 	t.supportsBinary = !ctx.Query().Has("b64")
+
+	// Close the gate for connections that originated from the Engine.IO
+	// server's own ServeHTTP entry point: the caller (Handshake / onWebSocket
+	// / OnWebTransportSession) still has "packet" listener registration left
+	// to do after this constructor returns, and the reader goroutine started
+	// right after Construct (see websocket.go / webtransport.go) must not be
+	// allowed to deliver packets before that registration completes. The
+	// caller reopens the gate with ReleaseGate once registration is done.
+	// Connections built without the marker (e.g. websocket_test.go's direct
+	// NewWebSocket(ctx) call) keep the pre-existing always-open behavior.
+	t.gateOpen.Store(!isHandshakeOrigin(ctx.Context()))
 }
 
 // Flags the transport as discarded.
@@ -176,8 +213,50 @@ func (t *transport) OnError(msg string, desc error) {
 }
 
 // Called with parsed out a packets from the data stream.
-func (t *transport) OnPacket(packet *packet.Packet) {
-	t.Emit("packet", packet)
+//
+// While the gate is closed the packet is appended to gateBuf instead of
+// being emitted; ReleaseGate flushes gateBuf (in arrival order) and reopens
+// the gate. See the gateMu field comment for why the check-and-append here
+// and the flush-and-open in ReleaseGate must share one critical section.
+func (t *transport) OnPacket(p *packet.Packet) {
+	t.gateMu.Lock()
+	if !t.gateOpen.Load() {
+		t.gateBuf = append(t.gateBuf, p)
+		t.gateMu.Unlock()
+		return
+	}
+	t.gateMu.Unlock()
+
+	// Any OnPacket call that observes gateOpen == true is guaranteed (by
+	// gateMu's mutual exclusion and the lock/unlock happens-before edges) to
+	// run after ReleaseGate's flush of every packet buffered up to that
+	// point has fully completed, so emitting outside the lock here cannot
+	// reorder this packet ahead of previously buffered ones.
+	t.Emit("packet", p)
+}
+
+// ReleaseGate reopens the packet-delivery gate, flushing any packets
+// buffered by OnPacket while the gate was closed, in the order they were
+// received. It is idempotent: calling it more than once (from any of
+// Handshake / onWebSocket / OnWebTransportSession) after the first call is a
+// no-op, guarded by CompareAndSwap. The flush happens while gateMu is still
+// held so that no OnPacket call can observe the gate as open until every
+// buffered packet has been emitted — see the gateMu field comment.
+func (t *transport) ReleaseGate() {
+	t.gateMu.Lock()
+	defer t.gateMu.Unlock()
+
+	if !t.gateOpen.CompareAndSwap(false, true) {
+		// Already open (never closed, or a previous ReleaseGate call already
+		// flushed and opened it). Nothing to do.
+		return
+	}
+
+	buffered := t.gateBuf
+	t.gateBuf = nil
+	for _, p := range buffered {
+		t.Emit("packet", p)
+	}
 }
 
 // Called with the encoded packet data.
