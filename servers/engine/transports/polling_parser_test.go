@@ -67,8 +67,11 @@ func TestPollingSendReaderFailure(t *testing.T) {
 			if failures != 1 || drains != 0 || r.closed != 1 || p.Writable() || p.ReadyState() != "closed" {
 				t.Fatalf("errors=%d drains=%d closes=%d writable=%v state=%v", failures, drains, r.closed, p.Writable(), p.ReadyState())
 			}
-			if !ctx.IsDone() || p.req.Load() != nil || recorder.Code != http.StatusInternalServerError || recorder.Body.Len() != 0 {
-				t.Fatalf("done=%v pending=%v status=%d body=%q", ctx.IsDone(), p.req.Load() != nil, recorder.Code, recorder.Body.String())
+			p.reqMu.Lock()
+			pending := p.req != nil
+			p.reqMu.Unlock()
+			if !ctx.IsDone() || pending || recorder.Code != http.StatusInternalServerError || recorder.Body.Len() != 0 {
+				t.Fatalf("done=%v pending=%v status=%d body=%q", ctx.IsDone(), pending, recorder.Code, recorder.Body.String())
 			}
 		})
 	}

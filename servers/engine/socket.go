@@ -160,12 +160,21 @@ func (s *socket) Construct(id string, server BaseServer, transport transports.Tr
 	}
 
 	s.setTransport(transport)
-	s.onOpen()
+	opened := s.onOpen()
+	if ctx.TransportReadPermission() != nil {
+		// Managed streams start heartbeat when their initialization completes.
+		ctx.SetTransportReady(s.startHeartbeat)
+	} else if opened {
+		s.startHeartbeat()
+	}
 }
 
-// Called upon transport considered open.
-func (s *socket) onOpen() {
-	s.SetReadyState("open")
+// onOpen queues OPEN and reports whether it reached the open event.
+func (s *socket) onOpen() bool {
+	// Initialization can lose to a transport error or its startup deadline.
+	if !s.readyState.CompareAndSwap("opening", "open") {
+		return false
+	}
 
 	// sends an `open` packet
 	s.Transport().SetSid(s.id)
@@ -182,7 +191,7 @@ func (s *socket) onOpen() {
 	if err != nil {
 		socketLog.Debug("json.Marshal err: %s", err)
 		s.OnClose("encode error")
-		return
+		return false
 	}
 	s.sendPacket(
 		packet.OPEN,
@@ -194,8 +203,17 @@ func (s *socket) onOpen() {
 		s.sendPacket(packet.MESSAGE, i, nil, nil)
 	}
 
+	if s.ReadyState() != "open" {
+		return false
+	}
 	s.Emit("open")
+	return true
+}
 
+func (s *socket) startHeartbeat() {
+	if s.ReadyState() == "closed" {
+		return
+	}
 	if s.protocol == 3 {
 		// in protocol v3, the client sends a ping, and the server answers with a pong
 		s.resetPingTimeout()
@@ -263,24 +281,39 @@ func (s *socket) onError(err error) {
 // Pings client every `this.pingInterval` and expects response
 // within `this.pingTimeout` or closes connection.
 func (s *socket) schedulePing() {
-	s.pingIntervalTimer.Store(utils.SetTimeout(func() {
+	timer := utils.SetTimeout(func() {
+		if s.ReadyState() == "closed" {
+			return
+		}
 		if log.DEBUG.Load() {
 			socketLog.Debug("writing ping packet - expecting pong within %dms", s.server.Opts().PingTimeout().Milliseconds())
 		}
 		s.sendPacket(packet.PING, nil, nil, nil)
 		s.resetPingTimeout()
-	}, s.server.Opts().PingInterval()))
+	}, s.server.Opts().PingInterval())
+	s.pingIntervalTimer.Store(timer)
+	// A close may have cleared the old timer before this one was published.
+	if s.ReadyState() == "closed" {
+		utils.ClearTimeout(timer)
+	}
 }
 
 // Resets ping timeout.
 func (s *socket) resetPingTimeout() {
 	utils.ClearTimeout(s.pingTimeoutTimer.Load())
-	s.pingTimeoutTimer.Store(utils.SetTimeout(func() {
+	if s.ReadyState() == "closed" {
+		return
+	}
+	timer := utils.SetTimeout(func() {
 		if s.ReadyState() == "closed" {
 			return
 		}
 		s.OnClose("ping timeout")
-	}, s.resetPingTimeoutDuration()))
+	}, s.resetPingTimeoutDuration())
+	s.pingTimeoutTimer.Store(timer)
+	if s.ReadyState() == "closed" {
+		utils.ClearTimeout(timer)
+	}
 }
 func (s *socket) resetPingTimeoutDuration() time.Duration {
 	if s.protocol == 3 {
@@ -316,6 +349,10 @@ func (s *socket) setTransport(transport transports.Transport) {
 		transport.RemoveListener("drain", onDrain)
 		transport.RemoveListener("close", onClose)
 	})
+	// Closing can finish before the listener cleanup is published.
+	if s.ReadyState() == "closed" {
+		s.clearTransport()
+	}
 }
 
 // Upon transport "drain" event
@@ -389,20 +426,16 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 		utils.ClearInterval(checkIntervalTimer.Load())
 		utils.ClearTimeout(upgradeTimeoutTimer.Load())
 
-		if transport != nil {
-			transport.RemoveListener("packet", onPacket)
-			transport.RemoveListener("close", onTransportClose)
-			transport.RemoveListener("error", onError)
-		}
+		transport.RemoveListener("packet", onPacket)
+		transport.RemoveListener("close", onTransportClose)
+		transport.RemoveListener("error", onError)
 		s.RemoveListener("close", onClose)
 	}
 
 	onError = func(errs ...any) {
 		socketLog.Debug("client did not complete upgrade - %v", slices.TryGetAny[error](errs, 0))
 		cleanup()
-		if transport != nil {
-			transport.Close()
-		}
+		transport.Close()
 	}
 
 	onTransportClose = func(...any) {
@@ -417,11 +450,7 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 	upgradeTimeoutTimer.Store(utils.SetTimeout(func() {
 		socketLog.Debug("client did not complete upgrade - closing transport")
 		cleanup()
-		if transport != nil {
-			if transport.ReadyState() == "open" {
-				transport.Close()
-			}
-		}
+		transport.Close()
 	}, s.server.Opts().UpgradeTimeout()))
 
 	_ = transport.On("packet", onPacket)
@@ -429,6 +458,12 @@ func (s *socket) MaybeUpgrade(transport transports.Transport) {
 	_ = transport.Once("error", onError)
 
 	_ = s.Once("close", onClose)
+	// A startup deadline may have closed the candidate before these listeners
+	// were installed. Do not leave a dead candidate marked as upgrading.
+	if state := transport.ReadyState(); state == "closing" || state == "closed" || s.ReadyState() == "closed" {
+		cleanup()
+		transport.Close()
+	}
 }
 
 func isProbePingPacket(data *packet.Packet) bool {
@@ -473,13 +508,11 @@ func (s *socket) clearTransport() {
 // Possible reasons: `ping timeout`, `client error`, `parse error`,
 // `transport error`, `server close`, `transport close`
 func (s *socket) OnClose(reason string, description ...error) {
-	if s.ReadyState() != "closed" {
+	if s.readyState.Swap("closed") != "closed" {
 		var closeErr error
 		if len(description) > 0 {
 			closeErr = description[0]
 		}
-
-		s.SetReadyState("closed")
 
 		// clear timers
 		utils.ClearTimeout(s.pingIntervalTimer.Load())
@@ -589,7 +622,7 @@ func (s *socket) flush() {
 func (s *socket) getAvailableUpgrades() []string {
 	availableUpgrades := []string{}
 	for _, upg := range s.server.Upgrades(s.Transport().Name()) {
-		if s.server.Transports().Has(upg) {
+		if s.server.Transports().Has(upg) && (s.protocol == 4 || upg != transports.WEBTRANSPORT) {
 			availableUpgrades = append(availableUpgrades, upg)
 		}
 	}
@@ -598,36 +631,35 @@ func (s *socket) getAvailableUpgrades() []string {
 
 // Closes the socket and underlying transport.
 func (s *socket) Close(discard bool) {
-	if discard &&
-		(s.ReadyState() == "open" || s.ReadyState() == "closing") {
-		s.closeTransport(discard)
+	if discard {
+		if state := s.ReadyState(); state == "open" || state == "closing" {
+			// The transport may have closed before its listeners were installed.
+			// Finalize the socket even when Transport.Close cannot call back.
+			s.Transport().Discard()
+			s.OnClose("forced close")
+		}
 		return
 	}
 
-	if s.ReadyState() != "open" {
+	if !s.readyState.CompareAndSwap("open", "closing") {
 		return
 	}
-
-	s.SetReadyState("closing")
 
 	if length := s.writeBuffer.Len(); length > 0 {
 		socketLog.Debug("there are %d remaining packets in the buffer, waiting for the 'drain' event", length)
 		_ = s.Once("drain", func(...any) {
 			socketLog.Debug("all packets have been sent, closing the transport")
-			s.closeTransport(discard)
+			s.closeTransport()
 		})
 		return
 	}
 
 	socketLog.Debug("the buffer is empty, closing the transport right away")
-	s.closeTransport(discard)
+	s.closeTransport()
 }
 
 // Closes the underlying transport.
-func (s *socket) closeTransport(discard bool) {
-	socketLog.Debug("closing the transport (discard? %t)", discard)
-	if discard {
-		s.Transport().Discard()
-	}
+func (s *socket) closeTransport() {
+	socketLog.Debug("closing the transport")
 	s.Transport().Close(func() { s.OnClose("forced close") })
 }

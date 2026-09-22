@@ -169,12 +169,12 @@ func (s *Server) Construct(srv any, opts ServerOptionsInterface) {
 
 	s.StrictEventEmitter = s.sockets.EventEmitter()
 
-	if srv != nil {
-		s.Attach(srv, nil)
-	}
-
 	if cors := s.opts.Cors(); cors != nil {
 		s._corsMiddleware = types.MiddlewareWrapper(cors)
+	}
+
+	if srv != nil {
+		s.Attach(srv, nil)
 	}
 }
 
@@ -269,39 +269,25 @@ func (s *Server) Listen(srv any, opts *ServerOptions) *Server {
 // Attach attaches socket.io to a server or port.
 // srv is the server or port, opts are options passed to engine.io.
 func (s *Server) Attach(srv any, opts *ServerOptions) *Server {
+	if port, ok := srv.(int); ok {
+		srv = ":" + strconv.Itoa(port)
+	}
 	var server *types.HttpServer
 	switch address := srv.(type) {
-	case int:
-		_address := ":" + strconv.Itoa(address)
-		// handle a port as a int
-		serverLog.Debug("creating http server and binding to %s", _address)
-		server = types.NewWebServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "404 page not found", http.StatusNotFound)
-		}))
-		server.Listen(_address, nil)
 	case string:
-		// handle a port as a string
 		serverLog.Debug("creating http server and binding to %s", address)
 		server = types.NewWebServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "404 page not found", http.StatusNotFound)
 		}))
-		server.Listen(address, nil)
 	case *types.HttpServer:
 		server = address
 	default:
 		panic(fmt.Errorf("trying to attach socket.io to express request handler %T, please pass a *types.HttpServer instance", address))
 	}
-	if opts == nil {
-		opts = DefaultServerOptions()
-	}
-
-	// merge the options passed to the Socket.IO server
-	opts.Assign(s.opts)
-	// set engine.io path to `/socket.io`
-	if opts.GetRawPath() == nil {
-		opts.SetPath(s._path)
-	}
 	s.initEngine(server, opts)
+	if address, ok := srv.(string); ok {
+		server.Listen(address, nil)
+	}
 
 	return s
 }
@@ -312,7 +298,12 @@ func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
 	if s.eio != nil {
 		return s.eio
 	}
+	s.initEngine(nil, opts)
+	return s.eio
+}
 
+// initEngine creates and binds Engine.IO before optionally attaching its handler.
+func (s *Server) initEngine(srv *types.HttpServer, opts *ServerOptions) {
 	if opts == nil {
 		opts = DefaultServerOptions()
 	}
@@ -324,31 +315,20 @@ func (s *Server) ServeHandler(opts *ServerOptions) http.Handler {
 		opts.SetPath(s._path)
 	}
 
-	// initialize engine
-	serverLog.Debug("creating http.Handler-based engine with opts %v", opts)
-	s.eio = engine.NewServer(opts)
-	// bind to engine events
-	s.Bind(s.eio)
-
-	return s.eio
-}
-
-// initEngine initializes the engine.io server and attaches it to the HTTP server.
-func (s *Server) initEngine(srv *types.HttpServer, opts ServerOptionsInterface) {
-	// initialize engine
 	serverLog.Debug("creating engine.io instance with opts %+v", opts)
-	s.eio = engine.Attach(srv, opts)
+	s.eio = engine.NewServer(opts)
+	s.httpServer = srv
+	// Bind before publishing a handler on a server that may already be listening.
+	s.Bind(s.eio)
+	if srv == nil {
+		return
+	}
+	s.eio.Attach(srv, opts)
 
 	// attach static file serving
 	if s._serveClient {
 		s.attachServe(srv, s.eio, opts)
 	}
-
-	// Export http server
-	s.httpServer = srv
-
-	// bind to engine events
-	s.Bind(s.eio)
 }
 
 // attachServe attaches the static file serving handler.
@@ -511,11 +491,14 @@ func (s *Server) Bind(egs engine.BaseServer) *Server {
 // onconnection is called with each incoming transport connection.
 func (s *Server) onconnection(conns ...any) {
 	conn := slices.TryGetAny[engine.Socket](conns, 0)
+	if conn.ReadyState() != "open" {
+		return
+	}
 	if log.DEBUG.Load() {
 		serverLog.Debug("incoming connection with id %s", conn.Id())
 	}
 	client := NewClient(s, conn)
-	if conn.Protocol() == 3 {
+	if conn.Protocol() == 3 && conn.ReadyState() == "open" {
 		client.connect("/", nil)
 	}
 }

@@ -2,6 +2,8 @@ package socket
 
 import (
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -181,9 +183,12 @@ func TestManagerCustomPath(t *testing.T) {
 }
 
 func TestManagerNilOpts(t *testing.T) {
+	httpServer := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(httpServer.Close)
 	m := MakeManager()
 	// Should not panic with nil opts
-	m.Construct("http://localhost:3000", nil)
+	m.Construct(httpServer.URL, nil)
+	t.Cleanup(m._close)
 
 	if m.Opts() == nil {
 		t.Error("Expected Opts() to be non-nil even when constructed with nil")

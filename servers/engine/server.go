@@ -80,6 +80,9 @@ func (s *server) HandleRequest(ctx *types.HttpContext) {
 	}
 
 	callback := func(codeMessage *types.CodeMessage, errorContext map[string]any) {
+		if ctx.IsDone() || ctx.Context().Err() != nil {
+			return
+		}
 		if codeMessage != nil {
 			s.emitAbortRequest(ctx, codeMessage, errorContext)
 			return
@@ -99,17 +102,21 @@ func (s *server) HandleRequest(ctx *types.HttpContext) {
 				abortRequest(ctx, UNKNOWN_SID, map[string]any{"sid": sid})
 			}
 		} else {
-			if codeMessage, t := s.Handshake(ctx.Query().Peek("transport"), ctx); t == nil {
+			if codeMessage, t := s.Proto().Handshake(ctx.Query().Peek("transport"), ctx); t == nil {
 				abortRequest(ctx, codeMessage, nil)
 			}
 		}
 	}
 
-	s.ApplyMiddlewares(ctx, func(err error) {
+	s.Proto().ApplyMiddlewares(ctx, func(err error) {
+		// Middleware may resume after the response ended or the request was canceled.
+		if ctx.IsDone() || ctx.Context().Err() != nil {
+			return
+		}
 		if err != nil {
 			callback(BAD_REQUEST, map[string]any{"name": "MIDDLEWARE_FAILURE"})
 		} else {
-			callback(s.Verify(ctx, false))
+			callback(s.Proto().Verify(ctx, false))
 		}
 	})
 
@@ -120,6 +127,9 @@ func (s *server) HandleRequest(ctx *types.HttpContext) {
 // Handles an Engine.IO HTTP Upgrade.
 func (s *server) HandleUpgrade(ctx *types.HttpContext) {
 	callback := func(codeMessage *types.CodeMessage, errorContext map[string]any) {
+		if ctx.IsDone() || ctx.Context().Err() != nil {
+			return
+		}
 		if codeMessage != nil {
 			s.emitAbortUpgrade(ctx, codeMessage, errorContext)
 			return
@@ -158,11 +168,15 @@ func (s *server) HandleUpgrade(ctx *types.HttpContext) {
 		}
 	}
 
-	s.ApplyMiddlewares(ctx, func(err error) {
+	s.Proto().ApplyMiddlewares(ctx, func(err error) {
+		// Middleware may resume after the response ended or the request was canceled.
+		if ctx.IsDone() || ctx.Context().Err() != nil {
+			return
+		}
 		if err != nil {
 			callback(BAD_REQUEST, map[string]any{"name": "MIDDLEWARE_FAILURE"})
 		} else {
-			callback(s.Verify(ctx, true))
+			callback(s.Proto().Verify(ctx, true))
 		}
 	})
 }
@@ -190,7 +204,7 @@ func (s *server) onWebSocket(ctx *types.HttpContext, wsc *types.WebSocketConn) {
 	ctx.Websocket = wsc
 
 	if len(id) == 0 {
-		if codeMessage, t := s.Handshake(transportName, ctx); t == nil {
+		if codeMessage, t := s.Proto().Handshake(transportName, ctx); t == nil {
 			abortUpgrade(ctx, codeMessage, nil)
 		} else {
 			// transport error handling takes over
@@ -216,15 +230,28 @@ func (s *server) onWebSocket(ctx *types.HttpContext, wsc *types.WebSocketConn) {
 		// transport error handling takes over
 		wsc.RemoveListener("error", onUpgradeError)
 
-		ctx.IdleTimeout = s.Opts().IdleTimeout()
-		transport, err := s.CreateTransport(transportName, ctx)
+		s.prepareUpgrade(transportName, ctx, client)
+	}
+}
+
+func (s *server) prepareUpgrade(transportName string, ctx *types.HttpContext, client Socket) {
+	ctx.IdleTimeout = s.Opts().IdleTimeout()
+	var transport transports.Transport
+	if !withTransportInitialization(ctx, s.Opts().UpgradeTimeout(), func(aborted func() bool) bool {
+		var err error
+		transport, err = s.Proto().CreateTransport(transportName, ctx)
 		if err != nil {
 			serverLog.Debug("upgrading not existing transport")
-			_ = wsc.Close()
-		} else {
-			transport.SetPerMessageDeflate(s.Opts().PerMessageDeflate())
-			client.MaybeUpgrade(transport)
+			return false
 		}
+		if state := transport.ReadyState(); aborted() || state == "closing" || state == "closed" {
+			return false
+		}
+		transport.SetPerMessageDeflate(s.Opts().PerMessageDeflate())
+		client.MaybeUpgrade(transport)
+		return true
+	}) && transport != nil {
+		transport.Close()
 	}
 }
 
@@ -236,13 +263,13 @@ func (s *server) OnWebTransportSession(ctx *types.HttpContext, wt *webtransport.
 		}
 	}
 
+	// Validate Engine CORS per request without changing the shared WT server's
+	// origin policy, which belongs to its caller and is configured before serving.
 	if cors := s.Opts().Cors(); cors != nil && cors.Origin != nil {
-		wt.CheckOrigin = func(r *http.Request) bool {
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				return true
-			}
-			return cors.IsOriginAllowed(origin, cors.Origin)
+		origin := ctx.Request().Header.Get("Origin")
+		if origin != "" && !cors.IsOriginAllowed(origin, cors.Origin) {
+			s.emitAbortRequest(ctx, FORBIDDEN, map[string]any{"message": "origin not allowed"})
+			return
 		}
 	}
 
@@ -257,11 +284,12 @@ func (s *server) OnWebTransportSession(ctx *types.HttpContext, wt *webtransport.
 		serverLog.Debug("the client failed to establish a bidirectional stream in the given period")
 		_ = session.CloseWithError(0, "")
 	}, s.Opts().UpgradeTimeout())
+	defer utils.ClearTimeout(timeout)
 
 	stream, err := session.AcceptStream(ctx.Context())
 	if err != nil {
-		serverLog.Debug("session is closed")
-		abortUpgrade(ctx, BAD_REQUEST, nil)
+		serverLog.Debug("accepting WebTransport stream failed: %s", err.Error())
+		_ = session.CloseWithError(http.StatusBadRequest, BAD_REQUEST.Message)
 		return
 	}
 
@@ -317,19 +345,21 @@ func (s *server) OnWebTransportSession(ctx *types.HttpContext, wt *webtransport.
 		return
 	}
 
+	// WebTransport uses protocol v4 for both new sessions and upgrades.
+	ctx.Query().Set("EIO", "4")
 	if data, ok := value.Data.(types.BufferInterface); ok && data.Len() == 0 {
-		ctx.Query().Set("EIO", "4")
-		if codeMessage, t := s.Handshake(ctx.Request().Proto, ctx); t == nil {
+		if codeMessage, t := s.Proto().Handshake(transports.WEBTRANSPORT, ctx); t == nil {
 			abortUpgrade(ctx, codeMessage, nil)
 		}
 		return
 	}
 
-	var wth *struct {
+	var wth struct {
 		Sid string `json:"sid"`
 	}
 
-	if json.NewDecoder(value.Data).Decode(&wth) != nil {
+	decoder := json.NewDecoder(value.Data)
+	if decoder.Decode(&wth) != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		serverLog.Debug("invalid WebTransport handshake")
 		abortUpgrade(ctx, BAD_REQUEST, nil)
 		return
@@ -346,6 +376,9 @@ func (s *server) OnWebTransportSession(ctx *types.HttpContext, wt *webtransport.
 	if !ok {
 		serverLog.Debug("upgrade attempt for closed client")
 		_ = session.CloseWithError(0, "")
+	} else if client.Protocol() != 4 {
+		serverLog.Debug("WebTransport requires protocol version 4")
+		_ = session.CloseWithError(0, "")
 	} else if client.Upgrading() {
 		serverLog.Debug("transport has already been trying to upgrade")
 		_ = session.CloseWithError(0, "")
@@ -355,15 +388,7 @@ func (s *server) OnWebTransportSession(ctx *types.HttpContext, wt *webtransport.
 	} else {
 		serverLog.Debug("upgrading existing transport")
 
-		ctx.IdleTimeout = s.Opts().IdleTimeout()
-		transport, err := s.CreateTransport(ctx.Request().Proto, ctx)
-		if err != nil {
-			serverLog.Debug("upgrading not existing transport")
-			_ = session.CloseWithError(0, "")
-		} else {
-			transport.SetPerMessageDeflate(s.Opts().PerMessageDeflate())
-			client.MaybeUpgrade(transport)
-		}
+		s.prepareUpgrade(transports.WEBTRANSPORT, ctx, client)
 	}
 }
 

@@ -211,7 +211,7 @@ func (s *ServerOptions) PingInterval() time.Duration {
 	return s.pingInterval.Get()
 }
 
-// how many ms before an uncompleted transport upgrade is canceled
+// Maximum time for stream transport initialization or an uncompleted upgrade.
 func (s *ServerOptions) SetUpgradeTimeout(upgradeTimeout time.Duration) {
 	s.upgradeTimeout = types.NewSome(upgradeTimeout)
 }
