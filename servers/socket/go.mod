@@ -6,10 +6,10 @@ require (
 	github.com/andybalholm/brotli v1.2.4
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.20.0
-	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.5
-	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.5
-	github.com/zishang520/socket.io/servers/engine/v3 v3.0.5
-	github.com/zishang520/socket.io/v3 v3.0.5
+	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.6
+	github.com/zishang520/socket.io/parsers/socket/v3 v3.0.6
+	github.com/zishang520/socket.io/servers/engine/v3 v3.0.6
+	github.com/zishang520/socket.io/v3 v3.0.6
 )
 
 require (

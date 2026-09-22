@@ -8,8 +8,8 @@ require (
 	github.com/klauspost/compress v1.20.0
 	github.com/quic-go/quic-go v0.62.0
 	github.com/quic-go/webtransport-go v0.13.0
-	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.5
-	github.com/zishang520/socket.io/v3 v3.0.5
+	github.com/zishang520/socket.io/parsers/engine/v3 v3.0.6
+	github.com/zishang520/socket.io/v3 v3.0.6
 )
 
 require (
