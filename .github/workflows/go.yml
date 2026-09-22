@@ -77,7 +77,7 @@ jobs:
 
       - name: Start Redis with Password and No-Save
         run: |
-          docker run -d -p 6379:6379 --name ci-redis redis:alpine \
+          docker run -d -p 127.0.0.1:6379:6379 --name ci-redis redis:alpine \
             redis-server --requirepass root --save "" --appendonly no
 
       - name: Wait for Redis to be ready

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	wt "github.com/quic-go/webtransport-go"
 	"github.com/zishang520/socket.io/servers/engine/v3/config"
@@ -458,8 +459,27 @@ func readinessWebTransportServer(t *testing.T, webServer *wt.Server) (string, *w
 			t.Error("WebTransport server did not stop")
 		}
 	})
-	dialer := &wt.Transport{TLSClientConfig: &tls.Config{RootCAs: rootCAs}}
-	t.Cleanup(func() { _ = dialer.Close() })
+	// The default QUIC dialer binds a wildcard UDP socket even for loopback peers.
+	clientUDP, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientTransport := &quic.Transport{Conn: clientUDP}
+	dialer := &wt.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: rootCAs},
+		DialAddr: func(ctx context.Context, address string, tlsConfig *tls.Config, config *quic.Config) (*quic.Conn, error) {
+			peer, err := net.ResolveUDPAddr("udp", address)
+			if err != nil {
+				return nil, err
+			}
+			return clientTransport.DialEarly(ctx, peer, tlsConfig, config)
+		},
+	}
+	t.Cleanup(func() {
+		_ = dialer.Close()
+		_ = clientTransport.Close()
+		_ = clientUDP.Close()
+	})
 	return "https://" + udp.LocalAddr().String(), dialer
 }
 

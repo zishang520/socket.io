@@ -224,6 +224,19 @@ completion callback. The next GET can be accepted once the response is committed
 even if the writer or callback has not returned. Request ownership is managed by
 the base transport; overrides do not need to replace or invoke `ctx.Cleanup`.
 
+The base transport keeps the HTTP handler alive throughout response preparation
+and writing, until that completion callback is invoked. The callback must be
+called exactly once and means that the override will no longer access the
+response, including its headers. During an asynchronous `DoWrite`, observe
+`ctx.Context().Done()` for cancellation; `ctx.Done()` waits for response work to
+finish, so waiting for it before calling the completion callback would deadlock.
+
+Other asynchronous integrations can use `ctx.BeginResponse()` before accessing
+the response and pair each successful call with `ctx.EndResponse()` after its last
+access. Preparing a response does not mark it committed. Cancellation or an
+explicit `ctx.Flush()` requests finalization but does not release an active
+response operation; the last operation to finish closes `ctx.Done()`.
+
 ## Events
 
 ### Server Events

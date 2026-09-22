@@ -355,11 +355,28 @@ func (p *polling) write(data types.BufferInterface, options *packet.Options) {
 		p.OnError("polling write error", nil)
 		return
 	}
-	if ctx.IsDone() || ctx.Context().Err() != nil {
+	if ctx.Context().Err() != nil || !ctx.BeginResponse() {
 		p.abortPollRequest(ctx)
 		return
 	}
+	var completed atomic.Bool
+	// The callback can be asynchronous. A panic before DoWrite returns must
+	// still release the response, without releasing it twice after a callback.
+	returned := false
+	defer func() {
+		if !returned && completed.CompareAndSwap(false, true) {
+			ctx.EndResponse()
+		}
+	}()
 	p.Proto().(Polling).DoWrite(ctx, data, options, func(err error) {
+		if !completed.CompareAndSwap(false, true) {
+			return
+		}
+		ctx.EndResponse()
+		if !ctx.ResponseCommitted() && ctx.Context().Err() != nil {
+			p.abortPollRequest(ctx)
+			return
+		}
 		p.releasePollRequest(ctx)
 		if err != nil {
 			p.OnError("polling write error", err)
@@ -367,6 +384,7 @@ func (p *polling) write(data types.BufferInterface, options *packet.Options) {
 		}
 		p.Emit("drain")
 	})
+	returned = true
 }
 
 // Performs the write.

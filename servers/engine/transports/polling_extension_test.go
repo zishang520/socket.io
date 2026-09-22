@@ -203,12 +203,14 @@ func TestPollingOverrideFlushedResponseAdmitsNextRequest(t *testing.T) {
 	connected := make(chan engine.Socket, 1)
 	_ = server.Once("connection", func(args ...any) { connected <- args[0].(engine.Socket) })
 	handshakeDone := make(chan struct{})
+	firstHandled := make(chan struct{})
 	flushed, resume := make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(resume) })
 	defer release()
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Query().Get("case") {
 		case "first":
+			defer close(firstHandled)
 			w = &flushedExtensionResponseWriter{ResponseWriter: w, flushed: flushed, resume: resume}
 		case "":
 			defer close(handshakeDone)
@@ -277,15 +279,18 @@ func TestPollingOverrideFlushedResponseAdmitsNextRequest(t *testing.T) {
 	}
 	<-flushed
 	firstContext := <-firstContexts
-	cancellationHandled := make(chan struct{})
-	_ = firstContext.Once("close", func(...any) { close(cancellationHandled) })
 	// The response is fully consumed, so the client may close its HTTP
 	// connection while the writer has not yet returned to the transport.
 	firstTransport.CloseIdleConnections()
 	select {
-	case <-cancellationHandled:
+	case <-firstContext.Context().Done():
 	case <-time.After(time.Second):
 		t.Fatal("closing the consumed response connection did not cancel its request")
+	}
+	select {
+	case <-firstHandled:
+		t.Error("HTTP handler returned before its response writer finished")
+	case <-time.After(30 * time.Millisecond):
 	}
 	if firstContext.Context().Err() == nil || socket.Transport().Discarded() {
 		t.Fatal("request cancellation discarded an already committed polling response")
@@ -308,6 +313,11 @@ func TestPollingOverrideFlushedResponseAdmitsNextRequest(t *testing.T) {
 		t.Fatal("successor HTTP poll was not registered on its independent connection")
 	}
 	release()
+	select {
+	case <-firstHandled:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP handler did not return after its response writer finished")
+	}
 	select {
 	case <-drained:
 	case <-time.After(time.Second):

@@ -98,23 +98,13 @@ func TestAttachPreparesSocketIOBeforePublishingHandler(t *testing.T) {
 }
 
 func TestAttachAddressStartsListeningAfterInitialization(t *testing.T) {
-	for _, address := range []struct {
-		name  string
-		value any
-	}{
-		{name: "port", value: 0},
-		{name: "address", value: "127.0.0.1:0"},
-	} {
-		t.Run(address.name, func(t *testing.T) {
-			server := NewServer(nil, nil)
-			t.Cleanup(func() { server.Close(nil) })
-			server.Attach(address.value, nil)
-			// Engine Attach installs a one-time listening callback. Starting the
-			// HTTP server before attaching leaves it waiting for an event it missed.
-			if pending := server.httpServer.ListenerCount("listening"); pending != 0 {
-				t.Fatalf("%d listening callbacks missed the server startup", pending)
-			}
-		})
+	server := NewServer(nil, nil)
+	t.Cleanup(func() { server.Close(nil) })
+	server.Attach("127.0.0.1:0", nil)
+	// Engine Attach installs a one-time listening callback. Starting the
+	// HTTP server before attaching leaves it waiting for an event it missed.
+	if pending := server.httpServer.ListenerCount("listening"); pending != 0 {
+		t.Fatalf("%d listening callbacks missed the server startup", pending)
 	}
 }
 

@@ -147,6 +147,88 @@ func (w *blockedHttpContextWriter) Write([]byte) (int, error) {
 	return 0, w.err
 }
 
+func TestHttpContextFinalizationDuringWriteWaitsForWriter(t *testing.T) {
+	for _, fails := range []bool{false, true} {
+		name := "success"
+		var writeErr error
+		if fails {
+			name = "write_error"
+			writeErr = errors.New("response write failed")
+		}
+		for _, finalizer := range []string{"cancel", "flush", "cancel_then_flush"} {
+			t.Run(name+"/"+finalizer, func(t *testing.T) {
+				parent, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				resume := make(chan struct{})
+				release := sync.OnceFunc(func() { close(resume) })
+				defer release()
+				writer := &blockedHttpContextWriter{
+					ResponseWriter: httptest.NewRecorder(), entered: make(chan struct{}),
+					resume: resume, err: writeErr,
+				}
+				ctx := NewHttpContext(writer, httptest.NewRequest(http.MethodGet, "/", nil).WithContext(parent))
+				var cleanups atomic.Int32
+				ctx.Cleanup = func() { cleanups.Add(1) }
+				closed := make(chan struct{})
+				_ = ctx.Once("close", func(...any) { close(closed) })
+				written := make(chan error, 1)
+				go func() { _, err := ctx.Write([]byte("response")); written <- err }()
+				select {
+				case <-writer.entered:
+				case <-time.After(time.Second):
+					t.Fatal("Write did not reach the response writer")
+				}
+				finalized := make(chan struct{})
+				go func() {
+					if finalizer != "flush" {
+						cancel()
+					}
+					if finalizer != "cancel" {
+						ctx.Flush()
+					}
+					close(finalized)
+				}()
+				select {
+				case <-finalized:
+				case <-time.After(time.Second):
+					t.Fatal("finalization blocked on the active writer")
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("finalization released a response whose writer was still active")
+				case <-time.After(30 * time.Millisecond):
+				}
+				if cleanups.Load() != 0 || !ctx.ResponseCommitted() {
+					t.Fatal("finalization cleaned up the active response")
+				}
+				release()
+				select {
+				case err := <-written:
+					if !errors.Is(err, writeErr) {
+						t.Fatalf("Write returned %v, want %v", err, writeErr)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("Write did not finish after releasing its writer")
+				}
+				select {
+				case <-ctx.Done():
+				default:
+					t.Fatal("finished Write did not finalize its response")
+				}
+				select {
+				case <-closed:
+				case <-time.After(time.Second):
+					t.Fatal("finished Write did not emit close")
+				}
+				ctx.Flush()
+				if cleanups.Load() != 1 {
+					t.Fatal("response cleanup did not run exactly once")
+				}
+			})
+		}
+	}
+}
+
 func TestHttpContextWriteClaimAndFailureFinalization(t *testing.T) {
 	writeErr := errors.New("test response write failed")
 	resume := make(chan struct{})
@@ -206,6 +288,63 @@ func TestHttpContextWriteClaimAndFailureFinalization(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("failed Write did not emit close")
+	}
+}
+
+func TestHttpContextResponsePreparationDelaysFinalization(t *testing.T) {
+	for _, finalizer := range []string{"write", "cancel", "flush"} {
+		t.Run(finalizer, func(t *testing.T) {
+			parent, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx := NewHttpContext(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil).WithContext(parent))
+			if !ctx.BeginResponse() {
+				t.Fatal("new context refused response preparation")
+			}
+			if ctx.IsDone() || ctx.ResponseCommitted() {
+				t.Fatal("response preparation committed the response")
+			}
+			ctx.ResponseHeaders().Set("X-Prepared", "true")
+			closed := make(chan error, 1)
+			_ = ctx.Once("close", func(args ...any) {
+				err, _ := args[0].(error)
+				closed <- err
+			})
+			switch finalizer {
+			case "write":
+				if _, err := ctx.Write([]byte("response")); err != nil {
+					t.Fatal(err)
+				}
+			case "cancel":
+				cancel()
+			case "flush":
+				ctx.Flush()
+			}
+			if finalizer != "write" && ctx.ResponseCommitted() {
+				t.Error("unfinished response preparation was marked committed")
+			}
+			select {
+			case <-ctx.Done():
+				t.Error("response finalized before preparation released its writer")
+			default:
+			}
+			ctx.EndResponse()
+			select {
+			case err := <-closed:
+				var want error
+				if finalizer == "cancel" {
+					want = context.Canceled
+				}
+				if !errors.Is(err, want) {
+					t.Errorf("close error = %v, want %v", err, want)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("response did not finalize after preparation finished")
+			}
+			if ctx.BeginResponse() {
+				ctx.EndResponse()
+				t.Fatal("finalized context accepted new response preparation")
+			}
+		})
 	}
 }
 

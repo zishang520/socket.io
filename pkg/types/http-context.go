@@ -27,12 +27,11 @@ const (
 
 const (
 	httpResponseCommitted uint32 = 1 << iota
-	httpContextClosed
+	httpContextFinalizing
 )
 
-// HttpContext wraps an http.Request / http.ResponseWriter pair with extra
-// features: event emission, lazy-computed request metadata, one-shot writing
-// semantics, and a done-channel tied to the request context.
+// HttpContext wraps an http.Request / http.ResponseWriter pair with lazy request
+// metadata, one-shot writing, and response completion notifications.
 //
 // Instances must be created with NewHttpContext. A single HttpContext is not
 // meant to be written to more than once; subsequent writes return
@@ -50,54 +49,29 @@ type HttpContext struct {
 	// Cleanup is invoked exactly once when the context is closed.
 	Cleanup Callable
 
-	transportMu             sync.Mutex
-	transportReadPermission <-chan bool
-	transportReady          Callable
+	request  *http.Request
+	response http.ResponseWriter
+	ctx      context.Context
 
-	ctx         context.Context
-	request     *http.Request
-	response    http.ResponseWriter
-	stopContext func() bool
-
+	// Guard response lifecycle and transport initialization; never hold across I/O or callbacks.
+	mu         sync.Mutex
 	statusCode atomic.Int32
-
 	// Track response commitment separately from cancellation and finalization.
-	state atomic.Uint32
-	done  chan struct{}
-
-	// responseHeadersUsed tracks whether ResponseHeaders() was ever called.
-	// When false, flushResponseHeaders can skip the redundant copy.
-	responseHeadersUsed atomic.Bool
+	state         atomic.Uint32
+	responseUsers int
+	closeErr      error
+	done          chan struct{}
+	stopContext   func() bool
 
 	// Keep each accessor's lazy state in the context instead of a heap closure.
 	headers, query, responseHeaders httpContextValue[*ParameterBag]
 	method, host, path, userAgent   httpContextValue[string]
-}
+	// Skip copying response headers if ResponseHeaders was never called.
+	responseHeadersUsed atomic.Bool
 
-// httpContextValue preserves OnceValue's initialization and panic semantics
-// without retaining an initializer function for every context accessor.
-type httpContextValue[T any] struct {
-	once       sync.Once
-	valid      bool
-	value      T
-	panicValue any
-}
-
-func (v *httpContextValue[T]) get(load func() T) T {
-	v.once.Do(func() {
-		defer func() {
-			if !v.valid {
-				v.panicValue = recover()
-				panic(v.panicValue)
-			}
-		}()
-		v.value = load()
-		v.valid = true
-	})
-	if !v.valid {
-		panic(v.panicValue)
-	}
-	return v.value
+	// Transport initialization is independent of HTTP response completion.
+	transportReadPermission <-chan bool
+	transportReady          Callable
 }
 
 // NewHttpContext creates a fully-initialized HttpContext. It panics if either
@@ -125,37 +99,62 @@ func NewHttpContext(w http.ResponseWriter, r *http.Request) *HttpContext {
 	if c.ctx.Done() != nil {
 		// Cancellation may run before stopContext is assigned, so it bypasses Flush.
 		c.stopContext = context.AfterFunc(c.ctx, func() {
-			c.closeWithError(c.ctx.Err())
+			c.requestClose(c.ctx.Err())
 		})
 	}
 
 	return c
 }
 
-// IsDone reports whether the response has been claimed for writing or finalized.
-func (c *HttpContext) IsDone() bool {
-	return c.state.Load() != 0
+func (c *HttpContext) Request() *http.Request { return c.request }
+
+func (c *HttpContext) Context() context.Context { return c.ctx }
+
+func (c *HttpContext) Headers() *ParameterBag {
+	return c.headers.get(func() *ParameterBag { return NewParameterBag(c.request.Header) })
 }
 
-// Done closes on finalization, before Cleanup and close listeners finish.
-func (c *HttpContext) Done() <-chan struct{} {
-	return c.done
+func (c *HttpContext) Query() *ParameterBag {
+	return c.query.get(func() *ParameterBag { return NewParameterBag(c.request.URL.Query()) })
 }
 
-// ResponseCommitted reports whether Write claimed the response or Flush
-// finalized it normally. It does not imply that the body write has finished
-// or succeeded. Cancellation before either operation leaves it false.
-func (c *HttpContext) ResponseCommitted() bool {
-	return c.state.Load()&httpResponseCommitted != 0
+func (c *HttpContext) Method() string {
+	return c.method.get(func() string { return strings.ToUpper(c.request.Method) })
 }
 
-// Flush finalizes the context without writing a response body.
-// Repeated calls do not wait for an ongoing Cleanup callback.
-func (c *HttpContext) Flush() {
-	if c.stopContext != nil {
-		c.stopContext()
-	}
-	c.closeWithError(nil)
+func (c *HttpContext) Host() string {
+	return c.host.get(func() string {
+		host := strings.TrimSpace(c.request.Host)
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			return h
+		}
+		return host
+	})
+}
+
+func (c *HttpContext) Path() string {
+	return c.path.get(func() string {
+		path := strings.Trim(c.request.URL.Path, "/")
+		if path == "" {
+			return "/"
+		}
+		return path
+	})
+}
+
+func (c *HttpContext) UserAgent() string {
+	return c.userAgent.get(func() string { return c.request.Header.Get("User-Agent") })
+}
+
+func (c *HttpContext) PathInfo() string { return c.request.URL.Path }
+
+func (c *HttpContext) Secure() bool { return c.request.TLS != nil }
+
+func (c *HttpContext) Response() http.ResponseWriter { return c.response }
+
+func (c *HttpContext) ResponseHeaders() *ParameterBag {
+	c.responseHeadersUsed.Store(true)
+	return c.responseHeaders.get(func() *ParameterBag { return NewParameterBag(c.response.Header()) })
 }
 
 // SetStatusCode sets the HTTP status code to be used by the next Write.
@@ -180,16 +179,134 @@ func (c *HttpContext) GetStatusCode() int {
 	return int(c.statusCode.Load())
 }
 
+// IsDone reports whether Write has claimed the response or finalization was requested.
+func (c *HttpContext) IsDone() bool {
+	return c.state.Load() != 0
+}
+
+// Done closes after finalization is requested and all response operations finish,
+// before Cleanup and close listeners run. Use Context().Done() for cancellation
+// while preparing or writing a response.
+func (c *HttpContext) Done() <-chan struct{} {
+	return c.done
+}
+
+// ResponseCommitted reports whether Write claimed the response or Flush
+// finalized it normally. It does not imply that the body write has finished
+// or succeeded. Cancellation before either operation leaves it false.
+func (c *HttpContext) ResponseCommitted() bool {
+	return c.state.Load()&httpResponseCommitted != 0
+}
+
+// BeginResponse keeps ResponseWriter valid while preparing an asynchronous
+// response, without marking it committed. It returns false if the response was
+// already committed or finalized. Each successful call needs one EndResponse.
+func (c *HttpContext) BeginResponse() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.IsDone() {
+		return false
+	}
+	c.responseUsers++
+	return true
+}
+
+// EndResponse releases a successful BeginResponse. Call it after the last access
+// to ResponseWriter, including any asynchronous response preparation or writing.
+func (c *HttpContext) EndResponse() {
+	c.mu.Lock()
+	c.responseUsers--
+	finished := c.completeResponseLocked()
+	c.mu.Unlock()
+	if finished {
+		c.finishClose()
+	}
+}
+
 // Write commits the response. It may be called at most once; subsequent
 // invocations return ErrResponseAlreadyWritten.
 func (c *HttpContext) Write(data []byte) (int, error) {
-	if !c.state.CompareAndSwap(0, httpResponseCommitted) {
+	c.mu.Lock()
+	if c.IsDone() {
+		c.mu.Unlock()
 		return 0, ErrResponseAlreadyWritten
 	}
-	defer c.Flush()
+	c.state.Store(httpResponseCommitted)
+	c.responseUsers++
+	c.mu.Unlock()
+	defer c.finishWrite()
 	c.flushResponseHeaders()
 	c.response.WriteHeader(c.GetStatusCode())
 	return c.response.Write(data)
+}
+
+// Flush requests finalization without writing a response body. An active Write
+// or BeginResponse scope delays Done; Flush does not wait for those operations.
+// Repeated calls do not wait for an ongoing Cleanup callback.
+func (c *HttpContext) Flush() {
+	if c.stopContext != nil {
+		c.stopContext()
+	}
+	c.requestClose(nil)
+}
+
+// finishWrite ends the write and requests normal finalization in one critical
+// section. An outer preparation scope may still own the response.
+func (c *HttpContext) finishWrite() {
+	if c.stopContext != nil {
+		c.stopContext()
+	}
+	c.mu.Lock()
+	c.state.Store(c.state.Load() | httpContextFinalizing)
+	c.responseUsers--
+	finished := c.completeResponseLocked()
+	c.mu.Unlock()
+	if finished {
+		c.finishClose()
+	}
+}
+
+// requestClose records the first finalization request. A response already
+// committed by Write keeps ownership when its request context is canceled.
+func (c *HttpContext) requestClose(err error) {
+	c.mu.Lock()
+	state := c.state.Load()
+	if state&httpContextFinalizing != 0 || (err != nil && state&httpResponseCommitted != 0) {
+		c.mu.Unlock()
+		return
+	}
+	c.closeErr = err
+	c.state.Store(state | httpContextFinalizing)
+	finished := c.completeResponseLocked()
+	c.mu.Unlock()
+	if finished {
+		c.finishClose()
+	}
+}
+
+// completeResponseLocked publishes completion after the last response operation.
+// Call only while holding mu, after requesting finalization or releasing an operation.
+func (c *HttpContext) completeResponseLocked() bool {
+	state := c.state.Load()
+	if c.responseUsers != 0 || state&httpContextFinalizing == 0 {
+		return false
+	}
+	if c.closeErr == nil {
+		c.state.Store(state | httpResponseCommitted)
+	}
+	close(c.done)
+	return true
+}
+
+// Done is already closed and closeErr is immutable. No lock is held across callbacks.
+func (c *HttpContext) finishClose() {
+	if c.Cleanup != nil {
+		c.Cleanup()
+	}
+	go func() {
+		c.Emit("close", c.closeErr)
+		c.Clear()
+	}()
 }
 
 // flushResponseHeaders copies any headers staged in the ParameterBag into the
@@ -207,99 +324,63 @@ func (c *HttpContext) flushResponseHeaders() {
 	}
 }
 
-func (c *HttpContext) Request() *http.Request        { return c.request }
-func (c *HttpContext) Response() http.ResponseWriter { return c.response }
-func (c *HttpContext) Context() context.Context      { return c.ctx }
-func (c *HttpContext) Headers() *ParameterBag {
-	return c.headers.get(func() *ParameterBag { return NewParameterBag(c.request.Header) })
-}
-func (c *HttpContext) Query() *ParameterBag {
-	return c.query.get(func() *ParameterBag { return NewParameterBag(c.request.URL.Query()) })
-}
-func (c *HttpContext) ResponseHeaders() *ParameterBag {
-	c.responseHeadersUsed.Store(true)
-	return c.responseHeaders.get(func() *ParameterBag { return NewParameterBag(c.response.Header()) })
-}
-func (c *HttpContext) Method() string {
-	return c.method.get(func() string { return strings.ToUpper(c.request.Method) })
-}
-func (c *HttpContext) Host() string {
-	return c.host.get(func() string {
-		host := strings.TrimSpace(c.request.Host)
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			return h
-		}
-		return host
-	})
-}
-func (c *HttpContext) Path() string {
-	return c.path.get(func() string {
-		path := strings.Trim(c.request.URL.Path, "/")
-		if path == "" {
-			return "/"
-		}
-		return path
-	})
-}
-func (c *HttpContext) UserAgent() string {
-	return c.userAgent.get(func() string { return c.request.Header.Get("User-Agent") })
-}
-func (c *HttpContext) PathInfo() string { return c.request.URL.Path }
-func (c *HttpContext) Secure() bool     { return c.request.TLS != nil }
-
 // SetTransportReadPermission publishes the single-reader initialization result.
 // Set it before constructing the transport; do not replace it while in use.
 func (c *HttpContext) SetTransportReadPermission(permission <-chan bool) {
-	c.transportMu.Lock()
+	c.mu.Lock()
 	c.transportReadPermission = permission
-	c.transportMu.Unlock()
+	c.mu.Unlock()
 }
 
 // TransportReadPermission returns the initialization result channel.
 // Only true permits reading; nil preserves standalone automatic startup.
 func (c *HttpContext) TransportReadPermission() <-chan bool {
-	c.transportMu.Lock()
+	c.mu.Lock()
 	permission := c.transportReadPermission
-	c.transportMu.Unlock()
+	c.mu.Unlock()
 	return permission
 }
 
 // SetTransportReady registers the callback before initialization completes.
 // Passing nil discards a pending callback without invoking it.
 func (c *HttpContext) SetTransportReady(ready Callable) {
-	c.transportMu.Lock()
+	c.mu.Lock()
 	c.transportReady = ready
-	c.transportMu.Unlock()
+	c.mu.Unlock()
 }
 
 // TakeTransportReady removes and returns the callback for the caller to invoke
 // after successful initialization. The callback runs outside the context lock.
 func (c *HttpContext) TakeTransportReady() Callable {
-	c.transportMu.Lock()
+	c.mu.Lock()
 	ready := c.transportReady
 	c.transportReady = nil
-	c.transportMu.Unlock()
+	c.mu.Unlock()
 	return ready
 }
 
-// closeWithError claims finalization before invoking Cleanup, allowing reentry.
-// Done closes before Cleanup; close listeners run asynchronously afterwards.
-func (c *HttpContext) closeWithError(err error) {
-	previous := c.state.Or(httpContextClosed)
-	if previous&httpContextClosed != 0 {
-		// Wait for finalization to be published, not for Cleanup to finish.
-		<-c.done
-		return
+// httpContextValue preserves OnceValue's initialization and panic semantics
+// without retaining an initializer function for every context accessor.
+type httpContextValue[T any] struct {
+	once       sync.Once
+	valid      bool
+	value      T
+	panicValue any
+}
+
+func (v *httpContextValue[T]) get(load func() T) T {
+	v.once.Do(func() {
+		defer func() {
+			if !v.valid {
+				v.panicValue = recover()
+				panic(v.panicValue)
+			}
+		}()
+		v.value = load()
+		v.valid = true
+	})
+	if !v.valid {
+		panic(v.panicValue)
 	}
-	if err == nil && previous&httpResponseCommitted == 0 {
-		c.state.Or(httpResponseCommitted)
-	}
-	close(c.done)
-	if c.Cleanup != nil {
-		c.Cleanup()
-	}
-	go func() {
-		c.Emit("close", err)
-		c.Clear()
-	}()
+	return v.value
 }
