@@ -121,7 +121,7 @@ func applyCalls(m mapInterface, calls []mapCall) (results []mapResult, final map
 }
 
 func applyMap(calls []mapCall) ([]mapResult, map[any]any) {
-	return applyCalls(new(sync.Map), calls)
+	return applyCalls(new(Map[any, any]), calls)
 }
 
 func applyRWMutexMap(calls []mapCall) ([]mapResult, map[any]any) {
@@ -132,8 +132,8 @@ func applyDeepCopyMap(calls []mapCall) ([]mapResult, map[any]any) {
 	return applyCalls(new(DeepCopyMap), calls)
 }
 
-func applyHashTrieMap(calls []mapCall) ([]mapResult, map[any]any) {
-	return applyCalls(new(Map[any, any]), calls)
+func applySyncMap(calls []mapCall) ([]mapResult, map[any]any) {
+	return applyCalls(new(sync.Map), calls)
 }
 
 func TestMapMatchesRWMutex(t *testing.T) {
@@ -148,8 +148,8 @@ func TestMapMatchesDeepCopy(t *testing.T) {
 	}
 }
 
-func TestMapMatchesHashTrieMap(t *testing.T) {
-	if err := quick.CheckEqual(applyMap, applyHashTrieMap, nil); err != nil {
+func TestMapMatchesSyncMap(t *testing.T) {
+	if err := quick.CheckEqual(applyMap, applySyncMap, nil); err != nil {
 		t.Error(err)
 	}
 }
@@ -157,7 +157,7 @@ func TestMapMatchesHashTrieMap(t *testing.T) {
 func TestConcurrentRange(t *testing.T) {
 	const mapSize = 1 << 10
 
-	m := new(sync.Map)
+	m := new(Map[any, any])
 	for n := int64(1); n <= mapSize; n++ {
 		m.Store(n, n)
 	}
@@ -216,7 +216,7 @@ func TestConcurrentRange(t *testing.T) {
 }
 
 func TestIssue40999(t *testing.T) {
-	var m sync.Map
+	var m Map[any, any]
 
 	// Since the miss-counting in missLocked (via Delete)
 	// compares the miss count with len(m.dirty),
@@ -239,7 +239,7 @@ func TestIssue40999(t *testing.T) {
 }
 
 func TestMapRangeNestedCall(t *testing.T) { // Issue 46399
-	var m sync.Map
+	var m Map[any, any]
 	for i, v := range [3]string{"hello", "world", "Go"} {
 		m.Store(i, v)
 	}
@@ -262,7 +262,7 @@ func TestMapRangeNestedCall(t *testing.T) { // Issue 46399
 			// 42 to the Map. In this case, the key 42 and associated value should be
 			// removed from the Map. Therefore any future range won't observe key 42
 			// as we checked in above.
-			val := "sync.Map"
+			val := "Map"
 			m.Store(42, val)
 			if v, loaded := m.LoadAndDelete(42); !loaded || !reflect.DeepEqual(v, val) {
 				t.Fatalf("Nested Range loads unexpected value, got %v, want %v", v, val)
@@ -284,12 +284,12 @@ func TestMapRangeNestedCall(t *testing.T) { // Issue 46399
 	})
 
 	if length != 0 {
-		t.Fatalf("Unexpected sync.Map size, got %v want %v", length, 0)
+		t.Fatalf("Unexpected Map size, got %v want %v", length, 0)
 	}
 }
 
 func TestCompareAndSwap_NonExistingKey(t *testing.T) {
-	m := &sync.Map{}
+	m := &Map[any, any]{}
 	if m.CompareAndSwap(m, nil, 42) {
 		// See https://go.dev/issue/51972#issuecomment-1126408637.
 		t.Fatalf("CompareAndSwap on a non-existing key succeeded")
@@ -297,7 +297,7 @@ func TestCompareAndSwap_NonExistingKey(t *testing.T) {
 }
 
 func TestMapRangeNoAllocations(t *testing.T) { // Issue 62404
-	var m sync.Map
+	var m Map[any, any]
 	allocs := testing.AllocsPerRun(10, func() {
 		m.Range(func(key, value any) bool {
 			return true
@@ -308,10 +308,10 @@ func TestMapRangeNoAllocations(t *testing.T) { // Issue 62404
 	}
 }
 
-// TestConcurrentClear tests concurrent behavior of sync.Map properties to ensure no data races.
+// TestConcurrentClear tests concurrent behavior of Map properties to ensure no data races.
 // Checks for proper synchronization between Clear, Store, Load operations.
 func TestConcurrentClear(t *testing.T) {
-	var m sync.Map
+	var m Map[any, any]
 
 	wg := sync.WaitGroup{}
 	wg.Add(30) // 10 goroutines for writing, 10 goroutines for reading, 10 goroutines for waiting
@@ -356,7 +356,7 @@ func TestConcurrentClear(t *testing.T) {
 }
 
 func TestMapClearOneAllocation(t *testing.T) {
-	var m sync.Map
+	var m Map[any, any]
 	allocs := testing.AllocsPerRun(10, func() {
 		m.Clear()
 	})

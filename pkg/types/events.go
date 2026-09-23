@@ -5,6 +5,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/zishang520/socket.io/v3/pkg/log"
 )
@@ -50,6 +51,7 @@ type (
 		RemoveAllListeners(EventName) bool
 		// RemoveListener removes given listener from the event named eventName.
 		// Returns an indicator whether listener was removed
+		// Use Subscribe when cleanup must identify one exact registration.
 		RemoveListener(EventName, EventListener) bool
 		// Clear removes all events and all listeners, restores Events to an empty value
 		Clear()
@@ -58,12 +60,16 @@ type (
 	}
 
 	eventEntry struct {
-		fn  EventListener
-		ptr uintptr
+		fn           EventListener
+		ptr          uintptr
+		registration *listenerRegistration
 	}
 
-	emmiter struct {
-		evtListeners Map[EventName, *Slice[*eventEntry]]
+	eventEmitter struct {
+		mu sync.RWMutex
+		// Published entries never change: registration appends, removal copies.
+		// Emit can therefore use its slice outside the lock.
+		listeners map[EventName][]eventEntry
 	}
 )
 
@@ -81,177 +87,196 @@ func (e Events) CopyTo(emitter EventEmitter) {
 
 // New returns a new, empty, EventEmitter
 func NewEventEmitter() EventEmitter {
-	emmiter := &emmiter{
-		evtListeners: Map[EventName, *Slice[*eventEntry]]{},
-	}
-
-	return emmiter
+	return &eventEmitter{}
 }
 
-func (e *emmiter) addListeners(evt EventName, listeners []*eventEntry) error {
+// Subscribe registers listener and returns a function that removes it.
+// For an emitter returned by NewEventEmitter, cleanup identifies this exact
+// registration and is safe to call repeatedly, even when callbacks share a
+// function body or receiver method. Other EventEmitter implementations use
+// their own On and RemoveListener methods.
+func Subscribe(emitter EventEmitter, evt EventName, listener EventListener) Callable {
+	if e, ok := emitter.(*eventEmitter); ok {
+		if listener == nil {
+			return func() {}
+		}
+		registration := &listenerRegistration{evt: evt, emitter: e}
+		e.mu.Lock()
+		if e.listeners == nil {
+			e.listeners = make(map[EventName][]eventEntry)
+		}
+		e.listeners[evt] = append(e.listeners[evt], eventEntry{
+			fn: listener, ptr: reflect.ValueOf(listener).Pointer(), registration: registration,
+		})
+		e.mu.Unlock()
+		return registration.remove
+	}
+	_ = emitter.On(evt, listener)
+	return func() { emitter.RemoveListener(evt, listener) }
+}
+
+func (e *eventEmitter) addListeners(evt EventName, once bool, listeners []EventListener) error {
 	if len(listeners) == 0 {
 		return nil
 	}
 
-	evtEntry, _ := e.evtListeners.LoadOrStore(evt, NewSlice[*eventEntry]())
-	evtEntry.Push(listeners...)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	entries := e.listeners[evt]
+	for _, listener := range listeners {
+		if listener == nil {
+			continue
+		}
+		entry := eventEntry{fn: listener, ptr: reflect.ValueOf(listener).Pointer()}
+		if once {
+			entry.registration = &listenerRegistration{evt: evt, emitter: e, fn: listener}
+			entry.fn = entry.registration.executeOnce
+		}
+		entries = append(entries, entry)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	if e.listeners == nil {
+		e.listeners = make(map[EventName][]eventEntry)
+	}
+	e.listeners[evt] = entries
 	return nil
 }
 
-func (e *emmiter) AddListener(evt EventName, listeners ...EventListener) error {
-	if len(listeners) == 0 {
-		return nil
-	}
-
-	var events []*eventEntry
-	for _, event := range listeners {
-		if event != nil {
-			events = append(events, &eventEntry{fn: event, ptr: reflect.ValueOf(event).Pointer()})
-		}
-	}
-
-	return e.addListeners(evt, events)
+func (e *eventEmitter) AddListener(evt EventName, listeners ...EventListener) error {
+	return e.addListeners(evt, false, listeners)
 }
 
 // Alias: [AddListener]
-func (e *emmiter) On(evt EventName, listeners ...EventListener) error {
+func (e *eventEmitter) On(evt EventName, listeners ...EventListener) error {
 	return e.AddListener(evt, listeners...)
 }
 
-func (e *emmiter) Emit(evt EventName, data ...any) {
-	evtEntry, ok := e.evtListeners.Load(evt)
-	if !ok {
-		return
-	}
+func (e *eventEmitter) snapshot(evt EventName) []eventEntry {
+	e.mu.RLock()
+	listeners := e.listeners[evt]
+	e.mu.RUnlock()
+	return listeners
+}
 
-	// Take a stable snapshot under one read lock. The previous Len/Len/Get path
-	// acquired the same lock three times for the common single-listener case.
-	evtEntry.mu.RLock()
-	count := len(evtEntry.elements)
-	if count == 0 {
-		evtEntry.mu.RUnlock()
-		return
-	}
-	if count == 1 {
-		event := evtEntry.elements[0]
-		evtEntry.mu.RUnlock()
-		executeEvent(event, data...)
-		return
-	}
-	events := slices.Clone(evtEntry.elements)
-	evtEntry.mu.RUnlock()
-
-	for _, event := range events {
-		executeEvent(event, data...)
+func (e *eventEmitter) Emit(evt EventName, data ...any) {
+	for _, event := range e.snapshot(evt) {
+		executeEvent(event.fn, data...)
 	}
 }
 
-func executeEvent(event *eventEntry, data ...any) {
-	if event == nil {
-		return
-	}
-
+func executeEvent(listener EventListener, data ...any) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Prevent a panicking listener from crashing the emitter.
 			eventsLog.Errorf("event listener panic recovered: %v\n%s", r, debug.Stack())
 		}
 	}()
-	event.fn(data...)
+	listener(data...)
 }
 
-func (e *emmiter) EventNames() []EventName {
-	return e.evtListeners.Keys()
-}
-
-func (e *emmiter) ListenerCount(evt EventName) int {
-	evtEntry, ok := e.evtListeners.Load(evt)
-	if !ok {
-		return 0
+func (e *eventEmitter) EventNames() []EventName {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if len(e.listeners) == 0 {
+		return nil
 	}
-
-	return evtEntry.Len()
+	names := make([]EventName, 0, len(e.listeners))
+	for name := range e.listeners {
+		names = append(names, name)
+	}
+	return names
 }
 
-func (e *emmiter) Listeners(evt EventName) []EventListener {
-	evtEntry, ok := e.evtListeners.Load(evt)
-	if !ok {
+func (e *eventEmitter) ListenerCount(evt EventName) int {
+	return len(e.snapshot(evt))
+}
+
+func (e *eventEmitter) Listeners(evt EventName) []EventListener {
+	entries := e.snapshot(evt)
+	if entries == nil {
 		return nil
 	}
 
-	datas := evtEntry.All()
-	listeners := make([]EventListener, len(datas))
-	for i, l := range datas {
+	listeners := make([]EventListener, len(entries))
+	for i, l := range entries {
 		listeners[i] = l.fn
 	}
 
 	return listeners
 }
 
-type oneTimeListener struct {
-	fired *sync.Once
+type listenerRegistration struct {
+	fired atomic.Bool
 
 	evt     EventName
-	emitter *emmiter
+	emitter *eventEmitter
 	fn      EventListener
 }
 
-func (l *oneTimeListener) execute(vals ...any) {
-	l.fired.Do(func() {
-		// Remove before invoking so reentrant Emit cannot enter this sync.Once.
-		l.emitter.RemoveListener(l.evt, l.fn)
-		l.fn(vals...)
-	})
+func (l *listenerRegistration) remove() {
+	l.emitter.removeListener(l.evt, func(entry eventEntry) bool { return entry.registration == l })
 }
 
-func (e *emmiter) Once(evt EventName, listeners ...EventListener) error {
-	if len(listeners) == 0 {
-		return nil
+func (l *listenerRegistration) executeOnce(vals ...any) {
+	if !l.fired.CompareAndSwap(false, true) {
+		return
 	}
+	// Remove this registration, even if the same function was registered twice.
+	l.remove()
+	l.fn(vals...)
+}
 
-	var events []*eventEntry
-	for _, event := range listeners {
-		if event != nil {
-			oneTime := &oneTimeListener{fired: &sync.Once{}, evt: evt, emitter: e, fn: event}
-			events = append(events, &eventEntry{fn: oneTime.execute, ptr: reflect.ValueOf(event).Pointer()})
-		}
-	}
-	return e.addListeners(evt, events)
+func (e *eventEmitter) Once(evt EventName, listeners ...EventListener) error {
+	return e.addListeners(evt, true, listeners)
 }
 
 // RemoveListener removes the specified listener from the listener array for the event named eventName.
-func (e *emmiter) RemoveListener(evt EventName, listener EventListener) bool {
+// It compares function entry points, which cannot distinguish closures or method
+// receivers sharing the same code. Subscribe provides exact registration cleanup.
+func (e *eventEmitter) RemoveListener(evt EventName, listener EventListener) bool {
 	if listener == nil {
 		return false
 	}
 
-	evtEntry, ok := e.evtListeners.Load(evt)
-
-	if !ok {
-		return false
-	}
-
-	if evtEntry.Len() == 0 {
-		return false
-	}
-
 	targetPtr := reflect.ValueOf(listener).Pointer()
-
-	remove, _ := evtEntry.RangeAndSplice(func(listener *eventEntry, i int) (bool, int, int, []*eventEntry) {
-		return listener.ptr == targetPtr, i, 1, nil
-	})
-	return len(remove) > 0
+	return e.removeListener(evt, func(entry eventEntry) bool { return entry.ptr == targetPtr })
 }
 
-func (e *emmiter) RemoveAllListeners(evt EventName) bool {
-	_, loaded := e.evtListeners.LoadAndDelete(evt)
+func (e *eventEmitter) removeListener(evt EventName, match func(eventEntry) bool) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	entries := e.listeners[evt]
+	index := slices.IndexFunc(entries, match)
+	if index < 0 {
+		return false
+	}
+	// Keep empty events registered, and never mutate a published snapshot.
+	remaining := make([]eventEntry, len(entries)-1)
+	copy(remaining, entries[:index])
+	copy(remaining[index:], entries[index+1:])
+	e.listeners[evt] = remaining
+	return true
+}
+
+func (e *eventEmitter) RemoveAllListeners(evt EventName) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, loaded := e.listeners[evt]
+	delete(e.listeners, evt)
 	return loaded
 }
 
-func (e *emmiter) Clear() {
-	e.evtListeners.Clear()
+func (e *eventEmitter) Clear() {
+	e.mu.Lock()
+	e.listeners = nil
+	e.mu.Unlock()
 }
 
-func (e *emmiter) Len() int {
-	return e.evtListeners.Len()
+func (e *eventEmitter) Len() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return len(e.listeners)
 }

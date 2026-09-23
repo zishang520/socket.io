@@ -230,15 +230,15 @@ func TestServeMuxHostSpecific(t *testing.T) {
 	}
 }
 
-func TestServeMuxPrefixSorting(t *testing.T) {
+func TestServeMuxMatchingPrefix(t *testing.T) {
 	mux := NewServeMux(nil)
 
-	// Register prefixes in non-sorted order
+	// Unrelated later prefixes do not hide an earlier matching prefix.
 	mux.Handle("/api/", http.NotFoundHandler())
 	mux.Handle("/api/v2/", http.NotFoundHandler())
 	mux.Handle("/api/v1/", http.NotFoundHandler())
 
-	// /api/v2/something should match /api/v2/ (longest prefix)
+	// /api/v2/users matches the most recently registered matching prefix.
 	req := httptest.NewRequest("GET", "/api/v2/users", nil)
 	h, pattern := mux.Handler(req)
 
@@ -278,5 +278,25 @@ func TestServeMuxConnectMethod(t *testing.T) {
 	}
 	if pattern != "/test" {
 		t.Errorf("Expected pattern '/test', got %q", pattern)
+	}
+}
+
+func TestServeMuxPrefixRegistrationPrecedence(t *testing.T) {
+	mux := NewServeMux(nil)
+	mux.Handle("/api/v1/", http.NotFoundHandler())
+	mux.Handle("/api/", http.NotFoundHandler())
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	if _, pattern := mux.Handler(request); pattern != "/api/" {
+		t.Fatalf("newest prefix should take precedence, got %q", pattern)
+	}
+	// Prefixes can be replaced by registering them again.
+	replacement := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+	mux.Handle("/api/", replacement)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("newest duplicate prefix not selected: %d", response.Code)
 	}
 }

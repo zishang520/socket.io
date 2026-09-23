@@ -15,9 +15,8 @@ import (
 )
 
 type HTTPClient struct {
-	client  *resty.Client
-	options *clientOptions
-	isDone  atomic.Bool
+	client *resty.Client
+	isDone atomic.Bool
 }
 
 func NewHTTPClient(options ...ClientOption) *HTTPClient {
@@ -69,12 +68,7 @@ func NewHTTPClient(options ...ClientOption) *HTTPClient {
 		client.SetCookieJar(opts.Jar)
 	}
 
-	httpClient := &HTTPClient{
-		client:  client,
-		options: opts,
-	}
-
-	return httpClient
+	return &HTTPClient{client: client}
 }
 
 func (c *HTTPClient) Request(ctx context.Context, method, url string, options *Options) (*Response, error) {
@@ -87,7 +81,9 @@ func (c *HTTPClient) Request(ctx context.Context, method, url string, options *O
 		return nil, err
 	}
 
-	c.setQuery(req, options)
+	if len(options.Query) > 0 {
+		req.SetQueryParamsFromValues(options.Query)
+	}
 
 	// Set request headers
 	if err := c.setRequestHeaders(req, options); err != nil {
@@ -95,8 +91,15 @@ func (c *HTTPClient) Request(ctx context.Context, method, url string, options *O
 	}
 
 	// Set authentication information
-	c.setAuthentication(req, options)
-	c.setCookies(req, options)
+	if options.BasicAuth != nil && options.BasicAuth.Username != "" {
+		req.SetBasicAuth(options.BasicAuth.Username, options.BasicAuth.Password)
+	}
+	if options.BearerToken != "" {
+		req.SetAuthToken(options.BearerToken)
+	}
+	if len(options.Cookies) > 0 {
+		req.SetCookies(options.Cookies)
+	}
 
 	// Send request
 	resp, err := req.Execute(method, url)
@@ -143,28 +146,27 @@ func (c *HTTPClient) Options(url string, options *Options) (*Response, error) {
 }
 
 func (c *HTTPClient) Close() (err error) {
-	if c.isDone.CompareAndSwap(false, true) {
-		// Close idle HTTP connections to prevent goroutine leaks
-		if httpClient := c.client.Client(); httpClient != nil {
-			if transport, ok := httpClient.Transport.(*http.Transport); ok {
-				transport.CloseIdleConnections()
-			}
-		}
-
-		if transport, ok := c.client.Transport().(io.Closer); ok {
-			defer func() {
-				if afterErr := transport.Close(); afterErr != nil {
-					if err != nil {
-						err = errors.Join(err, afterErr)
-					} else {
-						err = afterErr
-					}
-				}
-			}()
-		}
-		err = c.client.Close()
+	if !c.isDone.CompareAndSwap(false, true) {
+		return nil
 	}
-	return err
+	// Close idle HTTP connections to prevent goroutine leaks.
+	if httpClient := c.client.Client(); httpClient != nil {
+		if transport, ok := httpClient.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+	}
+
+	if transport, ok := c.client.Transport().(io.Closer); ok {
+		defer func() {
+			closeErr := transport.Close()
+			if err == nil {
+				err = closeErr
+			} else if closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
+	}
+	return c.client.Close()
 }
 
 func (c *HTTPClient) setRequestBody(req *resty.Request, options *Options) error {
@@ -196,41 +198,15 @@ func (c *HTTPClient) setRequestBody(req *resty.Request, options *Options) error 
 
 func (c *HTTPClient) setRequestHeaders(req *resty.Request, options *Options) error {
 	// Set default headers first
-	req.SetHeaders(map[string]string{
-		"User-Agent": "engine.io-go/1.0",
-		"Accept":     "*/*",
-	})
+	req.SetHeader("User-Agent", "engine.io-go/1.0")
+	req.SetHeader("Accept", "*/*")
 
 	// Then set custom headers, allowing override of defaults
-	if len(options.Headers) > 0 {
-		for name, values := range options.Headers {
-			if slices.ContainsFunc(values, utils.CheckInvalidHeaderChar) {
-				return fmt.Errorf("invalid character in header %q value", name)
-			}
+	for name, values := range options.Headers {
+		if slices.ContainsFunc(values, utils.CheckInvalidHeaderChar) {
+			return fmt.Errorf("invalid character in header %q value", name)
 		}
-		req.SetHeaderMultiValues(options.Headers)
 	}
+	req.SetHeaderMultiValues(options.Headers)
 	return nil
-}
-
-func (c *HTTPClient) setQuery(req *resty.Request, options *Options) {
-	if len(options.Query) > 0 {
-		req.SetQueryParamsFromValues(options.Query)
-	}
-}
-
-func (c *HTTPClient) setCookies(req *resty.Request, options *Options) {
-	if len(options.Cookies) > 0 {
-		req.SetCookies(options.Cookies)
-	}
-}
-
-func (c *HTTPClient) setAuthentication(req *resty.Request, options *Options) {
-	if options.BasicAuth != nil && options.BasicAuth.Username != "" {
-		req.SetBasicAuth(options.BasicAuth.Username, options.BasicAuth.Password)
-	}
-
-	if options.BearerToken != "" {
-		req.SetAuthToken(options.BearerToken)
-	}
 }

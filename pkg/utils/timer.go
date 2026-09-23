@@ -80,17 +80,13 @@ func (t *Timer) run() {
 
 	t.mu.Lock()
 	t.running = false
-	reset := false
 	if !t.stopped {
-		if t.interval {
+		if t.interval && t.deadline.Equal(deadline) {
 			t.deadline = started.Add(t.delay)
-			reset = true
-		} else if t.deadline.After(deadline) {
-			reset = true
 		}
-	}
-	if reset {
-		t.timer.Reset(max(time.Until(t.deadline), 0))
+		if t.deadline.After(deadline) {
+			t.timer.Reset(max(time.Until(t.deadline), 0))
+		}
 	}
 	t.mu.Unlock()
 }
@@ -101,7 +97,9 @@ func (t *Timer) Refresh() *Timer {
 
 	if !t.stopped {
 		t.deadline = time.Now().Add(t.delay)
-		t.timer.Reset(t.delay)
+		if !t.running {
+			t.timer.Reset(t.delay)
+		}
 	}
 	return t
 }

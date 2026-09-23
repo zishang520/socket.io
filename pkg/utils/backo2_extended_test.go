@@ -148,13 +148,36 @@ func TestBackoff_SetJitter(t *testing.T) {
 	}
 }
 
-func TestBackoff_DurationWithMaxAttempts(t *testing.T) {
+func TestBackoff_DurationAfterManyAttempts(t *testing.T) {
 	b := NewBackoff()
-	// Push attempts well beyond maxAttempts to ensure no overflow
+	// Duration must stay within the configured bounds after repeated attempts.
 	for range 100 {
 		d := b.Duration()
 		if d < int64(b.GetMin()) || d > int64(b.GetMax()) {
 			t.Errorf("Duration() = %d, outside [%v, %v]", d, b.GetMin(), b.GetMax())
+		}
+	}
+}
+
+func TestBackoffSmallGrowthFactorReachesMaximum(t *testing.T) {
+	b := NewBackoff(WithMin(100), WithMax(10000), WithFactor(1.01))
+	var duration int64
+	for range 1000 {
+		duration = b.Duration()
+	}
+	if duration != 10000 || b.Attempts() != 1000 {
+		t.Fatalf("duration=%d attempts=%d, want 10000 and 1000", duration, b.Attempts())
+	}
+}
+
+func TestBackoffExponentialOverflowUsesMaximum(t *testing.T) {
+	b := NewBackoff(WithFactor(math.MaxFloat64))
+	if got := b.Duration(); got != 100 {
+		t.Fatalf("first duration=%d, want 100", got)
+	}
+	for range 3 {
+		if got := b.Duration(); got != 10000 {
+			t.Fatalf("overflow duration=%d, want 10000", got)
 		}
 	}
 }

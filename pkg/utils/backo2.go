@@ -23,7 +23,6 @@ const (
 	defaultMin    = 100.0
 	defaultMax    = 10_000.0
 	defaultFactor = 2.0
-	maxAttempts   = 63 // Prevent math.Pow overflow
 )
 
 // WithMin sets the minimum backoff duration in milliseconds.
@@ -88,7 +87,7 @@ func (b *Backoff) Attempts() uint64 {
 
 // Duration calculates and returns the next backoff duration in milliseconds.
 func (b *Backoff) Duration() int64 {
-	attempt := min(b.attempts.Add(1)-1, maxAttempts)
+	attempt := b.attempts.Add(1) - 1
 
 	minVal := loadFloat(&b.min)
 	maxVal := loadFloat(&b.max)

@@ -138,9 +138,8 @@ func (s *Slice[T]) Splice(start, deleteCount int, insert ...T) ([]T, error) {
 	return s.splice(start, deleteCount, insert...)
 }
 
-// splice performs the splice operation without locking.
-// Avoids the double-append pattern (append(a, append(b, c...)...)) which creates
-// a temporary intermediate slice, and instead operates in-place with a single allocation.
+// splice performs the splice operation without locking. The standard library
+// handles overlapping insert values, capacity reuse, and clearing removed slots.
 func (s *Slice[T]) splice(start, deleteCount int, insert ...T) ([]T, error) {
 	n := len(s.elements)
 	if start < 0 || start > n {
@@ -154,41 +153,18 @@ func (s *Slice[T]) splice(start, deleteCount int, insert ...T) ([]T, error) {
 	removed := make([]T, deleteCount)
 	copy(removed, s.elements[start:start+deleteCount])
 
-	diff := len(insert) - deleteCount
-	switch {
-	case diff == 0:
-		// Exact replacement: copy in place, no resize needed
-		copy(s.elements[start:], insert)
-	case diff > 0:
-		// Growing: extend slice, shift tail right, then insert
-		s.elements = slices.Grow(s.elements, diff)[:n+diff]
-		copy(s.elements[start+len(insert):], s.elements[start+deleteCount:n])
-		copy(s.elements[start:], insert)
-	default:
-		// Shrinking: insert, shift tail left, zero out freed slots for GC
-		copy(s.elements[start:], insert)
-		copy(s.elements[start+len(insert):], s.elements[start+deleteCount:])
-		newLen := n + diff
-		clear(s.elements[newLen:n]) // zero out freed tail for GC
-		s.elements = s.elements[:newLen]
-	}
+	s.elements = slices.Replace(s.elements, start, start+deleteCount, insert...)
 
 	return removed, nil
 }
 
 // Remove removes the first element in the slice that satisfies the conditional function.
-// Uses copy instead of append for single-element removal and zeroes the freed slot.
 func (s *Slice[T]) Remove(condition func(T) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, el := range s.elements {
-		if condition(el) {
-			copy(s.elements[i:], s.elements[i+1:])
-			clear(s.elements[len(s.elements)-1:]) // zero out freed slot for GC
-			s.elements = s.elements[:len(s.elements)-1]
-			break
-		}
+	if index := slices.IndexFunc(s.elements, condition); index >= 0 {
+		s.elements = slices.Delete(s.elements, index, index+1)
 	}
 }
 
@@ -197,15 +173,7 @@ func (s *Slice[T]) RemoveAll(condition func(T) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	n := 0
-	for _, el := range s.elements {
-		if !condition(el) {
-			s.elements[n] = el
-			n++
-		}
-	}
-	clear(s.elements[n:]) // zero out freed tail for GC
-	s.elements = s.elements[:n]
+	s.elements = slices.DeleteFunc(s.elements, condition)
 }
 
 // Range executes the provided function once for each slice element.
@@ -257,12 +225,7 @@ func (s *Slice[T]) FindIndex(condition func(T) bool) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for i, el := range s.elements {
-		if condition(el) {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(s.elements, condition)
 }
 
 // DoRead allows a custom read-only operation on the slice with a read lock.

@@ -2,27 +2,34 @@ package request
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 )
 
 func TestRandomString(t *testing.T) {
-	s := RandomString()
-	if s == "" {
-		t.Fatal("RandomString() returned empty string")
-	}
-	// Verify uniqueness
 	seen := make(map[string]struct{})
 	for range 100 {
 		r := RandomString()
+		if len(r) != 13 || strings.Trim(r, "0123456789abcdefghijklmnopqrstuvwxyz") != "" {
+			t.Fatalf("RandomString() = %q, want 13 lowercase base36 characters", r)
+		}
 		if _, exists := seen[r]; exists {
 			t.Errorf("RandomString() produced duplicate: %s", r)
 		}
 		seen[r] = struct{}{}
+	}
+}
+
+func BenchmarkRandomString(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = RandomString()
 	}
 }
 
@@ -37,6 +44,39 @@ func TestHTTPClientClose(t *testing.T) {
 		t.Errorf("Second Close() returned error: %v", err)
 	}
 }
+
+func TestHTTPClientCloseOwnsTransport(t *testing.T) {
+	wantErr := errors.New("transport close")
+	var calls []string
+	transport := &closingTransport{close: func() error {
+		calls = append(calls, "transport")
+		return wantErr
+	}}
+	client := NewHTTPClient(WithTransport(transport))
+	client.client.OnClose(func() {
+		calls = append(calls, "client")
+		if err := client.Close(); err != nil {
+			t.Errorf("reentrant Close() = %v", err)
+		}
+	})
+	if err := client.Close(); err != wantErr {
+		t.Fatalf("Close() = %v, want original transport error", err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("repeated Close() = %v", err)
+	}
+	if !slices.Equal(calls, []string{"client", "transport"}) {
+		t.Fatalf("close callbacks = %v", calls)
+	}
+}
+
+type closingTransport struct{ close func() error }
+
+func (*closingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("unexpected request")
+}
+
+func (t *closingTransport) Close() error { return t.close() }
 
 func TestHTTPClientBodyTypes(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

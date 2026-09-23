@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -21,76 +22,46 @@ var (
 	http3Log  = slog.New(log.NewPrefixSimpleHandler(log.Output, "engine:server"))
 )
 
+// HttpServer manages HTTP listeners. It must not be copied after first use.
 type HttpServer struct {
 	EventEmitter
 	*ServeMux
 
-	servers *Slice[any]
+	mu sync.Mutex
+	// Registered actions are append-only, so Close can use a fixed-length
+	// snapshot without holding the registry lock during shutdown.
+	shutdowns []func() error
 }
 
 func NewWebServer(defaultHandler http.Handler) *HttpServer {
-	s := &HttpServer{
+	return &HttpServer{
 		EventEmitter: NewEventEmitter(),
 		ServeMux:     NewServeMux(defaultHandler),
-
-		servers: NewSlice[any](),
 	}
-	return s
 }
 
-func (s *HttpServer) httpServer(addr string, handler http.Handler) *http.Server {
-	server := &http.Server{Addr: addr, Handler: handler, ErrorLog: serverLog.Logger}
-
-	s.servers.Push(server)
-
-	return server
+func (s *HttpServer) addShutdowns(shutdowns ...func() error) {
+	s.mu.Lock()
+	s.shutdowns = append(s.shutdowns, shutdowns...)
+	s.mu.Unlock()
 }
 
-func (s *HttpServer) h3Server(handler http.Handler) *http3.Server {
-	// Start the servers
-	server := &http3.Server{Handler: handler, Logger: http3Log}
-
-	s.servers.Push(server)
-
-	return server
-}
-
-func (s *HttpServer) webtransportServer(addr string, handler http.Handler) *webtransport.Server {
-	// Start the servers
-	server := &webtransport.Server{
-		H3: &http3.Server{Addr: addr, Handler: handler, Logger: http3Log},
-	}
-
-	// Configure the H3 server for WebTransport (required for v0.10.0+)
-	webtransport.ConfigureHTTP3Server(server.H3)
-
-	s.servers.Push(server)
-
-	return server
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{Addr: addr, Handler: handler, ErrorLog: serverLog.Logger}
 }
 
 func (s *HttpServer) Close(fn func(error)) (err error) {
 	s.Emit("close")
 
-	var closingErr, serverErr error
-	s.servers.Range(func(server any, _ int) bool {
-		switch srv := server.(type) {
-		case *http.Server:
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			serverErr = srv.Shutdown(shutdownCtx)
-			cancel()
-		case *http3.Server:
-			serverErr = srv.Close()
-		case *webtransport.Server:
-			serverErr = srv.Close()
-		default:
-			serverErr = errors.New("unknown server type")
-		}
-		if serverErr != nil && closingErr == nil {
+	s.mu.Lock()
+	shutdowns := s.shutdowns
+	s.mu.Unlock()
+	var closingErr error
+	for _, shutdown := range shutdowns {
+		if serverErr := shutdown(); serverErr != nil && closingErr == nil {
 			closingErr = serverErr
 		}
-		return true
-	})
+	}
 
 	if closingErr != nil {
 		err = fmt.Errorf("error occurred while closing servers: %v", closingErr)
@@ -103,8 +74,48 @@ func (s *HttpServer) Close(fn func(error)) (err error) {
 	return err
 }
 
+func shutdownHTTPServer(server *http.Server) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return server.Shutdown(ctx)
+}
+
+func serverTLSConfig(certFile, keyFile string) *tls.Config {
+	certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		panic(err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{certificate}}
+}
+
+func listenUDP(addr string) *net.UDPConn {
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		panic(err)
+	}
+	conn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		panic(err)
+	}
+	return conn
+}
+
+// WebTransport's Serve registers its lifetime before QUIC first accesses the
+// socket. Wait for that access before publishing readiness: an earlier Close
+// would race its initial WaitGroup.Add. Embedding UDPConn retains QUIC's UDP
+// optimizations, including ReadMsgUDP and SyscallConn.
+type webTransportListenConn struct {
+	*net.UDPConn
+	started chan struct{}
+	once    sync.Once
+}
+
+func (c *webTransportListenConn) LocalAddr() net.Addr {
+	c.once.Do(func() { close(c.started) })
+	return c.UDPConn.LocalAddr()
+}
+
 func (s *HttpServer) Listen(addr string, fn Callable) *http.Server {
-	server := s.httpServer(addr, s)
 	// Bind before notifying listeners or callers that the server is ready.
 	listenAddr := addr
 	if listenAddr == "" {
@@ -114,6 +125,8 @@ func (s *HttpServer) Listen(addr string, fn Callable) *http.Server {
 	if err != nil {
 		panic(err)
 	}
+	server := newHTTPServer(addr, s)
+	s.addShutdowns(func() error { return shutdownHTTPServer(server) })
 	go func() {
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			panic(err)
@@ -129,10 +142,20 @@ func (s *HttpServer) Listen(addr string, fn Callable) *http.Server {
 }
 
 func (s *HttpServer) ListenTLS(addr string, certFile string, keyFile string, fn Callable) *http.Server {
-	server := s.httpServer(addr, s)
-	// Idempotent repeated calls
+	config := serverTLSConfig(certFile, keyFile)
+	listenAddr := addr
+	if listenAddr == "" {
+		listenAddr = ":https"
+	}
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		panic(err)
+	}
+	server := newHTTPServer(addr, s)
+	server.TLSConfig = config
+	s.addShutdowns(func() error { return shutdownHTTPServer(server) })
 	go func() {
-		if err := server.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+		if err := server.ServeTLS(listener, "", ""); err != nil && err != http.ErrServerClosed {
 			panic(err)
 		}
 	}()
@@ -146,66 +169,43 @@ func (s *HttpServer) ListenTLS(addr string, certFile string, keyFile string, fn 
 }
 
 func (s *HttpServer) ListenHTTP3TLS(addr string, certFile string, keyFile string, quicConfig *quic.Config, fn Callable) *http3.Server {
-	var err error
-	// Load certs
-	certs := make([]tls.Certificate, 1)
-	certs[0], err = tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		panic(err)
-	}
-	// We currently only use the cert-related stuff from tls.Config,
-	// so we don't need to make a full copy.
-	config := &tls.Config{
-		Certificates: certs,
-	}
-
+	config := serverTLSConfig(certFile, keyFile)
 	if addr == "" {
 		addr = ":https"
 	}
-
-	// Open the listeners
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	udpConn := listenUDP(addr)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		panic(err)
-	}
-	udpConn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
+		_ = udpConn.Close()
 		panic(err)
 	}
 
-	server := s.h3Server(s)
-	server.TLSConfig = config
-	server.QUICConfig = quicConfig
+	server := &http3.Server{
+		Handler:    s,
+		Logger:     http3Log,
+		TLSConfig:  config,
+		QUICConfig: quicConfig,
+	}
+	httpsServer := newHTTPServer(addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = server.SetQUICHeaders(w.Header())
+		s.ServeHTTP(w, r)
+	}))
+	httpsServer.TLSConfig = config.Clone()
+	s.addShutdowns(server.Close, func() error { return shutdownHTTPServer(httpsServer) })
 
-	// Idempotent repeated calls
+	// Each serving goroutine owns its listener and stops the paired server.
+	// There are no result senders left waiting after one side shuts down.
+	go func() {
+		defer func() { _ = server.Close() }()
+		if err := httpsServer.ServeTLS(listener, "", ""); err != nil && err != http.ErrServerClosed {
+			panic(err)
+		}
+	}()
 	go func() {
 		defer func() { _ = udpConn.Close() }()
-
-		hErr := make(chan error)
-		qErr := make(chan error)
-		// Idempotent repeated calls
-		go func() {
-			hErr <- s.httpServer(addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_ = server.SetQUICHeaders(w.Header())
-				s.ServeHTTP(w, r)
-			})).ListenAndServeTLS(certFile, keyFile)
-		}()
-		// Idempotent repeated calls
-		go func() {
-			qErr <- server.Serve(udpConn)
-		}()
-
-		select {
-		case err := <-hErr:
-			_ = server.Close()
-			if err != http.ErrServerClosed {
-				panic(err)
-			}
-		case err := <-qErr:
-			// Cannot close the HTTP server or wait for requests to complete properly :/
-			if err != http.ErrServerClosed {
-				panic(err)
-			}
+		defer func() { _ = shutdownHTTPServer(httpsServer) }()
+		if err := server.Serve(udpConn); err != nil && err != http.ErrServerClosed {
+			panic(err)
 		}
 	}()
 
@@ -218,15 +218,43 @@ func (s *HttpServer) ListenHTTP3TLS(addr string, certFile string, keyFile string
 }
 
 func (s *HttpServer) ListenWebTransportTLS(addr string, certFile string, keyFile string, quicConfig *quic.Config, fn Callable) *webtransport.Server {
-	server := s.webtransportServer(addr, s)
-	server.H3.QUICConfig = quicConfig
+	config := http3.ConfigureTLSConfig(serverTLSConfig(certFile, keyFile))
+	listenAddr := addr
+	if listenAddr == "" {
+		listenAddr = ":https"
+	}
+	conn := &webTransportListenConn{UDPConn: listenUDP(listenAddr), started: make(chan struct{})}
+	server := &webtransport.Server{
+		H3: &http3.Server{
+			Addr:       addr,
+			Handler:    s,
+			Logger:     http3Log,
+			TLSConfig:  config,
+			QUICConfig: quicConfig,
+		},
+	}
 
-	// Idempotent repeated calls
+	startErr := make(chan error)
 	go func() {
-		if err := server.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
-			panic(err)
+		// Serve owns WebTransport's HTTP/3 settings and ConnContext initialization.
+		err := server.Serve(conn)
+		_ = conn.Close()
+		select {
+		case startErr <- err:
+			// Serve failed before it could publish startup. Return the error to
+			// the caller without leaving a goroutine waiting for a receiver.
+		case <-conn.started:
+			if err != nil && err != http.ErrServerClosed && !errors.Is(err, context.Canceled) {
+				panic(err)
+			}
 		}
 	}()
+	select {
+	case <-conn.started:
+	case err := <-startErr:
+		panic(err)
+	}
+	s.addShutdowns(server.Close)
 
 	if fn != nil {
 		defer fn()

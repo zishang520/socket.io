@@ -28,13 +28,6 @@ type (
 		Key   string
 		Value string
 	}
-
-	cors struct {
-		options *Cors
-		ctx     *HttpContext
-		headers []*Kv
-		varys   []string
-	}
 )
 
 func (c *Cors) IsOriginAllowed(origin string, allowedOrigin any) bool {
@@ -66,150 +59,24 @@ func (c *Cors) IsOriginAllowed(origin string, allowedOrigin any) bool {
 	return false
 }
 
-func (c *cors) configureOrigin() *cors {
-	requestOrigin := c.ctx.Headers().Peek("Origin")
-	// Requests without an Origin header (same-origin or non-browser clients)
-	// are not subject to CORS; skip origin configuration entirely.
-	if requestOrigin == "" {
-		c.varys = append(c.varys, "Origin")
-		return c
-	}
-	if o, ok := c.options.Origin.(string); ok {
-		if o == "*" && c.options.Credentials {
-			// Credentials + wildcard origin: must reflect the specific origin
-			// per the CORS specification (Access-Control-Allow-Origin: * is
-			// incompatible with Access-Control-Allow-Credentials: true).
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Allow-Origin",
-				Value: requestOrigin,
-			})
-			c.varys = append(c.varys, "Origin")
-		} else if o == "*" {
-			// allow any origin (no credentials)
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Allow-Origin",
-				Value: "*",
-			})
-		} else {
-			// fixed origin — only reflect if request origin matches;
-			// if not, omit Access-Control-Allow-Origin entirely so the
-			// browser blocks the request without leaking the allowed origin.
-			if strings.EqualFold(requestOrigin, o) {
-				c.headers = append(c.headers, &Kv{
-					Key:   "Access-Control-Allow-Origin",
-					Value: o,
-				})
-			}
-			c.varys = append(c.varys, "Origin")
-		}
-	} else {
-		// reflect origin — only set the header when the origin is allowed;
-		// omitting it causes the browser to block the cross-origin request.
-		if c.options.IsOriginAllowed(requestOrigin, c.options.Origin) {
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Allow-Origin",
-				Value: requestOrigin,
-			})
-		}
-		c.varys = append(c.varys, "Origin")
-	}
-	return c
-}
-
-func (c *cors) configureMethods() *cors {
-	switch methods := c.options.Methods.(type) {
+// setCorsHeaderList accepts the two public header-list forms and omits empty lists.
+func setCorsHeaderList(headers *ParameterBag, key string, value any) {
+	switch values := value.(type) {
 	case string:
-		c.headers = append(c.headers, &Kv{
-			Key:   "Access-Control-Allow-Methods",
-			Value: methods,
-		})
-	case []string:
-		c.headers = append(c.headers, &Kv{
-			Key:   "Access-Control-Allow-Methods",
-			Value: strings.Join(methods, ","),
-		})
-	}
-	return c
-}
-
-func (c *cors) configureCredentials() *cors {
-	if c.options.Credentials {
-		c.headers = append(c.headers, &Kv{
-			Key:   "Access-Control-Allow-Credentials",
-			Value: "true",
-		})
-	}
-	return c
-}
-
-func (c *cors) configureAllowedHeaders() *cors {
-	allowedHeaders := c.options.AllowedHeaders
-	if allowedHeaders == nil {
-		allowedHeaders = c.options.Headers
-	}
-
-	switch h := allowedHeaders.(type) {
-	case nil:
-		// .c.headers wasn't specified, so reflect the request c.headers
-		if head := c.ctx.Headers().Peek("Access-Control-Request-Headers"); head != "" {
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Allow-Headers",
-				Value: head,
-			})
-			c.varys = append(c.varys, "Access-Control-Request-Headers")
-		}
-	case string:
-		if len(h) > 0 {
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Allow-Headers",
-				Value: h,
-			})
+		if len(values) > 0 {
+			headers.Set(key, values)
 		}
 	case []string:
-		if len(h) > 0 {
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Allow-Headers",
-				Value: strings.Join(h, ","),
-			})
+		if len(values) > 0 {
+			headers.Set(key, strings.Join(values, ","))
 		}
 	}
-	return c
 }
 
-func (c *cors) configureExposedHeaders() *cors {
-	switch headers := c.options.ExposedHeaders.(type) {
-	case string:
-		if len(headers) > 0 {
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Expose-Headers",
-				Value: headers,
-			})
-		}
-	case []string:
-		if len(headers) > 0 {
-			c.headers = append(c.headers, &Kv{
-				Key:   "Access-Control-Expose-Headers",
-				Value: strings.Join(headers, ","),
-			})
-		}
-	}
-	return c
-}
-
-func (c *cors) configureMaxAge() *cors {
-	if c.options.MaxAge != "" {
-		c.headers = append(c.headers, &Kv{
-			Key:   "Access-Control-Max-Age",
-			Value: c.options.MaxAge,
-		})
-	}
-	return c
-}
-
-func parseVary(vary string) *Set[string] {
+func parseVary(vary string) map[string]struct{} {
 	end := 0
 	start := 0
-	list := NewSet[string]()
+	list := make(map[string]struct{})
 
 	// gather tokens
 	for i, l := 0, len(vary); i < l; i++ {
@@ -220,7 +87,7 @@ func parseVary(vary string) *Set[string] {
 				start = end
 			}
 		case ',': /* , */
-			list.Add(vary[start:end])
+			list[vary[start:end]] = struct{}{}
 			end = i + 1
 			start = end
 		default:
@@ -230,53 +97,85 @@ func parseVary(vary string) *Set[string] {
 
 	if end := vary[start:end]; len(end) > 0 {
 		// final token
-		list.Add(end)
+		list[end] = struct{}{}
 	}
 
 	return list
 }
 
-func (c *cors) applyHeaders() {
-	for _, header := range c.headers {
-		c.ctx.ResponseHeaders().Set(header.Key, header.Value)
-	}
-	if vary := c.ctx.ResponseHeaders().Peek("Vary"); vary == "*" {
-		c.ctx.ResponseHeaders().Set("Vary", "*")
-	} else {
-		if len(c.varys) > 0 {
-			varys := parseVary(vary)
-			varys.Add(c.varys...)
-			c.ctx.ResponseHeaders().Set("Vary", strings.Join(varys.Keys(), ", "))
-		}
-	}
-}
-
 func CorsMiddleware(options *Cors, ctx *HttpContext, next func(error)) {
-	c := &cors{
-		options: options,
-		ctx:     ctx,
-		headers: []*Kv{},
+	method := ctx.Method()
+	requestOrigin := ctx.Headers().Peek("Origin")
+	origin, fixed := options.Origin.(string)
+	vary := make([]string, 0, 2)
+	var allowedOrigin string
+	if requestOrigin != "" && fixed && origin == "*" && !options.Credentials {
+		allowedOrigin = "*"
+	} else {
+		vary = append(vary, "Origin")
+		if requestOrigin != "" && options.IsOriginAllowed(requestOrigin, options.Origin) {
+			allowedOrigin = origin
+			if !fixed || origin == "*" {
+				allowedOrigin = requestOrigin
+			}
+		}
 	}
-	method := c.ctx.Method()
 
-	if http.MethodOptions == method {
-		// preflight — Expose-Headers is only meaningful for actual responses,
-		// so it is intentionally omitted here.
-		c.configureOrigin().configureCredentials().configureMethods().configureAllowedHeaders().configureMaxAge().applyHeaders()
-		if options.PreflightContinue {
-			next(nil)
+	// Resolve the origin callback before accessing or changing response headers.
+	headers := ctx.ResponseHeaders()
+	if allowedOrigin != "" {
+		headers.Set("Access-Control-Allow-Origin", allowedOrigin)
+	}
+	if options.Credentials {
+		headers.Set("Access-Control-Allow-Credentials", "true")
+	}
+	if method == http.MethodOptions {
+		switch methods := options.Methods.(type) {
+		case string:
+			headers.Set("Access-Control-Allow-Methods", methods)
+		case []string:
+			headers.Set("Access-Control-Allow-Methods", strings.Join(methods, ","))
+		}
+		allowedHeaders := options.AllowedHeaders
+		if allowedHeaders == nil {
+			allowedHeaders = options.Headers
+		}
+		if allowedHeaders == nil {
+			if requested := ctx.Headers().Peek("Access-Control-Request-Headers"); requested != "" {
+				headers.Set("Access-Control-Allow-Headers", requested)
+				vary = append(vary, "Access-Control-Request-Headers")
+			}
 		} else {
-			// Safari (and potentially other browsers) need content-length 0,
-			//   for 204 or they just hang waiting for a body
-			ctx.ResponseHeaders().Set("Content-Length", "0")
-			_ = ctx.SetStatusCode(options.OptionsSuccessStatus)
-			_, _ = ctx.Write(nil)
+			setCorsHeaderList(headers, "Access-Control-Allow-Headers", allowedHeaders)
+		}
+		if options.MaxAge != "" {
+			headers.Set("Access-Control-Max-Age", options.MaxAge)
 		}
 	} else {
-		// actual response
-		c.configureOrigin().configureCredentials().configureExposedHeaders().applyHeaders()
-		next(nil)
+		setCorsHeaderList(headers, "Access-Control-Expose-Headers", options.ExposedHeaders)
 	}
+
+	if current := headers.Peek("Vary"); current == "*" {
+		headers.Set("Vary", "*")
+	} else if len(vary) > 0 {
+		values := parseVary(current)
+		for _, value := range vary {
+			values[value] = struct{}{}
+		}
+		keys := make([]string, 0, len(values))
+		for value := range values {
+			keys = append(keys, value)
+		}
+		headers.Set("Vary", strings.Join(keys, ", "))
+	}
+
+	if method == http.MethodOptions && !options.PreflightContinue {
+		headers.Set("Content-Length", "0")
+		_ = ctx.SetStatusCode(options.OptionsSuccessStatus)
+		_, _ = ctx.Write(nil)
+		return
+	}
+	next(nil)
 }
 
 var defaultCors = &Cors{

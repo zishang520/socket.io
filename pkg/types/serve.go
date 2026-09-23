@@ -2,6 +2,7 @@ package types
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
@@ -12,10 +13,10 @@ type (
 	ServeMux struct {
 		DefaultHandler http.Handler // Default Handler
 
-		mu    sync.RWMutex
-		m     map[string]muxEntry
-		es    []muxEntry
-		hosts bool // whether any patterns contain hostnames
+		mu       sync.RWMutex
+		exact    map[string]muxEntry
+		prefixes []muxEntry
+		hosts    bool // whether any patterns contain hostnames
 	}
 
 	muxEntry struct {
@@ -32,16 +33,15 @@ func NewServeMux(defaultHandler http.Handler) *ServeMux {
 	return &ServeMux{DefaultHandler: defaultHandler}
 }
 
-// Find a handler on a handler map given a path string.
-// Most-specific (longest) pattern wins.
+// Exact matches precede prefixes. Among prefixes, the latest registration wins.
 func (mux *ServeMux) match(path string) (h http.Handler, pattern string) {
 	// Check for exact match first.
-	v, ok := mux.m[path]
+	v, ok := mux.exact[path]
 	if ok {
 		return v.h, v.pattern
 	}
 
-	for _, e := range mux.es {
+	for _, e := range slices.Backward(mux.prefixes) {
 		if strings.HasPrefix(path, e.pattern) {
 			return e.h, e.pattern
 		}
@@ -50,23 +50,12 @@ func (mux *ServeMux) match(path string) (h http.Handler, pattern string) {
 }
 
 // Handler returns the handler to use for the given request,
-// consulting r.Method, r.Host, and r.URL.Path. It always returns
-// a non-nil handler. If the path is not in its canonical form, the
-// handler will be an internally-generated handler that redirects
-// to the canonical path. If the host contains a port, it is ignored
-// when matching handlers.
-//
-// The path and host are used unchanged for CONNECT requests.
-//
-// Handler also returns the registered pattern that matches the
-// request or, in the case of internally-generated redirects,
-// the pattern that will match after following the redirect.
-//
-// If there is no registered handler that applies to the request,
-// Handler returns a “page not found” handler and an empty pattern.
+// consulting r.Method, r.Host, and r.URL.Path. It cleans the path for matching
+// without redirecting the request. Host ports are ignored except for CONNECT.
+// It returns the matching pattern, or DefaultHandler and an empty pattern.
 func (mux *ServeMux) Handler(r *http.Request) (h http.Handler, pattern string) {
 	path := utils.CleanPath(r.URL.Path)
-	// CONNECT requests are not canonicalized.
+	// CONNECT preserves the host, including its port.
 	if r.Method == http.MethodConnect {
 		return mux.handler(r.Host, path)
 	}
@@ -79,7 +68,7 @@ func (mux *ServeMux) Handler(r *http.Request) (h http.Handler, pattern string) {
 }
 
 // handler is the main implementation of Handler.
-// The path is known to be in canonical form, except for CONNECT methods.
+// The path is known to be in canonical form.
 func (mux *ServeMux) handler(host, path string) (h http.Handler, pattern string) {
 	mux.mu.RLock()
 	defer mux.mu.RUnlock()
@@ -97,8 +86,7 @@ func (mux *ServeMux) handler(host, path string) (h http.Handler, pattern string)
 	return
 }
 
-// ServeHTTP dispatches the request to the handler whose
-// pattern most closely matches the request URL.
+// ServeHTTP dispatches the request to the matching handler.
 func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.RequestURI == "*" {
 		if r.ProtoAtLeast(1, 1) {
@@ -112,7 +100,8 @@ func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Handle registers the handler for the given pattern.
-// If a handler already exists for pattern, Handle panics.
+// Duplicate exact patterns panic. Prefix patterns ending in / may be
+// registered again; the latest matching prefix takes precedence.
 func (mux *ServeMux) Handle(pattern string, handler http.Handler) {
 	mux.mu.Lock()
 	defer mux.mu.Unlock()
@@ -123,32 +112,23 @@ func (mux *ServeMux) Handle(pattern string, handler http.Handler) {
 	if handler == nil {
 		panic("http: nil handler")
 	}
-	if _, exist := mux.m[pattern]; exist {
+	if _, exist := mux.exact[pattern]; exist {
 		panic("http: multiple registrations for " + pattern)
 	}
 
-	if mux.m == nil {
-		mux.m = make(map[string]muxEntry)
-	}
 	e := muxEntry{h: handler, pattern: pattern}
 	if pattern[len(pattern)-1] == '/' {
-		mux.es = appendSorted(mux.es, e)
+		mux.prefixes = append(mux.prefixes, e)
 	} else {
-		mux.m[pattern] = e
+		if mux.exact == nil {
+			mux.exact = make(map[string]muxEntry)
+		}
+		mux.exact[pattern] = e
 	}
 
 	if pattern[0] != '/' {
 		mux.hosts = true
 	}
-}
-
-func appendSorted(es []muxEntry, e muxEntry) []muxEntry {
-	i := 0
-	// we now know that i points at where we want to insert
-	es = append(es, muxEntry{}) // try to grow the slice in place, any entry works.
-	copy(es[i+1:], es[i:])      // Move shorter entries down
-	es[i] = e
-	return es
 }
 
 // HandleFunc registers the handler function for the given pattern.

@@ -207,12 +207,12 @@ func (s *Socket) subEvents() {
 	}
 
 	s.subs.Store(types.NewSlice(
-		on(s.io, "open", s.onopen),
-		on(s.io, "packet", func(args ...any) {
+		on(s.io.EventEmitter, "open", s.onopen),
+		on(s.io.EventEmitter, "packet", func(args ...any) {
 			s.onpacket(slices.TryGetAny[*parser.Packet](args, 0))
 		}),
-		on(s.io, "error", s.onerror),
-		on(s.io, "close", func(args ...any) {
+		on(s.io.EventEmitter, "error", s.onerror),
+		on(s.io.EventEmitter, "close", func(args ...any) {
 			s.onclose(slices.TryGetAny[string](args, 0), slices.TryGetAny[error](args, 1))
 		}),
 	))
@@ -710,12 +710,9 @@ func (s *Socket) onconnect(id string, pid string) {
 
 // emitBuffered emits buffered events (received and emitted).
 func (s *Socket) emitBuffered() {
-	s.receiveBuffer.DoWrite(func(values [][]any) [][]any {
-		for _, args := range values {
-			s.emitEvent(args)
-		}
-		return values[:0]
-	})
+	for _, args := range s.receiveBuffer.AllAndClear() {
+		s.emitEvent(args)
+	}
 
 	for _, packet := range s.sendBuffer.AllAndClear() {
 		s.notifyOutgoingListeners(packet)

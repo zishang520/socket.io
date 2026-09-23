@@ -6,7 +6,7 @@ import "slices"
 // Get safely retrieves an element from a slice with bounds checking
 // Returns the element and true if successful, zero value and false otherwise
 func Get[S ~[]E, E any](s S, idx int) (E, bool) {
-	if idx < 0 || idx >= len(s) {
+	if !IsValidIndex(s, idx) {
 		var zero E
 		return zero, false
 	}
@@ -17,7 +17,7 @@ func Get[S ~[]E, E any](s S, idx int) (E, bool) {
 // Returns the converted element and true if successful, zero value and false otherwise
 func GetAny[O any](vals []any, idx int) (O, bool) {
 	var zero O
-	if idx < 0 || idx >= len(vals) {
+	if !IsValidIndex(vals, idx) {
 		return zero, false
 	}
 	v, ok := vals[idx].(O)
@@ -26,37 +26,28 @@ func GetAny[O any](vals []any, idx int) (O, bool) {
 
 // TryGet retrieves an element or returns zero value if index is out of bounds
 func TryGet[S ~[]E, E any](s S, idx int) E {
-	if idx < 0 || idx >= len(s) {
-		var zero E
-		return zero
-	}
-	return s[idx]
+	value, _ := Get(s, idx)
+	return value
 }
 
 // TryGetAny retrieves and type-asserts an element from []any or returns zero value
 func TryGetAny[O any](vals []any, idx int) O {
-	var zero O
-	if idx < 0 || idx >= len(vals) {
-		return zero
-	}
-	if v, ok := vals[idx].(O); ok {
-		return v
-	}
-	return zero
+	value, _ := GetAny[O](vals, idx)
+	return value
 }
 
 // GetWithDefault retrieves an element or returns a default value
 func GetWithDefault[S ~[]E, E any](s S, idx int, defaultVal E) E {
-	if idx < 0 || idx >= len(s) {
-		return defaultVal
+	if value, ok := Get(s, idx); ok {
+		return value
 	}
-	return s[idx]
+	return defaultVal
 }
 
 // GetPtr returns a pointer to the element if it exists, nil otherwise
 // Useful when you need to distinguish between zero value and missing element
 func GetPtr[S ~[]E, E any](s S, idx int) *E {
-	if idx < 0 || idx >= len(s) {
+	if !IsValidIndex(s, idx) {
 		return nil
 	}
 	return &s[idx]
@@ -87,20 +78,12 @@ func Slice[S ~[]E, E any](s S, start int) S {
 
 // First returns the first element if slice is not empty
 func First[S ~[]E, E any](s S) (E, bool) {
-	if len(s) == 0 {
-		var zero E
-		return zero, false
-	}
-	return s[0], true
+	return Get(s, 0)
 }
 
 // Last returns the last element if slice is not empty
 func Last[S ~[]E, E any](s S) (E, bool) {
-	if len(s) == 0 {
-		var zero E
-		return zero, false
-	}
-	return s[len(s)-1], true
+	return Get(s, len(s)-1)
 }
 
 // Filter creates a new slice with elements that pass the test
@@ -148,12 +131,7 @@ func Contains[S ~[]E, E comparable](s S, val E) bool {
 // FindIndex returns the index of the first element satisfying the predicate,
 // or -1 if no such element is found.
 func FindIndex[S ~[]E, E any](s S, predicate func(E) bool) int {
-	for i, v := range s {
-		if predicate(v) {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(s, predicate)
 }
 
 // Flatten concatenates a slice of slices into a single slice.
@@ -188,8 +166,6 @@ func IsEmpty[S ~[]E, E any](s S) bool {
 }
 
 // IsValidIndex checks if index is valid for the slice.
-//
-//go:inline
 func IsValidIndex[S ~[]E, E any](s S, idx int) bool {
 	return uint(idx) < uint(len(s))
 }

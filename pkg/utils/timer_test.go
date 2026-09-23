@@ -347,6 +347,30 @@ func TestIntervalCallbacksDoNotOverlap(t *testing.T) {
 	})
 }
 
+func TestIntervalRefreshDuringCallback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		release := make(chan struct{})
+		timer := SetInterval(func() {
+			if calls.Add(1) == 1 {
+				<-release
+			}
+		}, time.Second)
+		defer timer.Stop()
+
+		advanceTime(1500 * time.Millisecond)
+		assertCalls(t, &calls, 1)
+		timer.Refresh()
+		close(release)
+		synctest.Wait()
+
+		advanceTime(time.Second - time.Nanosecond)
+		assertCalls(t, &calls, 1)
+		advanceTime(time.Nanosecond)
+		assertCalls(t, &calls, 2)
+	})
+}
+
 func TestTimerUnref(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const delay = time.Second

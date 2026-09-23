@@ -9,10 +9,7 @@ import (
 // on registers an event listener for the given event name on the EventEmitter.
 // It returns a Callable to remove the listener.
 func on(evt types.EventEmitter, ev types.EventName, fn types.EventListener) types.Callable {
-	_ = evt.On(ev, fn)
-	return func() {
-		evt.RemoveListener(ev, fn)
-	}
+	return types.Subscribe(evt, ev, fn)
 }
 
 // extractValue extracts a value of type T from the map by key.

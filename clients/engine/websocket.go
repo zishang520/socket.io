@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	ws "github.com/gorilla/websocket"
@@ -41,10 +40,6 @@ type websocket struct {
 	// socket is the active WebSocket connection instance.
 	// It provides the actual communication channel with the server.
 	socket *types.WebSocketConn
-
-	// mu protects concurrent access to the WebSocket connection.
-	// This ensures thread-safe operations on the connection.
-	mu sync.Mutex
 
 	writeQueue *queue.Queue
 }
@@ -216,11 +211,7 @@ func (w *websocket) Write(packets []*packet.Packet) {
 	w.writeQueue.Enqueue(func() { w.write(packets) })
 }
 
-// write performs the actual packet writing operation.
-// This method runs in a separate goroutine to handle asynchronous writes.
-//
-// Parameters:
-//   - packets: Array of packets to be sent
+// write runs exclusively on writeQueue, including its completion events.
 func (w *websocket) write(packets []*packet.Packet) {
 	// fake drain
 	// defer to next tick to allow Socket to clear writeBuffer
@@ -231,7 +222,6 @@ func (w *websocket) write(packets []*packet.Packet) {
 
 	var writeErr error
 
-	w.mu.Lock()
 	// encodePacket efficient as it uses websocket framing
 	// no need for encodePayload
 	for _, packet := range packets {
@@ -268,15 +258,12 @@ func (w *websocket) write(packets []*packet.Packet) {
 			writeErr = err
 			break
 		}
-		w.doWrite(data, compress, &writeErr)
+		writeErr = w.doWrite(data, compress)
 		if writeErr != nil {
 			break
 		}
 	}
-	w.mu.Unlock()
-
-	// Report errors outside of the lock to prevent potential deadlocks
-	// from event handlers that may try to write.
+	// Report errors after I/O completes; listeners may enqueue another write.
 	if writeErr != nil {
 		w._error(writeErr)
 	}
@@ -284,22 +271,12 @@ func (w *websocket) write(packets []*packet.Packet) {
 
 // doWrite performs the actual WebSocket write operation.
 // This method handles message compression and WebSocket message framing.
-// When called from write() under lock, errors are stored in writeErr instead of
-// calling _error() directly, to prevent deadlocks from event handlers.
+// The caller reports errors after the message writer is closed.
 //
 // Parameters:
 //   - data: The data to be written
 //   - compress: Whether to compress the message
-//   - writeErr: Optional error pointer to store errors (when called under lock)
-func (w *websocket) doWrite(data types.BufferInterface, compress bool, writeErr ...*error) {
-	reportErr := func(err error) {
-		if len(writeErr) > 0 && writeErr[0] != nil {
-			*writeErr[0] = err
-		} else {
-			w._error(err)
-		}
-	}
-
+func (w *websocket) doWrite(data types.BufferInterface, compress bool) (err error) {
 	if perMessageDeflate := w.Opts().PerMessageDeflate(); perMessageDeflate != nil {
 		if data.Len() < perMessageDeflate.Threshold {
 			compress = false
@@ -314,19 +291,15 @@ func (w *websocket) doWrite(data types.BufferInterface, compress bool, writeErr 
 	}
 	write, err := w.socket.NextWriter(mt)
 	if err != nil {
-		reportErr(err)
-		return
+		return err
 	}
 	defer func() {
-		if err := write.Close(); err != nil {
-			reportErr(err)
-			return
+		if closeErr := write.Close(); closeErr != nil {
+			err = closeErr
 		}
 	}()
-	if _, err := io.Copy(write, data); err != nil {
-		reportErr(err)
-		return
-	}
+	_, err = io.Copy(write, data)
+	return err
 }
 
 // DoClose gracefully closes the WebSocket connection.

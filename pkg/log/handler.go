@@ -5,22 +5,23 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 	"sync"
 )
 
 type PrefixSimpleHandler struct {
-	w      io.Writer
-	mu     sync.RWMutex
-	prefix string
-	attrs  string // formatted attrs appended after prefix
-	group  string // group name appended after prefix
+	w       io.Writer
+	writeMu *sync.Mutex // shared by handlers writing to the same output
+	mu      sync.RWMutex
+	prefix  string
+	attrs   string // formatted attrs appended after prefix
+	group   string // group name appended after prefix
 }
 
 func NewPrefixSimpleHandler(w io.Writer, prefix string) *PrefixSimpleHandler {
 	return &PrefixSimpleHandler{
-		w:      w,
-		prefix: prefix,
+		w:       w,
+		writeMu: new(sync.Mutex),
+		prefix:  prefix,
 	}
 }
 
@@ -31,68 +32,70 @@ func (h *PrefixSimpleHandler) Enabled(_ context.Context, _ slog.Level) bool {
 func (h *PrefixSimpleHandler) Handle(_ context.Context, r slog.Record) error { //nolint:gocritic // slog.Handler interface requires value receiver
 	h.mu.RLock()
 	prefix := h.prefix
-	attrs := h.attrs
-	group := h.group
 	h.mu.RUnlock()
 
-	msg := r.Message
+	line := make([]byte, 0, len(prefix)+len(h.group)+len(r.Message)+len(h.attrs)+4)
+	if h.group != "" {
+		line = append(line, '[')
+		line = append(line, h.group...)
+		line = append(line, ']', ' ')
+	}
 	if prefix != "" {
-		msg = fmt.Sprintf("%s %s", prefix, msg)
+		line = append(line, prefix...)
+		line = append(line, ' ')
 	}
-	if group != "" {
-		msg = fmt.Sprintf("[%s] %s", group, msg)
-	}
-	// Append handler-level attrs.
+	line = append(line, r.Message...)
+	line = append(line, h.attrs...)
 	r.Attrs(func(a slog.Attr) bool {
-		attrs += fmt.Sprintf(" %s=%v", a.Key, a.Value)
+		line = appendAttr(line, a)
 		return true
 	})
-	if attrs != "" {
-		msg += attrs
-	}
-	_, err := fmt.Fprintln(h.w, msg)
+	line = append(line, '\n')
+
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
+	_, err := h.w.Write(line)
 	return err
 }
 
 func (h *PrefixSimpleHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	h.mu.RLock()
-	prefix := h.prefix
-	existingAttrs := h.attrs
-	group := h.group
-	h.mu.RUnlock()
-
-	var newAttrs strings.Builder
-	newAttrs.WriteString(existingAttrs)
+	clone := h.clone()
+	formatted := []byte(h.attrs)
 	for _, a := range attrs {
-		fmt.Fprintf(&newAttrs, " %s=%v", a.Key, a.Value)
+		formatted = appendAttr(formatted, a)
 	}
-	return &PrefixSimpleHandler{
-		w:      h.w,
-		prefix: prefix,
-		attrs:  newAttrs.String(),
-		group:  group,
-	}
+	clone.attrs = string(formatted)
+	return clone
 }
 
 func (h *PrefixSimpleHandler) WithGroup(name string) slog.Handler {
-	h.mu.RLock()
-	prefix := h.prefix
-	attrs := h.attrs
-	group := h.group
-	h.mu.RUnlock()
-
-	newGroup := group
-	if newGroup != "" {
-		newGroup += "." + name
+	clone := h.clone()
+	if clone.group != "" {
+		clone.group += "." + name
 	} else {
-		newGroup = name
+		clone.group = name
 	}
+	return clone
+}
+
+// clone snapshots the mutable prefix while retaining the shared output lock.
+func (h *PrefixSimpleHandler) clone() *PrefixSimpleHandler {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return &PrefixSimpleHandler{
-		w:      h.w,
-		prefix: prefix,
-		attrs:  attrs,
-		group:  newGroup,
+		w:       h.w,
+		writeMu: h.writeMu,
+		prefix:  h.prefix,
+		attrs:   h.attrs,
+		group:   h.group,
 	}
+}
+
+func appendAttr(dst []byte, attr slog.Attr) []byte {
+	dst = append(dst, ' ')
+	dst = append(dst, attr.Key...)
+	dst = append(dst, '=')
+	return fmt.Appendf(dst, "%v", attr.Value.Resolve())
 }
 
 func (h *PrefixSimpleHandler) SetPrefix(prefix string) {

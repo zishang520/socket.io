@@ -1,8 +1,10 @@
 package types
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"testing"
 )
 
@@ -371,15 +373,22 @@ func TestParseVary(t *testing.T) {
 		input    string
 		expected []string
 	}{
+		{"", nil},
 		{"Accept, Content-Type", []string{"Accept", "Content-Type"}},
 		{"Origin", []string{"Origin"}},
 		{"Accept, Origin, X-Custom", []string{"Accept", "Origin", "X-Custom"}},
+		{" Origin , Origin, Accept ", []string{"Origin", "Accept"}},
 	}
 
 	for _, tt := range tests {
 		result := parseVary(tt.input)
-		if result.Len() != len(tt.expected) {
-			t.Errorf("parseVary(%q) expected %d items, got %d", tt.input, len(tt.expected), result.Len())
+		if len(result) != len(tt.expected) {
+			t.Errorf("parseVary(%q) expected %d items, got %d", tt.input, len(tt.expected), len(result))
+		}
+		for _, value := range tt.expected {
+			if _, ok := result[value]; !ok {
+				t.Errorf("parseVary(%q) missing %q", tt.input, value)
+			}
 		}
 	}
 }
@@ -630,5 +639,105 @@ func TestMiddlewareWrapperDefaults(t *testing.T) {
 	origin := ctx.ResponseHeaders().Peek("Access-Control-Allow-Origin")
 	if origin != "*" {
 		t.Errorf("Expected default wildcard origin, got %q", origin)
+	}
+}
+
+func TestCorsHeaderListEmptyValues(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		value       any
+		wantMethods bool
+		wantHeaders bool
+	}{
+		{"nil", nil, false, false},
+		{"empty string", "", true, false},
+		{"nil slice", []string(nil), true, false},
+		{"empty slice", []string{}, true, false},
+		{"single empty string", []string{""}, true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			options := &Cors{Origin: "*", Methods: tt.value, AllowedHeaders: tt.value, ExposedHeaders: tt.value, PreflightContinue: true}
+			preflight := createTestContext(http.MethodOptions, "https://example.com")
+			CorsMiddleware(options, preflight, func(error) {})
+			for key, present := range map[string]bool{
+				"Access-Control-Allow-Methods": tt.wantMethods,
+				"Access-Control-Allow-Headers": tt.wantHeaders,
+			} {
+				if value, ok := preflight.ResponseHeaders().Get(key); ok != present || value != "" {
+					t.Errorf("%s = (%q, %t), want (empty, %t)", key, value, ok, present)
+				}
+			}
+			actual := createTestContext(http.MethodGet, "https://example.com")
+			CorsMiddleware(options, actual, func(error) {})
+			if value, ok := actual.ResponseHeaders().Get("Access-Control-Expose-Headers"); ok != tt.wantHeaders || value != "" {
+				t.Errorf("exposed headers = (%q, %t), want (empty, %t)", value, ok, tt.wantHeaders)
+			}
+		})
+	}
+}
+
+func TestCorsHeadersAlias(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		allowed any
+		want    string
+	}{
+		{"unset", nil, "X-Alias"},
+		{"empty string", "", ""},
+		{"nil slice", []string(nil), ""},
+		{"explicit", "X-Explicit", "X-Explicit"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := createTestContext(http.MethodOptions, "https://example.com")
+			options := &Cors{Origin: "*", AllowedHeaders: tt.allowed, Headers: "X-Alias", PreflightContinue: true}
+			CorsMiddleware(options, ctx, func(error) {})
+			if got := ctx.ResponseHeaders().Peek("Access-Control-Allow-Headers"); got != tt.want {
+				t.Fatalf("allowed headers = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCorsOriginCallbackBeforeResponseHeaders(t *testing.T) {
+	ctx := createTestContext(http.MethodOptions, "https://example.com")
+	options := &Cors{Methods: "GET", PreflightContinue: true}
+	calls := 0
+	options.Origin = func(origin string) bool {
+		calls++
+		if ctx.responseHeadersUsed.Load() {
+			t.Fatal("response headers accessed before origin callback")
+		}
+		// The request method has already been captured, while options and
+		// requested headers are still read after this callback.
+		ctx.request.Method = http.MethodGet
+		ctx.request.Header.Set("Access-Control-Request-Headers", "X-Callback")
+		options.Credentials = true
+		return origin == "https://example.com"
+	}
+	CorsMiddleware(options, ctx, func(err error) {
+		if err != nil || calls != 1 {
+			t.Fatalf("next called with err=%v after %d origin callbacks", err, calls)
+		}
+		for key, want := range map[string]string{
+			"Access-Control-Allow-Origin":      "https://example.com",
+			"Access-Control-Allow-Credentials": "true",
+			"Access-Control-Allow-Methods":     "GET",
+			"Access-Control-Allow-Headers":     "X-Callback",
+		} {
+			if got := ctx.ResponseHeaders().Peek(key); got != want {
+				t.Errorf("%s = %q, want %q", key, got, want)
+			}
+		}
+	})
+}
+
+func TestCorsVaryWildcardCollapsesValues(t *testing.T) {
+	ctx := createTestContext(http.MethodGet, "https://example.com")
+	ctx.ResponseHeaders().Add("Vary", "Accept-Encoding")
+	ctx.ResponseHeaders().Add("Vary", "*")
+	CorsMiddleware(&Cors{Origin: true}, ctx, func(error) {})
+	values, _ := ctx.ResponseHeaders().Gets("Vary")
+	if !slices.Equal(values, []string{"*"}) {
+		t.Fatalf("Vary = %q, want [*]", values)
 	}
 }

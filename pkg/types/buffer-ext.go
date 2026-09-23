@@ -58,10 +58,9 @@ func (b *Buffer) Clone() *Buffer {
 	return clone
 }
 
-// Size returns the original length of the underlying byte slice.
-// Size is the number of bytes available for reading via ReadAt.
-// The returned value is always the same and is not affected by calls
-// to any other method.
+// Size returns the current length of the underlying byte slice, including any
+// consumed prefix still retained by the buffer. Unlike Len, it includes bytes
+// before the read cursor; writes, growth, truncation, and resets may change it.
 func (b *Buffer) Size() int64 { return int64(len(b.buf)) }
 
 // Seek implements the io.Seeker interface.

@@ -1,7 +1,6 @@
 package webtransport
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"io"
@@ -394,6 +393,68 @@ func TestConn_NextWriter(t *testing.T) {
 	}
 }
 
+func TestConnNextReaderDiscardsPreviousMessage(t *testing.T) {
+	conn, _ := newTestConn(true)
+	for _, payload := range []string{"partially consumed", "next message"} {
+		if err := conn.WriteMessage(TextMessage, []byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, previous, err := conn.NextReader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = io.ReadFull(previous, make([]byte, 3)); err != nil {
+		t.Fatal(err)
+	}
+	messageType, current, err := conn.NextReader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = previous.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("previous reader error = %v, want EOF", err)
+	}
+	data, err := io.ReadAll(current)
+	if err != nil || messageType != TextMessage || string(data) != "next message" {
+		t.Fatalf("next message = (%d, %q, %v)", messageType, data, err)
+	}
+}
+
+func TestConnNextWriterSmallWrites(t *testing.T) {
+	for _, isServer := range []bool{true, false} {
+		conn, _ := newTestConn(isServer)
+		writer, err := conn.NextWriter(TextMessage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := bytes.Repeat([]byte("payload"), 700)
+		for offset := 0; offset < len(payload); offset += 37 {
+			if _, err = writer.Write(payload[offset:min(offset+37, len(payload))]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Opening a writer must finish the outstanding writer.
+		next, err := conn.NextWriter(BinaryMessage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = writer.Write([]byte("stale")); err != errWriteClosed {
+			t.Fatalf("previous writer error = %v, want write closed", err)
+		}
+		if err = next.Close(); err != nil {
+			t.Fatal(err)
+		}
+		messageType, decoded, err := conn.ReadMessage()
+		if err != nil || messageType != TextMessage || !bytes.Equal(decoded, payload) {
+			t.Fatalf("message = (type %d, %d bytes, %v), want one complete text message", messageType, len(decoded), err)
+		}
+		messageType, data, err := conn.ReadMessage()
+		if err != nil || messageType != BinaryMessage || len(data) != 0 {
+			t.Fatalf("next writer frame = (%d, %q, %v)", messageType, data, err)
+		}
+	}
+}
+
 func TestConn_SetWriteDeadline(t *testing.T) {
 	conn, _ := newTestConn(true)
 	err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -486,19 +547,16 @@ func TestConn_LargeMessage(t *testing.T) {
 // Helper function to create a test Conn with a mock stream
 func newTestConn(isServer bool) (*Conn, *prepareConn) {
 	nc := &prepareConn{}
-	mu := make(chan struct{}, 1)
-	mu <- struct{}{}
-	c := &Conn{
-		stream:       nc,
-		mu:           mu,
-		isServer:     isServer,
-		br:           bufio.NewReaderSize(nc, defaultReadBufferSize),
-		writeBuf:     make([]byte, defaultWriteBufferSize+maxFrameHeaderSize),
-		writeBufSize: defaultWriteBufferSize + maxFrameHeaderSize,
-	}
-	c.writeDeadline.Store(time.Time{})
-	return c, nc
+	return NewConn(nil, nc, isServer, 0, 0, nil, nil, nil), nc
 }
+
+type prepareConn struct{ buf bytes.Buffer }
+
+func (pc *prepareConn) Read(p []byte) (int, error)       { return pc.buf.Read(p) }
+func (pc *prepareConn) Write(p []byte) (int, error)      { return pc.buf.Write(p) }
+func (pc *prepareConn) SetWriteDeadline(time.Time) error { return nil }
+func (pc *prepareConn) SetReadDeadline(time.Time) error  { return nil }
+func (pc *prepareConn) Close() error                     { return nil }
 
 // pipeStream implements streamWithDeadline using io.Pipe
 type pipeStream struct {

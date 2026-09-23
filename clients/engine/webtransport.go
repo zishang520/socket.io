@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sync"
 	"time"
 
 	wt "github.com/quic-go/webtransport-go"
@@ -38,9 +37,6 @@ type webTransport struct {
 
 	// session is the WebTransport connection instance
 	session *types.WebTransportConn
-
-	// mu is a mutex to protect concurrent access to the WebTransport connection
-	mu sync.Mutex
 
 	writeQueue *queue.Queue
 }
@@ -204,7 +200,10 @@ func (w *webTransport) handshake() {
 		w._error(err)
 		return
 	}
-	w.doWrite(data, true)
+	if err = w.doWrite(data); err != nil {
+		w._error(err)
+		return
+	}
 
 	w.OnOpen()
 }
@@ -234,6 +233,8 @@ func (w *webTransport) Write(packets []*packet.Packet) {
 
 	w.writeQueue.Enqueue(func() { w.write(packets) })
 }
+
+// write runs exclusively on writeQueue, including its completion events.
 func (w *webTransport) write(packets []*packet.Packet) {
 	// fake drain
 	// defer to next tick to allow Socket to clear writeBuffer
@@ -244,17 +245,10 @@ func (w *webTransport) write(packets []*packet.Packet) {
 
 	var writeErr error
 
-	w.mu.Lock()
 	// encodePacket efficient as it uses webTransport framing
 	// no need for encodePayload
 	for _, packet := range packets {
-		// always creates a new object since ws modifies it
-		compress := true
 		if packet.Options != nil {
-			if packet.Options.Compress != nil && !*packet.Options.Compress {
-				compress = false
-			}
-
 			if w.Opts().PerMessageDeflate() == nil && packet.Options.WsPreEncodedFrame != nil {
 				mt := webtransport.BinaryMessage
 				if _, ok := packet.Options.WsPreEncodedFrame.(*types.StringBuffer); ok {
@@ -281,60 +275,37 @@ func (w *webTransport) write(packets []*packet.Packet) {
 			writeErr = err
 			break
 		}
-		w.doWrite(data, compress, &writeErr)
+		writeErr = w.doWrite(data)
 		if writeErr != nil {
 			break
 		}
 	}
-	w.mu.Unlock()
-
-	// Report errors outside of the lock to prevent potential deadlocks
-	// from event handlers that may try to write.
+	// Report errors after I/O completes; listeners may enqueue another write.
 	if writeErr != nil {
 		w._error(writeErr)
 	}
 }
 
 // doWrite performs the actual WebTransport write operation.
-// This method handles message compression and WebTransport message framing.
-// When called from write() under lock, errors are stored in writeErr instead of
-// calling _error() directly, to prevent deadlocks from event handlers.
-func (w *webTransport) doWrite(data types.BufferInterface, _ bool, writeErr ...*error) {
-	reportErr := func(err error) {
-		if len(writeErr) > 0 && writeErr[0] != nil {
-			*writeErr[0] = err
-		} else {
-			w._error(err)
-		}
-	}
-
-	// if perMessageDeflate := w.Opts().PerMessageDeflate(); perMessageDeflate != nil {
-	// 	if data.Len() < perMessageDeflate.Threshold {
-	// 		compress = false
-	// 	}
-	// }
+// The caller reports errors after the message writer is closed.
+func (w *webTransport) doWrite(data types.BufferInterface) (err error) {
 	clientWebtransportLog.Debug(`writing %#v`, data)
 
-	// w.session.EnableWriteCompression(compress)
 	mt := webtransport.BinaryMessage
 	if _, ok := data.(*types.StringBuffer); ok {
 		mt = webtransport.TextMessage
 	}
 	write, err := w.session.NextWriter(mt)
 	if err != nil {
-		reportErr(err)
-		return
+		return err
 	}
 	defer func() {
-		if err := write.Close(); err != nil {
-			reportErr(err)
-			return
+		if closeErr := write.Close(); closeErr != nil {
+			err = closeErr
 		}
 	}()
-	if _, err := io.Copy(write, data); err != nil {
-		reportErr(err)
-		return
-	}
+	_, err = io.Copy(write, data)
+	return err
 }
 
 // DoClose gracefully closes the WebTransport connection.

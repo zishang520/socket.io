@@ -6,6 +6,7 @@ package webtransport
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -28,8 +29,7 @@ const (
 	defaultReadBufferSize  = 4096
 	defaultWriteBufferSize = 4096
 
-	continuationFrame = 0
-	noFrame           = -1
+	noFrame = -1
 )
 
 // Close codes defined in RFC 6455, section 11.7.
@@ -352,34 +352,28 @@ type Conn struct {
 	session *webtransport.Session
 	stream  streamWithDeadline
 
-	isServer bool
-
 	// Write fields
-	mu            chan struct{} // used as mutex to protect write to conn
-	writeBuf      []byte        // frame is constructed in this buffer.
+	writeMu       sync.Mutex // protects stream writes and the permanent write error
+	writeBuf      []byte     // frame is constructed in this buffer.
 	writePool     BufferPool
 	writeBufSize  int
 	writeDeadline atomic.Value   // stores time.Time
-	writer        io.WriteCloser // the current writer returned to the application
+	writer        *messageWriter // the current writer returned to the application
 	isWriting     bool           // for best-effort concurrent write detection
-
-	writeErrMu sync.Mutex
-	writeErr   error
+	writeErr      error
 
 	// Read fields
-	reader  io.ReadCloser // the current reader returned to the application
 	readErr error
 	br      *bufio.Reader
 	// bytes remaining in current frame.
 	// set setReadRemaining to safely update this value and prevent overflow
 	readRemaining int64
-	readLength    int64 // Message size.
 	readLimit     int64 // Maximum message size.
 	readErrCount  int
 	messageReader *messageReader // the current low-level reader
 }
 
-func NewConn(session *webtransport.Session, stream streamWithDeadline, isServer bool, readBufferSize, writeBufferSize int, writeBufferPool BufferPool, br *bufio.Reader, writeBuf []byte) *Conn {
+func NewConn(session *webtransport.Session, stream streamWithDeadline, _ bool, readBufferSize, writeBufferSize int, writeBufferPool BufferPool, br *bufio.Reader, writeBuf []byte) *Conn {
 
 	if br == nil {
 		if readBufferSize == 0 {
@@ -397,14 +391,10 @@ func NewConn(session *webtransport.Session, stream streamWithDeadline, isServer 
 		writeBuf = make([]byte, writeBufferSize)
 	}
 
-	mu := make(chan struct{}, 1)
-	mu <- struct{}{}
 	c := &Conn{
-		isServer:     isServer,
 		br:           br,
 		session:      session,
 		stream:       stream,
-		mu:           mu,
 		writeBuf:     writeBuf,
 		writePool:    writeBufferPool,
 		writeBufSize: writeBufferSize,
@@ -440,17 +430,6 @@ func (c *Conn) RemoteAddr() net.Addr {
 	return c.session.RemoteAddr()
 }
 
-// Write methods
-func (c *Conn) writeFatal(err error) error {
-	err = hideTempErr(err)
-	c.writeErrMu.Lock()
-	if c.writeErr == nil {
-		c.writeErr = err
-	}
-	c.writeErrMu.Unlock()
-	return err
-}
-
 func (c *Conn) read(n int) ([]byte, error) {
 	p, err := c.br.Peek(n)
 	if err == io.EOF {
@@ -462,40 +441,39 @@ func (c *Conn) read(n int) ([]byte, error) {
 	return p, err
 }
 
-func (c *Conn) write(_ int, deadline time.Time, buf0, buf1 []byte) error {
-	<-c.mu
-	defer func() { c.mu <- struct{}{} }()
-
-	c.writeErrMu.Lock()
-	err := c.writeErr
-	c.writeErrMu.Unlock()
-	if err != nil {
-		return err
+func (c *Conn) writeFrame(buf0, buf1 []byte) error {
+	if c.isWriting {
+		panic("concurrent write to webtransport connection")
 	}
-
-	if wdErr := c.stream.SetWriteDeadline(deadline); wdErr != nil {
-		return c.writeFatal(wdErr)
+	c.isWriting = true
+	err := c.write(c.writeDeadline.Load().(time.Time), buf0, buf1)
+	if !c.isWriting {
+		panic("concurrent write to webtransport connection")
 	}
-	if len(buf1) == 0 {
-		_, err = c.stream.Write(buf0)
-	} else {
-		err = c.writeBufs(buf0, buf1)
-	}
-	if err != nil {
-		return c.writeFatal(err)
-	}
-
-	return nil
-}
-
-func (c *Conn) writeBufs(bufs ...[]byte) error {
-	b := net.Buffers(bufs)
-	_, err := b.WriteTo(c.stream)
+	c.isWriting = false
 	return err
 }
 
-// beginMessage prepares a connection and message writer for a new message.
-func (c *Conn) beginMessage(mw *messageWriter, messageType int) error {
+func (c *Conn) write(deadline time.Time, buf0, buf1 []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if c.writeErr != nil {
+		return c.writeErr
+	}
+
+	err := c.stream.SetWriteDeadline(deadline)
+	if err == nil {
+		_, err = c.stream.Write(buf0)
+	}
+	if err == nil && len(buf1) > 0 {
+		_, err = c.stream.Write(buf1)
+	}
+	c.writeErr = hideTempErr(err)
+	return c.writeErr
+}
+
+// beginMessage finishes any outstanding writer and acquires a write buffer.
+func (c *Conn) beginMessage(messageType int) error {
 	// Close previous writer if not already closed by the application. It's
 	// probably better to return an error in this situation, but we cannot
 	// change this without breaking existing applications.
@@ -510,16 +488,12 @@ func (c *Conn) beginMessage(mw *messageWriter, messageType int) error {
 		return errBadWriteOpCode
 	}
 
-	c.writeErrMu.Lock()
+	c.writeMu.Lock()
 	err := c.writeErr
-	c.writeErrMu.Unlock()
+	c.writeMu.Unlock()
 	if err != nil {
 		return err
 	}
-
-	mw.c = c
-	mw.frameType = messageType
-	mw.pos = maxFrameHeaderSize
 
 	if c.writeBuf == nil {
 		wpd, ok := c.writePool.Get().(writePoolData)
@@ -534,235 +508,111 @@ func (c *Conn) beginMessage(mw *messageWriter, messageType int) error {
 
 // NextWriter returns a writer for the next message to send. The writer's Close
 // method flushes the complete message to the network.
+// The payload is buffered until Close so its length can precede it on the wire.
+// Use WriteMessage when the complete payload is already available.
 //
 // There can be at most one open writer on a connection. NextWriter closes the
 // previous writer if the application has not already done so.
 //
-// All message types (TextMessage, BinaryMessage, CloseMessage, PingMessage and
-// PongMessage) are supported.
+// TextMessage and BinaryMessage are supported.
 func (c *Conn) NextWriter(messageType int) (io.WriteCloser, error) {
-	var mw messageWriter
-	if err := c.beginMessage(&mw, messageType); err != nil {
+	if err := c.beginMessage(messageType); err != nil {
 		return nil, err
 	}
-	c.writer = &mw
+	c.writer = &messageWriter{
+		c:           c,
+		messageType: messageType,
+		buf:         *bytes.NewBuffer(c.writeBuf[:maxFrameHeaderSize]),
+	}
 	return c.writer, nil
 }
 
 type messageWriter struct {
-	c         *Conn
-	pos       int // end of data in writeBuf.
-	frameType int // type of the current frame.
-	err       error
+	c           *Conn
+	messageType int
+	buf         bytes.Buffer
+	err         error
 }
 
-func (w *messageWriter) endMessage(err error) error {
-	if w.err != nil {
-		return err
-	}
-	c := w.c
-	w.err = err
-	c.writer = nil
+func (c *Conn) releaseWriteBuffer() {
 	if c.writePool != nil {
 		c.writePool.Put(writePoolData{buf: c.writeBuf})
 		c.writeBuf = nil
 	}
-	return err
 }
 
-// flushFrame writes buffered data and extra as a frame to the network. The
-// final argument indicates that this is the last frame in the message.
-func (w *messageWriter) flushFrame(final bool, extra []byte) error {
-	c := w.c
-	length := w.pos - maxFrameHeaderSize + len(extra)
-
-	b0 := (byte(w.frameType) - 1) << 7
-
-	b1 := byte(0)
-
-	// Assume that the frame starts at beginning of c.writeBuf.
-	framePos := 0
-
+// putFrameHeader right-aligns the header in the reserved prefix and returns its start.
+func putFrameHeader(buf []byte, messageType, length int) int {
+	messageFlag := (byte(messageType) - 1) << 7
 	switch {
 	case length >= 65536:
-		c.writeBuf[framePos] = b1 | 127 | b0
-		binary.BigEndian.PutUint64(c.writeBuf[framePos+1:], uint64(length))
+		buf[0] = 127 | messageFlag
+		binary.BigEndian.PutUint64(buf[1:], uint64(length))
+		return 0
 	case length > 125:
-		framePos += 6
-		c.writeBuf[framePos] = b1 | 126 | b0
-		binary.BigEndian.PutUint16(c.writeBuf[framePos+1:], uint16(length))
+		buf[6] = 126 | messageFlag
+		binary.BigEndian.PutUint16(buf[7:], uint16(length))
+		return 6
 	default:
-		framePos += 8
-		c.writeBuf[framePos] = b1 | byte(length) | b0
+		buf[8] = byte(length) | messageFlag
+		return 8
 	}
-
-	// Write the buffers to the connection with best-effort detection of
-	// concurrent writes. See the concurrency section in the package
-	// documentation for more info.
-
-	if c.isWriting {
-		panic("concurrent write to webtransport connection")
-	}
-	c.isWriting = true
-
-	err := c.write(w.frameType, c.writeDeadline.Load().(time.Time), c.writeBuf[framePos:w.pos], extra)
-
-	if !c.isWriting {
-		panic("concurrent write to webtransport connection")
-	}
-	c.isWriting = false
-
-	if err != nil {
-		return w.endMessage(err)
-	}
-
-	if final {
-		_ = w.endMessage(errWriteClosed)
-		return nil
-	}
-
-	// Setup for next frame.
-	w.pos = maxFrameHeaderSize
-	w.frameType = continuationFrame
-	return nil
-}
-
-func (w *messageWriter) ncopy(max int) (int, error) {
-	n := len(w.c.writeBuf) - w.pos
-	if n <= 0 {
-		if err := w.flushFrame(false, nil); err != nil {
-			return 0, err
-		}
-		n = len(w.c.writeBuf) - w.pos
-	}
-	if n > max {
-		n = max
-	}
-	return n, nil
 }
 
 func (w *messageWriter) Write(p []byte) (int, error) {
 	if w.err != nil {
 		return 0, w.err
 	}
-
-	if len(p) > 2*len(w.c.writeBuf) && w.c.isServer {
-		// Don't buffer large messages.
-		err := w.flushFrame(false, p)
-		if err != nil {
-			return 0, err
-		}
-		return len(p), nil
-	}
-
-	nn := len(p)
-	for len(p) > 0 {
-		n, err := w.ncopy(len(p))
-		if err != nil {
-			return 0, err
-		}
-		copy(w.c.writeBuf[w.pos:], p[:n])
-		w.pos += n
-		p = p[n:]
-	}
-	return nn, nil
+	return w.buf.Write(p)
 }
 
 func (w *messageWriter) WriteString(p string) (int, error) {
 	if w.err != nil {
 		return 0, w.err
 	}
-
-	nn := len(p)
-	for len(p) > 0 {
-		n, err := w.ncopy(len(p))
-		if err != nil {
-			return 0, err
-		}
-		copy(w.c.writeBuf[w.pos:], p[:n])
-		w.pos += n
-		p = p[n:]
-	}
-	return nn, nil
+	return w.buf.WriteString(p)
 }
 
-func (w *messageWriter) ReadFrom(r io.Reader) (nn int64, err error) {
+func (w *messageWriter) ReadFrom(r io.Reader) (int64, error) {
 	if w.err != nil {
 		return 0, w.err
 	}
-	for {
-		if w.pos == len(w.c.writeBuf) {
-			err = w.flushFrame(false, nil)
-			if err != nil {
-				break
-			}
-		}
-		var n int
-		n, err = r.Read(w.c.writeBuf[w.pos:])
-		w.pos += n
-		nn += int64(n)
-		if err != nil {
-			if err == io.EOF {
-				err = nil
-			}
-			break
-		}
-	}
-	return nn, err
+	return w.buf.ReadFrom(r)
 }
 
 func (w *messageWriter) Close() error {
 	if w.err != nil {
 		return w.err
 	}
-	return w.flushFrame(true, nil)
+	frame := w.buf.Bytes()
+	start := putFrameHeader(frame, w.messageType, len(frame)-maxFrameHeaderSize)
+	err := w.c.writeFrame(frame[start:], nil)
+	w.err = err
+	if err == nil {
+		w.err = errWriteClosed
+	}
+	w.buf = bytes.Buffer{}
+	w.c.writer = nil
+	w.c.releaseWriteBuffer()
+	return err
 }
 
 // WritePreparedMessage writes prepared message into connection.
 func (c *Conn) WritePreparedMessage(pm *PreparedMessage) error {
-	frameType, frameData, err := pm.frame(prepareKey{
-		isServer: c.isServer,
-	})
-	if err != nil {
-		return err
-	}
-	if c.isWriting {
-		panic("concurrent write to webtransport connection")
-	}
-	c.isWriting = true
-	err = c.write(frameType, c.writeDeadline.Load().(time.Time), frameData, nil)
-	if !c.isWriting {
-		panic("concurrent write to webtransport connection")
-	}
-	c.isWriting = false
-	return err
+	return c.writeFrame(pm.frame, nil)
 }
 
-// WriteMessage is a helper method for getting a writer using NextWriter,
-// writing the message and closing the writer.
+// WriteMessage writes one complete message. Large payloads use the caller's
+// data directly after the initial write buffer, without buffering the remainder.
 func (c *Conn) WriteMessage(messageType int, data []byte) error {
-
-	if c.isServer {
-		// Fast path with no allocations and single frame.
-
-		var mw messageWriter
-		if err := c.beginMessage(&mw, messageType); err != nil {
-			return err
-		}
-		n := copy(c.writeBuf[mw.pos:], data)
-		mw.pos += n
-		data = data[n:]
-		return mw.flushFrame(true, data)
-	}
-
-	w, err := c.NextWriter(messageType)
-	if err != nil {
+	if err := c.beginMessage(messageType); err != nil {
 		return err
 	}
-	if _, err = w.Write(data); err != nil {
-		return err
-	}
-	return w.Close()
+	n := copy(c.writeBuf[maxFrameHeaderSize:], data)
+	start := putFrameHeader(c.writeBuf, messageType, len(data))
+	err := c.writeFrame(c.writeBuf[start:maxFrameHeaderSize+n], data[n:])
+	c.releaseWriteBuffer()
+	return err
 }
 
 // SetWriteDeadline sets the write deadline on the underlying network
@@ -831,25 +681,12 @@ func (c *Conn) advanceFrame() (int, error) {
 		}
 	}
 
-	// 4. For text and binary messages, enforce read limit and return.
-
-	if frameType == TextMessage || frameType == BinaryMessage {
-
-		c.readLength += c.readRemaining
-		// Don't allow readLength to overflow in the presence of a large readRemaining
-		// counter.
-		if c.readLength < 0 {
-			return noFrame, ErrReadLimit
+	// 4. The high bit always identifies a text or binary message.
+	if c.readLimit > 0 && c.readRemaining > c.readLimit {
+		if err := c.CloseWithError(CloseMessageTooBig, ""); err != nil {
+			return noFrame, err
 		}
-
-		if c.readLimit > 0 && c.readLength > c.readLimit {
-			if err := c.CloseWithError(CloseMessageTooBig, ""); err != nil {
-				return noFrame, err
-			}
-			return noFrame, ErrReadLimit
-		}
-
-		return frameType, nil
+		return noFrame, ErrReadLimit
 	}
 
 	return frameType, nil
@@ -866,29 +703,15 @@ func (c *Conn) advanceFrame() (int, error) {
 // permanent. Once this method returns a non-nil error, all subsequent calls to
 // this method return the same error.
 func (c *Conn) NextReader() (messageType int, r io.Reader, err error) {
-	// Close previous reader, only relevant for decompression.
-	if c.reader != nil {
-		if err := c.reader.Close(); err != nil {
-			log.Printf("webtransport: discarding reader close error: %v", err)
-		}
-		c.reader = nil
-	}
-
 	c.messageReader = nil
-	c.readLength = 0
 
-	for c.readErr == nil {
+	if c.readErr == nil {
 		frameType, err := c.advanceFrame()
-		if err != nil {
-			c.readErr = hideTempErr(err)
-			break
-		}
-
-		if frameType == TextMessage || frameType == BinaryMessage {
+		if err == nil {
 			c.messageReader = &messageReader{c}
-			c.reader = c.messageReader
-			return frameType, c.reader, nil
+			return frameType, c.messageReader, nil
 		}
+		c.readErr = hideTempErr(err)
 	}
 
 	// Applications that do handle the error returned from this method spin in
@@ -940,9 +763,7 @@ func (r *messageReader) Read(b []byte) (int, error) {
 	return 0, err
 }
 
-func (r *messageReader) Close() error {
-	return nil
-}
+func (r *messageReader) Close() error { return nil }
 
 // ReadMessage is a helper method for getting a reader using NextReader and
 // reading from that reader to a buffer.

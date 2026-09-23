@@ -2,7 +2,6 @@ package request
 
 import (
 	"math/rand/v2"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -65,8 +64,19 @@ func validCookieValueByte(b byte) bool {
 	return 0x20 <= b && b < 0x7f && b != '"' && b != ';' && b != '\\'
 }
 
+// RandomString returns a 13-character lowercase base36 cache-busting token.
 func RandomString() string {
-	timestampStr := strconv.FormatInt(time.Now().UnixNano(), 36)[5:]
-	randomBase36 := strconv.FormatUint(rand.Uint64(), 36)[2:8]
-	return timestampStr + randomBase36
+	const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+	var token [13]byte
+	timestamp := uint64(time.Now().UnixNano())
+	for i := 6; i >= 0; i-- {
+		token[i] = alphabet[timestamp%36]
+		timestamp /= 36
+	}
+	random := rand.Uint64()
+	for i := len(token) - 1; i >= 7; i-- {
+		token[i] = alphabet[random%36]
+		random /= 36
+	}
+	return string(token[:])
 }

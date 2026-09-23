@@ -42,52 +42,68 @@ type altSvc struct {
 
 // NewTransport creates a new Transport instance with the specified TLS and QUIC configurations
 func NewTransport(tlsClientConfig *tls.Config, quicConfig *quic.Config) *Transport {
-	return &Transport{
+	transport := &Transport{
 		standardTransport: &http.Transport{
-			TLSClientConfig: tlsClientConfig,
+			ForceAttemptHTTP2: true,
 		},
 		h3Transport: &http3.Transport{
-			TLSClientConfig: tlsClientConfig,
-			QUICConfig:      quicConfig,
+			QUICConfig: quicConfig,
 		},
-		altSvcCache: types.Map[string, []*altSvc]{},
 	}
+	if tlsClientConfig != nil {
+		// HTTP/2 initializes ALPN on its config; HTTP/3 and the caller retain
+		// independent configurations.
+		transport.standardTransport.TLSClientConfig = tlsClientConfig.Clone()
+		transport.h3Transport.TLSClientConfig = tlsClientConfig.Clone()
+	}
+	return transport
 }
 
 // RoundTrip implements the http.RoundTripper interface. It attempts to send the request
 // first using available alternative services, falling back to standard transport if needed
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Try alternative services first
-	if resp, err := t.tryAltServices(req); err == nil {
-		return resp, nil
+	var response *http.Response
+	// An alternative may have processed the request before its response fails.
+	// Only idempotent requests with replayable bodies can safely fall back.
+	if canRetryRequest(req) {
+		services, _ := t.altSvcCache.Load(getOrigin(req.URL))
+		for _, svc := range services {
+			if isServiceValid(svc) {
+				if resp, err := t.tryService(req, svc); err == nil {
+					response = resp
+					break
+				}
+			}
+		}
 	}
 
-	// Fallback to standard transport
-	resp, err := t.standardTransport.RoundTrip(req)
-	if err != nil {
-		return nil, err
+	if response == nil {
+		var err error
+		response, err = t.standardTransport.RoundTrip(req)
+		if err != nil {
+			return nil, err
+		}
+	} else if req.Body != nil {
+		// Alternative attempts own independent bodies. The original was never
+		// handed to a transport, so close it when fallback is no longer needed.
+		_ = req.Body.Close()
 	}
 
-	// Process Alt-Svc header
-	t.processAltSvc(resp.Header, req.URL)
-	return resp, nil
+	// Both the origin and its alternatives can update this origin's cache.
+	t.processAltSvc(response.Header, req.URL)
+	return response, nil
 }
 
-// tryAltServices attempts to send the request using available alternative services
-func (t *Transport) tryAltServices(req *http.Request) (*http.Response, error) {
-	services, _ := t.altSvcCache.Load(getOrigin(req.URL))
-
-	for _, svc := range services {
-		if !isServiceValid(svc) {
-			continue
-		}
-
-		if resp, err := t.tryService(req, svc); err == nil {
-			return resp, nil
-		}
+func canRetryRequest(req *http.Request) bool {
+	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+		return false
 	}
-
-	return nil, errors.New("all alt-svc attempts failed")
+	switch req.Method {
+	case "", http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace, http.MethodPut, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 // isServiceValid checks if the service is still valid and hasn't exceeded retry attempts
@@ -97,11 +113,10 @@ func isServiceValid(svc *altSvc) bool {
 
 // tryService attempts to send the request using a specific alternative service
 func (t *Transport) tryService(req *http.Request, svc *altSvc) (*http.Response, error) {
-	altReq := req.Clone(req.Context())
-
 	// Apply alt-svc endpoint with same-origin validation (RFC 7838):
 	// only port changes are allowed; the hostname must remain the same.
-	if endpoint := svc.endpoint; endpoint != "" {
+	endpoint := svc.endpoint
+	if endpoint != "" {
 		if after, ok := strings.CutPrefix(endpoint, ":"); ok {
 			// Port-only override (e.g., ":443") — safe, keeps original hostname
 			endpoint = net.JoinHostPort(req.URL.Hostname(), after)
@@ -121,7 +136,17 @@ func (t *Transport) tryService(req *http.Request, svc *altSvc) (*http.Response, 
 				return nil, errors.New("alt-svc endpoint contains invalid characters")
 			}
 		}
+	}
+	altReq := req.Clone(req.Context())
+	if endpoint != "" {
 		altReq.URL.Host = endpoint
+	}
+	if req.Body != nil && req.Body != http.NoBody {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		altReq.Body = body
 	}
 
 	var transport http.RoundTripper
@@ -156,9 +181,7 @@ func (t *Transport) processAltSvc(header http.Header, reqURL *url.URL) {
 	// Parse and store new alternative services
 	entries := parseAltSvc(altSvc)
 	if len(entries) > 0 {
-		// If persist flag is set, store in persistent storage
-		// Note: This is a simplified implementation. In a real-world scenario,
-		// you would want to implement proper persistent storage.
+		// The cache is scoped to this transport, including entries marked persist.
 		t.altSvcCache.Store(origin, entries)
 	}
 }
@@ -178,36 +201,36 @@ func parseAltSvc(value string) []*altSvc {
 		}
 
 		// Split protocol and parameters
-		parts := strings.SplitN(entry, "=", 2)
-		if len(parts) != 2 {
+		protocol, params, ok := strings.Cut(entry, "=")
+		if !ok {
 			continue
 		}
 
-		protocol := strings.TrimSpace(parts[0])
-		params := strings.TrimSpace(parts[1])
+		protocol = strings.TrimSpace(protocol)
+		params = strings.TrimSpace(params)
 
 		// Parse parameters
 		maxAge := int64(24 * 3600) // Default 24 hours
 		persist := false
 
 		// Split endpoint and parameters
-		paramParts := strings.Split(params, ";")
-		endpoint := strings.Trim(strings.TrimSpace(paramParts[0]), `"`)
+		endpoint, params, _ := strings.Cut(params, ";")
+		endpoint = strings.Trim(strings.TrimSpace(endpoint), `"`)
 
 		// Parse additional parameters
-		for _, param := range paramParts[1:] {
+		for param := range strings.SplitSeq(params, ";") {
 			param = strings.TrimSpace(param)
 			if param == "" {
 				continue
 			}
 
-			kv := strings.SplitN(param, "=", 2)
-			if len(kv) != 2 {
+			key, value, ok := strings.Cut(param, "=")
+			if !ok {
 				continue
 			}
 
-			key := strings.TrimSpace(kv[0])
-			value := strings.TrimSpace(kv[1])
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
 
 			switch key {
 			case "ma":
@@ -245,13 +268,14 @@ func (t *Transport) Close() error {
 
 // Helper functions
 
-// getOrigin extracts the origin (host:port) from a URL
+// getOrigin extracts the scheme and authority from a URL.
 // If port is not specified, it uses the default port for the scheme
 func getOrigin(u *url.URL) string {
+	authority := u.Host
 	if u.Port() == "" {
-		return net.JoinHostPort(u.Hostname(), defaultPort(u.Scheme))
+		authority = net.JoinHostPort(u.Hostname(), defaultPort(u.Scheme))
 	}
-	return u.Host
+	return u.Scheme + "://" + authority
 }
 
 // defaultPort returns the default port number for a given scheme

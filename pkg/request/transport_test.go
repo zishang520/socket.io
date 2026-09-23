@@ -1,6 +1,10 @@
 package request
 
 import (
+	"crypto/tls"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -160,27 +164,37 @@ func TestGetOrigin(t *testing.T) {
 		{
 			name:     "https with port",
 			url:      "https://example.com:8443/path",
-			expected: "example.com:8443",
+			expected: "https://example.com:8443",
 		},
 		{
 			name:     "https without port",
 			url:      "https://example.com/path",
-			expected: "example.com:443",
+			expected: "https://example.com:443",
 		},
 		{
 			name:     "http with port",
 			url:      "http://example.com:8080/path",
-			expected: "example.com:8080",
+			expected: "http://example.com:8080",
 		},
 		{
 			name:     "http without port",
 			url:      "http://example.com/path",
-			expected: "example.com:80",
+			expected: "http://example.com:80",
 		},
 		{
 			name:     "localhost",
 			url:      "http://localhost:3000/api",
-			expected: "localhost:3000",
+			expected: "http://localhost:3000",
+		},
+		{
+			name:     "http using HTTPS port",
+			url:      "http://example.com:443/path",
+			expected: "http://example.com:443",
+		},
+		{
+			name:     "https with explicit default port",
+			url:      "https://example.com:443/path",
+			expected: "https://example.com:443",
 		},
 	}
 
@@ -288,6 +302,44 @@ func TestNewTransport(t *testing.T) {
 	}
 	if transport.h3Transport == nil {
 		t.Error("Expected h3 transport to be initialized")
+	}
+	if transport.standardTransport.TLSClientConfig != nil || transport.h3Transport.TLSClientConfig != nil {
+		t.Fatal("nil TLS config should retain transport defaults")
+	}
+}
+
+func TestTransportTLSConfigurationsAreIndependent(t *testing.T) {
+	config := &tls.Config{MinVersion: tls.VersionTLS12}
+	transport := NewTransport(config, nil)
+	standard := transport.standardTransport.TLSClientConfig
+	h3 := transport.h3Transport.TLSClientConfig
+	if standard == config || h3 == config || standard == h3 {
+		t.Fatal("HTTP/2 initialization must not mutate the caller's or HTTP/3 TLS config")
+	}
+	if standard.MinVersion != config.MinVersion || h3.MinVersion != config.MinVersion {
+		t.Fatal("TLS configuration values were not preserved")
+	}
+}
+
+func TestTransportNegotiatesHTTP2WithTLSConfig(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.Proto)
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	config := server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	transport := NewTransport(config, nil)
+	defer func() { _ = transport.Close() }()
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	if err != nil || response.ProtoMajor != 2 || string(body) != "HTTP/2.0" {
+		t.Fatalf("protocol=%q body=%q err=%v, want HTTP/2", response.Proto, body, err)
 	}
 }
 

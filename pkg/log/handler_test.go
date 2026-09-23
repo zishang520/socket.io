@@ -3,12 +3,26 @@ package log
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+type resolvedLogValue string
+
+func (resolvedLogValue) LogValue() slog.Value { return slog.StringValue("resolved") }
+
+func TestPrefixSimpleHandlerResolvesLogValuer(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(NewPrefixSimpleHandler(&output, "prefix"))
+	logger.With("saved", resolvedLogValue("raw-saved")).Info("message", "record", resolvedLogValue("raw-record"))
+	if got, want := output.String(), "prefix message saved=resolved record=resolved\n"; got != want {
+		t.Fatalf("output=%q, want %q", got, want)
+	}
+}
 
 func TestNewPrefixSimpleHandler(t *testing.T) {
 	var buf bytes.Buffer
@@ -162,25 +176,97 @@ func (w *concurrentWriter) String() string {
 }
 
 func TestPrefixSimpleHandlerConcurrent(t *testing.T) {
-	var buf concurrentWriter
+	var buf bytes.Buffer
 	handler := NewPrefixSimpleHandler(&buf, "[CONCURRENT]")
 
-	// Test concurrent writes - just verify no race condition occurs
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Go(func() {
-			record := slog.NewRecord(time.Now(), slog.LevelInfo, "message", 0)
-			_ = handler.Handle(context.Background(), record)
+			for range 100 {
+				record := slog.NewRecord(time.Now(), slog.LevelInfo, "message", 0)
+				if err := handler.Handle(context.Background(), record); err != nil {
+					t.Error(err)
+				}
+			}
 		})
 	}
-
-	// Wait for all goroutines
 	wg.Wait()
 
-	// Just verify some output was written (don't check exact count due to concurrent nature)
-	output := buf.String()
-	if output == "" {
-		t.Error("Expected some output from concurrent writes")
+	if got := strings.Count(buf.String(), "[CONCURRENT] message\n"); got != 1000 {
+		t.Fatalf("wrote %d complete records, want 1000", got)
+	}
+}
+
+func TestPrefixSimpleHandlerDerivedConcurrent(t *testing.T) {
+	var buf bytes.Buffer
+	parent := NewPrefixSimpleHandler(&buf, "parent")
+	child := parent.WithAttrs([]slog.Attr{slog.Int("id", 1)})
+	grouped := child.WithGroup("group")
+	handlers := []slog.Handler{parent, child, grouped}
+	var wg sync.WaitGroup
+	for _, handler := range handlers {
+		for range 4 {
+			wg.Go(func() {
+				for range 100 {
+					if err := handler.Handle(context.Background(), createTestRecord("message")); err != nil {
+						t.Error(err)
+					}
+				}
+			})
+		}
+	}
+	wg.Wait()
+	counts := make(map[string]int)
+	for line := range strings.SplitSeq(strings.TrimSuffix(buf.String(), "\n"), "\n") {
+		counts[line]++
+	}
+	for _, line := range []string{"parent message", "parent message id=1", "[group] parent message id=1"} {
+		if got := counts[line]; got != 400 {
+			t.Errorf("%q: wrote %d complete records, want 400", line, got)
+		}
+	}
+}
+
+func TestPrefixSimpleHandlerDerivedPrefixAndFormatting(t *testing.T) {
+	var buf bytes.Buffer
+	parent := NewPrefixSimpleHandler(&buf, "original")
+	child := parent.WithAttrs([]slog.Attr{slog.String("first", "one")}).(*PrefixSimpleHandler)
+	grouped := child.WithGroup("outer").WithGroup("inner").WithAttrs([]slog.Attr{slog.Int("second", 2)})
+	parent.SetPrefix("parent")
+	child.SetPrefix("child")
+	for _, handler := range []slog.Handler{parent, child, grouped} {
+		record := createTestRecord("message")
+		record.AddAttrs(slog.Bool("record", true))
+		if err := handler.Handle(context.Background(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "parent message record=true\nchild message first=one record=true\n[outer.inner] original message first=one second=2 record=true\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func BenchmarkPrefixSimpleHandler(b *testing.B) {
+	for _, attributes := range []bool{false, true} {
+		name := "plain"
+		if attributes {
+			name = "attributes"
+		}
+		b.Run(name, func(b *testing.B) {
+			var handler slog.Handler = NewPrefixSimpleHandler(io.Discard, "engine:server")
+			record := createTestRecord("connection opened")
+			if attributes {
+				handler = handler.WithGroup("transport").WithAttrs([]slog.Attr{slog.String("kind", "webtransport")})
+				record.AddAttrs(slog.String("remote", "127.0.0.1"), slog.Int("stream", 3))
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := handler.Handle(context.Background(), record); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
