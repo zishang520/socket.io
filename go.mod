@@ -7,7 +7,7 @@ require (
 	github.com/gookit/color v1.6.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.20.0
-	github.com/quic-go/quic-go v0.62.0
+	github.com/quic-go/quic-go v0.63.0
 	github.com/quic-go/webtransport-go v0.13.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	resty.dev/v3 v3.0.0-rc.4
