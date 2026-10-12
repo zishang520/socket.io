@@ -224,13 +224,18 @@ func (r *redisAdapter) handleChannelMessages(sub *rds.PubSub) {
 
 // onMessage handles broadcast messages from Redis pattern subscriptions.
 func (r *redisAdapter) onMessage(_ string, channel string, msg []byte) {
-	if len(channel) <= len(r.channel) || !strings.HasPrefix(channel, r.channel) {
-		redisLog.Debug("ignore channel: shorter than expected or prefix mismatch")
+	if !strings.HasPrefix(channel, r.channel) {
+		redisLog.Debug("ignore channel: prefix mismatch")
 		return
 	}
 
-	// Extract room from channel name
-	room := channel[len(r.channel) : len(channel)-1]
+	// A publish with no single room uses the namespace channel itself.
+	// A longer name is one room and ends with '#'. Slicing the equal
+	// channel would run the end index backwards.
+	room := ""
+	if len(channel) > len(r.channel) {
+		room = channel[len(r.channel) : len(channel)-1]
+	}
 	if room != "" && !r.hasRoom(socket.Room(room)) {
 		redisLog.Debug("ignore unknown room %s", room)
 		return
