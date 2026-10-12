@@ -288,8 +288,10 @@ func (s *socket) schedulePing() {
 		if log.DEBUG.Load() {
 			socketLog.Debug("writing ping packet - expecting pong within %dms", s.server.Opts().PingTimeout().Milliseconds())
 		}
-		s.sendPacket(packet.PING, nil, nil, nil)
+		// Arm the timeout before the ping goes out: the pong is handled on another
+		// goroutine, and if it lands first it must find this timer to clear.
 		s.resetPingTimeout()
+		s.sendPacket(packet.PING, nil, nil, nil)
 	}, s.server.Opts().PingInterval())
 	s.pingIntervalTimer.Store(timer)
 	// A close may have cleared the old timer before this one was published.
