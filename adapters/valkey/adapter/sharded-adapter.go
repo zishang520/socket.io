@@ -36,6 +36,15 @@ func (sb *ShardedValkeyAdapterBuilder) New(nsp socket.Namespace) socket.Adapter 
 	return NewShardedValkeyAdapter(nsp, sb.Valkey, sb.Opts)
 }
 
+// channelLock is a per-channel mutex. refs counts the goroutines that hold or
+// wait for it, so the lock is only dropped from the map once nobody uses it.
+// Dropping it earlier would let a later caller create a second lock for the
+// same channel and run beside a waiter on the old one.
+type channelLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
 type shardedValkeyAdapter struct {
 	adapter.ClusterAdapter
 
@@ -45,7 +54,10 @@ type shardedValkeyAdapter struct {
 	// dynamicPubSubs holds per-room dynamic channel subscriptions.
 	// valkey-go handles cluster routing internally, so no per-master pooling is needed.
 	dynamicPubSubs *types.Map[string, *valkey.ValkeyPubSub]
-	dynamicMutexes *types.Map[string, *sync.Mutex]
+	// dynamicLocks provides per-channel mutual exclusion for subscribe and
+	// unsubscribe. It is guarded by dynamicLocksMu.
+	dynamicLocks   map[string]*channelLock
+	dynamicLocksMu sync.Mutex
 
 	valkeyClient    *valkey.ValkeyClient
 	opts            *ShardedValkeyAdapterOptions
@@ -63,7 +75,7 @@ func MakeShardedValkeyAdapter() ShardedValkeyAdapter {
 		opts:           DefaultShardedValkeyAdapterOptions(),
 		pubSubClients:  &types.Map[string, *valkey.ValkeyPubSub]{},
 		dynamicPubSubs: &types.Map[string, *valkey.ValkeyPubSub]{},
-		dynamicMutexes: &types.Map[string, *sync.Mutex]{},
+		dynamicLocks:   map[string]*channelLock{},
 	}
 	c.Prototype(c)
 	return c
@@ -137,11 +149,10 @@ func (s *shardedValkeyAdapter) setupDynamicSubscriptions() {
 }
 
 // subscribeChannel subscribes to a single dynamic channel.
-// A per-channel mutex prevents duplicate subscriptions.
+// A per-channel lock prevents duplicate subscriptions.
 func (s *shardedValkeyAdapter) subscribeChannel(channel string) {
-	mu, _ := s.dynamicMutexes.LoadOrStore(channel, &sync.Mutex{})
-	mu.Lock()
-	defer mu.Unlock()
+	lock := s.lockChannel(channel)
+	defer s.unlockChannel(channel, lock)
 
 	if _, exists := s.dynamicPubSubs.Load(channel); exists {
 		return
@@ -153,19 +164,46 @@ func (s *shardedValkeyAdapter) subscribeChannel(channel string) {
 
 // unsubscribeChannel unsubscribes a dynamic channel.
 func (s *shardedValkeyAdapter) unsubscribeChannel(channel string) {
-	if mu, exists := s.dynamicMutexes.Load(channel); exists {
-		mu.Lock()
-		if pubSub, ok := s.dynamicPubSubs.LoadAndDelete(channel); ok {
-			if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
-				s.valkeyClient.Emit("error", err)
-			}
-			if err := pubSub.Close(); err != nil {
-				s.valkeyClient.Emit("error", err)
-			}
+	lock := s.lockChannel(channel)
+	defer s.unlockChannel(channel, lock)
+
+	if pubSub, ok := s.dynamicPubSubs.LoadAndDelete(channel); ok {
+		if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
+			s.valkeyClient.Emit("error", err)
 		}
-		mu.Unlock()
-		s.dynamicMutexes.Delete(channel)
+		if err := pubSub.Close(); err != nil {
+			s.valkeyClient.Emit("error", err)
+		}
 	}
+}
+
+// lockChannel locks the per-channel lock for a dynamic channel, creating it
+// if needed.
+func (s *shardedValkeyAdapter) lockChannel(channel string) *channelLock {
+	s.dynamicLocksMu.Lock()
+	lock, ok := s.dynamicLocks[channel]
+	if !ok {
+		lock = &channelLock{}
+		s.dynamicLocks[channel] = lock
+	}
+	lock.refs++
+	s.dynamicLocksMu.Unlock()
+
+	lock.mu.Lock()
+	return lock
+}
+
+// unlockChannel unlocks a lock taken by lockChannel and drops it from the map
+// once no goroutine holds or waits for it.
+func (s *shardedValkeyAdapter) unlockChannel(channel string, lock *channelLock) {
+	lock.mu.Unlock()
+
+	s.dynamicLocksMu.Lock()
+	lock.refs--
+	if lock.refs == 0 {
+		delete(s.dynamicLocks, channel)
+	}
+	s.dynamicLocksMu.Unlock()
 }
 
 // Close unsubscribes from all channels and shuts down every Pub/Sub connection.
@@ -190,7 +228,6 @@ func (s *shardedValkeyAdapter) Close() {
 	})
 
 	s.dynamicPubSubs.Clear()
-	s.dynamicMutexes.Clear()
 
 	s.ClusterAdapter.Close()
 }

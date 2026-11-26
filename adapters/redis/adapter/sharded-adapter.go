@@ -52,6 +52,15 @@ type nodePubSubEntry struct {
 	refCount atomic.Int64 // number of active dynamic channels on this connection
 }
 
+// channelLock is a per-channel mutex for the non-cluster path. refs counts the
+// goroutines that hold or wait for it, so the lock is only dropped from the map
+// once nobody uses it. Dropping it earlier would let a later caller create a
+// second lock for the same channel and run beside a waiter on the old one.
+type channelLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
 type shardedRedisAdapter struct {
 	adapter.ClusterAdapter
 
@@ -70,9 +79,11 @@ type shardedRedisAdapter struct {
 	// ncDynamicPubSubs holds dynamic channel subscriptions for non-ClusterClient
 	// backends (standalone Redis, Redis Ring). Each channel gets its own Pub/Sub.
 	ncDynamicPubSubs *types.Map[string, *rds.PubSub]
-	// ncDynamicMutexes provides per-channel mutual exclusion for non-cluster
+	// ncLocks provides per-channel mutual exclusion for non-cluster
 	// subscribe/unsubscribe pairs to prevent duplicate connections.
-	ncDynamicMutexes *types.Map[string, *sync.Mutex]
+	// It is guarded by ncLocksMu.
+	ncLocks   map[string]*channelLock
+	ncLocksMu sync.Mutex
 
 	redisClient     *redis.RedisClient
 	opts            *ShardedRedisAdapterOptions
@@ -93,7 +104,7 @@ func MakeShardedRedisAdapter() ShardedRedisAdapter {
 		nodePubSubs:      &types.Map[string, *nodePubSubEntry]{},
 		chanToAddr:       &types.Map[string, string]{},
 		ncDynamicPubSubs: &types.Map[string, *rds.PubSub]{},
-		ncDynamicMutexes: &types.Map[string, *sync.Mutex]{},
+		ncLocks:          map[string]*channelLock{},
 	}
 	c.Prototype(c)
 	return c
@@ -182,14 +193,13 @@ func (s *shardedRedisAdapter) setupDynamicSubscriptions() {
 // commands on the same Pub/Sub object (double-checked locking via nodePubSubEntry.mu).
 //
 // For non-ClusterClient backends, each channel gets its own Pub/Sub, guarded by
-// a per-channel mutex stored in ncDynamicMutexes.
+// a per-channel lock stored in ncLocks.
 func (s *shardedRedisAdapter) subscribeNode(channel string) {
 	clusterClient, isCluster := s.redisClient.Sub().(*rds.ClusterClient)
 	if !isCluster {
 		// Non-cluster path: ensure exactly one SSubscribe per channel.
-		mu, _ := s.ncDynamicMutexes.LoadOrStore(channel, &sync.Mutex{})
-		mu.Lock()
-		defer mu.Unlock()
+		lock := s.lockChannel(channel)
+		defer s.unlockChannel(channel, lock)
 
 		if _, exists := s.ncDynamicPubSubs.Load(channel); exists {
 			return // idempotency guard
@@ -244,18 +254,16 @@ func (s *shardedRedisAdapter) subscribeNode(channel string) {
 func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
 	if _, isCluster := s.redisClient.Sub().(*rds.ClusterClient); !isCluster {
 		// Non-cluster path: unsubscribe under the per-channel mutex.
-		if mu, exists := s.ncDynamicMutexes.Load(channel); exists {
-			mu.Lock()
-			if pubSub, ok := s.ncDynamicPubSubs.LoadAndDelete(channel); ok {
-				if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
-					s.redisClient.Emit("error", err)
-				}
-				if err := pubSub.Close(); err != nil {
-					s.redisClient.Emit("error", err)
-				}
+		lock := s.lockChannel(channel)
+		defer s.unlockChannel(channel, lock)
+
+		if pubSub, ok := s.ncDynamicPubSubs.LoadAndDelete(channel); ok {
+			if err := pubSub.SUnsubscribe(s.ctx, channel); err != nil {
+				s.redisClient.Emit("error", err)
 			}
-			mu.Unlock()
-			s.ncDynamicMutexes.Delete(channel)
+			if err := pubSub.Close(); err != nil {
+				s.redisClient.Emit("error", err)
+			}
 		}
 		return
 	}
@@ -288,6 +296,35 @@ func (s *shardedRedisAdapter) unsubscribeNode(channel string) {
 		}
 		s.nodePubSubs.Delete(addr)
 	}
+}
+
+// lockChannel locks the per-channel lock for a non-cluster dynamic channel,
+// creating it if needed.
+func (s *shardedRedisAdapter) lockChannel(channel string) *channelLock {
+	s.ncLocksMu.Lock()
+	lock, ok := s.ncLocks[channel]
+	if !ok {
+		lock = &channelLock{}
+		s.ncLocks[channel] = lock
+	}
+	lock.refs++
+	s.ncLocksMu.Unlock()
+
+	lock.mu.Lock()
+	return lock
+}
+
+// unlockChannel unlocks a lock taken by lockChannel and drops it from the map
+// once no goroutine holds or waits for it.
+func (s *shardedRedisAdapter) unlockChannel(channel string, lock *channelLock) {
+	lock.mu.Unlock()
+
+	s.ncLocksMu.Lock()
+	lock.refs--
+	if lock.refs == 0 {
+		delete(s.ncLocks, channel)
+	}
+	s.ncLocksMu.Unlock()
 }
 
 // Close unsubscribes from all channels and shuts down every Pub/Sub connection.
@@ -326,7 +363,6 @@ func (s *shardedRedisAdapter) Close() {
 	})
 
 	s.ncDynamicPubSubs.Clear()
-	s.ncDynamicMutexes.Clear()
 
 	s.ClusterAdapter.Close()
 }
